@@ -1,0 +1,592 @@
+[00:04:57] *** Quits: waldo323_ (~waldo323@d149-67-45-83.clv.wideopenwest.com) (Remote host closed the connection)
+[00:11:03] *** Quits: kikijiki (~Thunderbi@user/kikijiki) (Quit: kikijiki)
+[00:14:02] <ska> tabakhase: finished is when the docker contaner is brought down by docker compose.
+[00:15:22] <tabakhase> ska as in "finished cause its just  one job and no restart policy" - or were talking "docker-compose down"  --- for the first there is nothing, for the second not rly either, "bind-mounts" are never touched - if you use volumes instead tho, "docker-compose down -v" will rip them out too
+[00:17:28] <tabakhase> only thing that _might_ actually destroy itself is a) running that with "rm: true" (rarely used in compose, but totally a thing there too) and b) volumes of type tmpfs (where at that point, you can kinda just skip the volume entirely and get the same result)
+[00:18:30] <tabakhase> maybe extend on the "why" / "what for" to stir up some alternative ideas...
+[00:20:32] <Activ8> Alex8 just a thought, what’s in your routers DNS? Is that set as your ISP?
+[00:20:44] <Activ8> why not set the router to cloudflare?
+[00:21:13] <alexeightsix> yeah i could change it on the host but i want to avoid that if possible for reusuability 
+[00:21:14] <Activ8> the containers should be going to the router first n then to the external dns
+[00:21:56] <alexeightsix> changing the DNS on our cloud containers is not as straight forward as modifying the /etc/resolve.conf there's specific things we need to do and i want to avoid it and offload it to docker if possible
+[00:22:13] <alexeightsix> cloud instances*
+[00:22:17] <Activ8> Yeh
+[00:27:12] *** Quits: alexeightsix (~alexeight@65.ip-158-69-214.net) (Ping timeout: 245 seconds)
+[00:34:31] *** Joins: alexeightsix (~alexeight@65.ip-158-69-214.net)
+[00:34:34] <alexeightsix> cloud instances*
+[00:38:54] <ada_> alexeightsix: yes
+[00:39:52] <ada_> actually lemme doublecheck
+[00:40:13] <ada_> yes that should be correct
+[00:40:57] <alexeightsix> i added it and the containers seem to be working but how can i verify that it's going through CF?
+[00:41:07] <ada_> tcpdump
+[00:41:15] <ada_> or watch the docker daemon logs, iirc
+[00:41:28] <ada_> i think it shows forwarded DNS requests on the debug log level
+[00:42:27] <alexeightsix> ok i got tcpdump installed
+[00:43:40] <ada_> tcpdump -i eth0 udp port 53
+[00:43:58] <ada_> then send something like `dig google.com` from inside the container
+[00:44:08] <alexeightsix> would curl work?
+[00:44:24] <ada_> yes and no, i mean yes it would work, but curl also sends http
+[00:44:35] <ada_> since you're filtering for udp you'll still see a packet
+[00:44:58] <alexeightsix> dig worked
+[00:45:05] *** Quits: Haxxa (~Haxxa@122-199-44-36.ip4.superloop.com) (Quit: Haxxa flies away.)
+[00:45:18] <alexeightsix> 20:14:37.792487 IP php.44840 > one.one.one.one.domain: 13557+ [1au] NS? . (40) 
+[00:45:19] <alexeightsix> ?
+[00:45:31] <ada_> you're seeing the reverse whois lookup 
+[00:45:56] <ada_> you can do tcpdump with -nn to not resolve IPs to domains
+[00:47:00] <alexeightsix> yeah it says 20:16:37.672387 IP 172.19.0.6.45351 > 1.1.1.1.53: 62461+ [1au] A? google.com. (51)
+[00:47:07] <ada_> looks like it's working
+[00:47:24] *** Joins: Haxxa (~Haxxa@89nnjg0xckz9ggn6r5xm.ip6.superloop.com)
+[00:47:58] <alexeightsix> thank you!!!
+[00:48:04] <ada_> sure thing
+[00:48:17] <alexeightsix> i tried this method at the beginner but i added "network_brige" inside the compose file per a tutorial
+[00:48:22] <alexeightsix> not sure why that was needed
+[00:48:35] <ada_> you'd have to show me where you put that, im not familiar with that option
+[00:48:40] *** Joins: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com)
+[00:48:54] *** Quits: TomyWork (~TomyLobo@p200300e80f06af00c00d5f5320b62de4.dip0.t-ipconnect.de) (Remote host closed the connection)
+[00:51:05] <alexeightsix> beginning*
+[00:52:51] <alexeightsix> this is what i followed: https://www.techrepublic.com/article/how-to-define-dns-in-docker-containers/
+[00:53:01] <alexeightsix> maybe it was specific to a different case i dunno
+[00:53:23] <ada_> network_mode: bridge
+[00:53:30] <alexeightsix> as you can see from the code snip it says to add dns: 1.1.1.1 .... then adds     network_mode: "bridge"
+[00:53:35] <ada_> yeah thats the default
+[00:53:41] <alexeightsix> which breaks everything
+[00:54:32] <ada_> it actually prevents compose from creating a user-defined network for you
+[00:54:34] <ada_> not really what you want
+[00:55:35] <ada_> if you had multiple containers specified in your compose file, and you put that  option on one of them, that one service would get put into thel egacy 'bridge' network which wouldn't be the same as your other containers; that may explain why they didn't resolve
+[00:55:44] <ada_> only containers on the same docker network may resolve each other
+[00:56:27] <alexeightsix> right
+[00:56:51] <alexeightsix> well it seems to be working, thanks for your help.. hopefully this fixes our deeper issue we've been having 
+[00:59:27] *** Quits: thiras (~thiras@user/thiras) (Read error: Connection reset by peer)
+[01:01:03] <Ballerburg9005> why doesn't docker pull the new digest? docker pull ballerburg9005/docker-ejabberd-ecs-official-arm --platform linux/arm64 -> sha256:11f00e63c744b368a3a9c80ddb4da956cb07893dd11fc8ba650c8c286fc09971 and here are the actual digests: https://hub.docker.com/repository/docker/ballerburg9005/docker-ejabberd-ecs-official-arm/ 58288cb11299
+[01:03:52] <Ballerburg9005> it drives me crazy
+[01:04:14] <Ballerburg9005> first the buildx cache not deleting, then this too
+[01:05:27] <jochum> Ballerburg9005: i don't know, maybe give the registry a bit time to catchup?
+[01:05:54] <jochum> Ballerburg9005: I can't look at hub.docker.com seems your repo is private
+[01:06:27] <Ballerburg9005> it is not private, maybe just the link
+[01:06:39] <Ballerburg9005> jochum: it's like this since hours
+[01:06:55] <Ballerburg9005> maybe even yesterday
+[01:07:27] <jochum> https://hub.docker.com/r/ballerburg9005/docker-ejabberd-ecs-official-arm/tags?page=1&ordering=last_updated
+[01:08:33] <jochum> Ballerburg9005: programmerq for example knows better than i do.
+[01:09:50] <jochum> Ballerburg9005: as a note - I also get 11f00e63c
+[01:09:59] <Ballerburg9005> weird, isn't it?
+[01:10:16] <Ballerburg9005> maybe I can delete the entire entry
+[01:11:25] <Ballerburg9005> ok, deleted repository
+[01:12:21] <jochum> I see got a 404 :)
+[01:12:39] <Ballerburg9005> I think it had some internal error
+[01:13:04] <Ballerburg9005> thanks for support
+[01:13:37] <jochum> np
+[01:16:45] <Ballerburg9005> OMG IT IS STILL WRONG
+[01:16:52] <jochum> hahahahah
+[01:17:09] *** Quits: alexeightsix (~alexeight@65.ip-158-69-214.net) (Quit: Leaving)
+[01:17:28] <jochum> Digest: sha256:6f6801db1dd06b60d490c62056c0d50c7ef2772a72bc1592e146ebf0603aaa29
+[01:17:28] <jochum> Status: Downloaded newer image for ballerburg9005/docker-ejabberd-ecs-official-arm:latest
+[01:18:18] <jochum> Ballerburg9005: you could try to pull some other arm64 image not sure whats happening could be "normal" ?
+[01:18:39] <jochum> Big guess that is
+[01:20:59] *** Joins: dman777 (~dman777@76-253-74-225.lightspeed.austtx.sbcglobal.net)
+[01:23:02] <Ballerburg9005> oh no
+[01:23:06] <Ballerburg9005> I understand the problem now
+[01:24:42] <Ballerburg9005> the packages installed in the first image used as basis are actually removed in the second image ..
+[01:24:57] <Ballerburg9005> I didn't read the entire second Dockerfile
+[01:25:36] *** Quits: Ryu945 (~Ryu945@173.44.49.91.adsl.inet-telecom.org) (Ping timeout: 268 seconds)
+[01:37:13] <dman777> I am using docker compose 3.8 but when I try environment: Node=prod I get The Compose file './docker-compose.yml' is invalid because: services.formbuilder-ui.build contains unsupported option: 'environment'
+[01:37:34] <dman777> but docs here say it is valid https://docs.docker.com/compose/environment-variables/
+[01:38:12] <ada_> syntax error
+[01:38:14] <ada_> show your compose file
+[01:38:41] <ada_> reading the error message, it's likely because you have environment:  as a sub-element of build:  when it should not be
+[01:38:54] <ada_> it should be a subelement of services.formbuilder-ui
+[01:40:18] <dman777> ada_: that did it, thank you
+[01:40:41] *** Quits: metah4ck3r (~meta@user/metah4ck3r) (Quit: WeeChat 3.2)
+[01:40:53] <tabakhase> - bla=blub or mo: mew
+[01:41:59] *** Joins: pvdp (~Pieter@static-n58-105-183-94.rdl4.qld.optusnet.com.au)
+[01:42:48] <tabakhase> hm scratch that, scrollbuffer hung
+[01:43:58] <tabakhase> Ballerburg9005 well nice :D - but then note "that thats not helping" - unless it all happens in the same RUN block no actual diskspace will be reclaimed
+[01:56:38] <dman777> ENV REACT_APP_ENVIRONMENT=${REACT_APP_ENVIRONMENT} would this be how I would pass it in the Docker file? 
+[01:57:12] <faceface> sorry for noob question... now to make a public repo private in dockerhub? 
+[01:57:48] <faceface> Do I have to delete and push again with some option?
+[01:58:03] <faceface> I expected it to be just a button on docker hub
+[02:00:45] <tabakhase> dman777 yes&no, if you want to set it "on the build" shipping it "into the dockerfile" youll also need a ARG-line (and then --build-arg ...)
+[02:01:15] *** Quits: brickfat (~brickfat@user/brickfat) (Quit: Leaving)
+[02:01:22] <tabakhase> then the actual ENV-line will bake it into the image
+[02:03:00] <faceface>  Registry: https://index.docker.io/v1/
+[02:04:46] <faceface> I get teh feeling I'm missign some concepts
+[02:07:28] <faceface> is this the right place, or should I be asking on dockerhuh
+[02:09:10] <jochum> faceface: ask in #docker
+[02:09:35] <faceface> hi
+[02:09:40] <jochum> hi aehm sorry
+[02:09:45] <jochum> you already here :)
+[02:09:49] <faceface> ;-)
+[02:10:17] <jochum> I'm not sure, think you have to delete/create, wait for other answer.
+[02:10:39] <tabakhase> just delete and use an actually useable registry :P
+[02:10:48] <tabakhase> gitlab, github, gpc, whoever...
+[02:11:01] <faceface> Strange... now I see what I expected... I think my login was cached but not really logged in
+[02:11:35] <jochum> I'm using Harbor as registry
+[02:12:48] <faceface> well... problem solved, my public repos are now priate
+[02:12:53] <faceface> private
+[02:16:10] *** Quits: bouncy (~ben@user/benoit) (Ping timeout: 268 seconds)
+[02:17:57] *** Joins: bouncy (~ben@user/benoit)
+[02:25:40] *** Quits: svm_invictvs_ (~svm_invic@user/svm-invictvs/x-6696469) (Ping timeout: 258 seconds)
+[02:27:38] *** Joins: finsternis (~X@23.226.237.192)
+[02:32:11] *** Joins: molt (~molt@79.140.150.21)
+[02:34:28] *** Quits: molt (~molt@79.140.150.21) (Read error: Connection reset by peer)
+[02:34:38] *** Quits: brachamh (~brachamh@user/brachamh) (Read error: Connection reset by peer)
+[02:35:19] *** Joins: svm_invictvs (~svm_invic@user/svm-invictvs/x-6696469)
+[02:37:07] *** Quits: alzgh (~alzgh@216.155.158.214) (Ping timeout: 246 seconds)
+[02:41:14] *** Quits: fedenix_ (~fedenix@gateway/tor-sasl/fedenix) (Remote host closed the connection)
+[02:42:39] *** Joins: brachamh (~brachamh@user/brachamh)
+[02:51:27] *** Joins: mci64 (~mci64@185.242.190.95)
+[03:02:54] <hwrd> is there a way to achieve what I'm asking in my comments here: https://gist.github.com/hahuang65/2ac9f1b13425670515e537bd58250cd6
+[03:03:53] *** Quits: flynn (~mcbloch@user/flynn) (Read error: Connection reset by peer)
+[03:04:16] *** Joins: flynn (~mcbloch@user/flynn)
+[03:07:05] <tabakhase> hwrd i wanne say "no"... :/ - (if youre talking about nice & lily)
+[03:07:44] <tabakhase> doesnt it scan subfolders? - and if not, why does it seem like it may does for bt & ergotravel?
+[03:08:49] <hwrd> tabakhase I didn't understand the question in your second message...
+[03:09:15] *** Quits: iniazi (~iniazi@47.150.4.234) (Read error: Connection reset by peer)
+[03:09:42] *** Quits: mci64 (~mci64@185.242.190.95) (Ping timeout: 245 seconds)
+[03:10:17] <tabakhase> on alternatives... (maybe depending on size?) -> do that "flattening" in a entrypoint instead --- or even consider building images for each ((so make a "base" img that stops after line 8, and then a tag for each or so ((thanks to docker layer reuse those additional images have no real downside as in 'diskspace used' or such))
+[03:11:17] *** Joins: RougeR (~RougeR@user/rouger)
+[03:11:46] <tabakhase> hwrd as in "why is it not `boards/nice60/* config/nice/` && `boards/lily58/* config/lily/`
+[03:12:05] <tabakhase> (said, no clue what "west" is and what youre doing, so that may be nonsense, hence me asking :P
+[03:12:58] <hwrd> tabakhase ah, to answer that question, it's just where https://zmk.dev expects files. In this case, nice60 and lily58 are pre-configured... and included, so to override the settings, I need to put it in `config/`... and non-preconfigured ones go in their own directory, with a bunch of other files.
+[03:13:06] <hwrd> It's just an unfortunate setup that I have to deal with here.
+[03:13:22] <hwrd> although, that separate images is a GREAT idea.
+[03:14:28] <hwrd> I can do a multi-stage build and just make an image per thing I need.
+[03:14:30] <hwrd> I think
+[03:15:15] <tabakhase> multistage is "expected" to only return the final (you can stop "sooner" but not jump)
+[03:16:08] <hwrd> maybe I'm misunderstanding multi-stage then. Your initial idea of building multiple images is a good one.
+[03:16:36] <hwrd> how would I base a (for example) nice60 image off of a base image?
+[03:16:58] <hwrd> locally. I'm not planning to push these images anywhere.
+[03:18:20] <tabakhase> "multistage" = one dockerfile with multiple FROM´s in it, think FROM c++ as stage1, RUN compile thing, FROM debian, COPY thing.bin --from=stage1
+[03:19:12] <hwrd> so that wouldn't actually result in multiple images.
+[03:19:46] <tabakhase> yes, and no - the "stage1" would never actually be put out, just used internally and trashed right after
+[03:20:07] <hwrd> got it
+[03:20:23] <tabakhase> so "docker build -t mine" with that dockerfile would return 'mine' beeing ONLY a debian with the .bin in it
+[03:20:29] <hwrd> so I'd want to use something like +INCLUDE if I wanted to make a separate image output for each thing
+[03:20:42] <hwrd> INCLUDE+ rather
+[03:20:43] <tabakhase> youd just have multiple dockerfiles (and if you dont ever intend to "build images but bindmount instead" just a single image may be fine too, with then the "-v´s as you need em"
+[03:21:30] *** Quits: shokohsc (~shokohsc@161.88.195.77.rev.sfr.net) (Remote host closed the connection)
+[03:22:34] *** Joins: shokohsc (~shokohsc@161.88.195.77.rev.sfr.net)
+[03:22:54] <hwrd> is there a way for 1 dockerfile to initiate a build of another dockerfile?
+[03:23:55] <wez> hwrd: No
+[03:24:10] <wez> hwrd: Unless you are building docker iamges instead your docker image
+[03:24:18] <wez> s/instead/inside/
+[03:24:31] <tabakhase> as in, "remove line 12-15 entirely", build that and instead use "docker run -v $PWD/boards/bt60:root/config/boards/arm/ -v $PWD/boards/ergotravel:root/config/boards/shields/ -v $PWD/boards/nice60/:/root/config/ mybuilder" or such and flip nice/lily as needed   ((that is as said, if you dont actually "need both"))
+[03:25:08] <dman777> tabakhase: like this? https://dpaste.org/1fFA
+[03:26:07] <tabakhase> (--board "$BOARD" makes it smell as if you select one of those, if it needs all cause say, "it builds the FW for all devices" thats a loss still yes)
+[03:27:17] <tabakhase> then some dirty `-v $PWD/boards/nice60/:/root/config.d/nice/ -v $PWD/boards/lily58/:/root/config.d/lily/` and adding a script as ENTRYPOINT that moves those files around is likely the best fix...
+[03:27:56] <dman777> I can't get the REACT_APP_ENVIRONMENT value into the app
+[03:28:12] <hwrd> tabakhase yeah that's probably the nicest way... just conditionally mount the volumes based on $BOARD...
+[03:29:15] <hwrd> but I mean, my original problem was a nitpick right? Having to `COPY` a few files anytime a file has changed... is kind of a MINOR MINOR optimization to begin with.
+[03:29:32] *** Quits: junktext (~junktext@77.247.181.219) (Ping timeout: 268 seconds)
+[03:31:52] <tabakhase> dman777 kinda - all those other vars likely shouldnt be ARGs (for nodeEnv it may sense to define that at buildtime, to say yes/no for devtooling-dependencies or such - but for the other vars it smells as if they should be purely runtime... so no arg ((you may still set 'defaults as documentation' using a ENV line, but they dont "need" to be there  --- the actual notworking, ${REACT_APP_ENVIRONMENT} 
+[03:31:52] <tabakhase> may be trick? -- and youre doing a multistage, so that has to be under the FROM where you want em in, so after line 28
+[03:33:32] <tabakhase> hwrd kinda, kinda not - bit different usecases - namely, if youre not actually "interested in the resulting docker image, why even make it a build?" so if you can get away with "run only" thats a perfectly fine thing todo
+[03:34:27] <hwrd> errr I didn't know that was an option...
+[03:34:29] <hwrd> run-only?!
+[03:35:17] <hwrd> tabakhase I think this is a perfect case for run-only... unless that needs to start from the top everytime? `west update` takes quite sometime.
+[03:35:24] <tabakhase> so if that say compiles a FW or such, run & letting that write into another -v $PWD/result:/output directory is totally fine -- heck ive even seen images that will throw a .tar.gz or such "in your face" so they expect ya to "docker run .... > result.tar.gz"
+[03:36:03] <hwrd> uhh you are totally nailing everything that sounds good to me
+[03:36:12] <tabakhase> hwrd yea, lines 1 to 8 (and also your cmd in 17) can still make perfect sense to build a helper image for
+[03:36:18] <hwrd> how in the heck do I do that?
+[03:38:39] <tabakhase> what particular? drop #12-15, and just "docker build -t myzmkcompiler ." with that dockerfile - then "docker run -v.. -v... -v... myzmkcompiler"
+[03:39:10] <hwrd> tabakhase sorry, I meant, how do I get `docker run ...` to spit out a tar file?
+[03:39:33] *** Parts: Milos (~Milos@user/milos) (Leaving)
+[03:40:40] <tabakhase> if its only the single .uf2 file - just "cat" in in your cmd/entrypoint :D  - otherwise "tar output to stdout" will throw it in the same place, into your terminal (and the > to the redirect it to a file on your disk)
+[03:41:05] <hwrd> ah, that makes sense.
+[03:41:54] <tabakhase> but yea, just droping another bindmount on /build/ should obvs work just fine too
+[03:41:56] *** Quits: brachamh (~brachamh@user/brachamh) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[03:42:27] *** Joins: brachamh (~brachamh@user/brachamh)
+[03:42:29] <dman777> tabakhase: so those variables that should be there just for runtime...can I remove them from the docker file entirely? 
+[03:43:30] <tabakhase> dman777 yep ((some people like to set dummy defaults as ENV - as its kinda "free automagically included documentation" - but its not required at all))
+[03:46:32] *** Joins: xnbq (~xnbq@user/xnbq)
+[03:48:12] <tabakhase> similar it is with EXPOSE - its "real use" is(was) just with --link what is deprecated and shouldnt be used anymore anyhow -- or when using "-P" (publish all exposed ports on a random free port) what you see pretty much 'never' used in the wild --- but keeping it in there, instantly tells anyone that 80 is the service port at basically no cost :D
+[03:51:34] <hwrd> tabakhase wait, I'm confused...
+[03:52:22] <hwrd> I updated my Dockerfile, but I'm not sure how to access that tar file that's supposed to be made: https://gist.github.com/hahuang65/2ac9f1b13425670515e537bd58250cd6
+[03:52:56] <hwrd> I'm doing a `docker run --env BOARD=nice60 my_image` but I can't really pipe that to a file.
+[03:53:18] *** Quits: luvalon1 (~luva@178.239.167.170) (Read error: Connection reset by peer)
+[03:53:40] *** Joins: luvalon1 (~luva@178.239.167.170)
+[03:54:06] <dman777> tabakhase: oh... I think the issue is the app is being served by nginx. Wouldn't the env variables not work with nginx?
+[03:54:49] <tabakhase> hwrd why not? `docker run --env BOARD=nice60 my_image > result.tar.gz`  (((if "west build" also generates output those obvs would mix, commonly seen then is to redirect its output to STDERR instead of STDOUT))) - or using another bindmount instead as mentioned before, piping it out is rly just the fancy-pants sollution :P
+[03:55:28] <hwrd> yeah it's because `west build` also generates output.
+[03:56:14] <hwrd> I liked the idea of piping it out becase this artifact isn't really meant to be long-lived, so putting it in a named volume seemed excess
+[03:56:15] <tabakhase> dman777 got a updated paste or so? - cause going from https://dpaste.org/1fFA the "RUN env" in line 25 would should show it, but in line 29 it would be gone - so did ya move that arround into the image where it should actually land?
+[03:57:35] <tabakhase> hwrd no named volumes in any of this, just bind-mounts ((aka volumes whos names start with a "/*" :D)) - with volumes you would need extra "docker cp´s" after to pull it out, so thats mehw sure
+[03:58:03] <dman777> tabakhase: oh... I see Step 6/14 : ENV REACT_APP_ENVIRONMENT=${REACT_APP_ENVIRONMENT} but with RUN ENV I see REACT_APP_ENVIRONMENT=
+[03:58:05] <hwrd> yeah...
+[03:58:23] <hwrd> i gotta run. I'm gonna think about what the best way to do this is.
+[03:58:27] <hwrd> I appreciate all the help tabakhase 
+[03:58:42] <tabakhase> youre welcome =) laters
+[03:59:41] <tabakhase> dman777 did you pull the ARG line down too? or just ENV :P
+[04:05:10] <dman777> I  pulled the ARG out
+[04:05:21] <dman777> and the ENV
+[04:05:49] <tabakhase> maybe throw an updated nopaste :/
+[04:11:45] <dman777> tabakhase: ah... I think I found another way. Thank you though :) 
+[04:12:09] *** Quits: Church (~aleph@pool-98-116-232-112.nycmny.fios.verizon.net) (Quit: WeeChat info:version)
+[04:12:31] *** Joins: Church (~aleph@pool-98-116-232-112.nycmny.fios.verizon.net)
+[04:15:37] *** Quits: xnbq (~xnbq@user/xnbq) (Ping timeout: 248 seconds)
+[04:29:21] *** Quits: RougeR (~RougeR@user/rouger) (Ping timeout: 268 seconds)
+[04:38:25] *** Joins: brachamh_ (~brachamh@user/brachamh)
+[05:02:01] *** Quits: ash_worksi (~ash_m@user/ash-m/x-3292451) (Ping timeout: 248 seconds)
+[05:06:01] *** Quits: ectospasm (~ectospasm@user/ectospasm) (Quit: WeeChat 3.2)
+[05:06:23] <Lutin> ada_ how is the heat there atm ?
+[05:15:46] *** Quits: svm_invictvs (~svm_invic@user/svm-invictvs/x-6696469) (Ping timeout: 272 seconds)
+[05:18:45] *** Joins: lightstalker (~BT@user/lightstalker)
+[05:18:45] <dman777> tabakhase: actually, can I ask you please.... https://dpaste.org/aax6 shouldn't environment variable REACT_APP_ENVIRONMENT be showing up in the web app? 
+[05:20:04] <tabakhase> dman777 yep it should, try "docker run --env REACT_APP_ENVIRONMENT='foobar'  -p 5000:80 --rm foobar env"  ((added "env" as command overwrite on the end, nothing else changed))
+[05:20:15] *** Joins: debayer (~debayer@2603-8000-cf00-0010-b0d1-acda-42ae-962c.res6.spectrum.com)
+[05:20:54] <dman777> tabakhase: REACT_APP_ENVIRONMENT=foobar
+[05:21:36] <tabakhase> and inside nginx that should also still be set --- so i guess, Q is more where/what error you see where? / what you would expect? --- cause "nginx" just hands out files from disk... 
+[05:22:23] <dman777> oh...it's a react app so it gets built and it looks for process.env.REACT_APP_ENVIRONMENT but right now it just shows as white space
+[05:22:45] <dman777> I mean it shows as undefined
+[05:23:21] <tabakhase> "process.env" is a nodeJS thing, nginx gives no f* about that
+[05:23:59] <dman777> tabakhase: yep.... my bad
+[05:23:59] <tabakhase> (as in, nginx doesnt run js, just hands it down to the browser as is)
+[05:24:18] <dman777> tabakhase: in the Docker file what would I put as the equal value? ENV REACT_APP_ENVIRONMENT=
+[05:26:11] <tabakhase> not sure what you mean?
+[05:26:32] <dman777> well, this is more for helm charts 
+[05:26:51] *** Joins: xnbq (~xnbq@user/xnbq)
+[05:27:06] <dman777> so helm needs to pass the value in but it looks like a build step
+[05:27:47] <tabakhase> that may then be for the "npm run build" step, not for the nginx-result?
+[05:28:09] <dman777> maybe, I am really bad with helm
+[05:28:20] <tabakhase> (and that "build" should bake it into your result-files)
+[05:29:02] <dman777> ok, I'm going to a long break. thank you!
+[05:29:13] <dman777> I appreciate all the help :) 
+[05:29:23] <tabakhase> np =) good luck :P
+[05:30:24] *** Quits: vlm (~vlm@user/vlm) (Quit: "")
+[05:32:25] *** Joins: Jimmy_H (~Jimmy_H@119.136.154.241)
+[05:34:29] *** Joins: vlm (~vlm@user/vlm)
+[05:35:28] *** Quits: brachamh_ (~brachamh@user/brachamh) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[05:42:07] *** Quits: Lyn (~Lyn@user/law) (Ping timeout: 268 seconds)
+[05:43:46] *** Joins: niklauzg (~user@user/niklauzg)
+[05:43:57] <niklauzg> Hi!
+[05:45:01] <niklauzg> When a container is used as a way to modify the $PWD that it's run in ... is there a term for that pattern?
+[05:46:43] <niklauzg> Sort of similar to how it's sometimes use in CI systems.
+[05:48:24] *** Quits: Atum_ (~IRC@user/atum/x-2392232) (Quit: Atum_)
+[05:52:20] *** Quits: xnbq (~xnbq@user/xnbq) (Quit: The Lounge - https://thelounge.chat)
+[06:10:57] *** Quits: keypusher (keypusher@user/keypusher) (Ping timeout: 245 seconds)
+[06:11:11] *** Joins: keypushe- (keypusher@user/keypusher)
+[06:13:26] *** Quits: Lutin (~Lutin@user/lutin) (Quit: Lutin)
+[06:14:24] *** keypushe- is now known as keypusher
+[06:18:32] *** Quits: onelegend (onelegend@wireguard/tunneler/onelegend) (Ping timeout: 272 seconds)
+[06:27:34] *** Joins: onelegend (onelegend@wireguard/tunneler/onelegend)
+[06:28:44] <tabakhase> niklauzg you mean "what the -v" is called then? bind-mount? - or "where the container smd starts?" thats workdir
+[06:28:53] <tabakhase> if neither, got an example?
+[06:28:55] *** Joins: kikijiki (~Thunderbi@user/kikijiki)
+[06:33:56] *** Quits: Ballerburg9005 (~ICH@dslb-002-201-095-178.002.201.pools.vodafone-ip.de) (Ping timeout: 268 seconds)
+[06:35:34] *** onelegend is now known as CPUOne
+[06:45:40] *** Joins: oxum (~oxum@122.172.62.99)
+[06:46:17] *** Joins: derpadmin (~derpadmin@cloudbase2.200013.net)
+[06:50:17] *** Quits: oxum (~oxum@122.172.62.99) (Ping timeout: 248 seconds)
+[07:09:02] *** Joins: brickfat (~brickfat@user/brickfat)
+[07:09:29] *** Quits: realies (~realies@user/realies) (Ping timeout: 248 seconds)
+[07:13:24] <niklauzg> Hey tabakhase, I'm wondering if there's a name for this way of using Docker.
+[07:15:24] *** Joins: realies (~realies@user/realies)
+[07:16:28] <niklauzg> I'm setting up a "pipeline" where the contents of a directory are "processed" progressively by the tools packaged in docker containers modifying the data in the bind-mount then passing it on to the next to modify.  
+[07:32:58] <tabakhase> niklauzg dont think there is any written name for this... i call it "run-only" (cause you dont build an actual image as result) or "using docker as runtime", maybe some mix of the two with in-place could make sense too... dunno
+[07:35:03] <tabakhase> like if were talking pipeline as in CI, and you run say a linter and codequallity tools and such "using docker"
+[07:36:25] *** Quits: Xeago (~Xeago@user/xeago) (Ping timeout: 268 seconds)
+[07:36:34] <tabakhase> so, stuff like say -> docker run -v /path/to/php/files/:/scripts/ texthtml/php-parallel-lint parallel-lint /scripts/
+[07:36:59] *** Joins: brachamh_ (~brachamh@user/brachamh)
+[07:37:14] <tabakhase> potentially as "docker run -v $PWD:$PWD texthtml/php-parallel-lint parallel-lint $PWD" (to keep filename-mapping complete)
+[07:38:07] *** Joins: Xeago (~Xeago@user/xeago)
+[07:40:58] <tabakhase> or say serving a thing, "docker run -v $PWD:/var/www nginx" id call runtime, where as "FROM nginx \n COPY . /var/www" be 'dockerizing'
+[07:41:16] *** Quits: brachamh_ (~brachamh@user/brachamh) (Remote host closed the connection)
+[07:43:39] <niklauzg> Yeah exactly! It seems that it's fairly common so if feels like there should already be an established name that I'm inexplicably unable to discover.  
+[07:44:28] <niklauzg> > "using docker as runtime"
+[07:44:35] <niklauzg> This is exactly it
+[07:45:42] *** Joins: brachamh_ (~brachamh@user/brachamh)
+[08:11:45] *** Joins: jazzy (~jaziz@2600:380:8638:b14c:3d37:fea7:101f:573e)
+[08:32:57] *** Quits: flynn (~mcbloch@user/flynn) (Read error: Connection reset by peer)
+[08:33:19] *** Joins: flynn (~mcbloch@user/flynn)
+[08:33:29] *** Quits: kuler (~kulernil@gateway/tor-sasl/kuler) (Remote host closed the connection)
+[08:47:00] *** Joins: djapo (~archangel@user/djapo)
+[08:47:19] <djapo> Im trying to mount a volume but it isn't working. 
+[08:47:41] <djapo> I am doing it exactly the same as I do with other docker containers
+[08:48:21] <djapo> the image is percona/percona-server-mongodb:3.6 and the volume is - ./data/percona:/data/db
+[08:49:14] <djapo> it seems that despite this setting the content of the /data/db path in the container does not reflect the content from the host in ./data/percona
+[08:49:30] <djapo> I am using docker compose
+[08:52:10] *** Joins: mci64 (~mci64@185.242.190.95)
+[09:07:48] *** Joins: nattiestnate (~nate@180.243.1.7)
+[09:13:29] <wez> djapo: Try an absolute path? $PWD/data/percona:/data/db
+[09:13:41] <wez> ah, docker compose should fix the paths
+[09:13:55] <wez> What are the permissions like?
+[09:14:11] <wez> Are you running the container as a non-root user?
+[09:14:45] <wez> (as in, does the dockerfile specify a USER line?)
+[09:17:36] *** Joins: ash_worksi (~ash_m@user/ash-m/x-3292451)
+[09:21:02] *** Joins: kuler (~kulernil@gateway/tor-sasl/kuler)
+[09:22:16] *** Quits: nattiestnate (~nate@180.243.1.7) (Ping timeout: 268 seconds)
+[09:34:01] *** Quits: donofrio (~donofrio@c-68-40-123-74.hsd1.mi.comcast.net) (Ping timeout: 248 seconds)
+[09:36:09] *** Quits: realies (~realies@user/realies) (Ping timeout: 248 seconds)
+[09:56:29] *** Joins: realies (~realies@user/realies)
+[09:57:16] <djapo> wez: I am running the container as a non-root user
+[09:57:37] <djapo> thing is that other dir I mount do work
+[09:57:43] <djapo> in that same container
+[10:00:55] <Flash> stupid question: when running as non-root user, does that UID have write access to the host directory?
+[10:01:08] <Flash> I've had to make host dir 777 before
+[10:02:26] <djapo> I changed the directory I am mounting to but now I get this error
+[10:02:28] <djapo> 2021-08-12T05:30:28.265+0000 I STORAGE  [initandlisten] exception in initAndListen: IllegalOperation: Attempted to create a lock file on a read-only directory: /var/lib/mongo, terminating
+[10:02:53] <djapo> and this is how Im mounting the dir - ./data/percona:/var/lib/mongo
+[10:03:20] <Flash> can you provide the exact syntax?
+[10:05:39] <djapo> Ive also tried - ./data/percona:/var/lib/mongo:rw
+[10:05:47] <djapo> with the same results
+[10:06:06] <Flash> -v ? --mount ? how are you doing it?
+[10:08:46] <djapo> docker compose
+[10:12:29] <djapo> ok, Ill change the owner of the directory in host to be the UID of the user in the container
+[10:15:19] *** Quits: ash_worksi (~ash_m@user/ash-m/x-3292451) (Ping timeout: 268 seconds)
+[10:20:04] <djapo> ok that worked. but I had to mount the directory on a different path
+[10:20:13] <djapo> otherwise the contents wouldn't update
+[10:31:10] *** Quits: brickfat (~brickfat@user/brickfat) (Quit: Leaving)
+[10:32:09] <djapo> But That solution wont work when I mount a volume that is shared between two containers each with different users
+[10:36:02] *** Quits: Icedream (~icedream@hzn-b.serverkomplex.de) (Quit: A lol made me boom.)
+[10:37:02] *** Joins: ash_worksi (~ash_m@user/ash-m/x-3292451)
+[10:39:28] <djapo> I have docker volume named caddy_data, in it I have my crt and key file that I want to pass to vault from hashicorp but I get permissions error when trying to read the file, how can I specify the oowner in this situation if the caddy server needs a certain owner and vault another
+[10:48:09] *** Quits: djapo (~archangel@user/djapo) (Ping timeout: 248 seconds)
+[10:50:29] *** Joins: alzgh (~alzgh@216.155.158.214)
+[11:00:18] *** Quits: ash_worksi (~ash_m@user/ash-m/x-3292451) (Ping timeout: 272 seconds)
+[11:40:28] *** Joins: TomyWork (~TomyLobo@p200300e80f06af00e0f307a568755ca0.dip0.t-ipconnect.de)
+[11:42:01] *** Joins: Ballerburg9005 (~ICH@dslb-002-201-095-178.002.201.pools.vodafone-ip.de)
+[11:43:03] *** Joins: travisghansen3 (~travisgha@192.74.130.86)
+[11:43:10] *** Joins: lithium (~lithium@user/lithium)
+[11:44:39] *** Quits: travisghansen (~travisgha@192.74.130.86) (Read error: Connection reset by peer)
+[11:44:39] *** travisghansen3 is now known as travisghansen
+[11:45:02] *** Quits: kuler (~kulernil@gateway/tor-sasl/kuler) (Remote host closed the connection)
+[11:45:45] *** Joins: kuler (~kulernil@gateway/tor-sasl/kuler)
+[12:02:17] *** Quits: lithium (~lithium@user/lithium) (Ping timeout: 248 seconds)
+[12:02:34] *** Quits: kuler (~kulernil@gateway/tor-sasl/kuler) (Remote host closed the connection)
+[12:03:03] *** Joins: kuler (~kulernil@gateway/tor-sasl/kuler)
+[12:05:10] *** Joins: lithium (~lithium@user/lithium)
+[12:08:35] <wez> Flash: Either 777 or set the UID of the directory you are setting as the volume to be the same as the UID of the user within the container
+[12:08:55] *** Quits: Jimmy_H (~Jimmy_H@119.136.154.241) (Quit: Leaving)
+[12:09:03] *** Joins: ac5tin (~ac5tin@user/ac5tin)
+[12:09:03] *** Quits: simplicity (~yti@user/simplicity) (Remote host closed the connection)
+[12:09:09] *** Joins: Jimmy_H (~Jimmy_H@119.136.154.241)
+[12:09:50] *** Joins: simplicity (~yti@user/simplicity)
+[12:10:00] *** Quits: mci64 (~mci64@185.242.190.95) (Ping timeout: 268 seconds)
+[12:10:33] *** Quits: simplicity (~yti@user/simplicity) (Remote host closed the connection)
+[12:13:18] *** Joins: simplicity (~yti@user/simplicity)
+[12:19:49] *** Joins: RealKiller (~RealKille@103.134.20.216)
+[12:24:10] *** Joins: mei (~mei@user/mei)
+[12:25:40] *** Joins: zamba (~marius@5.226.162.54)
+[12:26:21] <zamba> when communicating between two containers in the same docker compose file (meaning they are both connected to the same network), then i don't have to specify any ports-mapping?
+[12:26:33] <zamba> they should be able to communicate between them without that?
+[12:26:45] <zamba> the ports is just for host-to-container exposure?
+[12:27:28] <zamba> or should i use expose for this?
+[12:33:18] <zamba> seems like i should use expose :)
+[12:38:04] <geirha> yeah, you don't need to expose the ports for container-to-container communications
+[12:38:31] *** Joins: mci64 (~mci64@194.25.223.4)
+[12:38:52] *** Joins: Zelec267 (~Zelec@135-23-82-85.cpe.pppoe.ca)
+[12:39:08] *** Joins: mikeliuk (~mikeliuk@109.249.187.96)
+[12:39:30] *** Joins: Lutin (~Lutin@user/lutin)
+[12:40:41] *** Quits: Zelec26 (~Zelec@135-23-82-85.cpe.pppoe.ca) (Ping timeout: 248 seconds)
+[12:40:41] *** Zelec267 is now known as Zelec26
+[12:44:09] *** Joins: plantroon (~plantroon@91.236.69.232)
+[12:44:46] *** Quits: ac5tin (~ac5tin@user/ac5tin) (Quit: WeeChat 3.2)
+[12:45:05] <plantroon> is there any way yet how I'd expose a unix socket from within the container to the host without bind mounting (via -v) the whole directory in which the socket is supposed to reside?
+[12:49:43] *** Joins: mjbatty (~mjbatty@2a01:4c8:41e:636b:a02a:9ffa:3be8:892c)
+[12:50:07] <geirha> Perhaps see if you can configure the app to use a tcp socket instead..?
+[12:50:54] <plantroon> due to the design of the whole system I'd like to stick to unix sockets. I do not want to create some "registry" of ports that a proxy will be forwarding to. It would require huge rewrite and would have no benefit
+[12:54:43] *** Quits: mjbatty (~mjbatty@2a01:4c8:41e:636b:a02a:9ffa:3be8:892c) (Quit: Leaving)
+[12:55:02] *** Joins: mjbatty (~mjbatty@2a01:4c8:41e:636b:a02a:9ffa:3be8:892c)
+[13:00:09] *** Trieste_ is now known as Trieste
+[13:08:14] *** Quits: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 252 seconds)
+[13:08:31] *** Quits: mjbatty (~mjbatty@2a01:4c8:41e:636b:a02a:9ffa:3be8:892c) (Quit: Leaving)
+[13:08:50] *** Joins: mjbatty (~mjbatty@2a01:4c8:41e:636b:a02a:9ffa:3be8:892c)
+[13:10:03] *** Quits: mjbatty (~mjbatty@2a01:4c8:41e:636b:a02a:9ffa:3be8:892c) (Client Quit)
+[13:11:52] *** Joins: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[13:29:03] *** Quits: mci64 (~mci64@194.25.223.4) (Quit: Connection closed)
+[13:53:01] *** Joins: AnapodoPsalidaki (~AnapodoPs@2a02:587:2910:6a35:36d8:f861:738e:6433)
+[14:10:07] *** Quits: RealKiller (~RealKille@103.134.20.216) (Ping timeout: 246 seconds)
+[14:15:01] *** Joins: brickfat (~brickfat@user/brickfat)
+[14:20:49] *** Joins: mjbatty (~mjbatty@82.2.17.205)
+[14:45:08] *** Joins: oxum (~oxum@122.172.62.99)
+[14:49:07] *** Quits: zakame (~zakame@user/zakame) (Ping timeout: 268 seconds)
+[14:49:56] *** Quits: divine (~divine@2001:470:8247:1::31) (Ping timeout: 268 seconds)
+[14:50:46] *** Joins: divine (~divine@2001:470:8247:1::31)
+[14:51:31] *** Joins: zakame (~zakame@user/zakame)
+[14:56:23] *** Quits: oxum (~oxum@122.172.62.99) (Remote host closed the connection)
+[14:59:36] *** Joins: donofrio (~donofrio@c-68-40-123-74.hsd1.mi.comcast.net)
+[15:07:05] *** Quits: sehrope (~sehrope@23-24-81-162-static.hfc.comcastbusiness.net) (Remote host closed the connection)
+[15:07:25] *** Joins: sehrope (~sehrope@23-24-81-162-static.hfc.comcastbusiness.net)
+[15:20:12] *** Quits: ztx (~ztx@user/ztx) (Quit: ztx)
+[15:21:19] *** Joins: ztx (~ztx@user/ztx)
+[15:31:40] *** Quits: niklauzg (~user@user/niklauzg) (Ping timeout: 268 seconds)
+[15:32:32] *** Joins: rewrit3 (~rewrit3@user/rewrit3)
+[15:35:07] *** Quits: BigShip (~BigShip@user/bigship) (Read error: Connection reset by peer)
+[15:35:48] *** Joins: BigShip (~BigShip@user/bigship)
+[15:40:32] *** Quits: donofrio (~donofrio@c-68-40-123-74.hsd1.mi.comcast.net) (Remote host closed the connection)
+[15:40:50] *** Joins: donofrio (~donofrio@c-68-40-123-74.hsd1.mi.comcast.net)
+[15:44:44] *** Quits: Gustavo6046 (~Gustavo60@user/gustavo6046) (Ping timeout: 272 seconds)
+[15:56:01] *** Joins: illu (~illu@2a02:7aa0:4000::101)
+[15:56:44] <illu> hi there, i'm trying to start docker-desktop (after fresh re-install with reboot)
+[15:56:52] <illu> and it doesn't start up
+[15:57:27] <illu> https://transfer.sh/1FGajHv/20210812112425.zip
+[15:57:32] <illu> this is the debug file
+[15:57:42] <illu> would be great, if somebody could help
+[15:58:00] *** Joins: niklauzg (~user@user/niklauzg)
+[16:02:17] *** Quits: niklauzg (~user@user/niklauzg) (Ping timeout: 248 seconds)
+[16:02:21] *** Joins: Gustavo6046 (~Gustavo60@user/gustavo6046)
+[16:06:43] *** Joins: me-sudoer-dentne (~me-sudoer@45.112.144.181)
+[16:11:53] *** Joins: niklauzg (~user@user/niklauzg)
+[16:16:09] *** Quits: niklauzg (~user@user/niklauzg) (Ping timeout: 248 seconds)
+[16:19:53] *** Quits: me-sudoer-dentne (~me-sudoer@45.112.144.181) (Ping timeout: 248 seconds)
+[16:22:51] *** Quits: mikeliuk (~mikeliuk@109.249.187.96) (Quit: Connection closed)
+[16:23:15] *** Joins: thiras (~thiras@user/thiras)
+[16:25:04] <tabakhase> zamba "similar it is with EXPOSE - its "real use" is(was) just with --link what is deprecated and shouldnt be used anymore anyhow -- or when using "-P" (publish all exposed ports on a random free port) what you see pretty much 'never' used in the wild --- but keeping it in there, instantly tells anyone that 80 is the service port at basically no cost :D"
+[16:25:54] <tabakhase> also some things *looks at gitlab-ci* abuse that as kinda health-check...
+[16:26:06] *** Quits: thiras (~thiras@user/thiras) (Read error: Connection reset by peer)
+[16:26:17] *** Quits: brickfat (~brickfat@user/brickfat) (Remote host closed the connection)
+[16:26:26] *** Joins: thiras (~thiras@user/thiras)
+[16:27:10] *** Joins: brickfat (~brickfat@user/brickfat)
+[16:28:53] *** Quits: realies (~realies@user/realies) (Ping timeout: 252 seconds)
+[16:34:36] *** Joins: Atque (~Atque@user/atque)
+[16:37:55] *** Joins: niklauzg (~user@user/niklauzg)
+[16:38:16] *** Quits: bouncy (~ben@user/benoit) (Ping timeout: 268 seconds)
+[16:39:39] <illu> error during connect: This error may indicate that the docker daemon is not running.: Get "http://%2F%2F.%2Fpipe%2Fdocker_engine/v1.24/version": open //./pipe/docker_engine: The system cannot find the file specified.
+[16:40:02] <illu> tried to activate hyper-v feature containers
+[16:40:05] <illu> as mentioned in a post
+[16:40:40] <illu> tried starting via powershell(admin)
+[16:42:12] *** Quits: niklauzg (~user@user/niklauzg) (Ping timeout: 245 seconds)
+[16:42:50] <illu> "dockercli -SwitchDaemon" did it for me
+[16:51:31] *** Joins: etienneme (~etienne@user/etienneme)
+[16:53:04] *** Quits: etiennem- (~etienne@user/etienneme) (Ping timeout: 268 seconds)
+[16:55:08] *** Joins: niklauzg (~user@user/niklauzg)
+[16:59:21] *** Quits: keypusher (keypusher@user/keypusher) (Ping timeout: 248 seconds)
+[16:59:50] *** Quits: niklauzg (~user@user/niklauzg) (Ping timeout: 268 seconds)
+[16:59:54] *** Joins: realies (~realies@user/realies)
+[17:02:57] *** Quits: Lutin (~Lutin@user/lutin) (Quit: Lutin)
+[17:04:41] *** Joins: Lutin (~Lutin@user/lutin)
+[17:13:16] *** Joins: bouncy (~ben@user/benoit)
+[17:19:28] *** Quits: Atque (~Atque@user/atque) (Quit: ...)
+[17:21:30] *** Quits: blaklistd (~blaklistd@user/blaklistd) (Quit: bye)
+[17:21:57] *** Joins: blaklistd (~blaklistd@user/blaklistd)
+[17:23:10] *** Joins: mikeliuk (~mikeliuk@109.249.187.96)
+[17:36:06] *** Quits: pvdp (~Pieter@static-n58-105-183-94.rdl4.qld.optusnet.com.au) (Remote host closed the connection)
+[17:41:05] *** Joins: rsx (~dummy@ppp-188-174-136-60.dynamic.mnet-online.de)
+[17:43:21] *** Quits: c10l (~c10l@89.34.167.207) (Read error: Connection reset by peer)
+[17:46:39] *** Joins: c10l (~c10l@89.34.167.207)
+[17:49:19] *** Quits: debayer (~debayer@2603-8000-cf00-0010-b0d1-acda-42ae-962c.res6.spectrum.com) (Quit: Textual IRC Client: www.textualapp.com)
+[18:01:08] *** Quits: alzgh (~alzgh@216.155.158.214) (Quit: Client closed)
+[18:10:07] *** Quits: mei (~mei@user/mei) (Read error: Connection reset by peer)
+[18:10:57] *** Quits: Jimmy_H (~Jimmy_H@119.136.154.241) (Ping timeout: 245 seconds)
+[18:15:41] *** Quits: nvmd (~nvmd@user/nvmd) (Ping timeout: 268 seconds)
+[18:21:15] *** Joins: catbehemoth (~vasyl@bras-base-lnglpq6100w-grc-17-174-89-2-49.dsl.bell.ca)
+[18:22:08] *** Joins: alzgh (~alzgh@216.155.158.214)
+[18:26:02] *** Quits: catbehemoth (~vasyl@bras-base-lnglpq6100w-grc-17-174-89-2-49.dsl.bell.ca) (Quit: WeeChat 3.2)
+[18:26:13] *** Joins: ash_worksi (~ash_m@user/ash-m/x-3292451)
+[18:43:48] *** Joins: minimal (~minimal@user/minimal)
+[18:51:24] *** Quits: mikeliuk (~mikeliuk@109.249.187.96) (Quit: Connection closed)
+[18:56:57] *** Joins: mohabaks (~mohabaks@gateway/tor-sasl/mohabaks)
+[18:57:13] *** Quits: sebastianos (~sebastian@user/sebastianos) (Ping timeout: 248 seconds)
+[19:01:05] *** Joins: sebastianos (~sebastian@user/sebastianos)
+[19:03:40] *** Joins: keypusher (keypusher@user/keypusher)
+[19:10:41] <ska> Is there a way to map the root volume mounts on the host to a normal user?
+[19:11:15] <ska> This is a testing environment and I just want to be able to delete the host volume data without resorting to sudo.
+[19:16:56] *** Joins: lilgopher (~textual@c-73-51-174-246.hsd1.il.comcast.net)
+[19:23:41] *** Joins: nvmd (~nvmd@user/nvmd)
+[19:26:40] <GyrosGeier> ska, so you're mounting host directories into the containers?
+[19:26:56] <GyrosGeier> if you don't need file system level access, you can use a volume instead
+[19:27:45] <GyrosGeier> e.g. my gitlab runner was created with "docker volume create gitlab-runner-config && docker run -v gitlab-runner-config:/etc/gitlab-runner ..."
+[19:28:06] <GyrosGeier> and I can delete that volume as a whole with normal docker access
+[19:28:21] <GyrosGeier> but only as a whole
+[19:30:39] *** Joins: fedenix (~fedenix@gateway/tor-sasl/fedenix)
+[19:31:19] *** Quits: ztx (~ztx@user/ztx) (Quit: ztx)
+[20:01:29] *** Parts: CPUOne (onelegend@wireguard/tunneler/onelegend) (WeeChat 2.8)
+[20:03:14] *** Quits: Gustavo6046 (~Gustavo60@user/gustavo6046) (Quit: ZNC 1.8.2 - https://znc.in)
+[20:04:03] *** Joins: mikeliuk (~mikeliuk@109.249.187.96)
+[20:18:14] *** Quits: i64 (i64@gateway/vpn/protonvpn/i64) (Ping timeout: 258 seconds)
+[20:18:21] *** Quits: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com) (Quit: WeeChat 3.0.1)
+[20:18:38] *** Quits: alzgh (~alzgh@216.155.158.214) (Quit: Ping timeout (120 seconds))
+[20:19:32] *** Quits: jazzy (~jaziz@2600:380:8638:b14c:3d37:fea7:101f:573e) (Ping timeout: 272 seconds)
+[20:21:50] *** Joins: alzgh (~alzgh@216.155.158.214)
+[20:39:21] *** Joins: xnbq (~xnbq@user/xnbq)
+[20:40:38] *** Quits: rsx (~dummy@ppp-188-174-136-60.dynamic.mnet-online.de) (Quit: rsx)
+[20:42:25] <ada_> ska: no, the filesystem ownership/permissions bits will stay the same
+[20:42:39] <ada_> ska: you could run your container AS a given uid, with the --user flag
+[20:44:06] <ada_> docker run --user 0:0 unprivilegedApplication:latest   would run the container as root even if the "user" in the image was not privileged.  by the same token you could do docker run --user 1000 unprivilegedApplication:latest and that would map the container user to uid 1000
+[20:44:52] *** Quits: Lutin (~Lutin@user/lutin) (Ping timeout: 272 seconds)
+[20:52:57] *** Quits: mz` (~mz`@user/mz/x-8532539) (Ping timeout: 248 seconds)
+[21:02:35] *** Joins: _SjG_ (~libera@2603-8000-a201-0b7d-e4f7-0f91-a4ed-e59c.res6.spectrum.com)
+[21:03:20] *** Quits: brickfat (~brickfat@user/brickfat) (Quit: Leaving)
+[21:07:31] *** Joins: i64 (i64@gateway/vpn/protonvpn/i64)
+[21:12:06] *** Quits: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 272 seconds)
+[21:31:30] *** Quits: nvmd (~nvmd@user/nvmd) (Quit: Later, nerds.)
+[21:35:32] *** Joins: me-sudoer-dentne (~me-sudoer@2402:e280:3d25:53d:14e4:a16a:66ca:906f)
+[21:36:39] *** Quits: me-sudoer-dentne (~me-sudoer@2402:e280:3d25:53d:14e4:a16a:66ca:906f) (Client Quit)
+[21:47:00] *** Parts: ash_worksi (~ash_m@user/ash-m/x-3292451) ()
+[21:53:54] *** Joins: aead (~aead@pool-96-232-187-142.nycmny.fios.verizon.net)
+[21:54:25] *** Joins: rmaw (~rmaw@90.162.90.196)
+[21:56:10] <rmaw> hello, can anyone tell me with docker-compose how I can get containers to start in order. I have a repo I want to checkout, build then share between two containers, but as I can't have a volume when building, I have to do this as part of one of the containers start scripts. But this means the second one is started before he build is complete
+[21:57:46] <tabakhase> rmaw depends:?
+[21:57:46] <ada_> rmaw: docker doesn't handle this 
+[21:58:04] <ada_> rmaw: you can use depends_on: to make sure they get created in the right order, but if something is supposed tohappen that takes some time, it won't be enough
+[21:58:28] <ada_> rmaw: the best bet is to program check & wait loops into your dependencies so that they check for some condition to be true before you allow them to start
+[21:58:36] <ada_> this is a common entrypoint pattern
+[21:59:13] <ada_> rmaw: for example, in the entrypoint script of the "second" one, you might write a loop that checks for some file to exist before you allow the main process in "second" to start
+[21:59:50] <ada_> rmaw: https://docs.docker.com/compose/startup-order/
+[22:05:44] <zoredache> I am probably thinking about doing something silly here, but is it possible for a container to have two connections on the same docker network?
+[22:06:40] <akik> zoredache: there can be multiple connections by default
+[22:10:25] <programmerq> zoredache▸ a given container can only be connected to one docker network one time. You can connect a container to multiple networks of course. Why do you want to connect it twice?
+[22:10:25] <rmaw> ada_: thanks
+[22:10:54] <rmaw> its a shame there isn't some built in way to signal between containers and wait for events
+[22:11:37] *** Quits: TomyWork (~TomyLobo@p200300e80f06af00e0f307a568755ca0.dip0.t-ipconnect.de) (Remote host closed the connection)
+[22:12:09] <zoredache> programmerq: Oh, I thinking about try doing some weird VPN and routing stuff in a container. I kinda wanted two IPs from a given docker network assigned to the container. It isn't really needed, I was just wondering what the limitations were.
+[22:18:10] *** Joins: incognito (~relativit@user/incognito)
+[22:18:55] *** Joins: goose (goose@bucket.goose.ws)
+[22:26:39] *** Joins: farmstatejake (~farmstate@user/farmstatejake)
+[22:29:43] *** Joins: DoofusCanadensis (~DoofusCan@207.229.38.10)
+[22:38:05] *** Quits: farmstatejake (~farmstate@user/farmstatejake) (Quit: farmstatejake)
+[22:50:18] *** Quits: mikeliuk (~mikeliuk@109.249.187.96) (Quit: Connection closed)
+[22:52:12] *** Quits: ihaveamac (~ihaveamac@ihaveahax.net) (Quit: fail)
+[22:54:47] *** Joins: ihaveamac (~ihaveamac@ihaveahax.net)
+[23:01:48] *** Quits: alzgh (~alzgh@216.155.158.214) (Quit: Client closed)
+[23:07:32] *** Joins: me-sudoer-dentne (~me-sudoer@2402:e280:3d25:53d:14e4:a16a:66ca:906f)
+[23:07:53] <me-sudoer-dentne> ok i have a quick question
+[23:08:19] <me-sudoer-dentne> how do you use a public ip adress as the ip adress for a docker container
+[23:08:37] <me-sudoer-dentne> suppose i have 256 ip adresses
+[23:09:24] <me-sudoer-dentne> and i would like to each use them as the ip adress for each container (one-one)
+[23:09:36] <me-sudoer-dentne> how do i achieve that?
+[23:11:02] <me-sudoer-dentne> 256 ip adresses bound to 256 containers
+[23:11:24] <me-sudoer-dentne> each container accessible using that particular ip
+[23:13:09] <DoofusCanadensis> https://docs.docker.com/config/containers/container-networking/
+[23:13:35] <me-sudoer-dentne> like may be 123.221.234.21 is used by a container , maybe running an web-server - now what i want is that i give it an public ip adress such that people can access that website with that ip
+[23:13:51] <me-sudoer-dentne> DoofusCanadensis: thanks
+[23:17:13] <me-sudoer-dentne> DoofusCanadensis: but then will this ip accept inbound connections ?
+[23:17:27] <DoofusCanadensis> that's the idea, yes
+[23:17:39] <me-sudoer-dentne> wont this option use the ip of the host
+[23:18:16] <DoofusCanadensis> not sure... I have load balancers in front of my hosts to begin with
+[23:18:36] <me-sudoer-dentne> well can we do it without load balancers
+[23:18:44] *** Joins: greg_ (~greg@047-014-230-095.res.spectrum.com)
+[23:18:53] <DoofusCanadensis> dunno
+[23:19:18] <DoofusCanadensis> you asked for binding a container to an ip, the documentation says how to do that... testing is up to you
+[23:19:18] <me-sudoer-dentne> hmm
+[23:19:27] <greg_> In my dockerfile how do I specify I want a proccess that doesnt exit to run when I start the container?
+[23:19:35] *** Joins: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com)
+[23:20:32] <me-sudoer-dentne> DoofusCanadensis: can you help me do it in an internal network with the reouter being my network provider?
+[23:20:33] <DoofusCanadensis> greg_: specify it as the CMD
+[23:20:43] <DoofusCanadensis> me-sudoer-dentne: sorry, no
+[23:21:17] <me-sudoer-dentne> coz you dont know how to or you dont want to (for any reason, i dont mind)?
+[23:21:31] <DoofusCanadensis> more for the former
+[23:21:41] <me-sudoer-dentne> oh
+[23:21:49] <DoofusCanadensis> I'm nearly done my lunch break so I'll shortly be out of time to assist
+[23:22:02] <me-sudoer-dentne> DoofusCanadensis: that is fine
+[23:22:08] <me-sudoer-dentne> thanks anyways
+[23:29:18] *** Joins: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[23:29:44] *** Joins: molt (~molt@79.140.150.21)
+[23:29:57] *** Joins: codebam (~codebam@user/codebam)
+[23:30:11] <codebam> how do I start an already existing container with a volume?
+[23:32:52] <me-sudoer-dentne> codebam: docker start <container name>
+[23:32:57] *** Quits: fedenix (~fedenix@gateway/tor-sasl/fedenix) (Remote host closed the connection)
+[23:33:17] *** Joins: fedenix (~fedenix@gateway/tor-sasl/fedenix)
+[23:33:21] <me-sudoer-dentne> if it was created with a volume attached it will stay that way
+[23:34:54] <codebam> okay I created a new container with a volume but the permissions on that directory are wrong now and I can't access it
+[23:35:06] <codebam> what user and permissions do the volume folder need to be on the host?
+[23:36:48] <s17> they should match the uid/gid of the user in the container
+[23:40:00] <me-sudoer-dentne> codebam: anyways you need to be the root in order to run docker
+[23:40:19] <me-sudoer-dentne> so the perms shouldnt be an issue i guess
+[23:40:46] *** Quits: DoofusCanadensis (~DoofusCan@207.229.38.10) (Quit: So as you can see from this flowchSQUIRREL!!)
+[23:41:16] <codebam> I fixed it, had to chown to www-data
+[23:41:21] <codebam> not sure why but it works now
+[23:43:22] <me-sudoer-dentne> what was in the container
+[23:43:31] <me-sudoer-dentne> a webserver?
+[23:46:03] <me-sudoer-dentne> nvm
+[23:50:36] *** Joins: mikeliuk (~mikeliuk@109.249.187.96)
+[23:52:31] *** Quits: me-sudoer-dentne (~me-sudoer@2402:e280:3d25:53d:14e4:a16a:66ca:906f) (Ping timeout: 258 seconds)

@@ -1,0 +1,108 @@
+[00:00:02] <headius> enebo: it may be time for us to finally ditch the gem install process from maven and just use command line tools like `gem` and `bundle` to set up all the default/bundled gems
+[00:01:38] <enebo[m]> headius: well it would be easier for me to understand.  It is mostly magic to me now :)
+[00:06:12] <headius> more like voodoo
+[00:07:25] <enebo[m]> image_voodoo (tm)
+[01:32:39] <headius> there's some really odd scoping issues in the pom.rb stuff
+[01:33:00] <headius> https://github.com/jruby/jruby/pull/6746/commits/ed88810e9e389d45d540b94891cd307601b04fc0
+[01:33:01] *** Quits: yosafbridge (~yosafbrid@static.38.6.217.95.clients.your-server.de) (Ping timeout: 265 seconds)
+[01:33:25] <headius> I can see no reason why this variable would not be visible to the define_method block when defined above, but that's the error I got on CI
+[01:33:26] <headius> really baffling
+[01:33:58] <headius> it must be something to do with embedding API and how the variables are propagated, but the same variable is visible just a few lines later in the Gem::Installer call
+[01:34:27] *** Joins: yosafbridge (~yosafbrid@static.38.6.217.95.clients.your-server.de)
+[01:38:54] <enebo[m]> yeah maybe sections are eval'd separately and it loses any variable captures
+[21:04:10] *** Joins: greyrat (~greyrat@ip202.ip-51-178-215.eu)
+[21:04:13] *** Joins: lucerne (~lucerne@ip202.ip-51-178-215.eu)
+[21:05:25] *** Server sets mode: +nt 
+[21:09:39] *** Quits: lucerne (~lucerne@ip202.ip-51-178-215.eu) (Quit: Bye)
+[21:13:28] *** Joins: lucerne (~lucerne@ip202.ip-51-178-215.eu)
+[22:32:49] <headius> enebo: that PR is green but I am sick and tired of ShellLauncher
+[22:33:26] <headius> this all came up mostly because the native exec is more strict than the simulated one but it still used the same ShellLauncher logic... might be able to excise that and get it using the other native logic
+[22:38:08] *** Joins: lucf117 (~lucf117@user/lucf117)
+[23:25:18] <enebo[m]> headius: so should I look at making windows exec in jnr-posix build the full exe name and assume an exec*p behavior?
+[23:25:42] <headius> it would be more useful if we did that
+[23:25:46] <enebo[m]> I just finished case/when laziness so I am game if we think that is the right behavior
+[23:25:57] <headius> we can do this search but having to do it only on Windows makes it more icky special case code
+[23:26:19] <headius> and actually moving the path searching logic into jnr-posix might be useful as a utility across platforms
+[23:26:19] <headius> I don
+[23:26:21] <enebo[m]> At one level if the unix variants are not doing that we could say it is inconsistent but I think largely windows is a strange outlier in behavior already
+[23:26:33] <headius> I don't know of a standard C API for PATH searches for executables but whynot
+[23:26:59] <enebo[m]> execp will do path searches though 
+[23:27:45] <enebo[m]> So I think we could perhaps have jruby call jnr-posix execp() (and make that) and perhaps then we get path searching for free on linux because we just bind to it
+[23:28:54] <headius> yeah but having the path search component as a callable util in jnr-posix would move more code out of JRuby and be useful to other jnr-posix users
+[23:29:07] <headius> you will need to have that code anyway
+[23:29:16] <headius> for Windows
+[23:29:20] <enebo[m]> yeah
+[23:29:37] <enebo[m]> and fwiw exec() is not a POSIX api
+[23:29:50] <enebo[m]> The variant names are all the API right?
+[23:30:05] <enebo[m]> so our shorthand name could add path searching as the impl
+[23:31:37] <headius> yeah
+[23:32:22] <enebo[m]> For a moment do you think anyone would notice we are calling execvpe instead of execve?
+[23:32:44] <enebo[m]> not sure how for a moment got in that sentence :)
+[23:33:01] <enebo[m]> ignore the first three words
+[23:33:02] * headius  < https://libera.ems.host/_matrix/media/r0/download/libera.chat/026e69eb9c79d7e7410443723b2943d117d1e183/message.txt >
+[23:33:29] <headius> "the actions of the shell"
+[23:33:37] <headius> so yeah this doesn't exist as a callable
+[23:33:52] <enebo[m]> so full paths will not search but partials will...for JRuby this is fine for other jnr-posix users I am less sure
+[23:33:59] <enebo[m]> but I think it may be fine
+[23:34:09] <enebo[m]> since people basically are making / names already
+[23:34:18] <enebo[m]> or exec would not work
+[23:34:43] <enebo[m]> it would only break fopr people putting relative paths into exec and expecting an error
+[23:35:34] <enebo[m]> my other hesitancy would be maybe not all unixy systems has execvpe()
+[23:35:47] <headius> jnr-posix should expose the raw exec* versions but the literally "exec" version could be the friendly one that does path searching and has normal Java varargs or whatever
+[23:36:26] <enebo[m]> yeah I agree with that premise already.  I am more talking about whether anyone expecting our old friendly behavior vs new friendly behavior
+[23:36:49] <headius> for Windows I would almost guarantee nobody is using it
+[23:36:53] <enebo[m]> I think old friendly behavior will mean no one is passing in relative paths
+[23:37:00] <headius> like 97.6% confidence
+[23:37:07] <enebo[m]> hahah
+[23:37:09] <enebo[m]> yeah
+[23:37:29] <enebo[m]> adding the new behavior to windows is a no-brainer
+[23:37:45] <enebo[m]> for all systems is more what I am wondering since it would be nice for this behavior to be consistent
+[23:38:01] <headius> hmm yeah
+[23:38:10] <headius> I am looking to see what we call on Linux
+[23:38:23] <enebo[m]> but current behavior does not work on linux already with relative paths
+[23:38:40] <enebo[m]> it must be execv or execvve
+[23:38:45] <enebo[m]> execve
+[23:38:55] <enebo[m]> those are the only two we bind to in LibC
+[23:39:14] <headius> new intellij seems much laggier
+[23:39:35] <enebo[m]> I have been finding index searches to be instanteous
+[23:39:50] <enebo[m]> or do you mean UI?
+[23:40:02] <headius> UI mostly
+[23:40:15] <headius> like I bring up a type search and start typing but it takes too long and whatever I typed goes into the editor
+[23:40:18] <headius> it was not this bad before
+[23:40:24] <enebo[m]> ah yeah.  I have not noticed but perhaps it is the year of the linux desktop
+[23:40:50] <enebo[m]> I definitely hit that issue while it is still indexing
+[23:40:52] <headius> once I have replaced my mac mini with a new M1 I will probably look into the linux machine
+[23:41:06] <headius> since I can still test x86 there
+[23:42:01] <enebo[m]> ok so I think we change exec() to do path search everywhere.  I think main problem could be that we do not have execvpe() on 100% of systems (but maybe it is literally on all systems)
+[23:42:06] <headius> jnr-posix has exec, execv, and execve exposed
+[23:42:34] <enebo[m]> yeah and exec is not a method so we use one of those two in am impl somewhere
+[23:43:25] <headius> hah
+[23:43:30] <headius> exec is only on Windows?
+[23:43:39] <headius> I think it is unimpl on Linux
+[23:43:50] <enebo[m]> no kidding?  I cannot find a generic impl anywhere which would explain it being windows only
+[23:44:06] <headius> I mean the one you added to jnr-posix
+[23:44:06] <enebo[m]> then I guess that makes the behavior change much simpler
+[23:44:22] <headius> it raises in BaseNativePosix and is only impl in WindowsPOSIX
+[23:44:43] <enebo[m]> yeah I saw that raise but assumed something higher overrode that...pretty funny
+[23:44:49] <headius> yeah so no reason not to make it path search, and we can fill it out on other platforms with vpe or whatever
+[23:45:04] <enebo[m]> yeah so only question is how pervasive vpe is
+[23:45:19] <headius> mac and linux for sure
+[23:45:20] <enebo[m]> If it is pervasive then this will make JRuby simpler
+[23:45:21] <headius> and bsd
+[23:45:37] <headius> next in line would be solaris and it drops off fast from there
+[23:45:48] <enebo[m]> worse-case we rev jnr-posix when AS400 comes back and says it doesn't work :)
+[23:46:16] <headius> even then we would have the path logic for Windows and v and e can be simulated easily
+[23:46:23] <enebo[m]> but realistically any platform missing it is a 3 line method for a new release
+[23:46:29] <headius> if that isn't enough then I guess you don'
+[23:46:31] <headius> don't get exec
+[23:46:55] <enebo[m]> yeah but if we call exec() from jruby then all platforms need to be considered
+[23:47:19] <enebo[m]> still it is easy to fix if it happens
+[23:47:49] <enebo[m]> and we could even catch unimplemented at jruby level and fall back if we really thought this was likely
+[23:47:59] <headius> I will come up with a test for this PR and then merge it into 9.2
+[23:48:07] <headius> the changes are small but kinda hacky and I hate them
+[23:48:33] <headius> problem is so many of these weird paths in ShellLauncher are shared so making one path start to look up paths broke another path
+[23:48:43] <headius> it just needs to go
+[23:48:44] <headius> 9.4
+[23:49:10] <enebo[m]> yeah seems like a good idea
+[23:49:49] <headius> now that you have that stuff for Windows exec I will try to finish native process stuff on Windows
+[23:50:01] <headius> after that we have very little native stuff we can't do there which will finally close the gap

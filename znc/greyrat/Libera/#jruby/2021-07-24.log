@@ -1,0 +1,67 @@
+[00:09:43] <headius> looks like that got it... I will merge this PR shortly and then look at the last couple items I have for 9.3
+[00:58:39] <headius> enebo: https://github.com/jruby/jruby/issues/6751
+[01:01:34] <enebo[m]> headius: I was reading this the other day...this is only windows because we do some ffi stuff (as part of fiddle impl) to access windows registry or something like that?
+[01:02:20] <enebo[m]> I don't totally recall why we have to do this on windows but I want to make sure it only impacts windows since I doubt we would want to enable ffi on all platforms for startup hit
+[01:03:10] <enebo[m]> this is from Win32API?
+[01:04:12] <enebo[m]> derp
+[01:04:19] <enebo[m]> ignore me...kernel/file.rb
+[01:04:31] <enebo[m]> sorry I read this a couple of days ago and forgot...so windows only
+[01:07:15] <headius> so the problem here is that we activate FFI very early in boot to set up some Windows and Solaris methods on File (symlink, fcntl)
+[01:07:25] <headius> early as in before RubyGems even boots
+[01:07:55] <headius> so there's no way to even try to activate the gem
+[01:08:25] <headius> I thought it could be made lazy but it defines constants from FFI that should be visible before you call e.g. fcntl
+[01:08:38] <enebo[m]> I think this could be more easily be lazy if we just say windows 2002/2003 are no longer supported
+[01:08:38] <headius> the cleanest option would be moving this into Java and using jnr-posix or jnr-ffi
+[01:09:00] <enebo[m]> that would eliminate the main FFI check which has to be done early
+[01:09:11] <enebo[m]> https://github.com/jruby/jruby/issues/3998
+[01:10:52] <enebo[m]> I think then there would be a def symlink which more or less included most of the code in the windows block (via another require) which then redefined symlink
+[01:12:19] <enebo[m]> I guess there is another early if for FFI::Config but is that because some windows platform may not be capable of loading FFI?
+[01:13:17] <headius> yeah the constants are the part I was unsure how to make lazy
+[01:13:20] <enebo[m]> I do half think though that could be in the new file and it would behave in a similar way to how it works now if ffi does not load
+[01:13:46] <headius> hmm they could just be harcoded too
+[01:13:55] <enebo[m]> those constants are only used by symlink or more?
+[01:14:03] <headius> not use FFI::Platform::ADDRESS_SIZE
+[01:14:28] <headius> they do not appear to be standard constants, maybe I am worried for nothing
+[01:14:38] <headius> standard as in we are just defining them for this logic
+[01:15:07] <enebo[m]> ok so everything in the windows section other than class File can be in another file which then does all that jazz to File including loading FFI at that point from first call to symlink?
+[01:15:34] <headius> that's what I'm thinking
+[01:15:48] <headius> and similar for the Solaris flock below
+[01:15:55] <enebo[m]> yeah I think so long as the 2002 thing is dropped it becomes easier
+[01:16:26] <enebo[m]> even the 2002 thing could be checked in another way I suppose but I think saying 9.2 is our last win 2002/3 supported version is ok in 2021
+[01:17:14] <enebo[m]> if someone really is stuck we can probably help them backport something but I don't feel horrible about dropping old platforms over time
+[01:18:05] <headius> yeah that seems reasonable
+[01:18:28] <enebo[m]> heh another possible path is to load it and pretend it will work and just catch any error which happens :)
+[01:18:58] <headius> yeah I am going to try to lazy this
+[01:19:00] <enebo[m]> 2002 would then call symlink get an error we catch then return unimplemented
+[01:19:10] <headius> gem activation would have been nice but I would need to move this way later in boot
+[01:19:37] <enebo[m]> so the funny part of this discussion is two hours from now when we realize bootstrapping on windows calls symlink
+[01:20:00] <headius> ugh I wouldn't be surprised
+[01:20:03] <enebo[m]> I am kidding there is no way that happens :)
+[01:20:15] <enebo[m]> If it does we probably should eliminate that
+[01:20:38] <enebo[m]> binstubs would be one place where it could happen but on windows?
+[01:22:36] <headius> yeah seems pretty unlikely
+[01:22:45] <headius> they aren't really even a user-facing thing on Windows
+[01:30:57] <headius> enebo: https://github.com/jruby/jruby/pull/6760
+[01:35:19] <enebo[m]> seems reasonable to me
+[01:36:03] <enebo[m]> CreateSymbolicLinkW(wlink, wtarget, flags)
+[01:36:44] <enebo[m]> you could catch on NoMethodError if you want to allow 2002/2003 to still work although the last comment in the issue above seems to imply your previous work did not solve their issue
+[01:37:01] <enebo[m]> since the referenced issue removed us from their test run
+[01:39:03] <headius> yeah who cares
+[01:41:02] <enebo[m]> ok.  if they care then we can help in some way.
+[01:41:13] <enebo[m]> but that is pretty long in the tooth
+[01:41:34] <enebo[m]> at some point you may need to monkey patch your own install if you want to keep working
+[01:42:02] <headius> 2002/2003 has been EOL by MS for a while anyway
+[01:42:31] <enebo[m]> I bet
+[01:42:47] <enebo[m]> HAHAHA
+[01:42:57] <enebo[m]> 2015.  And that issue was opened in 2016 :)
+[01:44:42] <headius> yeah
+[01:52:53] <byteit101[m]> headius: about to go on a one week vacation, but I wasn't sure how to fix 6718 when I debugged it as I wasn't sure how the super logic was working over there
+[01:54:10] <headius> hmm ok
+[01:54:34] <headius> enebo: we will have to decide how to handle that issue: https://github.com/jruby/jruby/issues/6718
+[01:55:04] <byteit101[m]> If you want to chat about it more when I'm back, ping me after Aug 2nd
+[01:55:29] <headius> it could be fixed in 9.3.1 also
+[02:16:09] <enebo[m]> I don't know how important this is
+[02:16:27] <enebo[m]> It would be nice if it is fixed but I don't know what is involved
+[02:20:58] <headius> I punted a few more open-ended issues to 9.3.1
+[02:21:30] <headius> We are under 25 issues for 9.3. my big one is to get all Thread.handle_interrupt specs passing
+[07:53:33] *** Quits: lopex (uid4272@id-4272.tooting.irccloud.com) (Quit: Connection closed for inactivity)

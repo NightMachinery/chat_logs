@@ -1,0 +1,1000 @@
+[00:11:21] *** Joins: lad (~lad@user/lad)
+[00:16:08] *** Quits: n4dir (~user@i577BC869.versanet.de) (Remote host closed the connection)
+[00:16:11] *** Quits: hitest (~hitest@user/hitest) (Quit: Leaving)
+[00:16:20] *** Joins: fortuno51 (~fortuno51@78.10.204.223)
+[00:16:32] *** Quits: timahvo1 (~rogue@105.163.1.216) (Quit: leaving)
+[00:17:01] *** Quits: fortuno51_ (~fortuno51@37.120.156.254) (Read error: Connection reset by peer)
+[00:17:55] *** Joins: fortuno51_ (~fortuno51@37.120.156.254)
+[00:20:41] <Khepra> neilthereildeil: you can cheat at the expense of extra RAM used, and bit more data lost in case of power failure, by using writeback cache for the VMs. 
+[00:20:55] *** Quits: fortuno51 (~fortuno51@78.10.204.223) (Ping timeout: 268 seconds)
+[00:21:03] <neilthereildeil> how do i do that?
+[00:21:39] <neilthereildeil> right now im doing "dd if=/dev/VG/LV of=/dev/null" and watching the FB cache grown, and then ill retest
+[00:22:12] <Khepra> by using cache=writeback on your qemu-kvm instance
+[00:23:13] <neilthereildeil> ahh man after dd was finished, it looks like it evicted all the cached blocks from the LV!
+[00:23:43] <neilthereildeil> so priming the cache didnt work
+[00:24:10] <Khepra> all this smells like XY tho. what _exactly_ is the issue you're seeing?
+[00:24:48] <neilthereildeil> when i have a LOT of VMs using the same LV origin, im seeing disk IO issues
+[00:25:53] *** Joins: nixpipe (~nixpipe@net-5-94-233-225.cust.vodafonedsl.it)
+[00:26:20] <Khepra> hold on. _same_ LV for multiple VMs?
+[00:26:21] <neilthereildeil> im seeing disk usage as high as 100's MB/s
+[00:26:27] <jhutchins> neilthereildeil: Define "a lot" and something about your system capacity.
+[00:26:38] <neilthereildeil> 768GB RAM, 184 windows VMs
+[00:26:48] <Khepra> are you talking about individual image _files_ atop of that LV (which must then be moutned, with a filesystem), or are you somehow sharing the block device among them?
+[00:26:50] <greycat> I'm vaguely interested in learning how two different VM guests can mount the same physical device simultaneously without corruption occurring, but I don't get the feeling I'll learn that here.
+[00:27:19] <neilthereildeil> im using LVM origin and child thinLVs
+[00:27:21] <jhutchins> neilthereildeil: What's your hypervisor?
+[00:27:22] <PMT> I would not be surprised if LVM lets you do something like base-modified image LVs with their snapshotting, but have never done it.
+[00:27:30] <neilthereildeil> ya it does
+[00:27:32] <jhutchins> WE assume the host is Debian stable.
+[00:27:44] <neilthereildeil> i have RAID5 of spinning disks
+[00:27:44] <Khepra> and side note: 184 VMs are gonna chew up the fastest NVMe SSD you can put on those PCI lanes, for breakfast.
+[00:28:13] <neilthereildeil> Khepra: us saying the wearing of the SSDs will destroy the SSDs?
+[00:28:22] <neilthereildeil> with all that IO?
+[00:28:28] <Khepra> no, I'm talking about IO congestion
+[00:28:36] <jhutchins> greycat: Wouldn't it be just like a network share?
+[00:28:44] <greycat> I would not assume so.
+[00:29:49] <Khepra> raid5 of spinners is going to be terrible for small block random IO
+[00:30:20] <PMT> a raid5 of spinning disks backing 200 VMs is going to be like all of new york city trying to take the same subway train at once
+[00:30:26] <Khepra> indeed.
+[00:30:31] *** Quits: totenkoph (~scythe@user/totenkoph) (Ping timeout: 244 seconds)
+[00:31:06] <Khepra> and like I said, even if that train was fastest NVMe SSD you can put on the pci bus, that's gonna be a "nope"
+[00:31:53] *** Joins: tradar (~tradar@user/tradar)
+[00:32:00] <neilthereildeil> what do you guys suggest for this kind of disk IO?
+[00:32:52] <Khepra> what's the load profile? read mostly? write mostly? random, sequential? what are those VMs doing?
+[00:33:08] *** Joins: ra (~ra-@user/ra-)
+[00:33:14] <neilthereildeil> maybe a file-backed PV that i store on a ramdisk?
+[00:33:32] <greycat> he never did answer "what's your hypervisor" either
+[00:33:38] <Khepra> indeed
+[00:33:41] <neilthereildeil> Xen
+[00:33:51] <neilthereildeil> mostly READ
+[00:33:55] <Khepra> uhm...
+[00:34:07] *** Joins: npc (~bjdkqalzo@user/spareproject)
+[00:34:11] <neilthereildeil> iotop shows 80MB/s READ, 20MB/s write
+[00:34:30] <Khepra> what have I missed about windows atop of _paravirt_ xen? did something grow that capability since last time I looked at xen, admittedly 10 years ago  ?
+[00:34:59] <neilthereildeil> this is not PV VMs
+[00:35:07] <neilthereildeil> i dont have any enlightenment drivers in the VMs
+[00:35:13] <neilthereildeil> this is simple QEMU emulating everything
+[00:35:22] <PMT> xen and qemu are not the same thing
+[00:35:23] <Khepra> greycat: time for plonk?
+[00:35:33] <neilthereildeil> right. qemu is emulating the device model
+[00:35:37] <neilthereildeil> for Xen VMs
+[00:36:17] <neilthereildeil> "maybe a file-backed PV that i store on a ramdisk?" is this a good idea?
+[00:36:48] <Khepra> qemu _emulating_ anything isn't gonna be helped even if you moved it all into L1 somehow.....   wth
+[00:36:50] <greycat> Khepra: I honestly do not know enough about this topic to tell whether he's making sense or not
+[00:37:24] <neilthereildeil> im guessing double layers of software translation on memory-backed PV would be faster than single translation of spinning disk-backed  PV
+[00:37:43] <Khepra> it makes zero sense. qemu something somethign with xen something something emulating for windows where NT is   *AFAIK*   not domU material....
+[00:37:55] <Khepra> unless NT grew domU capabilities in the past years
+[00:38:09] <neilthereildeil> Khepra: i dunno if PV would reduce disk IO. i know it reduces CPU load
+[00:38:16] *** Quits: npc (~bjdkqalzo@user/spareproject) (Ping timeout: 244 seconds)
+[00:38:26] <neilthereildeil> think about it. you have a 15MB executable emulating a device, but it still has to read the data from the disk
+[00:38:31] <Khepra> why this convoluted setup at all. why not qemu-kvm hypervisor, writeback cache and see if that helped anything
+[00:38:35] <neilthereildeil> you should save IO, but should save CPU
+[00:38:47] <neilthereildeil> ive already built everything around Xen
+[00:38:54] <neilthereildeil> i want a type 1 HV
+[00:38:59] <Khepra> sounds like you've built everything around totally wrong tool
+[00:39:08] <neilthereildeil> 100MB/s read, 56 MB/s write
+[00:39:12] <neilthereildeil> currently
+[00:39:23] <Khepra> what's wrong wiht qemu-kvm and virtio? there's virtio  drivers for windows, courtesy of RedHat
+[00:39:25] *** Quits: enoq (~enoq@194-208-179-35.lampert.tv) (Quit: enoq)
+[00:39:35] <Khepra> and THAT is paravirtualization that windows supports.
+[00:39:37] <neilthereildeil> i want a type 1 HV
+[00:39:41] <PMT> Xen can be convinced to run many things as long as you're not using paravirt.
+[00:39:41] <Khepra> .... because?
+[00:40:06] <neilthereildeil> performance and security.
+[00:40:17] <Khepra> then qemu-kvm and virtio
+[00:40:29] <neilthereildeil> no, Xen would have higher performance than KVM
+[00:40:39] <Khepra> did you actually benchmark that
+[00:40:42] <neilthereildeil> anyway, were getting distracted. what can i do given the current disk situation?
+[00:40:45] <Khepra> kvm is type1 hypervisor with virtio
+[00:40:47] <neilthereildeil> to improve IO?
+[00:40:56] <PMT> You're asking for help improving performance and then arguing that we don't know what we're talking about. You can't really have it both ways.
+[00:41:20] <Khepra> neilthereildeil: " what can i do given the current disk situation?"   use qemu-kvm with virtio and writeback cache
+[00:41:28] <neilthereildeil> im specficially looking for what i can do on the disk to fix performance, given the hypervisor
+[00:41:48] <greycat> "What can I do without changing anything that you tell me to change"
+[00:42:40] *** Quits: HamelinX (~HamelinX@user/hamelinx) (Read error: Connection reset by peer)
+[00:42:42] <PMT> neilthereildeil: you may have better luck finding a Xen-specific channel and asking them, but they are also going to tell you that 200 VMs on a tiny raid5 of spinning disks is going to suck.
+[00:42:42] <Khepra> the hosting industry has moved from xen to kvm long ago, for a _reason_.
+[00:42:46] <neilthereildeil> "maybe a file-backed PV that i store on a ramdisk?"<<do you guys think this will work?
+[00:43:11] *** Joins: HamelinX (~HamelinX@user/hamelinx)
+[00:43:12] <Khepra> nobody offers xen any more except niche providers. performance and security being the primary reasons.
+[00:43:34] <Khepra> I have no idea how ramdisk PV would work with that setup.
+[00:43:57] <Khepra> you'd still have bottlenecked on syncing all that to disk, unless that's somehow read-once, write never volatile data
+[00:44:04] <neilthereildeil> basically i store the PV as a file on a RamDisk, and then losetup -f the file
+[00:44:22] <neilthereildeil> yea, the Origin LV is write-never
+[00:44:31] <neilthereildeil> but its probably read many many times
+[00:44:41] <greycat> 16:09  neilthereildeil> 100MB/s read, 56 MB/s write
+[00:44:50] <neilthereildeil> thats writing to the child LVs
+[00:44:53] <neilthereildeil> not the origin
+[00:44:58] <Khepra> in that case, if the LV is smaller than available RAM as you say, the kernel should've cached all that unless something is misconfigured for direct IO
+[00:44:58] <neilthereildeil> origin is write-protected
+[00:45:05] *** Quits: Haxxa (~Haxxa@122-199-44-36.ip4.superloop.com) (Quit: Haxxa flies away.)
+[00:45:19] <neilthereildeil> yea, i dont see a huge amount of file buffer used...
+[00:45:32] <neilthereildeil> maybe theres apoilcy not to file-buffer LV devices?
+[00:45:57] <neilthereildeil> 110 MB/s read, 64MB/s write currently
+[00:45:59] <Khepra> welp, as far as qemu(-kvm) goes, it's cache=writeback taht does it
+[00:46:03] *** Joins: Haxxa (~Haxxa@122-199-44-36.ip4.superloop.com)
+[00:46:24] <Khepra> (kvm should be irrelevant here; if you have qemu in the picture somehow)
+[00:46:29] <neilthereildeil> is there a kernel channel on this IRC network?
+[00:46:44] <Khepra> ask alis
+[00:46:52] <neilthereildeil> whats that?
+[00:46:53] <Khepra>  /msg alis list kernel
+[00:47:01] <greycat> same as it was on Freenode
+[00:47:44] *** Quits: HamelinX (~HamelinX@user/hamelinx) (Ping timeout: 258 seconds)
+[00:48:16] *** Joins: HamelinX (~HamelinX@user/hamelinx)
+[00:51:08] <neilthereildeil> i already have cache=writeback
+[00:51:11] <neilthereildeil> just checked
+[00:52:19] *** Quits: HamelinX (~HamelinX@user/hamelinx) (Read error: Connection reset by peer)
+[00:52:33] <Khepra> is there anything else running that would evict the LV pages from RAM?
+[00:52:41] *** Joins: HamelinX (~HamelinX@user/hamelinx)
+[00:52:44] <Khepra> the kernel won't evict anything except to make room for other things
+[00:54:36] <Khepra> it's also a dumb LRU cache mind you.   you could also try something like ZFS. counterintuitively maybe, but ARC has multiple caches, most prominent of them being the MFU (Most Frequently Used) which helps _tremendously_ in a MFU-fits-RAM scenario
+[00:54:40] <neilthereildeil> nothing thats doing  alot of disk IO
+[00:55:08] <neilthereildeil> can i tune the caching algorithm in the storage subsystem of the kernel?
+[00:55:19] <neilthereildeil> or tell to ti switch toe MRU or something?
+[00:55:23] <Khepra> you can tweak page/block sizes in the zvol, there's snapshotting, and you can help your poor raid of rust centrifuges with one or two ultra fast NVMe SSDs in intermediate caching roles, especially to buffer sync writes.
+[00:55:50] <neilthereildeil> yea im planning to switch our the spinning rust for SSD
+[00:56:02] <neilthereildeil> i dont have a lot of data
+[00:56:07] <neilthereildeil> just a LOT of IO
+[00:56:18] <neilthereildeil> whats the zvol?
+[00:56:39] <Khepra> you could also come close to this with some bcache (note: not bachefs) but that requires re-creating the whole setup with your LV atop of a bache device
+[00:56:42] <neilthereildeil> ohh im not using ZFS
+[00:56:49] <neilthereildeil> hmm
+[00:57:00] <Khepra> neilthereildeil: zvol is a ZFS block device, quite versatile thingy. like LV/M but on steroids and far superior.
+[00:57:14] <neilthereildeil> my corrent setup is RAID5 with a large partition given to the PV for my LV
+[00:57:14] *** Quits: HamelinX (~HamelinX@user/hamelinx) (Ping timeout: 272 seconds)
+[00:57:40] <neilthereildeil> man, looking at htop is disappointing
+[00:57:47] <neilthereildeil> the blue part of the memro yusage is so small
+[00:57:53] <neilthereildeil> and the yellow is large
+[00:58:06] <neilthereildeil> blue=file cache, yellow = cache (whats the difference?)
+[00:58:14] *** Joins: HamelinX (~HamelinX@user/hamelinx)
+[00:58:26] <neilthereildeil> i noticed then i did the DD test jsut now, blue grew HUGE
+[00:58:31] <neilthereildeil> which is what i want to maintain
+[00:58:38] <neilthereildeil> but after DD was done, it all got evicted
+[00:59:54] *** Quits: reprazent (~reprazent@178-118-195-230.access.telenet.be) (Ping timeout: 256 seconds)
+[01:00:47] <neilthereildeil> 90 MB/s read, 80MB/s write currently
+[01:01:00] <Khepra> what about iops
+[01:01:06] *** Joins: reprazent (~reprazent@178-118-195-230.access.telenet.be)
+[01:01:46] <neilthereildeil> where do i find that?
+[01:02:03] <Khepra> neilthereildeil: btw, just reading what you wrote above... no you want yellow used, not blue. blue is temporary data structures. yellow is the page cache
+[01:02:11] <Khepra> neilthereildeil: vmstat, iostat
+[01:02:14] <neilthereildeil> ahh ok
+[01:03:10] <Khepra> I'd bet a whole cow here, and I'd throw in a goat for good measure, that your kernel is already caching most it can. taht'd be the default kernel behaviour unless you misconfigured something, like direct IO.
+[01:04:25] <Khepra> simply put, a raid5 of spinners is going to be _terrible_ for random io. that's jsut a sad fact. the best you can do here is add some buffering in form of a nvme via bcache or, seriously, look into ZFS as ARC has a few more knobs and better algos than the default kernel
+[01:04:30] <neilthereildeil> https://pastebin.ubuntu.com/p/Q9GSBXgKPC/
+[01:05:45] <Khepra> at this point, I do have to ask. how is it possible that someone who sets up all THIS, can't read and use vmstat :)   do you not know that running just "vmstat" gives you cumulative values since boot? you should really give it a period and observe the numbers as you do whatever the test you did before, where you see those MB/s
+[01:06:13] *** Quits: MikZyth (~MikZyth@188.65.242.223) (Quit: WeeChat 3.1)
+[01:06:18] *** Joins: bebop (~sig@dialup-208-98-133-190.fmtc.com)
+[01:06:37] <neilthereildeil> oops. im always learning!
+[01:07:09] <Khepra> sounds to me like you jumped from chapter 1 to chapter 13 and you should slow down and go back to chapter 2, and read it slowly up to 13.
+[01:07:37] <Khepra> dead into hypervisors and convoluted qemu setups, thinking "performance" and "security", but no idea how to actually read performance metrics....
+[01:09:16] *** Quits: tradar (~tradar@user/tradar) (Ping timeout: 244 seconds)
+[01:09:16] *** Quits: tejr (~tejr@user/tejr) (Ping timeout: 244 seconds)
+[01:09:53] <Khepra> best advice I can give you here is toss all that out, go to qemu-kvm (and forget libvirt and other convenience crap, learn to use qemu-system-x86_64 directly, it's most powerful and most flexible); setup kvm based virt, with virtio drivers in the windows guests. consider adding a NVMe SSD for some writeback dampening via bcache, and/or read caching inbetween disk and RAM
+[01:10:11] *** Joins: Caesar-EW (~Caesar-EW@84.213.107.109)
+[01:10:19] <Khepra> that's VASTLY superior than anything you can muster based on long deprcated xen and hacking PVs into ramdisks...
+[01:11:13] *** Joins: tejr (~tejr@user/tejr)
+[01:11:27] *** Joins: tradar (~tradar@user/tradar)
+[01:11:39] <Khepra> also LVM + mdadm is crap. use ZFS. if you have lots of RAM, ZFS's ARC is superior to linux pagecache (and in conflict with it). you can tweak zvol page sizes, and make things readonly snapshots with volatile clones you throw away after you're done. 
+[01:12:32] <Khepra> you can define caching caching policies per dataset, you can use transparent compression and save some extra bits going up or down the bus lane at the expense of extra CPU cycles.
+[01:13:11] *** Joins: ddsys (~ddsys@user/ddsys)
+[01:15:59] *** Quits: mickey8 (~user@user/mickey) (Ping timeout: 244 seconds)
+[01:16:09] <neilthereildeil> heres my vmstat output for 2 seconds: dm-5  2009043      0 136386352 1150748      0      0       0       0      0    577
+[01:16:13] <neilthereildeil> dm-5 is the origin disk
+[01:16:18] <neilthereildeil> LOTS of READs
+[01:17:40] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 268 seconds)
+[01:18:24] *** Quits: ax56234 (~NickServ@user/ax562) (Ping timeout: 258 seconds)
+[01:18:46] *** Quits: HamelinX (~HamelinX@user/hamelinx) (Ping timeout: 272 seconds)
+[01:18:46] <Khepra> there's also iostat and I'd rather try that. give it some more time than just 2 seconds.
+[01:19:34] *** Joins: i0e (~is0ke3@user/is0ke3)
+[01:20:19] *** Joins: ax56234 (~NickServ@user/ax562)
+[01:22:03] *** Quits: beelzebuzz (~rasputin@gateway/tor-sasl/beelzebuzz) (Remote host closed the connection)
+[01:22:33] *** Quits: tradar (~tradar@user/tradar) (Quit: tradar)
+[01:24:07] *** Joins: HamelinX (~HamelinX@user/hamelinx)
+[01:25:03] *** Quits: ax56234 (~NickServ@user/ax562) (Read error: Connection reset by peer)
+[01:27:32] *** Joins: beelzebuzz (~rasputin@gateway/tor-sasl/beelzebuzz)
+[01:28:33] *** Quits: neilthereildeil (~neilthere@204.115.183.4) (Quit: Client closed)
+[01:30:29] *** Joins: Kobaz (~kobaz@50.75.184.42)
+[01:31:00] <Kobaz> Anyone have any experience with vm hypervisor backups causing kernel timeouts and disk failures while they run
+[01:31:35] *** Joins: ax56234 (~NickServ@user/ax562)
+[01:33:01] <Khepra> Kobaz: please be more specific. which hypervisor, what kind if backups, how do you measure kernel timeouts and disk failures....
+[01:33:10] <Khepra> *of
+[01:33:21] <Kobaz> vmware, it's not our host actually
+[01:33:58] <Kobaz> and by measuring, I mean, klog showing kernel level timeouts... low level hardware disk read errors and timeouts, and then the filesystem going r/o
+[01:33:58] *** Quits: HamelinX (~HamelinX@user/hamelinx) (Read error: Connection reset by peer)
+[01:34:29] *** Quits: ax56234 (~NickServ@user/ax562) (Read error: No route to host)
+[01:35:00] <jhutchins> Kobaz: That's not normal performance for a properly provisioned host.
+[01:35:00] *** Joins: HamelinX (~HamelinX@user/hamelinx)
+[01:35:09] <Khepra> Kobaz: so the vmware host, which you don't control, is doing something it calls backups and when that runs you see, in the guest, in dmesg, kernel stack traces and other error log entries?
+[01:35:19] <Kobaz> Khepra: exactly
+[01:35:25] <Kobaz> jhutchins: i would agree
+[01:35:34] <Khepra> definitely not normal, no.
+[01:35:45] <Kobaz> i know it's not normal, heh
+[01:36:01] <Kobaz> i'm looking through my backlog to pull up the actual errors, it's around somewhere
+[01:36:18] <Khepra> don't you have fresh log entries from the guests=
+[01:36:55] *** Joins: scabby_ (~scabby@user/scabootssca)
+[01:37:02] <Kobaz> i did at the time, but with the filesystem going read-only obviously the logs are gone from disk
+[01:37:12] <Kobaz> but I have some stuff around from the last one... digging
+[01:39:00] <Khepra> journalctl should have somethign in memory maybe
+[01:39:12] <Kobaz> in memory?
+[01:39:14] <Kobaz> not after a reboot
+[01:39:29] <Khepra> ah. you never mentioned reboot.
+[01:39:49] <Khepra> ro filesystem can be recovered rw with a remount, so I assumed....
+[01:39:51] <Kobaz> oh, well yeah.  this happened at like midnight and.. well... we needed the box back up
+[01:39:52] *** Quits: HamelinX (~HamelinX@user/hamelinx) (Client Quit)
+[01:39:58] <Kobaz> yeah sometimes
+[01:40:09] <Kobaz> assuming it's not too fubar'd in overall environmental state
+[01:40:56] *** Quits: DsszzD (~DsszzD@2409:4060:2e1c:102b::684b:2d05) (Remote host closed the connection)
+[01:41:05] <Khepra> shouldn't be the case assuming this is really just about virtual disks going away due to contention on the host side, and the guest kernel interprets that at the driver level with timeouts causing severe sounding errors and traces
+[01:41:05] *** Joins: DsszzD (~DsszzD@2409:4060:2e1c:102b::684b:2d05)
+[01:41:06] *** Quits: DsszzD (~DsszzD@2409:4060:2e1c:102b::684b:2d05) (Read error: Connection reset by peer)
+[01:41:29] *** Joins: DsszzD (~DsszzD@2409:4060:2e1c:102b::684b:2d05)
+[01:41:40] <Kobaz> it could be maxing out disk io, is one theory
+[01:41:43] <Kobaz> on the host...
+[01:42:13] <Khepra> just taking too long for the, assuming, SATA driver's built in timeouts. is it, SATA? or are the disks virtio?
+[01:43:18] <Kobaz> it's using the sas drivers right now
+[01:43:30] <Kobaz> i would be curious if virtio would have the same issue
+[01:43:37] <Khepra> hence me asking
+[01:48:53] *** Joins: bloodninja (~bloodninj@user/bloodninja)
+[01:53:01] *** Joins: stateless (~Thunderbi@2603:9000:7101:5e11:0:946e:fb6:cd71)
+[01:55:17] *** Joins: eeg3 (~earl@cpe-104-139-102-235.carolina.res.rr.com)
+[01:56:34] *** Quits: goose (goose@bucket.goose.ws) (Ping timeout: 256 seconds)
+[01:58:01] *** Quits: coconut (~martijn@user/coconut) (Quit: Leaving)
+[02:00:07] *** Quits: thaw (~thaw@static-47-207-6-117.tamp.fl.frontiernet.net) (Ping timeout: 246 seconds)
+[02:00:50] *** Quits: tesseract (~tesseract@user/tesseract) (Quit: WeeChat 3.0)
+[02:01:40] *** Quits: paulgrmn (~paulgrmn@user/paulgrmn) (Ping timeout: 256 seconds)
+[02:02:06] *** Joins: amacater (~amacater@77.97.174.253)
+[02:10:16] *** Quits: c10l2 (~c10l@89.34.167.207) (Quit: The Lounge - https://thelounge.chat)
+[02:10:29] *** Quits: kathenas (~kathenas@94.14.40.225) (Quit: Leaving)
+[02:10:59] *** Joins: c10l2 (~c10l@89.34.167.207)
+[02:12:57] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 248 seconds)
+[02:14:30] *** Joins: kathenas (~kathenas@94.14.40.225)
+[02:14:55] *** Joins: i0e (~is0ke3@user/is0ke3)
+[02:15:25] *** Quits: towo_home (~towo_home@ip1f10ac38.dynamic.kabel-deutschland.de) (Quit: Leaving)
+[02:20:44] *** Joins: blackout69 (~blackout6@net-2-42-57-150.cust.vodafonedsl.it)
+[02:22:33] *** Quits: Caesar-EW (~Caesar-EW@84.213.107.109) (Ping timeout: 248 seconds)
+[02:24:44] *** Joins: goose (goose@bucket.goose.ws)
+[02:26:17] *** Quits: lad (~lad@user/lad) (Ping timeout: 248 seconds)
+[02:27:22] *** Quits: kathenas (~kathenas@94.14.40.225) (Quit: Leaving)
+[02:29:12] *** Joins: Dezimodnar (~Dezimodna@user/dezimodnar)
+[02:29:19] *** Quits: Tokamak (~Tokamak@107.117.203.145) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[02:29:52] *** Joins: Haudegen (~quassel@178.115.237.87.static.drei.at)
+[02:30:02] *** Discombobulated is now known as Disconsented
+[02:30:07] *** Parts: blackout69 (~blackout6@net-2-42-57-150.cust.vodafonedsl.it) ()
+[02:31:17] *** Joins: kathenas (~kathenas@94.14.40.225)
+[02:33:42] *** Quits: mortderi1 (~mortderir@192.198.151.53) (Remote host closed the connection)
+[02:33:44] *** Joins: bloodninja123 (~bloodninj@user/bloodninja)
+[02:34:02] *** Quits: mei (~mei@user/mei) (Read error: Connection reset by peer)
+[02:34:19] *** Joins: Tokamak (~Tokamak@107.117.203.145)
+[02:34:31] *** Joins: mortderi1 (~mortderir@192.198.151.52)
+[02:36:52] *** Joins: Fluxx (~Fluxx@user/fluxx)
+[02:37:45] *** Quits: bloodninja (~bloodninj@user/bloodninja) (Ping timeout: 258 seconds)
+[02:39:59] *** Joins: mickey86 (~user@user/mickey)
+[02:40:58] *** Quits: de-facto (~de-facto@user/de-facto) (Remote host closed the connection)
+[02:42:03] *** Quits: luna-is-here (~quassel@2a02:908:f761:2a3c::a) (Remote host closed the connection)
+[02:42:37] *** c10l2 is now known as c10l
+[02:43:12] *** Joins: luna-is-here (~quassel@2a02:908:f761:2a3c::a)
+[02:43:26] *** Quits: revolt112 (~revolt112@gw.thefirewall.de) (Ping timeout: 252 seconds)
+[02:43:34] *** Quits: ChrisH (~dg7pc@clio.dg7pc.de) (Ping timeout: 272 seconds)
+[02:43:43] *** Joins: revolt112 (~revolt112@gw.thefirewall.de)
+[02:44:22] *** Quits: JohnML (~JohnML@ip-37-201-129-30.hsi13.unitymediagroup.de) (Read error: Connection reset by peer)
+[02:44:49] *** Quits: madez (~madez@ip-176-199-23-87.hsi06.unitymediagroup.de) (Read error: Connection reset by peer)
+[02:45:10] *** Joins: JohnML (~JohnML@ip-37-201-129-30.hsi13.unitymediagroup.de)
+[02:45:22] *** Joins: de-facto (~de-facto@user/de-facto)
+[02:46:02] *** Joins: madez (~madez@ip-176-199-23-87.hsi06.unitymediagroup.de)
+[02:46:11] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 258 seconds)
+[02:48:21] *** Joins: i0e (~is0ke3@user/is0ke3)
+[02:49:55] *** Quits: Dezimodnar (~Dezimodna@user/dezimodnar) (Remote host closed the connection)
+[02:49:57] *** Joins: ChrisH (~dg7pc@clio.dg7pc.de)
+[02:51:02] *** Joins: ninja (~vaetis@shadow.agency)
+[02:51:52] *** Quits: FoodMan (~FoodMan@cpc104776-belf12-2-0-cust417.2-1.cable.virginm.net) (Ping timeout: 272 seconds)
+[02:53:14] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 268 seconds)
+[02:54:42] *** Joins: i0e (~is0ke3@user/is0ke3)
+[02:58:48] *** Joins: brickfat (~brickfat@user/brickfat)
+[02:59:21] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 248 seconds)
+[02:59:30] <xx> Gifsicle has a security fix https://lcdf.org/gifsicle/changes.html that debian maintainers nor security team know about (because nobody told them)
+[03:01:14] *** Joins: ax56234 (~NickServ@user/ax562)
+[03:01:42] <Khepra> xx: achievement unlock if you get to be the first to tell them! :)
+[03:02:05] <xx> Khepra: I don't use email, so can't tell them.
+[03:05:00] <Khepra> xx: maybe you could file for a CVE? getting a CVE might trigger automation and maintainer response...   https://github.com/kohler/gifsicle/commit/9a2392958741055beda5de845d639564bea4c6ec
+[03:06:53] <Khepra> afk
+[03:10:11] *** Joins: lsrtl_ (~lsrtl@user/lsrtl)
+[03:11:43] *** Quits: pong (~beaver@user/pong) (Ping timeout: 244 seconds)
+[03:12:41] *** Quits: lsrtl__ (~lsrtl@user/lsrtl) (Ping timeout: 248 seconds)
+[03:15:00] <sney> you could get a salsa account and file a MR fixing the debian/watch file, which would not only give them warning about the current upstream release but also any future ones 
+[03:16:05] *** Quits: amacater (~amacater@77.97.174.253) (Ping timeout: 258 seconds)
+[03:18:32] *** Quits: ChrisH (~dg7pc@clio.dg7pc.de) (Ping timeout: 268 seconds)
+[03:20:48] <sney> salsa typically requires an email address to sign up (as it's gitlab) but you could ask in #salsa on oftc and see if they have any way around that 
+[03:21:13] *** Quits: LucaTM (~LucaTM@user/lucatm) (Quit: Textual IRC Client: www.textualapp.com)
+[03:21:23] *** Joins: srv (~cmd@user/srv)
+[03:22:16] *** Quits: goose (goose@bucket.goose.ws) (Ping timeout: 272 seconds)
+[03:22:41] *** Joins: thiras (~thiras@user/thiras)
+[03:23:04] *** Quits: sinaowolabi (~SinaOwola@102.134.114.1) (Read error: No route to host)
+[03:24:25] *** Quits: finsternis (~X@23.226.237.192) (Remote host closed the connection)
+[03:27:20] *** Joins: horribleprogram (~horriblep@cpe9050cac22453-cm9050cac22450.cpe.net.cable.rogers.com)
+[03:27:29] <horribleprogram> networking.service can't read my /etc/network/interfaces
+[03:27:43] *** Joins: paulgrmn (~paulgrmn@user/paulgrmn)
+[03:28:07] <horribleprogram> what's wrong with iface wlan0 gateway 192.168.0.1
+[03:28:19] <sney> networking.service doesn't read that file, it calls ifupdown 
+[03:28:33] <sney> there are quite a few things missing if that's your whole entry
+[03:28:48] <horribleprogram> it says "ifup unknown or no address type and no inherits keyword specified
+[03:28:52] *** Joins: udaba (~udaba@athedsl-331869.home.otenet.gr)
+[03:28:59] <horribleprogram> so you're correct
+[03:29:05] <horribleprogram> but what's the "syntax" of such a file
+[03:29:26] <sney> the 3rd text block here has a working example, you can also look at 'man 5 interfaces' for general syntax. https://wiki.debian.org/WiFi/HowToUse#Using_ifupdown
+[03:29:45] *** Quits: cef (~cef@user/cef) (Ping timeout: 248 seconds)
+[03:29:45] *** Quits: twobitsprite (~twobitspr@195.181.171.244) (Ping timeout: 248 seconds)
+[03:29:55] <horribleprogram> sweet
+[03:29:56] <horribleprogram> ily
+[03:30:46] *** Joins: twobitsprite (~twobitspr@195.181.171.244)
+[03:32:25] *** Quits: paulgrmn (~paulgrmn@user/paulgrmn) (Ping timeout: 248 seconds)
+[03:33:06] *** Joins: totenkoph (~scythe@user/totenkoph)
+[03:33:35] *** Quits: ax56234 (~NickServ@user/ax562) (Quit: AndroIRC - Android IRC Client ( http://www.androirc.com ))
+[03:35:48] *** Quits: evilbug (~evilbug@191.101.174.96) (Ping timeout: 268 seconds)
+[03:35:56] *** Quits: rglu (~rglu@2603-8090-2006-7fc6-783a-cbac-b87a-d302.res6.spectrum.com) (Quit: leaving)
+[03:36:24] *** Joins: cef (~cef@user/cef)
+[03:36:41] *** Joins: evilbug (~evilbug@191.101.174.118)
+[03:37:09] *** Quits: Iamthehuman1 (~noname@user/iamthehuman) (Quit: zzz..)
+[03:39:24] *** Joins: pong (~beaver@user/pong)
+[03:40:45] <horribleprogram> heh
+[03:40:54] <horribleprogram>  The file consists of zero or more "iface", "mapping", "auto", "allow-", "source" and "source-directory" stanzas. 
+[03:41:01] <horribleprogram> wtf is this music class?
+[03:41:07] <horribleprogram> lol
+[03:41:37] <horribleprogram> I don't even know what that even means to be honest, I think it's a poetry thing but last time I checked I didn't sign up for Shakespeare poetry
+[03:41:50] <sney> it's derived from poetry yes, as in a grouped set of lines 
+[03:42:02] <sney> when you keep reading the manual, the examples show you what they mean
+[03:42:32] <horribleprogram> I'll get there hold on, I'm slow I take my time
+[03:42:45] <sney> especially with the detours to complain about nothing 
+[03:42:53] <horribleprogram> lol :/
+[03:43:35] <horribleprogram> so when ur on a gameshow in 10 years and the question is "where in the man pages is there a word "stanza" u will now know"
+[03:43:44] <horribleprogram> yw :) 
+[03:43:49] *** Quits: reprazent (~reprazent@178-118-195-230.access.telenet.be) (Ping timeout: 268 seconds)
+[03:46:18] *** Joins: reprazent (~reprazent@178-118-195-230.access.telenet.be)
+[03:47:48] *** Parts: Raguile (~Raguile@user/raguile) ()
+[03:53:13] *** Quits: reprazent (~reprazent@178-118-195-230.access.telenet.be) (Ping timeout: 248 seconds)
+[03:53:39] *** Quits: shokohsc (~shokohsc@161.88.195.77.rev.sfr.net) (Remote host closed the connection)
+[03:54:35] *** Joins: shokohsc (~shokohsc@161.88.195.77.rev.sfr.net)
+[03:54:49] *** Joins: reprazent (~reprazent@178-118-195-230.access.telenet.be)
+[03:56:15] *** Quits: gildasio (~gildasio@gateway/tor-sasl/gildasio) (Remote host closed the connection)
+[03:56:28] *** Quits: craigevil (craig@user/craigevil) (Quit: leaving)
+[03:57:05] *** Joins: craigevil (craig@user/craigevil)
+[03:57:20] *** Quits: RhinosF1 (uid339563@miraheze/RhinosF1) (Quit: Connection closed for inactivity)
+[03:58:00] *** Quits: acebrian1 (~acebrianj@56.red-83-53-98.dynamicip.rima-tde.net) (Ping timeout: 268 seconds)
+[03:59:13] *** Quits: d3sync (~d3sync@194.219.251.225) (Read error: Connection reset by peer)
+[04:01:47] *** Quits: fatso-dude (~patryk@S010690e2ba275824.vc.shawcable.net) (Remote host closed the connection)
+[04:02:49] *** Joins: Alias2 (~Alias@user/alias)
+[04:05:46] *** Quits: AliasAlreadyTake (~Alias@user/alias) (Ping timeout: 256 seconds)
+[04:09:04] <horribleprogram> sney: I don't undersatnd the difference between a logical interface and a physical interface
+[04:09:46] <horribleprogram> sney: it says iface <logical-interface-name> starts a stanza
+[04:10:11] <sney> a physical interface is an actual network device, like your wifi card. a logical interface is one that only exists in software, like your loopback interface, or a bond etc 
+[04:10:40] <sney> that's not really important for making wifi work, though. you can just scroll down to the examples, or modify the wiki one linked earlier. 
+[04:11:43] *** Quits: evilbug (~evilbug@191.101.174.118) (Quit: Connection closed)
+[04:12:45] <horribleprogram> wifi is working
+[04:12:55] <horribleprogram> in fact I'm not even typing on it, I'm ssh'd into it
+[04:13:01] <horribleprogram> networking.service is down tho lol
+[04:13:31] <horribleprogram> and pinging outside my LAN works 
+[04:14:09] <horribleprogram> iface needs a address family
+[04:14:15] <horribleprogram> so iface wlan0 isn't enough
+[04:14:44] <horribleprogram> u need to follow those 2 words with the address family, like one of inet, inet6, etc... then the "method" it uses
+[04:14:47] *** Joins: ChrisH (~dg7pc@clio.dg7pc.de)
+[04:14:51] <horribleprogram> I'm guessing that's dhcp, static, etc
+[04:15:00] *** Quits: nixpipe (~nixpipe@net-5-94-233-225.cust.vodafonedsl.it) (Remote host closed the connection)
+[04:16:57] *** Quits: Misotauros (~Misotauro@193-181-35-232.cust.norisab.com) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[04:17:11] *** Joins: Misotauros (~Misotauro@193-181-35-232.cust.norisab.com)
+[04:23:35] <horribleprogram> it works now
+[04:23:43] <horribleprogram> basically u need 4 keywords for the ifname stanza
+[04:23:52] <horribleprogram> u can't just be like ifname wlan0 
+[04:23:54] *** Quits: Haudegen (~quassel@178.115.237.87.static.drei.at) (Ping timeout: 268 seconds)
+[04:24:16] <greycat> you know there's a man page, right?
+[04:24:24] <horribleprogram> greycat: i just finished reading it
+[04:24:39] <horribleprogram> greycat: that's how I arrived at why it wasn't working
+[04:25:45] *** Quits: amahl (~amahl@dsl-jklbng12-54fbca-64.dhcp.inet.fi) (Ping timeout: 268 seconds)
+[04:26:52] *** Quits: xx (~xx@user/xx) (Quit: xx)
+[04:27:08] *** Joins: treefrob (~treefrob@p57a9648f.dip0.t-ipconnect.de)
+[04:33:44] *** Joins: Misotaur- (~Misotauro@193-181-35-203.cust.norisab.com)
+[04:35:11] *** Quits: Misotauros (~Misotauro@193-181-35-232.cust.norisab.com) (Ping timeout: 252 seconds)
+[04:35:12] *** Quits: ice99 (~ice9@user/ice9) (Ping timeout: 268 seconds)
+[04:36:34] *** Quits: udaba (~udaba@athedsl-331869.home.otenet.gr) (Quit: Leaving)
+[04:39:46] *** Quits: ra (~ra-@user/ra-) (Ping timeout: 256 seconds)
+[04:40:41] *** Quits: Misotaur- (~Misotauro@193-181-35-203.cust.norisab.com) (Ping timeout: 248 seconds)
+[04:43:10] *** Quits: nobyk (~nobyk@user/nobyk) (Ping timeout: 244 seconds)
+[04:45:40] *** Joins: Plan_IX (~P9@108-90-4-118.lightspeed.austtx.sbcglobal.net)
+[04:46:12] *** Joins: nobyk (~nobyk@user/nobyk)
+[04:48:00] *** Quits: kathenas (~kathenas@94.14.40.225) (Quit: Leaving)
+[04:50:04] *** Joins: ra (~ra-@user/ra-)
+[04:51:01] *** Quits: shailangsa (~shailangs@host86-185-58-139.range86-185.btcentralplus.com) (Ping timeout: 268 seconds)
+[04:51:53] *** Quits: horribleprogram (~horriblep@cpe9050cac22453-cm9050cac22450.cpe.net.cable.rogers.com) (Quit: Leaving...)
+[04:53:27] *** Quits: lsrtl_ (~lsrtl@user/lsrtl) (Ping timeout: 258 seconds)
+[04:56:17] *** Joins: goose (goose@bucket.goose.ws)
+[04:56:56] *** Joins: kathenas (~kathenas@94.14.40.225)
+[04:58:08] *** Joins: pvoigt (~pvoigt@user/pvoigt)
+[04:58:17] *** Joins: Shiodushi (Sensei@sponsored.by.bnc4you.xyz)
+[04:59:17] *** Quits: c10l (~c10l@89.34.167.207) (Quit: The Lounge - https://thelounge.chat)
+[04:59:22] *** Quits: pvoigt (~pvoigt@user/pvoigt) (Client Quit)
+[04:59:42] *** Joins: pvoigt (~pvoigt@user/pvoigt)
+[05:17:28] *** Joins: jo-huck (~johuck@dynamic-093-131-111-085.93.131.pool.telefonica.de)
+[05:19:26] *** Quits: johuck (~johuck@dynamic-078-049-088-106.78.49.pool.telefonica.de) (Ping timeout: 272 seconds)
+[05:20:16] *** Quits: stateless (~Thunderbi@2603:9000:7101:5e11:0:946e:fb6:cd71) (Quit: stateless)
+[05:20:27] *** Joins: hyskaru (~hyskaru@user/hyskaru)
+[05:23:40] *** Joins: the4oo4 (~the4oo4@shenzhou.whatbox.ca)
+[05:28:26] *** Quits: mortderi1 (~mortderir@192.198.151.52) (Read error: Connection reset by peer)
+[05:29:52] *** Quits: srv (~cmd@user/srv) (Ping timeout: 268 seconds)
+[05:35:13] *** Quits: hyskaru (~hyskaru@user/hyskaru) (Quit: hyskaru)
+[05:44:51] *** Joins: lunc (~omnd@user/lunc)
+[05:53:11] *** Quits: DsszzD (~DsszzD@2409:4060:2e1c:102b::684b:2d05) (Remote host closed the connection)
+[05:55:52] *** Joins: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac)
+[06:13:57] *** Quits: maxtimbo (~maxtim@c-71-228-128-153.hsd1.ga.comcast.net) (Ping timeout: 258 seconds)
+[06:17:25] *** Joins: Jimmy_H (~Jimmy_H@119.136.154.241)
+[06:22:21] *** Joins: Misotauros (~Misotauro@193-181-35-220.cust.norisab.com)
+[06:22:46] *** Quits: Jimmy_H (~Jimmy_H@119.136.154.241) (Ping timeout: 258 seconds)
+[06:24:57] *** Quits: tejr (~tejr@user/tejr) (Ping timeout: 244 seconds)
+[06:32:34] *** Quits: madez (~madez@ip-176-199-23-87.hsi06.unitymediagroup.de) (Quit: .)
+[06:35:31] *** Joins: madez (~madez@ip-176-199-23-87.hsi06.unitymediagroup.de)
+[06:37:44] *** Quits: ddsys (~ddsys@user/ddsys) (Quit: Leaving)
+[06:37:59] *** Quits: kathenas (~kathenas@94.14.40.225) (Quit: Leaving)
+[06:43:38] *** Joins: tejr (~tejr@user/tejr)
+[06:51:12] *** Quits: greycat (~greg@209.142.155.49) (Quit: Bye)
+[06:51:59] *** Joins: hyskaru (~hyskaru@user/hyskaru)
+[06:56:41] *** Quits: sydney_untangle (~irssi@199.96.48.242) (Ping timeout: 248 seconds)
+[07:02:10] *** Quits: yuta (~pi@user/yuta) (Quit: WeeChat 3.2)
+[07:04:47] *** Quits: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac) (Remote host closed the connection)
+[07:05:11] *** Joins: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac)
+[07:08:52] *** Joins: sydney_untangle (~irssi@199.96.48.242)
+[07:11:34] *** Joins: kathenas (~kathenas@94.14.40.225)
+[07:14:41] *** Joins: shailangsa (~shailangs@host86-145-14-24.range86-145.btcentralplus.com)
+[07:16:48] *** Quits: mh3f (~mhowle@cpe-98-25-217-234.sc.res.rr.com) (Remote host closed the connection)
+[07:17:43] *** Joins: mh3f (~mhowle@cpe-98-25-217-234.sc.res.rr.com)
+[07:18:38] *** Quits: jkc (~jkc@almalinux/security/jkc) (Quit: WeeChat 3.0)
+[07:21:42] *** Quits: _Vi (~vi0oss@2a0d:7c40:3000:1326::3) (Ping timeout: 268 seconds)
+[07:22:25] *** Joins: jkc (jkc@almalinux/security/jkc)
+[07:25:28] *** Quits: co0n (~r4co0n@user/r4co0n) (Ping timeout: 272 seconds)
+[07:31:53] *** Quits: flynn (~mcbloch@user/flynn) (Remote host closed the connection)
+[07:32:15] *** Joins: flynn (~mcbloch@user/flynn)
+[07:32:46] *** Quits: hyskaru (~hyskaru@user/hyskaru) (Quit: hyskaru)
+[07:40:08] *** Joins: Clarth (~Clarth@68.235.36.109)
+[07:42:44] *** Joins: palimaar (~oasd@KD113148020047.ppp-bb.dion.ne.jp)
+[07:43:59] *** Quits: jrjsmrtn (~jrjsmrtn@ip-83-134-41-235.dsl.scarlet.be) (Quit: ZNC 1.8.2 - https://znc.in)
+[07:44:15] *** Joins: jrjsmrtn (~jrjsmrtn@ip-83-134-41-235.dsl.scarlet.be)
+[07:44:56] *** Joins: hwdyki (~hwdyki@user/hwdyki)
+[07:45:14] *** Parts: hwdyki (~hwdyki@user/hwdyki) (WeeChat 2.8)
+[07:48:24] *** Quits: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac) (Remote host closed the connection)
+[07:48:44] *** Joins: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac)
+[07:49:56] *** Quits: yuckey2d (~yuckey2d@46.246.3.221) (Quit: The Lounge - https://thelounge.chat)
+[07:53:52] *** Quits: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac) (Remote host closed the connection)
+[07:54:28] *** Joins: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac)
+[08:03:24] *** Joins: hbautista (~hbautista@187.171.122.82)
+[08:05:49] *** Quits: wintersky (uid453465@id-453465.brockwell.irccloud.com) (Quit: Connection closed for inactivity)
+[08:21:47] *** Quits: TheCreeper (~TheCreepe@user/thecreeper) (Remote host closed the connection)
+[08:22:05] *** Joins: TheCreeper (~TheCreepe@user/thecreeper)
+[08:24:35] *** Joins: mambang (~mambang@user/mambang)
+[08:26:58] *** Quits: Tokamak (~Tokamak@107.117.203.145) (Ping timeout: 258 seconds)
+[08:27:53] *** Quits: palimaar (~oasd@KD113148020047.ppp-bb.dion.ne.jp) (Ping timeout: 248 seconds)
+[08:29:29] *** Quits: Lord_of_Life (~Lord@user/lord-of-life/x-2819915) (Ping timeout: 248 seconds)
+[08:30:30] *** Joins: Lord_of_Life (~Lord@user/lord-of-life/x-2819915)
+[08:30:42] *** Quits: nssy (~nssy@user/nssy) (Ping timeout: 272 seconds)
+[08:33:30] *** Joins: lsrtl_ (~lsrtl@user/lsrtl)
+[08:34:27] *** Quits: kathenas (~kathenas@94.14.40.225) (Quit: Leaving)
+[08:35:08] *** Quits: twobitsprite (~twobitspr@195.181.171.244) (Ping timeout: 272 seconds)
+[08:36:28] *** Quits: Abrax (~Abrax@user/abrax) (Quit: Leaving)
+[08:37:35] *** Joins: kathenas (~kathenas@94.14.40.225)
+[08:37:48] *** Quits: mambang (~mambang@user/mambang) (Quit: Leaving)
+[08:38:14] *** Joins: yuckey2d (~yuckey2d@195.246.120.132)
+[08:38:14] *** Quits: yuckey2d (~yuckey2d@195.246.120.132) (Remote host closed the connection)
+[08:38:33] *** Joins: yuckey2d (~yuckey2d@195.246.120.132)
+[08:40:51] *** Joins: lad (~lad@user/lad)
+[08:43:17] *** Joins: c10l (~c10l@89.34.167.207)
+[08:44:04] *** Quits: c10l (~c10l@89.34.167.207) (Client Quit)
+[08:46:47] *** Joins: Abrax (~Abrax@user/abrax)
+[08:47:40] *** Joins: diogenes_ (~diogenes_@188.208.121.83)
+[08:48:58] *** Joins: c10l (~c10l@89.34.167.207)
+[08:50:44] *** Quits: wigums (~wigums@user/wigums) (Ping timeout: 258 seconds)
+[08:51:28] *** Joins: wigums (~wigums@user/wigums)
+[08:55:02] *** Quits: GrapeApe (~GrapeApe@065-190-150-032.inf.spectrum.com) (Quit: Ping timeout (120 seconds))
+[08:55:21] *** Joins: GrapeApe (~GrapeApe@065-190-150-032.inf.spectrum.com)
+[08:57:45] *** Quits: wigums (~wigums@user/wigums) (Ping timeout: 248 seconds)
+[09:06:23] *** Quits: kathenas (~kathenas@94.14.40.225) (Quit: Leaving)
+[09:09:58] *** Quits: thiras (~thiras@user/thiras) (Ping timeout: 272 seconds)
+[09:15:06] *** Quits: craigevil (craig@user/craigevil) (Remote host closed the connection)
+[09:19:20] *** Joins: craigevil (craig@user/craigevil)
+[09:30:02] *** Quits: riff-IRC (~riff-IRC@user/riff-irc) (Remote host closed the connection)
+[09:30:19] *** Joins: nssy (~nssy@user/nssy)
+[09:31:48] *** Joins: riff-IRC (~riff-IRC@user/riff-irc)
+[09:32:08] *** Joins: wigums (~wigums@user/wigums)
+[09:35:37] *** Quits: craigevil (craig@user/craigevil) (Ping timeout: 248 seconds)
+[09:47:53] *** Quits: hbautista (~hbautista@187.171.122.82) (Ping timeout: 248 seconds)
+[09:50:33] *** Joins: elint (~elint@77.81.142.27)
+[09:55:02] *** Quits: reprazent (~reprazent@178-118-195-230.access.telenet.be) (Ping timeout: 268 seconds)
+[09:57:23] *** Joins: reprazent (~reprazent@178-118-195-230.access.telenet.be)
+[09:59:37] *** Joins: i0e (~is0ke3@user/is0ke3)
+[10:02:28] <jochum> ,libxp-dev
+[10:07:05] *** Joins: ihristov (~ihristov@217.145.94.71)
+[10:07:23] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 268 seconds)
+[10:08:56] *** Quits: reprazent (~reprazent@178-118-195-230.access.telenet.be) (Ping timeout: 258 seconds)
+[10:11:25] *** Joins: reprazent (~reprazent@178-118-195-230.access.telenet.be)
+[10:22:24] <somiaj> jochum: missing a 'v'?
+[10:22:35] <somiaj> you can also /msg judd v libxp-dev
+[10:22:52] <jochum> ,v libxp-dev
+[10:22:53] <judd> No package named 'libxp-dev' was found in amd64.
+[10:23:02] <jochum> ta
+[10:23:30] *** Quits: lsrtl_ (~lsrtl@user/lsrtl) (Ping timeout: 258 seconds)
+[10:56:48] *** Quits: foka (~foka@162.208.172.172) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[10:57:33] *** Joins: Lord_of_Life_ (~Lord@user/lord-of-life/x-2819915)
+[10:58:46] *** Quits: Lord_of_Life (~Lord@user/lord-of-life/x-2819915) (Ping timeout: 258 seconds)
+[10:58:48] *** Lord_of_Life_ is now known as Lord_of_Life
+[10:59:41] *** Joins: i0e (~is0ke3@user/is0ke3)
+[11:05:35] *** Quits: hafat (~hafat@159.146.87.68) (Remote host closed the connection)
+[11:05:36] <ASDX> does anyone have a working preseed file for populating the authorized_keys file with a public key? similarly to the guy have issues here: https://github.com/andrewc12/scripts/blob/master/pxe/preseed/ssh%20key.txt
+[11:07:07] *** Joins: mei (~mei@user/mei)
+[11:07:33] *** Joins: LucaTM (~LucaTM@user/lucatm)
+[11:09:04] *** Quits: derpadmin (~derpadmin@cloudbase2.200013.net) (Ping timeout: 256 seconds)
+[11:11:53] *** Quits: LucaTM (~LucaTM@user/lucatm) (Read error: Connection reset by peer)
+[11:13:04] *** Joins: LucaTM (~LucaTM@user/lucatm)
+[11:13:30] *** Quits: benniej (~benniej@user/benniej) (Quit: leaving)
+[11:14:29] *** Quits: driib (~driib@185.195.233.162) (Ping timeout: 258 seconds)
+[11:16:24] *** Quits: TheCreeper (~TheCreepe@user/thecreeper) (Ping timeout: 258 seconds)
+[11:23:13] *** Joins: furrymcgee (~devuan@31.179.186.66)
+[11:24:47] *** Joins: ice9 (~ice9@user/ice9)
+[11:24:50] *** Quits: lad (~lad@user/lad) (Ping timeout: 258 seconds)
+[11:27:17] *** Joins: Latrina (~Latrina@cpc91238-cmbg18-2-0-cust297.5-4.cable.virginm.net)
+[11:29:02] *** Quits: elint (~elint@77.81.142.27) (Read error: Connection reset by peer)
+[11:29:23] *** Quits: ice9 (~ice9@user/ice9) (Ping timeout: 268 seconds)
+[11:30:17] *** Quits: de-facto (~de-facto@user/de-facto) (Remote host closed the connection)
+[11:30:40] *** Joins: de-facto (~de-facto@user/de-facto)
+[11:36:41] *** Quits: Latrina (~Latrina@cpc91238-cmbg18-2-0-cust297.5-4.cable.virginm.net) (Ping timeout: 248 seconds)
+[11:39:46] *** Joins: AhmadRaniri (~AhmadRani@subs16-114-142-168-10.three.co.id)
+[11:41:51] *** Quits: AhmadRaniri (~AhmadRani@subs16-114-142-168-10.three.co.id) (Quit: Quit)
+[11:44:12] *** Quits: Clarth (~Clarth@68.235.36.109) (Ping timeout: 268 seconds)
+[11:46:28] *** Joins: Haohmaru (~Haohmaru@195.24.53.110)
+[11:46:56] *** Joins: udaba (~udaba@athedsl-331869.home.otenet.gr)
+[11:49:52] *** Quits: diogenes_ (~diogenes_@188.208.121.83) (Quit: vergissmeinnicht)
+[11:51:02] *** Joins: towo_home (~towo_home@ip1f10ac38.dynamic.kabel-deutschland.de)
+[11:55:48] *** Joins: darutoko (~darutoko@176.209.223.5)
+[11:57:49] *** Joins: driib (~driib@185.195.233.162)
+[12:02:28] *** Joins: Vizva (~vizva@gateway/tor-sasl/vizva)
+[12:02:58] *** Quits: jmcgnh (~jmcgnh@wikipedia/jmcgnh) (Ping timeout: 240 seconds)
+[12:07:18] *** Joins: jmcgnh (~jmcgnh@wikipedia/jmcgnh)
+[12:15:02] *** Quits: fling (~fling@user/fling) (Ping timeout: 268 seconds)
+[12:16:14] *** Joins: timahvo1 (~rogue@41.80.96.209)
+[12:18:07] *** Quits: internat (~nf@167-179-170-254.a7b3aa.bne.nbn.aussiebb.net) ()
+[12:18:25] *** Joins: RhinosF1 (uid339563@miraheze/RhinosF1)
+[12:19:21] *** Quits: unixpro1970 (~unixpro19@c-73-181-185-205.hsd1.wa.comcast.net) (Ping timeout: 268 seconds)
+[12:19:59] *** Quits: timahvo1 (~rogue@41.80.96.209) (Client Quit)
+[12:25:13] *** Joins: _Vi (~vi0oss@2a0d:7c40:3000:1326::3)
+[12:26:36] *** Joins: twobitsprite (~twobitspr@66.115.175.48)
+[12:29:23] *** Joins: unixpro1970 (~unixpro19@c-73-181-185-205.hsd1.wa.comcast.net)
+[12:31:20] *** Joins: scabootssca_ (~scabby@user/scabootssca)
+[12:32:36] *** Joins: diogenes_ (~diogenes_@188.208.121.64)
+[12:33:05] *** Joins: mortderi1 (~mortderir@192.198.151.52)
+[12:34:17] *** Quits: scabby_ (~scabby@user/scabootssca) (Ping timeout: 248 seconds)
+[12:34:45] *** Joins: amacater (~amacater@77.97.174.253)
+[12:45:49] *** Joins: timahvo1 (~rogue@41.80.96.209)
+[12:48:25] *** Quits: jochum (~jochum@user/jochum) (Read error: Connection reset by peer)
+[12:48:44] *** Joins: jochum (~jochum@user/jochum)
+[12:49:32] *** Joins: amahl (~amahl@dsl-jklbng12-54fbca-64.dhcp.inet.fi)
+[12:51:53] *** Quits: reprazent (~reprazent@178-118-195-230.access.telenet.be) (Ping timeout: 248 seconds)
+[12:52:23] *** Quits: diogenes_ (~diogenes_@188.208.121.64) (Quit: vergissmeinnicht)
+[12:54:11] *** Joins: reprazent (~reprazent@178-118-195-230.access.telenet.be)
+[13:04:59] *** Quits: nssy (~nssy@user/nssy) (Ping timeout: 268 seconds)
+[13:05:03] *** Joins: acebrian1 (~acebrianj@183.red-37-10-133.dynamicip.rima-tde.net)
+[13:09:33] *** Joins: plantroon (~plantroon@91.236.69.232)
+[13:10:29] *** Joins: pilyn (~pilyn@user/pilyn)
+[13:10:52] *** Quits: winstonsmith (~winstonsm@109.201.152.172) (Remote host closed the connection)
+[13:11:11] *** Joins: winstonsmith (~winstonsm@109.201.152.173)
+[13:12:07] *** Joins: diogenes_ (~diogenes_@188.208.121.64)
+[13:15:17] *** Joins: Haudegen (~quassel@178.115.237.87.static.drei.at)
+[13:15:23] *** Joins: lsrtl_ (~lsrtl@user/lsrtl)
+[13:21:38] *** Quits: acebrian1 (~acebrianj@183.red-37-10-133.dynamicip.rima-tde.net) (Read error: Connection reset by peer)
+[13:23:15] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[13:25:37] *** Joins: acebrian1 (~acebrianj@162.red-83-50-62.dynamicip.rima-tde.net)
+[13:26:24] *** Joins: xx (~xx@user/xx)
+[13:26:52] *** Quits: pvoigt (~pvoigt@user/pvoigt) (Read error: Connection reset by peer)
+[13:27:44] *** Quits: pyre (~pyre@crimeboss.nillas-power.com) (Ping timeout: 272 seconds)
+[13:33:12] *** Joins: benniej (~benniej@user/benniej)
+[13:35:48] *** Quits: amacater (~amacater@77.97.174.253) (Ping timeout: 268 seconds)
+[13:36:31] *** Joins: pvoigt (~pvoigt@user/pvoigt)
+[13:39:06] *** Joins: cryptikulous (~cryptikul@gateway/tor-sasl/cryptikulous)
+[13:42:16] *** Quits: cryptikulous (~cryptikul@gateway/tor-sasl/cryptikulous) (Client Quit)
+[13:50:33] *** Quits: diogenes_ (~diogenes_@188.208.121.64) (Ping timeout: 248 seconds)
+[13:52:53] *** Joins: Brottweiler (~brott@user/brottweiler)
+[14:01:17] *** Joins: Iamthehuman1 (~noname@user/iamthehuman)
+[14:03:17] *** Quits: udaba (~udaba@athedsl-331869.home.otenet.gr) (Quit: Leaving)
+[14:04:12] *** Joins: Latrina (~Latrina@cpc91238-cmbg18-2-0-cust297.5-4.cable.virginm.net)
+[14:09:08] *** Joins: sinaowolabi (~SinaOwola@160.152.50.125)
+[14:10:58] *** Quits: filePeter (~filePeter@user/filepeter) (Ping timeout: 268 seconds)
+[14:11:42] *** Joins: rsx (~dummy@ppp-188-174-141-119.dynamic.mnet-online.de)
+[14:12:25] *** Quits: _Vi (~vi0oss@2a0d:7c40:3000:1326::3) (Ping timeout: 268 seconds)
+[14:12:37] *** Joins: filePeter (~filePeter@user/filepeter)
+[14:14:04] *** Quits: fiet (~nobody@user/fiet) (Quit: WeeChat 3.2)
+[14:14:30] *** Joins: fiet (~nobody@user/fiet)
+[14:14:33] *** Quits: Latrina (~Latrina@cpc91238-cmbg18-2-0-cust297.5-4.cable.virginm.net) (Ping timeout: 248 seconds)
+[14:18:23] *** Joins: lucad111 (~lucad111@51-148-40-1.dsl.zen.co.uk)
+[14:20:55] *** Joins: npc (~bjdkqalzo@user/spareproject)
+[14:23:53] *** Quits: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac) (Remote host closed the connection)
+[14:24:04] *** Joins: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac)
+[14:24:05] *** Quits: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac) (Read error: Connection reset by peer)
+[14:24:22] *** Joins: mbrad (~mbrad@176.252.84.38)
+[14:24:33] *** Joins: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac)
+[14:24:50] *** Joins: blackout69 (~blackout6@net-2-42-57-150.cust.vodafonedsl.it)
+[14:28:12] *** Joins: m4r35n357 (~ian@host-92-13-130-45.as13285.net)
+[14:29:02] *** Joins: aiRness (~airness@199.ip-54-37-75.eu)
+[14:29:06] *** Parts: aiRness (~airness@199.ip-54-37-75.eu) (WeeChat 2.8)
+[14:32:36] *** Quits: Vizva (~vizva@gateway/tor-sasl/vizva) (Remote host closed the connection)
+[14:32:51] *** Quits: sinaowolabi (~SinaOwola@160.152.50.125) (Ping timeout: 276 seconds)
+[14:40:01] *** Quits: dselect (~dselect@debian/bot/dselect) (Quit: ouch... that hurt)
+[14:41:20] *** Joins: stateless (~Thunderbi@2603:9000:7101:5e11:0:946e:fb6:cd71)
+[14:41:29] *** Joins: dselect (~dselect@debian/bot/dselect)
+[14:41:36] *** Joins: nssy (~nssy@user/nssy)
+[14:43:01] *** Quits: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac) (Remote host closed the connection)
+[14:43:25] *** Joins: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac)
+[14:44:55] *** Joins: wintersky (uid453465@id-453465.brockwell.irccloud.com)
+[14:47:52] *** Joins: mikeliuk (~mikeliuk@109.249.187.96)
+[14:48:27] *** Quits: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac) (Remote host closed the connection)
+[14:48:52] *** Joins: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac)
+[14:52:48] *** Quits: fortuno51_ (~fortuno51@37.120.156.254) (Remote host closed the connection)
+[14:57:15] *** Joins: gefd (~Geoff@user/gefd)
+[15:00:25] *** Quits: reprazent (~reprazent@178-118-195-230.access.telenet.be) (Ping timeout: 248 seconds)
+[15:00:55] *** Joins: tesseract (~tesseract@user/tesseract)
+[15:03:20] *** Quits: raekuul (pokota@user/raekuul) (Remote host closed the connection)
+[15:03:56] *** Joins: reprazent (~reprazent@178-118-195-230.access.telenet.be)
+[15:08:40] *** Joins: diogenes_ (~diogenes_@188.208.122.231)
+[15:14:13] *** Joins: _Vi (~vi0oss@2a0d:7c40:3000:1326::3)
+[15:22:25] *** Joins: kathenas (~kathenas@94.14.40.225)
+[15:25:11] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Ping timeout: 258 seconds)
+[15:35:01] *** Quits: dpkg (~dpkg@debian/bot/dpkg) (Quit: buh bye!)
+[15:35:23] *** Joins: dpkg (~dpkg@debian/bot/dpkg)
+[15:39:01] *** Joins: zadock (~Baltazar@user/zadock)
+[15:40:25] *** Quits: diogenes_ (~diogenes_@188.208.122.231) (Ping timeout: 248 seconds)
+[15:46:12] *** Quits: CEP (~CEP@user/cep) (Quit: me juí)
+[15:57:43] *** Joins: diogenes_ (~diogenes_@93.116.130.26)
+[15:58:14] *** Parts: blackout69 (~blackout6@net-2-42-57-150.cust.vodafonedsl.it) ()
+[15:59:25] *** Joins: AhmadRaniri (~AhmadRani@subs16-114-142-168-0.three.co.id)
+[16:00:21] *** Quits: AhmadRaniri (~AhmadRani@subs16-114-142-168-0.three.co.id) (Client Quit)
+[16:00:22] *** Quits: lunc (~omnd@user/lunc) (Ping timeout: 272 seconds)
+[16:00:49] *** Joins: lunc (~omnd@user/lunc)
+[16:02:26] *** Joins: kulernil (~kulernil@gateway/tor-sasl/kuler)
+[16:03:24] *** Joins: |3ean (~|3ean@user/3ean/x-1246637)
+[16:03:31] *** Quits: Fluxx (~Fluxx@user/fluxx) (Ping timeout: 258 seconds)
+[16:05:29] *** Quits: stateless (~Thunderbi@2603:9000:7101:5e11:0:946e:fb6:cd71) (Quit: stateless)
+[16:06:42] *** Quits: scabootssca_ (~scabby@user/scabootssca) (Ping timeout: 272 seconds)
+[16:14:04] *** Quits: mikeliuk (~mikeliuk@109.249.187.96) (Quit: Connection closed)
+[16:16:10] *** Quits: zadock (~Baltazar@user/zadock) (Ping timeout: 258 seconds)
+[16:16:51] *** Joins: Franciman (~francesco@openglass.it)
+[16:16:56] *** Quits: gefd (~Geoff@user/gefd) (Ping timeout: 258 seconds)
+[16:17:06] <Franciman> hi, anybod using debian on tablet?
+[16:18:23] *** Joins: sinaowolabi (~SinaOwola@160.152.50.125)
+[16:18:51] *** Quits: goose (goose@bucket.goose.ws) (Ping timeout: 258 seconds)
+[16:20:19] <Khepra> !anyone
+[16:20:20] <dpkg> Please do not ask if anyone can help you, knows 'something' or uses 'some_program'.  Instead, ask your real question.  (If the real question _was_ "does anyone use 'some_program'?" ask me about <popcon> instead.)  See <ask> <ask to ask> <polls> <search> <sicco> <smart questions>.
+[16:20:43] <Franciman> i just want to know if anybod managed to do it
+[16:20:46] <Franciman> i have no problem
+[16:24:17] *** Joins: Dom_ (~quassel@i59F7CDA5.versanet.de)
+[16:25:16] <Dom_> hello can someone help me to get my surfstick to work on my raspbian system? i researched a lot and the stick is available as network device
+[16:25:42] <Dom_> how do i bridge and more important insert the PIN other than by the webinterface?
+[16:27:34] <Franciman> Khepra: if you want a concrete question
+[16:27:43] <Franciman> does debian work fine with touch screen monitors?
+[16:29:03] <Blondie101010> Dom_:  99% of consumer devices are made to be configurable through a GUI or webUI and not CLI, but check with the manufacturer for details
+[16:29:40] <Dom_> so it could be there is no other way than webinterface?
+[16:29:55] <Blondie101010> sounds plausible there isn't
+[16:30:30] <Dom_> :-(
+[16:30:53] <Blondie101010> for your bridging question, not sure how it would make sense to bridge your edge router
+[16:31:17] <Blondie101010> or modem 
+[16:31:55] <Blondie101010> a bridge is to connect devices to the same LAN, while routing is used to connect from one network to another
+[16:33:01] *** Quits: sinaowolabi (~SinaOwola@160.152.50.125) (Ping timeout: 268 seconds)
+[16:34:40] *** Joins: zerowalker_w (~zerowalke@193.45.214.130)
+[16:39:00] *** Quits: falk689 (~falk689-q@gateway/tor-sasl/falk689) (Remote host closed the connection)
+[16:42:49] <kulernil> Hi, anyone could give me some hints or reference about setting up a network with virtualbox and kvm? some keywords to search is appreciated, too.
+[16:44:23] *** Joins: ddsys (~ddsys@user/ddsys)
+[16:45:19] <Dom_> well i would need to pass traffic at WiFi/LAN to this lte-modem
+[16:45:47] *** Joins: sinaowolabi (~SinaOwola@102.134.114.1)
+[16:47:13] <Blondie101010> Dom_:  if you connect it to your router machine, then make it the default route and it will route it to the stick which will NAT it
+[16:50:56] *** Joins: tlaxkit (~hexchat@170.253.40.255)
+[16:51:24] *** Joins: palimaar (~oasd@KD113148020047.ppp-bb.dion.ne.jp)
+[16:54:44] *** Joins: paulgrmn (~paulgrmn@user/paulgrmn)
+[17:03:04] *** Quits: paulgrmn (~paulgrmn@user/paulgrmn) (Ping timeout: 272 seconds)
+[17:04:57] *** Joins: ikeaviking (~ikeavikin@caffeine.packetghost.com)
+[17:07:30] *** Joins: op0x0f05 (~op0x0f05@5.29.10.223)
+[17:08:11] *** Quits: npc (~bjdkqalzo@user/spareproject) (Remote host closed the connection)
+[17:10:16] *** Joins: zerpam (~yfournel@163-172-24-38.rev.poneytelecom.eu)
+[17:11:45] *** Joins: pyre (~pyre@crimeboss.nillas-power.com)
+[17:11:45] *** Joins: Kruppt (~Kruppt@50-111-52-254.drhm.nc.frontiernet.net)
+[17:14:59] *** Quits: Haudegen (~quassel@178.115.237.87.static.drei.at) (Quit: Bin weg.)
+[17:18:44] *** Joins: d3sync (~d3sync@130.43.80.239.dsl.dyn.forthnet.gr)
+[17:24:07] *** Joins: chipox (~chipox@185.45.15.216)
+[17:28:05] *** Joins: f-a (~f-a@151.82.157.84)
+[17:28:16] *** Joins: soozie (~quassel@103.46.200.41)
+[17:31:03] *** Joins: enoq (~enoq@194-208-179-35.lampert.tv)
+[17:31:27] <f-a> I am shopping for a new lappy
+[17:31:36] <f-a> how difficult is it to put Debian on a chromebook?
+[17:32:50] <Franciman> not so hard
+[17:33:02] <Franciman> but have nothad first hnd exp
+[17:33:34] *** Joins: paulgrmn (~paulgrmn@user/paulgrmn)
+[17:33:56] <Khepra> there's some info in teh wiki.... https://wiki.debian.org/InstallingDebianOn/HP/Chromebook%2014
+[17:36:46] *** Joins: hassoon (hassoon@user/hassoon)
+[17:36:54] <hassoon> 'afternoon
+[17:37:24] <op0x0f05> you know it's bad when there's a specific page describing how to install it...
+[17:37:27] *** Joins: nixpipe (~nixpipe@net-5-94-233-225.cust.vodafonedsl.it)
+[17:37:45] <f-a> hehe, that is what I am checking
+[17:37:45] *** Joins: Axyzhdeu (uid391113@user/axyzhdeu)
+[17:38:23] *** Quits: op0x0f05 (~op0x0f05@5.29.10.223) (Quit: Client closed)
+[17:39:22] *** Quits: furrymcgee (~devuan@31.179.186.66) (Quit: leaving)
+[17:39:50] *** Joins: op0x0f05 (~op0x0f05@5.29.10.223)
+[17:40:00] *** Joins: mtn (~mtn@206.214.232.111)
+[17:40:11] *** Joins: rglu (~rglu@2603-8090-2006-7fc6-1dd6-d0c9-85aa-4efe.res6.spectrum.com)
+[17:41:46] *** Joins: bninja (~bloodninj@user/bloodninja)
+[17:42:14] *** Joins: Midjak (~Midjak@82-65-111-221.subs.proxad.net)
+[17:44:06] *** Joins: fling (~fling@user/fling)
+[17:45:29] *** Quits: bloodninja123 (~bloodninj@user/bloodninja) (Ping timeout: 258 seconds)
+[17:45:45] *** Cyp_ is now known as Cyp
+[17:51:58] *** Joins: npc (~bjdkqalzo@user/spareproject)
+[17:52:47] *** Joins: mikeliuk (~mikeliuk@109.249.187.96)
+[17:53:40] *** Joins: crash_ (~crash@h-158-174-58-161.A357.priv.bahnhof.se)
+[17:55:25] *** cdown_ is now known as cdown
+[17:55:29] *** Joins: raekuul (~pokota@user/raekuul)
+[18:00:21] *** Quits: pilyn (~pilyn@user/pilyn) (Quit: Leaving)
+[18:02:27] *** Joins: jamea (~jamea@177.239.85.103)
+[18:02:35] *** Quits: reprazent (~reprazent@178-118-195-230.access.telenet.be) (Ping timeout: 252 seconds)
+[18:03:42] *** Joins: reprazent (~reprazent@178-118-195-230.access.telenet.be)
+[18:16:28] *** Quits: diogenes_ (~diogenes_@93.116.130.26) (Quit: vergissmeinnicht)
+[18:16:40] *** Joins: diogenes_ (~diogenes_@93.116.130.26)
+[18:20:28] *** Quits: mtn (~mtn@206.214.232.111) (Quit: Konversation terminated!)
+[18:21:36] *** Quits: diogenes_ (~diogenes_@93.116.130.26) (Ping timeout: 272 seconds)
+[18:21:54] *** Joins: xet7 (~xet7@user/xet7)
+[18:24:41] *** Joins: amacater (~amacater@77.97.174.253)
+[18:25:31] *** Quits: Unity (~Mitsuki@virt-de01.mrvm.net) (Quit: Quit)
+[18:31:03] *** Joins: xet7_ (~xet7@user/xet7)
+[18:31:06] *** Joins: Unity (~Mitsuki@2a01:4f8:140:5007:9b5c:9b13:9d96:1)
+[18:31:16] *** Quits: xet7 (~xet7@user/xet7) (Read error: Connection reset by peer)
+[18:31:34] *** Joins: Haudegen (~quassel@91.114.49.10)
+[18:31:34] *** Joins: GhostInTheShell (~melkor@chaosgate.angband.eu)
+[18:31:35] *** Joins: onelegend (onelegend@wireguard/tunneler/onelegend)
+[18:32:11] *** Joins: chipox_ (~chipox@185.123.143.212)
+[18:34:22] *** Quits: ihristov (~ihristov@217.145.94.71) (Quit: Connection closed)
+[18:34:56] *** Quits: chipox (~chipox@185.45.15.216) (Ping timeout: 258 seconds)
+[18:37:59] *** Joins: greknod5 (~grek@1.132.20.84)
+[18:38:35] *** Quits: greknod (~grek@114-198-41-185.dyn.iinet.net.au) (Ping timeout: 268 seconds)
+[18:38:36] *** greknod5 is now known as greknod
+[18:40:18] *** Quits: xet7_ (~xet7@user/xet7) (Ping timeout: 258 seconds)
+[18:40:59] *** Joins: DaNeenjah (~jake@adsl-74-230-6-204.hsv.bellsouth.net)
+[18:44:53] *** Quits: soozie (~quassel@103.46.200.41) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[18:46:00] *** Quits: amahl (~amahl@dsl-jklbng12-54fbca-64.dhcp.inet.fi) (Ping timeout: 268 seconds)
+[18:46:08] *** Quits: winstonsmith (~winstonsm@109.201.152.173) (Remote host closed the connection)
+[18:46:12] *** Joins: mattil (~mattilinn@62-113-178-139.bb.dnainternet.fi)
+[18:46:17] *** Quits: pong (~beaver@user/pong) (Remote host closed the connection)
+[18:46:23] *** Joins: winstonsmith (~winstonsm@109.201.152.164)
+[18:46:57] *** Joins: pong (~beaver@user/pong)
+[18:48:04] *** Quits: mattil (~mattilinn@62-113-178-139.bb.dnainternet.fi) (Max SendQ exceeded)
+[18:49:09] <enkrypt> some of my installed packages packages ended up with an "ht" status instead of the usual "hi" (they are held)
+[18:49:19] <enkrypt> the "t" is about triggers pending. what can I do to fix that?
+[18:49:46] <enkrypt> the usual apt update; apt dist-upgrade; doesn't show anything special
+[18:50:15] *** Quits: catbehemoth (~vasyl@bras-base-lnglpq6100w-grc-16-206-172-248-225.dsl.bell.ca) (Quit: WeeChat 3.2)
+[18:50:16] *** Quits: amacater (~amacater@77.97.174.253) (Ping timeout: 258 seconds)
+[18:51:24] *** Joins: greknod9 (~grek@203-33-161-235.dyn.iinet.net.au)
+[18:52:06] *** Quits: kulernil (~kulernil@gateway/tor-sasl/kuler) (Quit: Leaving)
+[18:52:25] *** Joins: kulernil (~kulernil@gateway/tor-sasl/kuler)
+[18:52:55] <jelly> enkrypt, which debian release is this?
+[18:53:24] *** Quits: greknod (~grek@1.132.20.84) (Ping timeout: 268 seconds)
+[18:53:24] *** greknod9 is now known as greknod
+[18:54:50] <jelly> enkrypt, if you do a "dpkg --configure -a" or "dpkg --triggers-only -a" does that clear things up?
+[18:55:54] *** Quits: Brottweiler (~brott@user/brottweiler) (Quit: leaving)
+[18:56:20] *** Quits: rsx (~dummy@ppp-188-174-141-119.dynamic.mnet-online.de) (Quit: rsx)
+[18:57:53] *** Quits: delial420 (~delial@47.185.98.253) (Quit: Leaving)
+[18:59:22] *** Joins: Texou (~Texou@2a01cb08902c1600aa950734b38dfd90.ipv6.abo.wanadoo.fr)
+[19:01:07] *** Joins: mweckbecker (~matthias@weckbecker.name)
+[19:04:48] *** Quits: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac) (Remote host closed the connection)
+[19:05:07] *** Joins: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac)
+[19:08:51] *** Joins: srv (~cmd@user/srv)
+[19:10:01] *** Quits: palimaar (~oasd@KD113148020047.ppp-bb.dion.ne.jp) (Ping timeout: 248 seconds)
+[19:15:32] *** Quits: pan (~quassel@pankid.club) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[19:16:59] *** Joins: pan (~quassel@pankid.club)
+[19:21:20] *** Joins: nssy2 (~nssy@user/nssy)
+[19:23:02] *** Quits: nssy (~nssy@user/nssy) (Ping timeout: 272 seconds)
+[19:23:45] *** Joins: amahl (~amahl@dsl-jklbng12-54fbca-64.dhcp.inet.fi)
+[19:24:05] *** Joins: EoflaOE (~eoflaoe@eoflaoe.powered.by.lunarbnc.net)
+[19:24:57] *** Quits: Iamthehuman1 (~noname@user/iamthehuman) (Quit: Konversation terminated!)
+[19:28:20] *** Quits: op0x0f05 (~op0x0f05@5.29.10.223) (Quit: Client closed)
+[19:28:40] *** nssy2 is now known as nssy
+[19:29:00] *** Joins: op0x0f0541 (~op0x0f05@5.29.10.223)
+[19:29:52] *** op0x0f0541 is now known as op0x0f05
+[19:31:11] *** Joins: bebop_ (~bebop@dialup-208-98-133-190.fmtc.com)
+[19:31:34] *** Quits: op0x0f05 (~op0x0f05@5.29.10.223) (Client Quit)
+[19:33:21] *** Quits: wigums (~wigums@user/wigums) (Read error: Connection reset by peer)
+[19:33:30] *** Joins: Iamthehuman1 (~noname@user/iamthehuman)
+[19:34:22] *** Joins: wigums (~wigums@user/wigums)
+[19:39:55] *** Joins: Iamthehuman (~noname@user/iamthehuman)
+[19:40:04] *** Quits: Iamthehuman1 (~noname@user/iamthehuman) (Killed (NickServ (GHOST command used by Iamthehuman)))
+[19:40:11] *** Iamthehuman is now known as Iamthehuman1
+[19:40:14] *** Joins: diogenes_ (~diogenes_@188.208.121.20)
+[19:40:16] *** Quits: jamea (~jamea@177.239.85.103) (Ping timeout: 268 seconds)
+[19:43:53] *** Joins: nuala (~nuala@user/nuala)
+[19:45:19] *** Joins: op0x0f05 (~op0x0f05@5.29.10.223)
+[19:48:05] *** Quits: beardy (~beardy@user/beardy) (Ping timeout: 252 seconds)
+[19:50:24] *** Joins: Tokamak (~Tokamak@mobile-166-170-30-222.mycingular.net)
+[19:51:59] *** Quits: aeris (~aeris@gateway/tor-sasl/aeris) (Quit: ZNC - http://znc.sourceforge.net)
+[19:52:01] *** Joins: _aeris_ (~aeris@gateway/tor-sasl/aeris)
+[19:52:12] *** Quits: beelzebuzz (~rasputin@gateway/tor-sasl/beelzebuzz) (Remote host closed the connection)
+[19:52:33] *** Joins: beelzebuzz (~rasputin@gateway/tor-sasl/beelzebuzz)
+[19:53:08] *** _aeris_ is now known as aeris
+[19:53:14] *** Quits: towo_home (~towo_home@ip1f10ac38.dynamic.kabel-deutschland.de) (Quit: Leaving)
+[19:53:42] *** Joins: beardy (~beardy@user/beardy)
+[19:54:02] *** Joins: towo_home (~towo_home@ip1f10ac38.dynamic.kabel-deutschland.de)
+[19:58:27] *** Quits: bebop_ (~bebop@dialup-208-98-133-190.fmtc.com) (Quit: oxygen shutdown...)
+[19:58:30] *** Joins: cdown_ (~cdown@89.32.122.5)
+[19:59:06] *** Quits: srv (~cmd@user/srv) (Quit: Leaving)
+[20:00:09] *** Quits: cdown (~cdown@163.114.131.1) (Ping timeout: 248 seconds)
+[20:00:15] *** cdown_ is now known as cdown
+[20:01:37] *** Joins: greycat (~greg@209.142.155.49)
+[20:03:39] *** Joins: bebop_ (~bebop@dialup-208-98-133-190.fmtc.com)
+[20:06:31] *** Quits: brickfat (~brickfat@user/brickfat) (Quit: Leaving)
+[20:07:15] *** Joins: yuta (~pi@user/yuta)
+[20:09:37] *** Quits: Tokamak (~Tokamak@mobile-166-170-30-222.mycingular.net) (Ping timeout: 258 seconds)
+[20:11:40] *** Joins: Tokamak (~Tokamak@mobile-166-170-30-222.mycingular.net)
+[20:14:35] *** Quits: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac) (Remote host closed the connection)
+[20:14:57] *** Joins: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac)
+[20:15:06] *** Quits: bebop_ (~bebop@dialup-208-98-133-190.fmtc.com) (Quit: oxygen shutdown...)
+[20:15:25] *** Joins: Elzington (~Elzington@104.129.24.120)
+[20:18:45] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[20:24:22] *** Franciman is now known as Error_the_commie
+[20:24:44] *** Quits: op0x0f05 (~op0x0f05@5.29.10.223) (Quit: Client closed)
+[20:25:50] *** Quits: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac) (Remote host closed the connection)
+[20:26:01] *** Quits: cdown (~cdown@89.32.122.5) (Remote host closed the connection)
+[20:26:22] *** Joins: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac)
+[20:28:17] *** Joins: cdown (~cdown@89.32.122.5)
+[20:31:26] *** Quits: Tokamak (~Tokamak@mobile-166-170-30-222.mycingular.net) (Ping timeout: 268 seconds)
+[20:31:42] *** Joins: johnsol (~root@178.176.76.245)
+[20:31:43] *** debchange sets mode: +b *!*@178.176.76.245
+[20:31:44] *** johnsol was kicked by debchange (You are banned from this channel)
+[20:33:46] *** Quits: Haohmaru (~Haohmaru@195.24.53.110) ()
+[20:34:36] *** Quits: allorder (allorder@user/allorder) (Quit: allorder)
+[20:34:58] *** pi37 is now known as johnjay
+[20:35:17] *** Error_the_commie is now known as Franciman
+[20:35:19] *** Joins: Tokamak (~Tokamak@107.117.203.145)
+[20:36:32] <jelly> !qotd0
+[20:36:33] <dpkg> -<-Freenode-staff-member->- [Global Notice] Hi all, terribly sorry to bother you again but regardless of how much hairdye I go through, I can't get away from being blonde. Needless to say, my previous global resulted in inadvertedly ddosing the machine hosting the blog and website. Please try again later and for now, call me Homer and watch me Doh!
+[20:37:07] *** Quits: totenkoph (~scythe@user/totenkoph) (Remote host closed the connection)
+[20:37:50] *** Joins: totenkoph (~scythe@user/totenkoph)
+[20:38:16] *** Joins: bebop_ (~bebop@dialup-208-98-133-190.fmtc.com)
+[20:41:25] *** Joins: blackout69 (~blackout6@net-2-42-57-150.cust.vodafonedsl.it)
+[20:42:14] *** Joins: cdown_ (~cdown@163.114.131.1)
+[20:42:49] *** Quits: tlaxkit (~hexchat@170.253.40.255) (Ping timeout: 248 seconds)
+[20:42:59] *** Joins: allorder (allorder@user/allorder)
+[20:45:18] *** Quits: cdown (~cdown@89.32.122.5) (Ping timeout: 272 seconds)
+[20:45:28] *** cdown_ is now known as cdown
+[20:45:35] *** Quits: wigums (~wigums@user/wigums) (Read error: Connection reset by peer)
+[20:46:10] *** chipox_ is now known as chipox
+[20:47:17] *** Joins: hitest (~hitest@user/hitest)
+[20:47:56] *** Joins: wigums (~wigums@user/wigums)
+[20:48:04] *** Quits: bebop_ (~bebop@dialup-208-98-133-190.fmtc.com) (Quit: oxygen shutdown...)
+[20:49:21] *** Quits: enoq (~enoq@194-208-179-35.lampert.tv) (Quit: enoq)
+[20:50:15] *** Joins: hbautista (~hbautista@187.135.210.129)
+[20:50:19] *** Joins: luuuciano (~luuuciano@user/luuuciano)
+[20:51:18] *** Quits: chipox (~chipox@185.123.143.212) (Quit: Leaving)
+[20:52:20] *** waxfire238 is now known as waxfire
+[20:52:26] *** Joins: chipox (~chipox@217.138.199.92)
+[20:54:13] *** Joins: Thoth (~thoth@2601:647:4903:69f0::d5e7)
+[20:54:14] *** Quits: kulernil (~kulernil@gateway/tor-sasl/kuler) (Remote host closed the connection)
+[20:54:54] *** Joins: kulernil (~kulernil@gateway/tor-sasl/kuler)
+[20:56:10] *** Quits: Haudegen (~quassel@91.114.49.10) (Quit: Bin weg.)
+[20:56:37] *** Quits: hitest (~hitest@user/hitest) (Quit: Leaving)
+[20:58:47] *** Joins: lad (~lad@user/lad)
+[21:06:34] *** Quits: kulernil (~kulernil@gateway/tor-sasl/kuler) (Remote host closed the connection)
+[21:10:18] *** Quits: f-a (~f-a@151.82.157.84) (Ping timeout: 268 seconds)
+[21:11:27] *** Joins: TomyWork (~TomyLobo@p200300e80f06af00c00d5f5320b62de4.dip0.t-ipconnect.de)
+[21:12:03] *** Joins: f-a (~f-a@151.82.171.50)
+[21:13:36] *** onelegend is now known as legend
+[21:14:20] *** Joins: rgr (~user@ip-109-42-112-234.web.vodafone.de)
+[21:16:39] *** legend is now known as onelegend
+[21:19:39] *** Quits: de-facto (~de-facto@user/de-facto) (Remote host closed the connection)
+[21:23:56] *** Quits: GenTooMan (~cyberman@2601:547:437f:e5c6:21f:5bff:fefe:a883) (Ping timeout: 272 seconds)
+[21:25:03] *** Joins: GenTooMan (~cyberman@2601:547:437f:e5c6:21f:5bff:fefe:a883)
+[21:25:18] *** Quits: _Vi (~vi0oss@2a0d:7c40:3000:1326::3) (Ping timeout: 268 seconds)
+[21:27:49] *** Joins: kuler (~kulernil@gateway/tor-sasl/kuler)
+[21:31:16] *** Quits: Tokamak (~Tokamak@107.117.203.145) (Ping timeout: 258 seconds)
+[21:36:27] *** Joins: kapad (~kapad@46.246.193.116.dsl.dyn.forthnet.gr)
+[21:40:27] *** Joins: Brottweiler (~brott@user/brottweiler)
+[21:41:09] *** Joins: xet7 (~xet7@user/xet7)
+[21:41:29] *** Quits: reprazent (~reprazent@178-118-195-230.access.telenet.be) (Ping timeout: 248 seconds)
+[21:43:35] *** Joins: reprazent (~reprazent@178-118-195-230.access.telenet.be)
+[21:44:22] *** Joins: tradar (~tradar@user/tradar)
+[21:45:36] *** Joins: thiras (~thiras@user/thiras)
+[21:46:53] *** Quits: lucad111 (~lucad111@51-148-40-1.dsl.zen.co.uk) (Quit: Leaving)
+[21:48:14] *** Joins: gildasio (~gildasio@gateway/tor-sasl/gildasio)
+[21:48:30] *** Joins: yuckey2d7 (~yuckey2d@195.246.120.52)
+[21:48:31] *** Quits: mikeliuk (~mikeliuk@109.249.187.96) (Quit: Connection closed)
+[21:50:26] *** Quits: yuckey2d (~yuckey2d@195.246.120.132) (Ping timeout: 258 seconds)
+[21:50:27] *** yuckey2d7 is now known as yuckey2d
+[21:50:58] *** Joins: mtn (~mtn@206.214.232.111)
+[21:51:52] *** Joins: co0n (~r4co0n@user/r4co0n)
+[21:59:55] *** Joins: de-facto (~de-facto@user/de-facto)
+[22:00:09] *** Joins: Clarth (~Clarth@68.235.36.102)
+[22:03:09] *** Quits: tradar (~tradar@user/tradar) (Quit: tradar)
+[22:03:20] *** Quits: reprazent (~reprazent@178-118-195-230.access.telenet.be) (Ping timeout: 268 seconds)
+[22:03:35] *** Joins: Tokamak (~Tokamak@107.117.203.161)
+[22:04:02] *** Joins: reprazent (~reprazent@178-118-195-230.access.telenet.be)
+[22:05:11] *** Joins: _Vi (~vi0oss@2a0d:7c40:3000:1326::3)
+[22:07:35] *** Joins: mexen (uid495612@user/mexen)
+[22:08:40] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Ping timeout: 256 seconds)
+[22:11:03] *** gordonfish- is now known as gordonfish
+[22:12:49] *** Joins: polyphem (~polyphem@2a02:810d:640:776c:5d1:5727:1484:7756)
+[22:17:20] *** Joins: Haudegen (~quassel@178.115.237.87.static.drei.at)
+[22:19:05] *** Quits: gce108 (~gce@user/gce108) (Read error: Connection reset by peer)
+[22:20:22] *** Quits: de-facto (~de-facto@user/de-facto) (Quit: See you around. 💤)
+[22:21:23] *** Joins: gce108 (~gce@user/gce108)
+[22:22:30] *** Quits: darutoko (~darutoko@176.209.223.5) (Quit: Leaving)
+[22:23:17] *** Joins: alzgh (~alzgh@216.155.158.214)
+[22:24:32] <alzgh> Hi, I just created an account on debian.org but I haven't received a confirmation email nor can I login with the account information. Is a lag between registration and activation of account normal?
+[22:26:25] <alzgh> Apparently, automatic account creation is disabled.
+[22:26:37] <greycat> I'm guessing... that you mean wiki.debian.org?
+[22:27:43] <greycat> If not, then I have no idea what it means to "create an account on debian.org".
+[22:28:55] *** Quits: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac) (Remote host closed the connection)
+[22:29:05] *** Joins: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac)
+[22:29:05] *** Quits: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac) (Read error: Connection reset by peer)
+[22:29:21] *** Joins: DsszzD (~DsszzD@2409:4060:87:2ab3::ef6:40ac)
+[22:30:37] *** Joins: n4dir (~user@i5E8666BE.versanet.de)
+[22:31:42] *** Joins: de-facto (~de-facto@user/de-facto)
+[22:31:46] *** debchange sets mode: -b *!*@178.176.76.245
+[22:32:06] *** Joins: fatso-dude (~patryk@S010690e2ba275824.vc.shawcable.net)
+[22:33:30] *** Joins: GrapeApe1 (~GrapeApe@065-190-150-032.inf.spectrum.com)
+[22:33:46] <alzgh> greycat I was about to edit a page and tried to create an account. I read that I need to contact wiki@debian.org, which I did.
+[22:34:10] <alzgh> Yes, I meant wiki.debian.org
+[22:34:36] <greycat> If the registration didn't happen within a minute, then it's probably being vetted by a human.  So you'll just have to wait for it.
+[22:35:20] <alzgh> OK, thanks
+[22:35:34] *** Quits: GrapeApe (~GrapeApe@065-190-150-032.inf.spectrum.com) (Ping timeout: 272 seconds)
+[22:35:34] *** GrapeApe1 is now known as GrapeApe
+[22:37:36] <tharkun> A client requires php7.4 and his current service is running debian 10. What is my best choice? Upgrade to testing or backport 7.4?
+[22:37:58] <tharkun> BTW Good $DAY.
+[22:40:02] <Khepra> tharkun: sury.org. that's, btw, the maintainer of PHP in debian, who also offers his own custom PHP repos
+[22:40:04] <PMT> Upgrading to bullseye would, in a vacuum, be markedly less work, but I don't know if your client has anything depending on older versions.
+[22:44:02] *** Quits: gildasio (~gildasio@gateway/tor-sasl/gildasio) (Ping timeout: 244 seconds)
+[22:44:12] <greycat> I would upgrade, possibly after waiting a few days for it to become officially stable, possibly just doing it anyway, depending on the client.
+[22:47:57] *** Joins: gildasio (~gildasio@gateway/tor-sasl/gildasio)
+[22:54:00] *** Quits: hbautista (~hbautista@187.135.210.129) (Ping timeout: 256 seconds)
+[22:54:50] *** Quits: Tokamak (~Tokamak@107.117.203.161) (Ping timeout: 258 seconds)
+[22:57:34] *** Joins: nergar (~nergar@177.225.146.7)
+[22:57:44] *** Joins: gildasio1 (~gildasio@gateway/tor-sasl/gildasio)
+[23:00:20] *** Quits: luuuciano (~luuuciano@user/luuuciano) (Remote host closed the connection)
+[23:00:34] *** Quits: gildasio (~gildasio@gateway/tor-sasl/gildasio) (Ping timeout: 244 seconds)
+[23:00:44] *** Joins: luuuciano (~luuuciano@user/luuuciano)
+[23:01:01] *** Joins: Tokamak (~Tokamak@2600:381:1529:c93d:f422:662d:52eb:6d43)
+[23:01:28] *** Quits: acebrian1 (~acebrianj@162.red-83-50-62.dynamicip.rima-tde.net) (Quit: WeeChat 1.9.1)
+[23:04:09] <alzgh> I read this https://wiki.debian.org/DebianRepository/Format and got a good idea about how repository management works in debian/ubuntu. I'm looking for a good source for security key management. How it works for apt and dependency managers and also in general.
+[23:04:26] <alzgh> If anyone knows of a good source, I'm really grateful.
+[23:07:09] *** Joins: falk689 (~falk689-q@gateway/tor-sasl/falk689)
+[23:08:17] *** Joins: GrapeApe9 (~GrapeApe@065-190-150-032.inf.spectrum.com)
+[23:08:28] <PMT> How it works from a client perspective or from the perspective of someone administering such a large repo?
+[23:09:42] *** Quits: GrapeApe (~GrapeApe@065-190-150-032.inf.spectrum.com) (Ping timeout: 245 seconds)
+[23:09:42] *** GrapeApe9 is now known as GrapeApe
+[23:12:41] *** Quits: co0n (~r4co0n@user/r4co0n) (Ping timeout: 252 seconds)
+[23:14:29] <alzgh> PMT First how it work from a client's perspective. The key management and gpg part.
+[23:14:45] *** Quits: bogus (~bogus@83-83-165-7.cable.dynamic.v4.ziggo.nl) (Read error: Connection reset by peer)
+[23:15:31] <somiaj> https://wiki.debian.org/SecureApt -- something like that?
+[23:15:37] *** Joins: bogus (~bogus@83-83-165-7.cable.dynamic.v4.ziggo.nl)
+[23:17:57] <alzgh> O, yeah. This looks good. Thanks.
+[23:20:12] <tharkun> Khepra: Thanks for the link I will propose it to him. I am not fond of backporting anything, although having a separate user space install for any language is most welcomed.
+[23:21:03] <tharkun> PMT: I will ask them they should know about it. Although knowing the degree of competence regarding sysadmin stuff I will set up a vps with all their code prior to doing anything.
+[23:21:42] <PMT> Backups are always good no matter how much you trust people not to screw things up. :)
+[23:21:42] <tharkun> greycat: I did not know a new release was about to be done.
+[23:21:58] <greycat> !bullseye
+[23:21:59] <dpkg> The release following Debian 10 "Buster" is codenamed "Bullseye" (Woody's horse in Toy Story 2) and will be Debian 11. Tentative release date: 2021-08-14. Good bug reports on packages and upgrades are greatly appreciated! https://wiki.debian.org/DebianBullseye . Bullseye is Debian turned up to 11! <buster->bullseye> <install bullseye>
+[23:22:01] <tharkun> PMT: Specially for archive purposes.
+[23:22:24] *** Quits: Kruppt (~Kruppt@50-111-52-254.drhm.nc.frontiernet.net) (Quit: Leaving)
+[23:23:50] *** Quits: nergar (~nergar@177.225.146.7) (Read error: Connection reset by peer)
+[23:24:05] *** Joins: nergar (~nergar@177.225.146.7)
+[23:25:02] *** Quits: nergar (~nergar@177.225.146.7) (Read error: Connection reset by peer)
+[23:25:22] *** Joins: co0n (~r4co0n@user/r4co0n)
+[23:29:55] <alzgh> I trust people to screw things up, given enough time and opportunity
+[23:32:17] *** Joins: iosid1 (~Thunderbi@static-87-79-68-249.netcologne.de)
+[23:32:32] <PMT> that's generally the wise way to bet
+[23:32:33] *** Joins: stunder (~stunder@47.146.57.113)
+[23:35:02] *** Quits: mei (~mei@user/mei) (Read error: Connection reset by peer)
+[23:36:49] *** Quits: bmlzootown (~bmlzootow@075-138-153-223.res.spectrum.com) (Quit: ZNC - https://znc.in)
+[23:38:34] *** Quits: mtn (~mtn@206.214.232.111) (Quit: Konversation terminated!)
+[23:40:17] *** Joins: craigevil (~craig@user/craigevil)
+[23:41:36] *** Quits: mbrad (~mbrad@176.252.84.38) (Ping timeout: 258 seconds)
+[23:41:52] *** Quits: chipox (~chipox@217.138.199.92) (Quit: Leaving)
+[23:44:40] *** Joins: bmlzootown (~bmlzootow@075-138-153-223.res.spectrum.com)
+[23:49:21] *** Joins: samnob (~samnob@user/samnob)
+[23:49:40] *** Quits: jo-huck (~johuck@dynamic-093-131-111-085.93.131.pool.telefonica.de) (Ping timeout: 272 seconds)
+[23:52:52] *** Joins: chipox (~chipox@31.170.22.17)
+[23:53:12] *** Quits: chipox (~chipox@31.170.22.17) (Remote host closed the connection)
+[23:54:29] *** Parts: blackout69 (~blackout6@net-2-42-57-150.cust.vodafonedsl.it) ()
+[23:54:35] *** Joins: chipox (~chipox@31.170.22.17)
+[23:58:52] *** Joins: brickfat (~brickfat@user/brickfat)

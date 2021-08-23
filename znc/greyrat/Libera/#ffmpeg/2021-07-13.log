@@ -1,0 +1,623 @@
+[00:00:26] *** Joins: Buster_ (~Buster@46.160.36.66)
+[00:04:55] <kepstin> avframe pointers
+[00:05:00] *** Quits: dreamon (~dreamon@pd95038fb.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[00:05:41] <Terrence> Ohh nice
+[00:05:56] <Terrence> But do you see where my confusion lies at ? kepstin
+[00:07:30] <kepstin> since silencedetect tells you on later frames whether earlier frames were silence, you need to delay your decision about whether to send earlier frames to the encoder or not
+[00:07:42] <kepstin> to do that, you temporarily store the earlier frames in a buffer
+[00:08:27] <BtbN> I don't think it does that?
+[00:08:46] <BtbN> Or you mean the duration on the end tag?
+[00:11:04] <Terrence> So here's what I'm getting .. 1. Open audio file 2. Run silencedetect filter 3. Up until silence_start, store every frame in the buffer 4. Encode the frames in the buffer 5. Reach silence_end and repeat step 3 to step 5 again?
+[00:11:25] <kepstin> BtbN: according to the docs of the silencedetect filter, after the "duration" has elapsed since the start of the silence, it'll add a tag to the next frame containing the timestamp when the silence actually started
+[00:11:38] <kepstin> where "duration" is the filter parameter (default 2s)
+[00:11:57] <kepstin> i thought the filter would have an internal buffer that length, but apparently it doesn't :/
+[00:11:59] <BtbN> kepstin, I think that just points back to the start metadata tag
+[00:12:33] <kepstin> BtbN: straight from the docs: "The lavfi.silence_start […] metadata key is set on the first frame whose timestamp equals or exceeds the detection duration and it contains the timestamp of the first frame of the silence."
+[00:13:14] <BtbN> ah, so you might need to do a bit of backtracking with that info
+[00:13:25] <Terrence> Hmm..
+[00:14:26] <Terrence> What would need to be done differently then? BtbN
+[00:14:34] <BtbN> hm?
+[00:17:05] <Terrence> My apologies I'm just kinda confused
+[00:18:36] <Terrence> How does this delay work?
+[00:18:55] <Terrence> Because apparently it tells you on a later frame where the first indication of silence was detected
+[00:24:51] <kepstin> right, that's exactly what it does. because it only reports silence if it sees (by default) at least 2 seconds of silence, which means it has to wait 2 seconds before it can decide if it was silence or not.
+[00:25:13] *** Quits: Blacker47 (~Blacker47@user/blacker47) (Quit: Life is short. Get a V.90 modem fast!)
+[00:26:16] <Terrence> Okay
+[00:27:36] *** Quits: onicosta (~onicosta@5.2.73.206) (Ping timeout: 268 seconds)
+[00:31:23] <Terrence> https://pastebin.com/zycPbXau
+[00:31:49] <Terrence> kepstin just so I'm understanding correctly, the comments that I've added encapsulate what I would need to do right?
+[00:34:54] <Terrence> hmm well I guess the problem with that is that it would keep encoding up until it's not longer silent when i really only need to do it once
+[00:42:41] <Terrence> yeah just to make sure, I would only need to encode all the frames up until the the first encounter of silence right?
+[00:42:56] *** Joins: demon__ (~user@196.156.134.90)
+[00:44:32] <kepstin> yeah - the "silence_start" indicates that silence started 2s ago, and the "silence_end" indicates that the silence has ended now.
+[00:46:12] *** Quits: anotheruser (~user@41.46.227.139) (Ping timeout: 265 seconds)
+[00:46:50] <Terrence> Okay but here's my question, (once again thanks for all your help can't express it enough), so with that loop that I have, I start reading the INPUT file file from it's beginning. Filter the frame. And if it's not silent (flag = 0) ADD IT TO BUFFER, but when flag changes to 1, and it's silent, I should only encode and write all the frames in the
+[00:46:51] <Terrence> current buffer once
+[00:47:30] <Terrence> But the size of the buffer is going to continuously be different though right?
+[00:47:43] <Terrence> Because one duration could be 3 seconds another could be 10 seconds
+[00:48:01] *** Joins: TanoMarcelo (~TanoMarce@179.63.242.126)
+[00:54:24] <kepstin> no, the buffer should only ever have about 2s or so.
+[00:54:48] <kepstin> since if 2s have passed and you didn't get a silence_start, then you know it wasn't silent so you can encode it
+[00:55:33] *** Quits: milkt (~debian@gateway/tor-sasl/milkt) (Quit: leaving)
+[00:58:30] <Terrence> Sigh, I don't know why it's taking me this long to understand =(  I think I have the general gist down but understanding how to incorporate this is what's confusing me
+[01:00:15] <Terrence> Just from a logical standpoint here is what I have thus far
+[01:00:16] <Terrence> https://pastebin.com/N91b5bXa
+[01:00:40] <Terrence> Where any time the frame isn't silent I would ADD it to the buffer
+[01:00:41] *** Quits: demon__ (~user@196.156.134.90) (Read error: Connection reset by peer)
+[01:01:17] <Terrence> But whenever lavfi.silence_start is added to a metadata key, it stays 1 until the next lavfi.silence_end
+[01:01:43] <Terrence> *the flag stays 1
+[01:03:24] <Terrence> But I only need to encode the buffer once
+[01:03:53] <Terrence> So what should I be doing during this case? kepstin
+[01:04:21] *** Joins: milkt (~debian@gateway/tor-sasl/milkt)
+[01:05:14] <Terrence> Unless, what I could do is just added only the frames I do need in the whole while loop and perform the encoding process outside of it?
+[01:07:59] *** Quits: Flabb (~Flabb@89.169.84.117) (Quit: Leaving)
+[01:18:41] <Terrence> Ohhh wait kepstin I think I understand now, the buffer is used to only hold the duration of silence right??
+[01:19:23] <kepstin> it's used to delay the processing of frames by an amount of time equal to the delay by which the silencedetect filter reports silence start
+[01:19:43] <fossforus> what does the "pred" option do in some codecs? I can find very little information about it
+[01:20:19] <fossforus> png has none, sub, up, avg, paeth, and mixed for example
+[01:20:47] <kepstin> fossforus: you need to check the docs of the specific codec, that's a codec-specific option
+[01:21:14] <Terrence> ohhhhh
+[01:21:44] <fossforus> kepstin: if you mean the docs at https://ffmpeg.org/ffmpeg-codecs.html#png they're not even mentioned
+[01:23:04] <kepstin> hmm, so it isn't.
+[01:23:24] <kepstin> from the name and option description, it sets the "prediction method" used
+[01:24:02] <fossforus> tried searching "prediction method" in ffmpeg-all's manual, found nothing
+[01:24:11] <kepstin> which in the case of png, is a pre-filter operation that can optionally be applied to an image in the hopes of making it compress better with zlib
+[01:24:26] <fossforus> I see, so it's only for use with zlib
+[01:24:29] <fossforus> guess I'll set to none then
+[01:24:39] <kepstin> none is the default, you don't have to set it at all
+[01:24:52] <kepstin> some types of images might compress better with other options
+[01:25:13] <kepstin> (but that's a "you have to try and see" thing, and you'd probably be better off using dedicated png optimization tools)
+[01:25:46] <kepstin> https://www.w3.org/TR/PNG-Filters.html if you want to read about them
+[01:26:49] <furq> fossforus: use -pred mixed for best compression
+[01:26:59] <furq> that tries the other four and selects the smallest one
+[01:27:11] <Terrence> Ahhh
+[01:27:18] <Terrence> kepstin I think I got it
+[01:27:19] <Terrence> https://pastebin.com/5Nmp3B6D
+[01:27:34] <Terrence> This is how it would function, I'm assuming?
+[01:29:39] *** another is now known as another|
+[01:30:04] <Terrence> Because the frames that are silent are passed to the buffer instead and after it ends it begins the encoding process again
+[01:30:06] <Terrence> Ahhh
+[01:30:53] <fossforus> kepstin: much thanks
+[01:32:55] <Terrence> But how would that delay the processing?
+[01:37:35] <Terrence> Because if I have an audio file that 40 seconds
+[01:38:06] <Terrence> and I'm encoding frames and get to silence start at 32 seconds
+[01:38:18] <Terrence> and it lasts 4 seconds
+[01:38:27] <Terrence> it means that it really started at 28 seconds
+[01:38:34] <Terrence> How would the buffer be helpful then?
+[01:39:04] <Terrence> kepstin
+[01:39:48] <kepstin> hmm? a silence start at 32s means that silence really started at 30s
+[01:40:15] <Terrence> I set my duration to 3 seconds
+[01:40:16] <kepstin> because silencedetect filter looks for 2s of silence (by default) before reporting that it found silence
+[01:40:25] <Terrence> Oh
+[01:40:53] <Terrence> But you still run into the same problem, you know what I mean?
+[01:40:58] *** beaver is now known as pong
+[01:41:10] <Terrence> Because if I'm reading the frames
+[01:41:41] <Terrence> And I encode up until 32 seconds
+[01:41:45] <kepstin> i don't see any problem...?
+[01:42:15] <Terrence> And I silencedetect says silence was found, and I add the frames into the buffer up until silence end
+[01:42:49] <Terrence> Aren't the frames that I decoded off by 3 seconds? kepstin
+[01:43:11] <kepstin> you don't even need to buffer frames during silence, since you're throwing them away. the buffer is only to hold frames which you don't know whether they're silence or not yet
+[01:44:32] <Terrence> Ohh okay that clears up a little confusion, but the offset is where my confusion still lied
+[01:44:53] <kepstin> when you get a silence start, you send any frames in the buffer with timestamps before the silence start to the encoder. then throw out the rest of the frames. then keep throwing out frames until you get the silence end, at which point you start buffering them again.
+[01:45:09] <Terrence> Ohhhhhhhh
+[01:45:12] <kepstin> (and also any frame in the buffer older than 3s can't be silence, so it can go to the encoder too)
+[01:46:29] *** Quits: Volgaar (~volgaar@104.66.13.93.rev.sfr.net) (Quit: WeeChat 3.2)
+[01:47:45] <Terrence> Thanks!
+[01:48:03] <Terrence> But since I don't know what the size of the buffer will be should I just use a stream instead?
+[01:48:47] <kepstin> i don't know what you mean by a stream. a buffer is just a generic word for "a data structure that holds stuff", use whatever is appropriate.
+[01:49:34] <Terrence> Okay cool
+[01:49:38] <Terrence> awesome
+[01:50:15] <kepstin> in particular, you want a data structure that lets you push onto the end, and pull from the front, so some sort of queue?
+[01:51:00] <Terrence> I'm pretty sure a struct exists called AVFifoBuffer
+[01:51:08] <Terrence> I'll see if I can store frames in it
+[01:51:41] <Terrence> But I'm getting so close to getting this ! Nice!
+[01:51:55] *** Joins: linjie (~linjie@58.247.210.251)
+[01:55:50] <Terrence> https://pastebin.com/8TcF5bdb
+[01:56:15] *** Quits: linjie (~linjie@58.247.210.251) (Ping timeout: 255 seconds)
+[01:56:18] <Terrence> Kind of psuedocoded but this is the general process that I would need to apply? kepstin
+[01:56:54] <Terrence> One of my fears is instances where the file either starts silent, or ends in silence before the total duration of the file
+[02:06:58] *** Joins: jafa (~jafa@ip68-98-112-122.ph.ph.cox.net)
+[02:08:47] <jafa> graph with yadif mode=send_field results in the timestamps being doubled, and unclear how to detect this happening
+[02:09:09] <jafa> source is MPEG-TS so the timestamps are in 90000 units
+[02:09:25] <jafa> I set the codec pkt_timebase to 1/90000
+[02:10:26] <jafa> the first frame out of the codec used to configure the graph reports time_base = 1001/60000 and step 2
+[02:10:49] <jafa>  configure the graph with this time base
+[02:11:53] <jafa> what I get out is best_effort_timestamp and pkt_pts = original MPEG-TS timestamp, with every pair of frames having the same timestamp
+[02:12:18] <jafa> and I get pts = double with every 2nd frame spaced inbetween
+[02:12:49] <jafa> ultimately what I need is a 90kHz base PTS
+[02:13:34] <BtbN> yadif can produce twice as many frames as it gets, so it has to double timestamps
+[02:14:00] <jafa> I would have expected the yadif filter to interpolate the timestamp OR indicate somewhere it has changed the timebase
+[02:14:58] <jafa> how do I detect when yadif is doing that, or does it always do that for send=field even for progressive content it doesn't touch
+[02:15:20] <jafa> using "yadif=deint=interlaced:mode=send_field"
+[02:17:05] <jafa> timestamps can't be changed for AV sync so I need to know when it is doubling so I can undo the doubling
+[02:18:42] <Terrence> Is there a way to seek to the 0 second mark of the a format context?
+[02:19:13] <jafa> the timestamps that come out of avcodec are my 90kHz timestamps even though the codec is reporting the time_base to be 1/59.94 with a step of 2
+[02:20:28] <jafa> is there a way to get the time_base used for the timestamps exiting the graph?
+[02:26:12] <jafa> crude but I could check if pts != pkt_pts and halve pts to get the timestamp
+[02:27:26] <jafa> but I figure there must be a way to read back the timebase yadif has generated
+[02:28:37] <BtbN> Rescale the timestamps to the desired timebase?
+[02:28:59] <jafa> yes, but I need to know what timebase yadif generated to know how to rescale
+[02:30:51] <kepstin> if yadif changed the timebase, then it you should be able to get the new timebase on the filter chain output
+[02:31:31] <BtbN> depending on how it changes it, it might be impossible to represent the new frames under the old timebase
+[02:32:52] <Terrence> In relation to timebase, is the conversion to convert it to seconds just 1/75 of it ?
+[02:33:02] <jafa> av_opt_get_q("time_base") on buffersink?
+[02:44:06] *** Joins: someuser (~user@41.46.255.35)
+[02:55:48] *** Quits: pong (~beaver@user/pong) (Quit: purge)
+[02:57:53] *** Joins: beaver (~beaver@user/pong)
+[02:57:58] *** Quits: keypusher (keypusher@user/keypusher) (Ping timeout: 252 seconds)
+[02:59:01] *** beaver is now known as pong_par_le_vide
+[03:03:58] *** pong_par_le_vide is now known as le_vide
+[03:06:36] *** Joins: keypusher (keypusher@user/keypusher)
+[03:14:22] *** Quits: le_vide (~beaver@user/pong) (Quit: les hommes, les put****** d'hommes)
+[03:17:29] *** Joins: le_vide (~beaver@user/pong)
+[03:19:05] *** Quits: der_richter (~Akemi@p4fde4320.dip0.t-ipconnect.de) (Quit: Leaving.)
+[03:19:29] *** le_vide is now known as hommes_de_mes_de
+[03:22:41] *** hommes_de_mes_de is now known as hommes_de_mes_ce
+[03:23:30] *** hommes_de_mes_ce is now known as hommes_de_mes_bi
+[03:23:37] *** hommes_de_mes_bi is now known as hommes_mes_biip
+[03:27:35] <jafa> no luck with av_opt_get_q(buffersink, "time_base")
+[03:29:45] <jafa> ah - buffersink->inputs[0].time_base
+[03:35:37] *** Quits: hommes_mes_biip (~beaver@user/pong) (Quit: je cable)
+[03:36:06] *** Quits: Arwalk (~Arwalk@lfbn-dij-1-263-107.w86-235.abo.wanadoo.fr) (Ping timeout: 252 seconds)
+[03:41:55] *** Joins: Arwalk (~Arwalk@lfbn-dij-1-263-107.w86-235.abo.wanadoo.fr)
+[03:45:13] *** Quits: iive (~iive@87.119.101.204.client.entry.bg) (Quit: They came for me...)
+[03:47:48] <jafa> that worked - getting a timebase of 1/180000 so simple conversion to get back to the timebase I want (1/90000)
+[03:54:39] *** Quits: keypusher (keypusher@user/keypusher) (Ping timeout: 276 seconds)
+[03:55:35] *** Quits: jafa (~jafa@ip68-98-112-122.ph.ph.cox.net) (Remote host closed the connection)
+[03:55:48] *** Joins: jafa (~jafa@ip68-98-112-122.ph.ph.cox.net)
+[03:59:02] *** Quits: emcodem (uid483343@id-483343.brockwell.irccloud.com) (Quit: Connection closed for inactivity)
+[03:59:33] *** Quits: amahl (~amahl@dsl-jklbng12-54fbca-64.dhcp.inet.fi) (Ping timeout: 255 seconds)
+[04:02:49] *** Joins: zmt01 (~zmt00@user/zmt00)
+[04:05:16] *** Quits: zmt00 (~zmt00@user/zmt00) (Ping timeout: 256 seconds)
+[04:05:51] *** Quits: Buster_ (~Buster@46.160.36.66) (Ping timeout: 255 seconds)
+[04:05:57] *** Quits: TanoMarcelo (~TanoMarce@179.63.242.126) (Quit: WeeChat 3.1)
+[04:22:08] <Terrence> Hi, going back to my question from earlier, does anyone know how I can find the conversion for a timebase ? I'm trying to seek to a frame at a certain number of seconds but the timestamp is in time_base units
+[04:23:15] <furq> it's pts * timebase
+[04:24:56] <furq> clock time = pts * timebase, pts = clock time / timebase
+[04:25:12] <BtbN> timestamps also by no means have to start at 0
+[04:25:20] <furq> yeah adjusted by your first pts
+[04:26:07] <Terrence> Ah okay
+[04:27:42] *** Joins: blerd (~blerd@71.182.169.24)
+[04:28:08] <fossforus> is there a way to get ffplay to wait for input; sort of like tail -f?
+[04:29:07] <fossforus> rather than just immediately erroring out with invalid data found when processing input
+[04:29:17] <BtbN> I don't think so, no
+[04:29:39] <furq> you can maybe pipe from tail -f
+[04:29:45] <furq> that's the recommended way to do it with mpv
+[04:30:41] <Terrence> @furq I don't think that worked
+[04:31:00] <Terrence> I'm trying to seek to 0 seconds in clock time
+[04:31:49] <Terrence> But 0 / codec->timebase.num wouldn't give me the correct pts to seek to that point
+[04:31:57] <Terrence> Because it would always be 0
+[04:32:41] <BtbN> sounds correct to me
+[04:32:46] <furq> yeah that should be 0
+[04:32:51] <fossforus> furq: tail -f worked as intended :)
+[04:32:55] <furq> but using timebase.num is wrong
+[04:33:08] <fossforus> tail -f | ffplay -
+[04:33:09] <Terrence> But the frame of 0 seconds in the audio file is 143360
+[04:33:19] <furq> your timestamps are offset then
+[04:33:28] <fossforus> s/-f/& filename
+[04:33:39] <furq> you need to know the first pts in the file anyway to account for that
+[04:33:42] <furq> so you can just seek there
+[04:34:03] <Terrence> So the first pts will tell me how the offset is?
+[04:34:12] <furq> for pcm yes
+[04:34:20] <furq> in some containers you also need to be aware of non-zero start time but i don't think wav supports that
+[04:35:08] <Terrence> Hmm, the first pts is 0
+[04:35:09] <fossforus> I'm actually doing this because I'm writing a youtube frontend for ffplay
+[04:35:22] <furq> you should probably just use mpv for that
+[04:35:25] <fossforus> since youtube uses this jank called dash that is two separate streams, but ffplay only works with one
+[04:35:29] <fossforus> it's just a very short script
+[04:35:37] <furq> ffplay is mostly just for debugging
+[04:35:52] <furq> by design it's missing a lot of stuff you'd want in a player
+[04:36:06] <fossforus> I actually love its design because I use ffmpeg so much
+[04:36:12] <fossforus> it's been my player for years
+[04:36:19] *** Joins: TanoMarcelo (~TanoMarce@179.63.242.126)
+[04:36:24] <furq> well whatever works i guess
+[04:37:13] <fossforus> while [ $(du $ffyt_tmp | cut -b1) = 0 ]; do sleep 0.1 <- I was using this awful thing before to detect data in the file
+[04:37:20] <furq> Terrence: anyway by timebase i meant the full timebase, num/den
+[04:37:22] *** Quits: admal (~admal@gateway/tor-sasl/admal) (Remote host closed the connection)
+[04:37:37] <fossforus> but now I can just pipe output off tail -f, much more elegant
+[04:38:06] *** Joins: admal (~admal@gateway/tor-sasl/admal)
+[04:38:35] <Terrence> Oh so clocktime = (0 / (num/den))
+[04:39:12] <Terrence> * pts = clocktime / (num/den)
+[04:39:15] <furq> yeah
+[04:39:42] <Terrence> But with the issue of this offset, I just read the first frame and it's 0
+[04:40:16] <Terrence> But when I run silencedetect on it with an audio file whos silence begins at 0 seconds, that frame pts is 143360
+[04:40:29] <Terrence> What are the extra frames prior to that? Is that the header?
+[04:40:45] <jafa> running a test using ffmpeg cli to convert a video to mpeg2 1080i. the tinterlace video filter is doing a good job of interlacing but the resulting video is marked as 1080p30 rather than 1080i
+[04:40:47] <furq> i don't know but it's definitely not the header
+[04:41:32] <furq> jafa: iirc for m2v you need -ilme -top 1
+[04:41:43] <Terrence> Hmm... back to the drawing board
+[04:41:46] <furq> or -top 0 for bff
+[04:41:47] <jafa> vlc auto deinterlace fails to detect it as interlaced and tsreader reports it as 1080p30. If I check a known good 1080i stream with tsreader it reports 1080i
+[04:42:05] <furq> yeah you need extra flags to encode interlaced
+[04:42:11] <jafa> testing...
+[04:43:18] <Terrence> I'm just confused what would be causing this offset
+[04:44:34] <jafa> furq - worked - thanks!
+[04:45:14] <furq> apparently -flags +ilme+ildct works better than -ilme
+[04:45:22] <furq> someone who uses m2v a lot probably knows better than me
+[04:45:49] <furq> i think just -top is all you need to flag it interlaced and the other stuff is just for better quality
+[04:46:26] <jafa> I still need tinterlace correct?
+[04:46:29] <furq> yeah
+[04:46:53] *** Quits: Nact (~l@host-85-27-122-107.dynamic.voo.be) (Quit: Konversation terminated!)
+[04:49:38] <Terrence> Uploaded file: https://uploads.kiwiirc.com/files/458fffb2944b731225e1e417f905bf01/image.png
+[04:49:47] <Terrence> @furq this is what I was referring to
+[04:50:08] <Terrence> The silence in the audio file begins at 0 seconds, yet the frame number of 0 seconds is 143360
+[04:50:35] <Terrence> So for some reason I'm reading a bunch of frames (which seem useless) up until that point
+[04:52:12] <Terrence> But say I just have any audio file, my goal would be to use av_seek_fram() to seek to n seconds in the video but to get the pts parameter to do that is what's giving me the grief
+[04:53:22] <furq> isn't that the thing kepstin pointed out
+[04:53:42] <Terrence> About the delay?
+[04:53:46] <furq> yeah
+[04:54:14] <furq> pts 143360 is the frame with the metadata set that tells you the silence started at pts 0
+[04:54:23] <furq> i guess anyway
+[04:57:19] <Terrence> Ohh know I see, so for me to know where the pts started at it's the time(in seconds) * (num/dem)
+[04:57:28] <Terrence> *now
+[04:59:15] <Terrence> Ah thanks for that furq, I guess I'm just a visual person
+[05:04:30] <Terrence> Hmm, but for some reason when I perform (codecContext->timebase.num/codecContext->timebase.den) it's result is 0
+[05:07:14] *** Quits: Seirdy (~Seirdy@sourcehut/user/seirdy) (Ping timeout: 252 seconds)
+[05:08:30] <Terrence> Ah nvm, it's 1/480000 so I'll need to use decimal instead of int
+[05:13:04] *** Joins: keypusher (keypusher@user/keypusher)
+[05:23:11] <Terrence> furq are you sure your equation for the pts using clock time and timebase was correct?
+[05:26:18] *** Quits: MrZeus__ (~MrZeus@37.120.156.249) (Ping timeout: 276 seconds)
+[05:26:51] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 255 seconds)
+[05:30:20] *** Quits: vlm (~vlm@user/vlm) (Quit: "")
+[05:34:03] *** Joins: vlm (~vlm@user/vlm)
+[05:50:08] *** Quits: Jonno_FT1 (~come@api.carswap.me) (Quit: Reconnecting)
+[05:50:15] *** Joins: Jonno_FTW (~come@api.carswap.me)
+[05:52:04] *** Quits: Jonno_FTW (~come@api.carswap.me) (Changing host)
+[05:52:04] *** Joins: Jonno_FTW (~come@user/jonno-ftw/x-0835346)
+[05:58:02] *** Joins: Fohsap (~Muimi@221.201.0.201)
+[06:10:56] *** Quits: blerd (~blerd@71.182.169.24) (Quit: Going offline, see ya! (www.adiirc.com))
+[06:21:16] *** Quits: Terrence (~Terrence@097-085-185-009.biz.spectrum.com) (Quit: Ping timeout (120 seconds))
+[06:22:26] *** Joins: Terrence (~Terrence@097-085-185-009.biz.spectrum.com)
+[06:37:23] *** Joins: gnoo (~gnoo@user/gnoo)
+[06:56:40] *** Joins: jos1 (~jos3@dyndsl-095-033-175-166.ewe-ip-backbone.de)
+[06:59:44] *** Quits: jos2 (~jos3@dyndsl-091-248-052-071.ewe-ip-backbone.de) (Ping timeout: 272 seconds)
+[07:05:32] *** Quits: zmt01 (~zmt00@user/zmt00) (Quit: Gone.)
+[07:07:08] *** Quits: rhys- (~rhys@mill.in.net) (Quit: See you later alligator)
+[07:07:27] *** Joins: rhys- (~rhys@mill.in.net)
+[07:08:48] *** Joins: zmt00 (~zmt00@user/zmt00)
+[07:09:26] *** Quits: Rhys (Rhys@help.lux.melted.me) (Killed (platinum.libera.chat (Nickname regained by services)))
+[07:09:26] *** rhys- is now known as rhys
+[07:09:36] *** Joins: Rhvs (Rhys@help.lux.melted.me)
+[07:14:12] *** Quits: Terrence (~Terrence@097-085-185-009.biz.spectrum.com) (Quit: Ping timeout (120 seconds))
+[07:14:22] *** Joins: Terrence (~Terrence@097-085-185-009.biz.spectrum.com)
+[07:14:38] *** Joins: YuGiOhJCJ (~YuGiOhJCJ@gateway/tor-sasl/yugiohjcj)
+[07:25:15] *** Quits: Terrence (~Terrence@097-085-185-009.biz.spectrum.com) (Quit: Ping timeout (120 seconds))
+[07:25:25] *** Joins: Terrence (~Terrence@097-085-185-009.biz.spectrum.com)
+[07:27:53] *** Quits: gnoo (~gnoo@user/gnoo) (Ping timeout: 244 seconds)
+[07:30:05] *** Quits: finsternis (~X@23.226.237.192) (Remote host closed the connection)
+[07:30:06] *** Joins: gnoo (~gnoo@user/gnoo)
+[07:30:08] *** Quits: Arwalk (~Arwalk@lfbn-dij-1-263-107.w86-235.abo.wanadoo.fr) (Quit: The Lounge - https://thelounge.chat)
+[07:30:37] *** Joins: Arwalk (~Arwalk@lfbn-dij-1-263-107.w86-235.abo.wanadoo.fr)
+[07:35:54] *** Quits: Terrence (~Terrence@097-085-185-009.biz.spectrum.com) (Quit: Ping timeout (120 seconds))
+[07:36:04] *** Joins: Terrence (~Terrence@097-085-185-009.biz.spectrum.com)
+[07:38:49] *** Joins: Seirdy (~Seirdy@sourcehut/user/seirdy)
+[07:48:14] *** Quits: Terrence (~Terrence@097-085-185-009.biz.spectrum.com) (Quit: Ping timeout (120 seconds))
+[07:48:24] *** Joins: Terrence (~Terrence@097-085-185-009.biz.spectrum.com)
+[07:57:03] *** Quits: Terrence (~Terrence@097-085-185-009.biz.spectrum.com) (Quit: Ping timeout (120 seconds))
+[07:57:14] *** Joins: Terrence (~Terrence@097-085-185-009.biz.spectrum.com)
+[08:25:22] *** Quits: Vonter (~Vonter@user/vonter) (Read error: Connection reset by peer)
+[08:26:01] *** Joins: Vonter (~Vonter@user/vonter)
+[08:27:45] *** Quits: TikityTik (~TikityTik@162.223.44.49) (Ping timeout: 255 seconds)
+[08:31:07] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[08:46:30] *** Quits: Terrence (~Terrence@097-085-185-009.biz.spectrum.com) (Quit: Ping timeout (120 seconds))
+[08:46:41] *** Joins: Terrence (~Terrence@097-085-185-009.biz.spectrum.com)
+[09:00:31] *** Quits: Terrence (~Terrence@097-085-185-009.biz.spectrum.com) (Quit: Ping timeout (120 seconds))
+[09:18:32] *** Quits: gnoo (~gnoo@user/gnoo) (Remote host closed the connection)
+[09:18:57] *** Joins: gnoo (~gnoo@user/gnoo)
+[09:23:43] *** Joins: Terrence (~Terrence@097-085-185-009.biz.spectrum.com)
+[09:27:32] *** Quits: arcatech (~arcatech@user/arcatech) (Quit: Bye.)
+[09:56:26] <Terrence> Hey so I'm looking at the documentation of silencedetect, and it says The lavfi.silence_start or lavfi.silence_start.X metadata key is set on the first frame whose timestamp equals or exceeds the detection duration and it contains the timestamp of the first frame of the silence. However, when I check the timestamp of the filtered frame, it is still
+[09:56:26] <Terrence> the same as the current frame that was passed into av_buffersrc_add_frame_flags()
+[09:56:37] <Terrence> Anyone happen to know why this is the case?
+[09:56:57] *** Joins: leaper (~43f57e00@ircip2.mibbit.com)
+[09:57:49] *** Quits: Xaldafax (~xaldafax@cpe-198-72-160-101.socal.res.rr.com) (Quit: Bye...)
+[09:59:17] *** Quits: gnoo (~gnoo@user/gnoo) (Remote host closed the connection)
+[09:59:42] *** Joins: gnoo (~gnoo@user/gnoo)
+[10:02:40] *** Quits: leaper (~43f57e00@ircip2.mibbit.com) (Quit: https://mibbit.com Online IRC Client)
+[10:05:21] *** Joins: der_richter (~Akemi@p4fde4320.dip0.t-ipconnect.de)
+[10:11:18] *** Quits: Terrence (~Terrence@097-085-185-009.biz.spectrum.com) (Quit: Ping timeout (120 seconds))
+[10:11:19] *** Quits: der_richter (~Akemi@p4fde4320.dip0.t-ipconnect.de) (Read error: Connection reset by peer)
+[10:11:28] *** Joins: Terrence (~Terrence@097-085-185-009.biz.spectrum.com)
+[10:12:02] *** Joins: der_richter (~Akemi@p4fde4320.dip0.t-ipconnect.de)
+[10:22:47] *** Joins: Flabb (~Flabb@89.169.84.117)
+[10:29:52] *** Quits: Terrence (~Terrence@097-085-185-009.biz.spectrum.com) (Quit: Ping timeout (120 seconds))
+[10:31:59] *** Quits: der_richter (~Akemi@p4fde4320.dip0.t-ipconnect.de) (Quit: Leaving.)
+[10:34:37] *** Quits: s1b1 (~s1b1@user/s1b1) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[10:35:40] *** Quits: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com) (Remote host closed the connection)
+[10:37:36] *** Quits: Asterisk (~asterisk@69.195.134.172) (Ping timeout: 272 seconds)
+[10:42:25] *** Joins: der_richter (~Akemi@p4fde4320.dip0.t-ipconnect.de)
+[10:44:12] *** Joins: Asterisk (~asterisk@69.195.134.172)
+[10:58:01] *** Joins: Terrence (~Terrence@097-085-185-009.biz.spectrum.com)
+[10:58:17] *** Joins: s1b1 (~s1b1@user/s1b1)
+[11:00:40] *** Joins: linjie (~linjie@58.247.210.251)
+[11:03:02] *** Quits: der_richter (~Akemi@p4fde4320.dip0.t-ipconnect.de) (Read error: Connection reset by peer)
+[11:03:30] *** Joins: der_richter (~Akemi@p4fde4320.dip0.t-ipconnect.de)
+[11:04:37] *** Quits: Hackerpcs (~user@user/hackerpcs) (Quit: Hackerpcs)
+[11:05:15] *** Quits: linjie (~linjie@58.247.210.251) (Ping timeout: 255 seconds)
+[11:08:19] *** Joins: Hackerpcs (~user@user/hackerpcs)
+[11:21:34] *** Quits: Ruxnor (kevin@user/kddlb) (Quit: The Lounge - https://thelounge.chat)
+[11:24:41] *** Joins: Ruxnor (kevin@user/kddlb)
+[11:31:40] *** Quits: Terrence (~Terrence@097-085-185-009.biz.spectrum.com) (Quit: Ping timeout (120 seconds))
+[11:31:50] *** Joins: Terrence (~Terrence@097-085-185-009.biz.spectrum.com)
+[12:04:32] *** Quits: Terrence (~Terrence@097-085-185-009.biz.spectrum.com) (Quit: Ping timeout (120 seconds))
+[12:04:42] *** Joins: Terrence (~Terrence@097-085-185-009.biz.spectrum.com)
+[12:33:06] *** Quits: gnoo (~gnoo@user/gnoo) (Remote host closed the connection)
+[12:33:32] *** Joins: gnoo (~gnoo@user/gnoo)
+[12:42:23] *** Joins: Kacper_ (~kasper93@89-74-110-199.dynamic.chello.pl)
+[12:44:15] *** Joins: Volgaar (~volgaar@104.66.13.93.rev.sfr.net)
+[12:44:16] *** Quits: kasper93 (~kasper93@89-74-110-199.dynamic.chello.pl) (Ping timeout: 272 seconds)
+[12:44:16] *** Kacper_ is now known as kasper93
+[12:47:31] *** Joins: dreamon (~dreamon@ppp-88-217-71-147.dynamic.mnet-online.de)
+[12:56:51] *** Quits: crashmatrix (~hatseflat@hatsuseno.rootaccess.nl) (Ping timeout: 255 seconds)
+[13:08:44] *** Quits: pyre (~pyre@crimeboss.nillas-power.com) (Ping timeout: 255 seconds)
+[13:11:55] *** Quits: Terrence (~Terrence@097-085-185-009.biz.spectrum.com) (Quit: Ping timeout (120 seconds))
+[13:12:56] *** Joins: crashmatrix (~hatseflat@hatsuseno.rootaccess.nl)
+[13:18:58] *** Joins: Terrence (~Terrence@097-085-185-009.biz.spectrum.com)
+[13:26:53] *** Quits: zsoltiv_ (~zsoltiv@fibhost-67-12-35.fibernet.hu) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[13:27:13] *** Joins: zsoltiv_ (~zsoltiv@fibhost-67-12-35.fibernet.hu)
+[13:31:20] <TL> https://snipboard.io/ohOlYz.jpg
+[13:32:51] <TL> in loongson it show different with normal
+[13:35:33] <TL> Anyone kown why this is the case?
+[14:07:38] *** Quits: Terrence (~Terrence@097-085-185-009.biz.spectrum.com) (Ping timeout: 256 seconds)
+[14:12:54] *** Quits: Arokh (~MoveAlong@ip-88-153-211-132.hsi04.unitymediagroup.de) (Ping timeout: 255 seconds)
+[14:14:46] *** Joins: Blacker47 (~Blacker47@user/blacker47)
+[14:37:13] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[14:37:40] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[14:41:24] *** Quits: bencc1 (~bencc1@2a00:a040:197:3af:574c:fa19:1d0c:55f4) (Ping timeout: 276 seconds)
+[14:42:21] *** Joins: bencc1 (~bencc1@2a00:a040:197:3af:7094:2615:2447:f548)
+[14:54:29] *** Quits: mickey (~user@user/mickey) (Remote host closed the connection)
+[14:54:45] *** Joins: mickey (~user@user/mickey)
+[14:57:15] *** Joins: Arokh (~MoveAlong@ip-88-153-210-106.hsi04.unitymediagroup.de)
+[15:02:25] *** Joins: linjie (~linjie@58.247.210.251)
+[15:03:09] *** Joins: pyre (~pyre@crimeboss.nillas-power.com)
+[15:07:24] *** Quits: linjie (~linjie@58.247.210.251) (Ping timeout: 276 seconds)
+[15:08:13] *** Joins: iive (~iive@87.119.101.204.client.entry.bg)
+[15:12:03] *** Quits: bencc1 (~bencc1@2a00:a040:197:3af:7094:2615:2447:f548) (Quit: Leaving)
+[15:14:02] *** Quits: gnoo (~gnoo@user/gnoo) (Remote host closed the connection)
+[15:22:58] *** Quits: DeHackEd (~dehacked@atmaweapon.dehacked.net) (Ping timeout: 265 seconds)
+[16:00:29] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[16:13:12] *** Quits: YuGiOhJCJ (~YuGiOhJCJ@gateway/tor-sasl/yugiohjcj) (Quit: YuGiOhJCJ)
+[16:18:24] *** Joins: MrZeus__ (~MrZeus@37.120.156.249)
+[16:26:48] *** Quits: someuser (~user@41.46.255.35) (Ping timeout: 272 seconds)
+[16:45:04] *** Joins: Nact (~l@host-85-27-122-107.dynamic.voo.be)
+[16:45:11] *** Quits: Mister_Magister (~Mister_Ma@user/mister-magister/x-2636733) (Ping timeout: 255 seconds)
+[16:54:26] *** Joins: wolfshappen (~waff@irc.furworks.de)
+[17:01:57] *** Quits: wolfshappen (~waff@irc.furworks.de) (Quit: later)
+[17:02:22] *** Joins: wolfshappen (~waff@irc.furworks.de)
+[17:04:56] *** Joins: Mister_Magister (~Mister_Ma@user/mister-magister/x-2636733)
+[17:09:20] *** Joins: Trieste (T@user/pilgrim)
+[17:13:56] *** Joins: Trieste_ (T@user/pilgrim)
+[17:15:27] *** Quits: Trieste (T@user/pilgrim) (Ping timeout: 276 seconds)
+[17:25:30] *** Joins: houlei (uid497843@id-497843.stonehaven.irccloud.com)
+[17:44:04] *** Quits: GenTooMan (~cyberman@2601:547:437f:e5c6:21f:5bff:fefe:a883) (Ping timeout: 272 seconds)
+[17:44:51] *** Quits: taliho (~taliho@c-73-149-98-40.hsd1.ma.comcast.net) (Ping timeout: 255 seconds)
+[18:04:26] *** Joins: linjie (~linjie@58.247.210.251)
+[18:08:42] *** Quits: linjie (~linjie@58.247.210.251) (Ping timeout: 255 seconds)
+[18:11:49] *** Joins: GenTooMan (~cyberman@2601:547:437f:e5c6:21f:5bff:fefe:a883)
+[18:17:51] *** Quits: crashmatrix (~hatseflat@hatsuseno.rootaccess.nl) (Ping timeout: 276 seconds)
+[18:19:22] *** Quits: qwedfg (~qwedfg@user/qwedfg) (Quit: ZNC - https://znc.in)
+[18:19:43] *** Joins: qwedfg (~qwedfg@user/qwedfg)
+[18:23:08] *** Joins: crashmatrix (~hatseflat@hatsuseno.rootaccess.nl)
+[18:32:50] *** Joins: blerd (~blerd@71.182.169.24)
+[18:38:57] *** Joins: amahl (~amahl@dsl-jklbng12-54fbca-64.dhcp.inet.fi)
+[18:58:10] *** Quits: luc65r (~luc65r@2001:470:69fc:105::ee1) (*.net *.split)
+[18:58:10] *** Quits: lexano (~lexano@2607:fea8:5bc0:12:12c3:7bff:fe95:9fc1) (*.net *.split)
+[18:58:10] *** Quits: schweby (~schweby@user/schweby) (*.net *.split)
+[18:58:10] *** Quits: fructose (~fructose@user/fructose) (*.net *.split)
+[18:58:10] *** Quits: LRN (~LRN@broadband-95-84-200-6.ip.moscow.rt.ru) (*.net *.split)
+[18:58:10] *** Quits: rossome (~rossome@server.likeaross.com) (*.net *.split)
+[18:58:10] *** Quits: q66 (~q66@q66.moe) (*.net *.split)
+[18:58:10] *** Quits: dostoyevsky2 (~sck@user/dostoyevsky2) (*.net *.split)
+[18:58:10] *** Quits: Zucca (~Zucca@user/zucca) (*.net *.split)
+[18:58:10] *** Quits: nrg (~NRG@user/nrg) (*.net *.split)
+[18:58:10] *** Quits: wyatt8740 (~wyatt8740@149.164.111.64) (*.net *.split)
+[18:58:10] *** Quits: xlei (znc@pool-68-129-84-118.nycmny.fios.verizon.net) (*.net *.split)
+[18:58:10] *** Quits: Flat (~flat@35.137.99.241) (*.net *.split)
+[18:58:15] *** Joins: q66 (~q66@q66.moe)
+[18:58:17] *** Joins: dostoyevsky2 (~sck@user/dostoyevsky2)
+[18:58:23] *** Joins: LRN (~LRN@broadband-95-84-200-6.ip.moscow.rt.ru)
+[18:58:37] *** Joins: Zucca (~Zucca@85-76-33-107-nat.elisa-mobile.fi)
+[18:58:37] *** Joins: n000g (~NRG@user/nrg)
+[18:58:39] *** Quits: Zucca (~Zucca@85-76-33-107-nat.elisa-mobile.fi) (Signing in (Zucca))
+[18:58:39] *** Joins: Zucca (~Zucca@user/zucca)
+[18:58:39] *** Joins: fructose (~fructose@2604:180:1:c00::de96)
+[18:58:45] *** Quits: fructose (~fructose@2604:180:1:c00::de96) (Signing in (fructose))
+[18:58:45] *** Joins: fructose (~fructose@user/fructose)
+[18:58:57] *** Joins: Flat (~flat@35.137.99.241)
+[18:59:03] *** Joins: lexano (~lexano@2607:fea8:5bc0:12:12c3:7bff:fe95:9fc1)
+[18:59:09] *** Joins: rossome (~rossome@server.likeaross.com)
+[19:00:00] *** Joins: wyatt8740 (~wyatt8740@149.164.111.64)
+[19:01:06] *** Joins: schweby (~schweby@user/schweby)
+[19:05:14] *** Joins: xlei (znc@pool-68-129-84-118.nycmny.fios.verizon.net)
+[19:21:18] *** Quits: Zucca (~Zucca@user/zucca) (Quit: WeeChat 3.1)
+[19:21:34] *** Joins: Zucca (~Zucca@user/zucca)
+[19:22:51] *** Joins: Xaldafax (~xaldafax@cpe-198-72-160-101.socal.res.rr.com)
+[19:27:32] *** Quits: crashmatrix (~hatseflat@hatsuseno.rootaccess.nl) (Ping timeout: 265 seconds)
+[19:38:37] *** Joins: crashmatrix (~hatseflat@193.200.132.183)
+[19:41:58] *** Joins: arcatech (~arcatech@user/arcatech)
+[19:52:29] *** Quits: arcatech (~arcatech@user/arcatech) (Quit: Bye.)
+[19:53:25] *** Joins: emcodem (uid483343@id-483343.brockwell.irccloud.com)
+[19:59:03] *** Joins: Terrence (~Terrence@097-085-185-009.biz.spectrum.com)
+[20:05:05] *** Quits: houlei (uid497843@id-497843.stonehaven.irccloud.com) (Quit: Connection closed for inactivity)
+[20:15:36] <Terrence> kepstin do you think you could help me look at something? I was working on incorporating the buffer with the filter to encode specific frames but I ran into an error stating, "Timestamps are unset in a packet for stream 0. This is deprecated and will stop working in the future" and incorrect values from running silencedetect
+[20:16:24] *** Joins: DHE (~dhe@rubyweapon.execulink.net)
+[20:16:55] <Terrence> I tried adding every frame prior to the beginning of silence to a queue struct, and when it was determined that it was silent, it would then go through a process that for every frame that has a pts less than the pts of the silence time, the frame would be encoded
+[20:17:05] <Terrence> However, this process has been unsuccessful
+[20:20:06] *** Quits: Trieste_ (T@user/pilgrim) (Ping timeout: 255 seconds)
+[20:20:17] *** Joins: marco (~marco@pc19f8e16.dip0.t-ipconnect.de)
+[20:20:41] *** marco is now known as Guest8086
+[20:20:52] <Terrence> https://pastebin.com/VPC7b2AX
+[20:21:14] <Terrence> Here is the code that I've been using, if anyone else may know what could be the issue I'd really appreciate it
+[20:21:25] *** Quits: Xaldafax (~xaldafax@cpe-198-72-160-101.socal.res.rr.com) (Quit: Bye...)
+[20:22:36] *** Joins: Xaldafax (~xaldafax@cpe-198-72-160-101.socal.res.rr.com)
+[20:25:08] <Guest8086> Is there a way to modify filter parameters depending on properties of the frame? In particular I want to modify the "hi" parameter of the mpdecimate filter depending on the colour saturation of the frame
+[20:27:15] <Guest8086> something like "-vf mpdecimate=hi=if(sat,50,20)" where 20 is used for "hi" when the min/max/average (whatever is possible) saturation of the frame is 0 nand 50 is used else
+[20:33:38] *** Joins: arcatech (~arcatech@user/arcatech)
+[20:37:04] *** Joins: milkt_ (~debian@gateway/tor-sasl/milkt)
+[20:37:57] *** Joins: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com)
+[20:38:12] *** Quits: milkt_ (~debian@gateway/tor-sasl/milkt) (Client Quit)
+[20:38:33] *** Joins: milkt_ (~debian@gateway/tor-sasl/milkt)
+[20:38:33] *** Quits: milkt_ (~debian@gateway/tor-sasl/milkt) (Client Quit)
+[20:38:55] *** Joins: milkt_ (~debian@gateway/tor-sasl/milkt)
+[20:39:00] *** Quits: milkt_ (~debian@gateway/tor-sasl/milkt) (Client Quit)
+[20:39:20] *** Joins: milkt_ (~debian@gateway/tor-sasl/milkt)
+[20:39:25] *** Quits: milkt (~debian@gateway/tor-sasl/milkt) (Ping timeout: 244 seconds)
+[20:40:52] *** Quits: milkt_ (~debian@gateway/tor-sasl/milkt) (Remote host closed the connection)
+[20:41:44] *** Quits: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com) (Quit: WeeChat 3.0.1)
+[20:42:17] *** Joins: milkt (~debian@gateway/tor-sasl/milkt)
+[20:46:43] <Terrence> Or does anyone happen to know another way I can produce an audio file after running a silencedetect filter on it?
+[20:47:17] *** Quits: Fohsap (~Muimi@221.201.0.201) (Read error: Connection reset by peer)
+[20:47:40] *** Joins: Guest55 (~Guest55@2603-6011-e701-3900-c1bc-51f7-dc49-3a78.res6.spectrum.com)
+[20:47:46] <Guest55> hey anyone active?
+[20:48:01] <Terrence> I'm here
+[20:48:26] <Guest55> I'm not sure this is the right place to ask this but here we go
+[20:48:54] <Guest55> im trying to build fpcalc .so files for use on the android platform following phorton1's work https://bitbucket.org/phorton1/chromaprint/src/multi-0.9/
+[20:49:24] <Guest55> following the steps I get to ./multi-configure all host
+[20:49:51] *** Joins: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com)
+[20:50:33] <Guest55> the response for this is that gcc is unable to create an executable file. this is for the ffmpeg portion
+[20:51:13] <Guest55> i'm doing this on a vm so maybe thats part of the problem. I can't seem to get that particular command to work on windows to use the multi-configure file
+[20:51:18] *** Quits: milkt (~debian@gateway/tor-sasl/milkt) (Ping timeout: 244 seconds)
+[20:51:27] <Guest55> the file isn't recognized as a command or executable on windows so it won't run
+[20:52:23] *** Quits: Nact (~l@host-85-27-122-107.dynamic.voo.be) (Quit: Konversation terminated!)
+[20:58:01] *** Joins: milkt (~debian@gateway/tor-sasl/milkt)
+[20:59:01] *** Quits: dreamon (~dreamon@ppp-88-217-71-147.dynamic.mnet-online.de) (Remote host closed the connection)
+[21:00:53] *** Quits: milkt (~debian@gateway/tor-sasl/milkt) (Remote host closed the connection)
+[21:02:04] *** Joins: AbleBacon (~AbleBacon@user/AbleBacon)
+[21:02:29] *** Quits: Guest55 (~Guest55@2603-6011-e701-3900-c1bc-51f7-dc49-3a78.res6.spectrum.com) (Quit: Client closed)
+[21:16:22] <Terrence> Do you have to reset the pts of a frame before encoding it using avcodec_send_frame()?
+[21:22:30] *** Joins: TheSashmo (~TheSashmo@207.35.238.34)
+[21:25:02] *** Quits: TheSashm_ (~TheSashmo@207.35.238.34) (Ping timeout: 252 seconds)
+[21:25:16] *** Quits: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com) (Remote host closed the connection)
+[21:42:59] *** Quits: jess (~jess@libera/staff/jess) ()
+[21:49:55] <emcodem> @Guest55 i dont get what you do, is this a cross compile for multi-os?
+[21:51:03] <emcodem> ah, file isnt recognized... i am pretty sure you miss some dependency for compiling, if they have a compilation guide, it will be best to re-read it and make sure you followed each point
+[21:51:16] <emcodem> e.g. do you have gcc in your path?
+[21:51:22] *** Quits: Terrence (~Terrence@097-085-185-009.biz.spectrum.com) (Ping timeout: 245 seconds)
+[21:52:47] *** Joins: milkt (~debian@gateway/tor-sasl/milkt)
+[21:53:16] *** Joins: Terrence (~Terrence@097-085-185-009.biz.spectrum.com)
+[21:55:01] *** Quits: milkt (~debian@gateway/tor-sasl/milkt) (Client Quit)
+[21:55:16] *** Joins: milkt (~debian@gateway/tor-sasl/milkt)
+[21:58:15] *** Joins: zumba_addict (~zumba_add@2601:240:4500:8320:69c5:2d38:da5d:16)
+[22:11:22] *** Joins: TheSashm_ (~TheSashmo@207.35.238.34)
+[22:14:17] *** Quits: TheSashmo (~TheSashmo@207.35.238.34) (Ping timeout: 265 seconds)
+[22:14:49] *** Joins: TheSashmo (~TheSashmo@207.35.238.34)
+[22:15:57] *** Quits: TheSashm_ (~TheSashmo@207.35.238.34) (Ping timeout: 245 seconds)
+[22:16:55] *** Quits: zumba_addict (~zumba_add@2601:240:4500:8320:69c5:2d38:da5d:16) (Quit: Client closed)
+[22:19:16] <elenril> Terrence: what do you mean by "reset"
+[22:19:44] <elenril> pts on the frames you send to the encoder should be set to the presentation timestamp of those frames
+[22:19:45] <Terrence> My apologies, adjust
+[22:20:41] <elenril> that's not much better really
+[22:20:47] <elenril> adjust from what to what?
+[22:21:33] <Terrence> So I'm trying to copy certain frames from one audio file to another
+[22:21:37] <elenril> you should set it according to how those frames should be presented to the user
+[22:22:11] <elenril> it's the caller's job to know what "correct" is, the encoder cannot possibly know
+[22:22:43] <elenril> if it's audio, then in most cases you want it to be continuous
+[22:23:02] <elenril> so the pts of each frame is <number of samples sent to the decoder before this frame>
+[22:23:32] <Terrence> Ahh
+[22:24:21] <Terrence> https://pastebin.com/6irVbXGS
+[22:24:41] <Terrence> elenril this is what I'm currently doing to copy over certain frames from the input that will eventually go to the output
+[22:25:52] <Terrence> https://pastebin.com/Jd0TcyBz
+[22:26:00] <Terrence> And this is where the process of encoding the frames happens
+[22:26:30] <Terrence> So you're saying during the encoding loop, I should be adjusting the pts of each frame send to the encoder by an offset?
+[22:26:51] <furq> if you're cutting frames out then you need to change either the duration of the frame before the cut (if you want silence) or all the pts values after the cut (if you don't)
+[22:27:15] <furq> actually idk how the first thing works for audio but i guess you don't want that anyway
+[22:27:53] <Terrence> I just want to include the frames that are not silent
+[22:28:08] <Terrence> furq
+[22:28:21] <furq> well yeah you need to change all the timestamps after any cut
+[22:28:27] <elenril> if you want the result to be continuous, then it's simplest to just generate pts from scratch
+[22:28:31] <furq> or that
+[22:28:41] <elenril> keep a counter of the samplest sent to the encoder
+[22:28:46] <elenril> then that counter is your pts
+[22:28:49] <furq> you know the input sample rate and you can set the output timebase
+[22:28:58] <furq> so it's trivial to generate new ones
+[22:29:34] <elenril> also, the code in your first pastebin can be replaced by av_frame_clone()+av_frame_make_writable()
+[22:29:45] <elenril> (+are you sure you need the frames to be writable?)
+[22:30:06] <elenril> and in your second pastebin, av_frame_unref is redundant, av_frame_free does that already
+[22:30:27] <Terrence> Make writeable allows me to change the contents of the frame right? elenril
+[22:30:40] <elenril> yes
+[22:31:27] *** Joins: Trieste (~T@user/pilgrim)
+[22:31:40] <Terrence> then yes I would need to make it writeable
+[22:31:49] <Terrence> Thank you for reviewing the code elenril
+[22:32:06] <Terrence> I think I'm going to incorporate the idea you have of a continuous pts counter
+[22:32:48] <Terrence> But the thing with that I noticed is that the pts values skips around, so should I increment it by 1 or a different value?
+[22:33:29] <elenril> by the number of samples in the frame
+[22:33:41] <Terrence> Ah nice
+[22:33:44] <elenril> assuming your timebase is 1/samplerate (which it always should be for audio)
+[22:34:30] <Terrence> Nice, I think this explains why my output files were the exact same length as my input '=D , I'll incorporate these changes
+[22:34:36] <Terrence> Thank you
+[22:42:08] *** Joins: finsternis (~X@23.226.237.192)
+[22:42:15] *** Quits: Volgaar (~volgaar@104.66.13.93.rev.sfr.net) (Quit: WeeChat 3.2)
+[22:42:35] *** Joins: Volgaar (~volgaar@104.66.13.93.rev.sfr.net)
+[22:47:12] *** Quits: Trieste (~T@user/pilgrim) (Ping timeout: 245 seconds)
+[22:48:01] *** Joins: Trieste (T@user/pilgrim)
+[22:48:39] <Terrence> Hmm it looks like that didn't work elenril , I tried stepping through the code and it looks like the timestamps are incrementing by the nb_samples as expected and written to the audio file, however, it's still producing an audio file that is the same length as the input
+[22:49:34] <elenril> measured how?
+[22:49:49] <Terrence> In seconds?
+[22:49:59] <Terrence> Silence detect says there is 6 seconds of silence
+[22:50:03] <elenril> i mean where are you getting this duration from?
+[22:50:12] <Terrence> Metadata
+[22:50:34] <Terrence> https://pastebin.com/RhvsLkaF
+[22:50:40] <Terrence> This is the program using those changes
+[22:50:53] <Terrence> the input is 2:53 and the output is also 2:53
+[22:52:39] <Terrence> I forgot to include it but above the while(1) look I declared the variable, int64_t pts_temp = 0;
+[22:52:54] <Terrence> And it increments based on the timestamp passed to the queue
+[22:55:07] <elenril> first, check how many samples does the output file actually decode to
+[22:59:54] <Terrence> Hmm strange, so the input file has 8133 and the output file has 8096 frames, which is actually expected
+[23:00:44] <Terrence> Silencedetect log reported 37 frames of silence
+[23:01:01] <Terrence> But the output file is still the same duration as the input for some reason
+[23:01:56] <elenril> so see if you're not setting the duration somewhere
+[23:02:53] <Terrence> Am I supposed to manually set the duration? Because you won't know the duration until after all the frames have been written
+[23:03:14] <elenril> you don't have to set it, no
+[23:03:41] <furq> 37 frames is less than a second
+[23:03:48] <elenril> but there's the question of where the output file is getting that information from, given that the amount of audio in it is correct
+[23:04:24] <Terrence> Uploaded file: https://uploads.kiwiirc.com/files/c737deb5c2bd1d0835af0ef0e8f180cf/pasted.txt
+[23:04:32] <Terrence> This is the log
+[23:04:50] <Terrence> furq
+[23:04:59] *** Quits: Guest8086 (~marco@pc19f8e16.dip0.t-ipconnect.de) (Quit: Guest8086)
+[23:05:24] <Terrence> I used ffprobe elenril
+[23:05:50] <furq> are you trimming from the frame with the metadata set
+[23:06:03] <furq> pretty sure this came up already
+[23:06:42] <Terrence> I change the frame's timestamp using a counter
+[23:06:50] <Terrence> https://pastebin.com/RhvsLkaF
+[23:07:05] <Terrence> This is the code if you're interested in seeing the process
+[23:07:16] <Terrence> all frames are added to a queue until the first indication of silence
+[23:07:24] <Terrence> When the first indication of silence is met
+[23:07:36] <Terrence> All frames that have a timestamp LESS than that are encoded and written to the file
+[23:07:41] <Terrence> then rest are released
+[23:07:45] <Terrence> until the end of silence
+[23:08:19] <Terrence> That is when the process repeats and frames are added back into the queue
+[23:08:49] <Terrence> if the file does not end in silence then the rest of the frames remaining in the queue are encoded and written to the file as well
+[23:08:58] <Terrence> furq
+[23:10:41] <emcodem> you have enough memory to store all possible frames until you hit the first silence?
+[23:10:55] <Terrence> The reason I have to use a queue is because as I learned yesterday, silencedetect writes to a later frame when the silence was actually found since it has to wait a default 2 seconds to determine wheter or not it was silent
+[23:11:02] <Terrence> emcodem yes
+[23:12:35] <Terrence> The size of the queue before the first instance of silence is 5157 which matches the output log
+[23:13:11] <elenril> Terrence: line 65 in your pastebin looks suspicious
+[23:13:50] <elenril> and I think setting pts in the place you're doing it complicates things
+[23:14:06] <elenril> just set pts+increment counter immediately before avcodec_send_frame
+[23:14:07] <Terrence> That's the counter, remember how you said I need to store the pts of  LAST written frame sent to the encoder?
+[23:14:23] <Terrence> Okay I can change that
+[23:15:09] <Terrence> pts_temp += myQueue.front()->nb_samples;
+[23:15:13] <Terrence> This is what I changed it to
+[23:15:24] <Terrence> prior to the avcoded_send_frame()
+[23:15:53] <Terrence> Hmm ...
+[23:16:23] <Terrence> well now the output is 40 seconds less than expected
+[23:17:43] <Terrence> And the thing that's crazy is it isn't even removing the interval of silence '=(
+[23:20:01] <Terrence> Could this be because silence_start is storing an incorrect variable based on silencedetect?
+[23:20:35] <Terrence> Because the filter description says ".... metadata key is set on the first frame whose timestamp equals or exceeds the detection duration and it contains the timestamp of the first frame of the silence."
+[23:20:59] *** Quits: s55 (~s55@user/s55) (Ping timeout: 265 seconds)
+[23:26:29] *** Joins: s55 (~s55@user/s55)
+[23:31:17] <emcodem> i'd have a very short query about non_linear_quant option of mpeg2enc
+[23:32:48] *** Quits: TL (~TL@119.4.240.125) (Ping timeout: 272 seconds)
+[23:33:33] <emcodem> is this needed for xdcamhd compatibility, so does it do structural changes or is it "just" to influence encoding quality?
+[23:38:48] *** Joins: jess (~jess@libera/staff/jess)
+[23:39:15] *** Joins: TL (~TL@119.4.240.125)
+[23:42:14] *** Quits: Flat (~flat@35.137.99.241) (Ping timeout: 256 seconds)
+[23:43:21] *** Quits: thebombzen (~thebombze@71.73.92.220) (Quit: attack.c:4: main: Assertion `I_can_beat_that_monster' failed. Aborted (core dumped))
+[23:45:26] *** Joins: thebombzen (~thebombze@71.73.92.220)
+[23:45:33] *** Joins: Flat (~flat@94.198.42.135)
+[23:46:31] *** Joins: FlameSniper (~FlameSnip@user/flamesniper)
+[23:49:10] *** Quits: FlameSniper (~FlameSnip@user/flamesniper) (Client Quit)
+[23:50:24] *** Quits: Flat (~flat@94.198.42.135) (Ping timeout: 258 seconds)
+[23:52:05] *** Joins: Flat (~flat@35.137.99.241)
+[23:59:59] *** Joins: wcpan (~quassel@2400:8902::f03c:91ff:fee0:f952)

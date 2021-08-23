@@ -1,0 +1,98 @@
+[19:36:41] <headius> good morning
+[23:13:21] <headius> enebo: could you review https://github.com/jruby/jruby/pull/6770
+[23:22:28] <enebo[m]> ok
+[23:23:00] <headius> there are a couple additional places on master relating to splitting or inlining or something, I will just fix those directly after merging
+[23:24:50] <enebo[m]> headius: yeah inlining is pretty non-working (well how we hook it up not the inlining code itself) so don't worry too much about it
+[23:25:34] <enebo[m]> I like this change since it removes looking a TC to something where we know it is set it and forget it.  IRScope will have the right line whereas we are too depend on moving parts to trust TC
+[23:26:09] <headius> yeah this might get revisited if I try to fix the JIT, because it doesn't push a backtrace and does arity-checking outside the method body
+[23:26:15] <headius> so in that case the bad frame just disappears
+[23:26:28] <headius> but I could generate a varargs wrapper that uses the file and line like this does
+[23:26:43] <enebo[m]> I have been looking at prepend issues
+[23:26:47] <enebo[m]> woof
+[23:26:54] <headius> oh good, I have not had motivation to do it
+[23:26:59] <headius> any luck?
+[23:27:03] <enebo[m]> hahah I almost lost all mine already
+[23:27:18] <headius> yeah digging around in the class object hierarchy is pretty gnarly
+[23:27:33] <enebo[m]> well it is funny when I look at https://github.com/jruby/jruby/issues/6445
+[23:27:50] <enebo[m]> I realize donv is correct in wondering why X method is not called.  It is fixed in 3.0
+[23:28:09] <headius> oh hell
+[23:28:18] <enebo[m]> So that had to have been a lookup bug in MRI that was fixed because logically it makes sense X would be called
+[23:28:20] <headius> so maybe we punt these another release
+[23:28:46] <enebo[m]> well one thing is certain...no one can depend on the havior in 6445 since it will change
+[23:29:10] <enebo[m]> So that particular one can definitely be punted since no one can portably use it in MRI 
+[23:29:30] <enebo[m]> but here is where it is weird for me and the other issues may be part of this
+[23:30:13] <enebo[m]> I changed searchNormalSuperclass to return getNonIncluedClass() if the klazz is prepended
+[23:30:35] <enebo[m]> and not get the superclass from then non included class
+[23:31:17] <enebo[m]> This almost fixes the issue but now I get 'Stuff X\nSruff X\nStuff M'
+[23:31:29] <enebo[m]> Ok well that is unexpected
+[23:31:58] <enebo[m]> So I guess I am on a prepended method X in a module made for the specific prepend
+[23:32:12] <enebo[m]> Then I get nonincluded which is just the original module for X so it prints again
+[23:32:19] <headius> ah yeah
+[23:32:26] <enebo[m]> but then it does actually then find the M from there
+[23:32:44] <enebo[m]> but if I getNonIncluded.getSuperClass it won't find M
+[23:34:22] <headius> this is the 6445 example?
+[23:34:30] <enebo[m]> Actually I wonder now what I figured out :)  If the second call ends up finding the X version of the mehtod again but after that it finds the M then I don't know whhich X is which
+[23:34:38] <enebo[m]> yeah donv original one
+[23:34:49] <enebo[m]> oh wait no
+[23:35:01] <enebo[m]> sorry yeah
+[23:35:08] <enebo[m]> he has two very very similar open issues on prepend
+[23:35:22] <enebo[m]> #6445 top reported snippet
+[23:35:34] <headius> ok
+[23:35:43] <enebo[m]> we print stuff X and die trying to find super
+[23:35:51] <headius> where do you change getNonIncludedClass
+[23:35:56] <enebo[m]> 2.7- will only print sutff M which is wrong
+[23:36:11] <enebo[m]> 3.0 does what you would logically think is the correct behavior
+[23:36:11] <headius> like show me a patch
+[23:36:52] <enebo[m]> https://gist.github.com/enebo/c388fdbf36ccb9c48be92d65a40e11ad
+[23:37:12] <headius> when X gets prepended into M, M's contents should move to a prepend shim and X gets included just below that
+[23:37:17] <enebo[m]> ignore what I have in the isPrepended thing.  I was just screwing around in the debugger
+[23:37:33] <headius> method search of M would start at the original M and then should go up to the included X and the prepend shim
+[23:37:45] <enebo[m]> yeah I figured we would get a shim module for the prepend
+[23:37:49] <headius> logically 3.0 behavior does make sense to me with this model
+[23:38:13] <enebo[m]> non-included is actually wrong I think because it would then go to actual module it is defined from
+[23:38:18] <enebo[m]> Or at least I thought that
+[23:38:50] <headius> so where this gets fuzzy for me is that I don't quite understand what happens with modules included in modules
+[23:40:10] <enebo[m]> I learn this stuff and then lose my knowledge :)  
+[23:40:46] <enebo[m]> I guess ancestors may be our friend
+[23:41:25] <headius> what I really would like is a diagram of the internal structure of this particular hierarch
+[23:41:27] <enebo[m]>             if (module.methodLocation == module) list.add(module.getDelegate().getNonIncludedClass());
+[23:41:37] <enebo[m]> HAHAH
+[23:41:47] <headius> edipo.federle: you might be better at debugging CRuby than me... maybe you can figure out what the actual class hierarchy looks like
+[23:41:52] <enebo[m]> yeah I was thinking damn...why can't this debugger display this in a nice box diagram
+[23:42:35] <headius> depending on how X looks when prepended into M I can see both examples
+[23:42:36] <enebo[m]> but for us we stack up a big list of all modules into a single list and this may also explain our ordering issues
+[23:42:48] <headius> maybe if we figure out how they fixed this it will inform a solution on our end
+[23:44:07] <enebo[m]> hahah ok crud
+[23:44:53] <enebo[m]> A.ancestors in that snippet on == [A, M, Object, Kernel, BasicObject]
+[23:44:54] <enebo[m]> on 3.0 it is [A, X, M, Object, Kernel, BasicObject]
+[23:45:00] <headius> jeremyevans has his fingers in this stuff on the 3.0 timeline
+[23:45:13] <headius> aha
+[23:45:30] <headius> so this gets back to my weak understanding of including modules with includes
+[23:45:55] <headius> I believe at one point, if you included a module X that itself included Y, the target class would get separate includes of X and Y
+[23:45:56] <headius> at that moment
+[23:46:03] <headius> so if X included Y later it would not be seen
+[23:46:17] <enebo[m]> M.prepend(X) is not visible to ancestor chain until 3.0 but logically you would think it would be
+[23:46:17] <headius> they may have changed how modules with included modules work at some point and we did not track it
+[23:46:39] <enebo[m]> oh because we copy at that point
+[23:46:40] <headius> like instead of copying all modules out of that one at include time, they may do a separate walk of the module and its own includes
+[23:46:41] <enebo[m]> or make the ship
+[23:46:44] <headius> which would pick up changes later on
+[23:46:49] <enebo[m]> SHIP IT SHIM
+[23:46:53] <headius> but this is all just supposition
+[23:47:00] <headius> we did it that way at one point but it didn't match behavior at the time
+[23:47:31] <enebo[m]> well if we shim and then process other modules as part of the shim process it is pretty easy to see how order would matter
+[23:48:21] <enebo[m]> but beyond figuring out this ordering we do actually find X when we call 'stuff' :)
+[23:48:24] <headius> look at gatherModules in RubyModule
+[23:48:49] <headius> it goes and mines out the modules that are in the original (including the original) and then does separate includes of each in doIncludeModule
+[23:50:01] <headius> doPrependModule does the same logic
+[23:50:11] <headius> but this has to be the general area where we differ
+[23:50:32] <headius> I am just not confident we even have the hierarchy wired right so I'm not sure what to fix
+[23:50:43] <headius> patching around a broken hierarchy is why we are here
+[23:50:56] <headius> is why = may be why
+[23:53:44] <enebo[m]> there seems to be 3 different prepend bugs and two are heavily related to ordering of when something happens
+[23:53:52] <headius> yes
+[23:54:06] <enebo[m]> the third one is what I am looking at but it also perhaps is or isn't 
+[23:54:48] <enebo[m]> I imagine if we change order of include M to be later we get a  different behavior so it definitely could be part of it
+[23:55:22] <headius> or move the prepend up
+[23:56:04] <enebo[m]> what my pet theory is when we prepend/include we will set up a set of shims to live in the hiearchy of what it is included/prepended into but then anything later added gets added to original modules but the shimmed ones never see it
+[23:56:06] <headius> I feel like the only way this could work is if they changed it to not copy all modules out at include time

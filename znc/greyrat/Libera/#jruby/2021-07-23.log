@@ -1,0 +1,78 @@
+[00:09:13] <enebo[m]> headius: I am ok with punting it and had noticed this failure in the past
+[00:09:38] <enebo[m]> I think it is at most annoying to someone who hits it
+[00:10:04] <enebo[m]> I got bugged and too curious and took https://github.com/jruby/jruby/issues/6748
+[00:10:19] <enebo[m]> It should be fixed.  We were doing some weird stuff in those methods
+[00:10:30] <enebo[m]> Making a PR for it now
+[00:11:23] <enebo[m]> cat19 handles encoding for us so having logic for encoding in these methods are not needed
+[00:14:27] <headius> Ah I see
+[00:20:53] <enebo[m]> I also removed ensure since that is just like checking size an extra time
+[00:21:31] <enebo[m]> append will grow and not just grow by 1 so I don't think the ensure would probably ever reduce array growth of the bytelist
+[00:22:13] <enebo[m]> Also it was 2 + size + 1 and that 1 is not needed?
+[00:22:56] <enebo[m]> LOL: Array#inspect with encoding use the default external encoding if it is ascii compatible FAILED
+[00:23:31] <enebo[m]> we set our new string to US-ASCII by default vs default external so our extra setEncoding happened to fix it somehow
+[01:09:05] <enebo[m]> headius: you know anything which does this:
+[01:09:06] <enebo[m]> +        Encoding encoding = runtime.getDefaultExternalEncoding();
+[01:09:06] <enebo[m]> +        RubyString str = RubyString.newStringLight(runtime, DEFAULT_INSPECT_STR_SIZE, encoding.isAsciiCompatible() ? encoding : USASCIIEncoding.INSTANCE);
+[01:09:29] <enebo[m]> lol...those + messthat up
+[01:09:38] <enebo[m]>         Encoding encoding = runtime.getDefaultExternalEncoding();
+[01:09:38] <enebo[m]>         RubyString str = RubyString.newStringLight(runtime, DEFAULT_INSPECT_STR_SIZE, encoding.isAsciiCompatible() ? encoding : USASCIIEncoding.INSTANCE);
+[01:10:04] <enebo[m]> feels like not just RubyArray.inspect would have this logic
+[01:11:51] <enebo[m]> RubyString#inspect does it but RubyHash#inspect does not ... fun fun
+[01:12:32] <enebo[m]> So does RubySymbol.  Hmm and these have extra defaultinternal logic too
+[01:16:41] <enebo[m]> unless I am blind MRI does not do any of this for Hash#inspect
+[01:21:20] <enebo[m]> Stupid codebase.  My code works and is simpler but I see mri  will call rb_enc_associate for n>0 elements of an array index on inspect.  What we did was wrong (we just did setEncoding) but why all this logic?
+[01:22:01] <enebo[m]> I believe rb_str_buf_append will do encoding negotiation already
+[01:22:13] <enebo[m]> anyways...I guess I will push this branch
+[01:30:07] <enebo[m]> edipo.federle: I know you said you were looking at this but curiousity got the better of me: https://github.com/jruby/jruby/pull/6759
+[16:51:25] *** Joins: lopex (uid4272@id-4272.tooting.irccloud.com)
+[21:24:40] <headius> enebo: catching up
+[21:25:19] <headius> I am going to tag off the remaining items in this jit spec PR... they are known issues with bugs filed, but unlikely to be hit by most people in typical apps (and none have been reported organically)
+[21:26:39] <headius> 2 * size + 1 I think is typical if you don't want to check for size = 1
+[21:26:43] <headius> er size = 0
+[21:28:05] <headius> I will look at your branch but it sounds like you sussed out what we should be doing
+[22:16:18] <enebo[m]> headius: [nil].to_s.encoding
+[22:16:22] <enebo[m]> err
+[22:16:33] <enebo[m]> 2 + size() + 1
+[22:16:34] <enebo[m]> not 2 * size()
+[22:16:51] <enebo[m]> As it turns out MRI has some really weird weird logic for this
+[22:17:02] <enebo[m]> [nil] -> USASCII
+[22:17:17] <enebo[m]> but some cases will be default external
+[22:44:49] <headius> 2 + size + 1?
+[22:44:52] <headius> weird
+[22:46:18] <enebo[m]> it was an ensure for ',' and ' ' to be appended
+[22:46:28] <headius> oh I see
+[22:46:36] <enebo[m]> not sure where the +1 came in but we already check size on append and cat
+[22:47:12] <enebo[m]> and those resizes I guess could make it too big?
+[22:47:21] <headius> FWIW there is rb_enc_associate_index in EncodingUtils, which is pretty much what you needed... but just using cat seems fine
+[22:47:29] <enebo[m]> I guess that could be a reason for it if we are doing a lot of [0] or something
+[22:47:31] <headius> +1 maybe for trailing null?
+[22:47:42] <enebo[m]> hahah yeah maybe
+[22:47:52] <headius> they are not very explicit when they do that so I have to read between the lines
+[22:48:39] <headius> duplicating that ternary in three places does seem a little ick
+[22:48:45] <enebo[m]> it is going away
+[22:48:49] <headius> ok
+[22:48:54] <enebo[m]> I failed tests in MRI
+[22:49:14] <enebo[m]> I did not plan on that being the end of this either but the ternary does exist within other places
+[22:49:17] <enebo[m]> Also in MRI too :)
+[22:49:24] <headius> figures
+[22:50:13] <enebo[m]> so I dislike this associateIndex but I may end up doing it
+[22:50:43] <enebo[m]> The ruby/spec definition sounds very clear on how it behaves but the reason it behaves that way is not as described
+[22:51:43] <enebo[m]> things will be US-ASCII and won't be if they change due to a single content with the only exception is that we cannot use an encoding which is not ascii compatible since we are putting '[]' into the resulting string
+[22:52:09] <enebo[m]> So testing for default external etc is really testing that a subelement of that was present in a sense
+[22:52:26] <enebo[m]> It is still good they have these specs since it catches mistakes in ary_to_s
+[22:53:48] <headius> and because inspect strings always need to be ascii
+[22:53:59] <headius> right?
+[22:56:16] <enebo[m]> well yeah they have to accept an ascii character to display
+[22:56:54] <enebo[m]> I guess it goes encoding -> default_external -> fuck it US-ASCII and look horrible
+[22:57:15] <enebo[m]> somewhat surprised it is not binary
+[22:57:44] <headius> oh rad, they appear to have deprecated Proc.new with no block in 2.7
+[22:58:02] <enebo[m]> yeah
+[22:58:25] <headius> that will be nice, we can remove that hack in IR
+[22:58:31] <enebo[m]> It is already gone
+[22:58:40] <enebo[m]> ssshhhh
+[23:02:49] <headius> tasty
+[23:03:01] <headius> I just tagged off a spec in this jit run that does ProcSubclass.new
+[23:03:10] <headius> worked accidentally in interpreter but was never really supported
+[23:51:11] <headius> I must be doing something wrong with these tags... I thought adding any tag name would filter it but it doesn't seem to for "jit"
+[23:53:29] <headius> ah need to add to exclusion I guess
+[23:59:19] <headius> there we go

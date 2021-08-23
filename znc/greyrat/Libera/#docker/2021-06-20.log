@@ -1,0 +1,434 @@
+[00:00:13] <iamtheworstdev> here's what I was trying to follow - https://willschenk.com/articles/2020/developing_react_inside_docker/
+[00:00:20] <iamtheworstdev> seems like he didn't have the issue at all
+[00:01:12] <iamtheworstdev> i'm not at all a docker expert.. i'm just tired of trying to keep three different computers (that I do my work from) in sync.. and figured since I have a server sitting around doing nothing maybe I could host a docker development environment and just remote in
+[00:01:23] <iamtheworstdev> and VPN in when I'm no the road
+[00:02:52] <Lutin> I run into this issue...I need IPv6 it seems... but how why to fix that ? https://github.com/freeipa/freeipa-container/issues/298 
+[00:03:38] <rawtaz> yeah using docker for dev envs is something i couldnt live without
+[00:06:10] <iamtheworstdev> rawtaz, got a recommended writeup on how to make that happen well? i'm pretty new to docker
+[00:06:25] <iamtheworstdev> aside from making some docker images that I deploy through AWS.. I've never really worked 'inside' of one
+[00:06:27] <rawtaz> i just use Docker for Mac and it works out of the box
+[00:06:31] <rawtaz> let me check a server i have
+[00:08:26] <rawtaz> most of the bind mount files are created with root as owner and group ther etoo
+[00:08:31] <rawtaz> err, there*
+[00:08:37] <rawtaz> on my mac they're my own local user
+[00:09:06] <rawtaz> cant you just adjust the filesystem permissions? what is the actual problem you are having? you never responded to that i think
+[00:10:01] <Lutin> when people use a mac... I quit ;D
+[00:13:40] <iamtheworstdev> i feel like what's happening is it's failing to write to the node_modules volume
+[00:15:11] <rawtaz> ...
+[00:15:36] <rawtaz> if oyu have a problem, show the exact symptoms of it, otherwise we'll just be speculating ;)
+[00:15:45] *** Parts: Hello72 (~Hello71@wireguard/contributor/hello71) ()
+[00:15:47] <rawtaz> pastebin if needed
+[00:15:51] *** Joins: tang^ (~doofus@2604:3d09:47c:f970:7864:b824:15e5:4869)
+[00:16:03] <iamtheworstdev> yea sorry, i'm not trying to dodge the question.. still just trying to resolve it myself.. going back through the steps of that link
+[00:16:19] *** Joins: foka (~foka@162.208.172.172)
+[00:16:42] <iamtheworstdev> ultimate when i launch the `yarn start` command I'm getting : EACCES: permission denied, mkdir '/app/node_modules/.cache'
+[00:17:14] <rawtaz> what does `ls -l /app/node_modules/.cache` say?
+[00:17:18] <rawtaz> about that folder
+[00:17:19] <iamtheworstdev> it looks like it creates the node_modules as root:root
+[00:17:30] <iamtheworstdev> and perms keep me from writing to it
+[00:18:14] <iamtheworstdev>  docker run -it --rm -v ${PWD}:/app -v testapp_nodemodules:/app/node_modules --user 1000 --network host testapp $@
+[00:18:19] <iamtheworstdev> but i'm trying to pass in my uid
+[00:19:39] <rawtaz> i would just start hte container and enter it and inspect what permissions there are on that path it's trying to write to, for starters
+[00:21:39] *** Joins: PeGaSuS_ (BlackHole@user/pegasus)
+[00:21:53] *** Quits: betelgeuse (~john2gb@94-225-47-8.access.telenet.be) (Quit: The Lounge - https://thelounge.chat)
+[00:26:49] *** Joins: tex (~super@user/dix)
+[00:27:43] <iamtheworstdev> owned by root (1086)
+[00:28:12] <rawtaz> since when does root have UID 1086? :O
+[00:28:46] *** Quits: PeGaSuS (James@user/pegasus) (Killed (zinc.libera.chat (Nickname regained by services)))
+[00:28:46] *** PeGaSuS_ is now known as PeGaSuS
+[00:28:49] <Lutin> since it's old :P before 1970 P
+[00:28:54] <iamtheworstdev> chown not permitted
+[00:29:06] *** Joins: PeGaSuS_ (~James@user/pegasus)
+[00:29:17] <iamtheworstdev> oh god. ignore the 1086 bit
+[00:29:46] <rawtaz> so the files something in the container is trying to write to are owned by root and what group?
+[00:29:57] <iamtheworstdev> root:root
+[00:30:10] <rawtaz> and what user:group is the thing that tries to write to it running as?
+[00:30:13] <iamtheworstdev> everything else is node:node
+[00:30:27] <iamtheworstdev> (node:14 is the base image here)
+[00:30:29] <rawtaz> im guessing node:node then. the Dockerfile would tell
+[00:31:01] <rawtaz> so you have a mismatch there. you have to make the user:group match on either side
+[00:31:32] <rawtaz> one thing you can do is find out the uid and gid of the node user and group inside the container, then chown -R the files to that on the host
+[00:31:37] *** Quits: PeGaSuS_ (~James@user/pegasus) (Remote host closed the connection)
+[00:31:52] <rawtaz> then inside the container the node user should see it with ownership it likes
+[00:32:14] <iamtheworstdev> https://gist.github.com/iamtheworstdev/d21436911dead1af5a05b88783bff9e5
+[00:32:48] <iamtheworstdev> node is uid=1000
+[00:33:00] <iamtheworstdev> and on my machine  worst is uid=1000
+[00:33:51] <rawtaz> and the gui?
+[00:33:53] <rawtaz> gid*
+[00:34:01] <rawtaz> i dont understand why you kepe mentioning just 50% of the relevant information
+[00:34:29] <iamtheworstdev> they're the same
+[00:34:46] <iamtheworstdev>  node is 1000:1000 in the container.. on local machine worst is 1000:1000
+[00:35:05] <rawtaz> then  chown -R 1000:1000 <that path on the host>  (on the host)
+[00:35:33] <rawtaz> that is:
+[00:35:44] <rawtaz> then  chown -R 1000:1000 testapp_nodemodules  (on the host)
+[00:35:44] <iamtheworstdev> i did.. it didn't change anything
+[00:38:20] *** Quits: Gustavo6046 (~Gustavo60@user/gustavo6046) (Quit: ZNC 1.8.2 - https://znc.in)
+[00:38:23] <rawtaz> haha ok :)
+[00:39:04] <rawtaz> what does  ls -l testapp_nodemodules  on the host show?
+[00:39:41] <iamtheworstdev> total 0
+[00:39:54] <rawtaz> what does  ls -la testapp_nodemodules  on the host show?
+[00:40:18] <iamtheworstdev> owned by worst:worst but no contents
+[00:40:28] <iamtheworstdev> looks like it's not getting mounted maybe?
+[00:40:48] <iamtheworstdev> so the container is just creating a node_modules directory and it's being created improperly?
+[00:40:57] <rawtaz> try removing the mount and youll see inside the container (after restarting it) :)
+[00:43:42] *** Joins: Gustavo6046 (~Gustavo60@user/gustavo6046)
+[00:43:47] <iamtheworstdev> there is where I don't fully understand what I'm doing
+[00:43:55] <iamtheworstdev> I don't technically have a container running.. I'm just running an image?
+[00:44:03] <iamtheworstdev> because `docker container ls` reports back nothing
+[01:00:25] <tabakhase> iamtheworstdev add a "-a" to that
+[01:04:34] <iamtheworstdev> the only one it shows is an old homeassistant image
+[01:09:41] <rawtaz> iamtheworstdev: its not the same thing but for purposes of concept; imagine the image being the virtual disk file of a VM, and imagine the container being the VM that you start with the image as its harddrive
+[01:10:05] <rawtaz> iamtheworstdev: instead of describing what you see, pastebin the actual command and its output
+[01:10:13] <rawtaz> to avoid any misunderstandings
+[01:11:26] <rawtaz> iamtheworstdev: if you just run that docker command you have in https://gist.github.com/iamtheworstdev/d21436911dead1af5a05b88783bff9e5 then your container starts and the prompt just sits there i take it. then open another terminal window and `docker ps` should show you whats running
+[01:12:28] <iamtheworstdev> https://gist.github.com/iamtheworstdev/d21436911dead1af5a05b88783bff9e5#file-gistfile1-txt
+[01:13:22] <rawtaz> not much running there it seems
+[01:13:39] <iamtheworstdev> just updated it
+[01:13:44] <iamtheworstdev> sorry, i didn't tihnk to launch it first
+[01:14:38] <rawtaz> well there you see it running
+[01:22:09] *** Quits: LouWestin (~Lou@sirkyle.net) (Quit: The light at the end of the tunnel has been turned off.)
+[01:23:22] *** Quits: akik (akik@dsl-tkubng22-50de9d-120.dhcp.inet.fi) (Quit: leaving)
+[01:26:11] *** Quits: foka (~foka@162.208.172.172) (Read error: Connection reset by peer)
+[01:26:38] *** Joins: akik (akik@dsl-tkubng22-50de9d-120.dhcp.inet.fi)
+[01:28:45] *** Joins: foka (~foka@162.208.172.172)
+[01:29:36] *** Quits: gordonjcp (~gordonjcp@boulton.gjcp.net) (Ping timeout: 252 seconds)
+[01:34:51] *** Quits: wootehfoot (~wootehfoo@user/wootehfoot) (Quit: Leaving)
+[01:35:14] *** Joins: wootehfoot (~wootehfoo@user/wootehfoot)
+[01:38:14] *** Quits: onizu (uid373383@id-373383.highgate.irccloud.com) (Quit: Connection closed for inactivity)
+[01:38:40] *** Joins: safe (~safe@cpe-74-64-165-24.nj.res.rr.com)
+[01:40:06] *** Parts: safe (~safe@cpe-74-64-165-24.nj.res.rr.com) ()
+[01:40:50] <dlam> is there a way to clear "all the logs"?   (when i type `docker-compose 
+[01:41:10] <dlam> ...it dumps a ton of old output i dont want to look at!
+[01:42:08] <rawtaz> if you dont want to look at it, start it like `docker-compose up -d` 
+[01:43:42] * rawtaz &
+[01:48:37] *** Quits: zakame (~zakame@user/zakame) (Ping timeout: 265 seconds)
+[01:52:21] <tabakhase> dlam dont think there is a explicit "wipe" cmd - tail/use the "starting from" flag, also you can setup rotation and such on the driver https://docs.docker.com/config/containers/logging/configure/
+[01:57:43] *** Quits: wootehfoot (~wootehfoo@user/wootehfoot) (Quit: Leaving)
+[02:00:32] *** Joins: Gustavo6046_ (~Gustavo60@user/gustavo6046)
+[02:01:09] *** Quits: Gustavo6046 (~Gustavo60@user/gustavo6046) (Ping timeout: 265 seconds)
+[02:02:50] *** Gustavo6046_ is now known as Gustavo6046
+[02:22:50] *** Joins: Skyz (~Skyz@ool-43538427.dyn.optonline.net)
+[02:25:22] *** Quits: rgl (~rgl@bl12-47-147.dsl.telepac.pt) (Read error: Connection reset by peer)
+[02:31:25] *** Joins: pvdp (~Pieter@static-n58-105-183-94.rdl4.qld.optusnet.com.au)
+[02:36:47] *** Quits: treethought (treethou@138.68.49.251) (Remote host closed the connection)
+[02:37:44] *** Joins: treethought (~treethoug@138.68.49.251)
+[02:41:40] *** Joins: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com)
+[02:45:42] *** Quits: Skyz (~Skyz@ool-43538427.dyn.optonline.net) (Quit: Client closed)
+[02:52:51] *** Quits: treethought (~treethoug@138.68.49.251) (Remote host closed the connection)
+[02:53:27] *** Quits: bradley (~bradley@user/bradley) (Quit: Bye.)
+[02:53:38] *** Joins: treethought (treethou@138.68.49.251)
+[02:57:01] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-221.dsl.bell.ca)
+[02:57:40] *** Quits: tex (~super@user/dix) (Ping timeout: 258 seconds)
+[03:00:45] *** Quits: fedenix (~fedenix@gateway/tor-sasl/fedenix) (Remote host closed the connection)
+[03:02:08] *** Quits: treethought (treethou@138.68.49.251) (Remote host closed the connection)
+[03:02:57] *** Joins: treethought (treethou@138.68.49.251)
+[03:12:34] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-221.dsl.bell.ca) (Quit: ERC (IRC client for Emacs 27.2))
+[03:12:51] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-221.dsl.bell.ca)
+[03:16:17] *** Quits: treethought (treethou@138.68.49.251) (Remote host closed the connection)
+[03:17:00] *** Joins: treethought (treethou@138.68.49.251)
+[03:19:48] *** Quits: treethought (treethou@138.68.49.251) (Remote host closed the connection)
+[03:20:46] *** Joins: treethought (~treethoug@138.68.49.251)
+[03:22:00] *** Quits: TheFatherMind (~TheFather@user/thefathermind) (Remote host closed the connection)
+[03:24:08] <Lutin> tabakhase I have a nice one for you
+[03:24:28] <Lutin> tabakhase https://github.com/freeipa/freeipa-container/issues/403 
+[03:27:56] *** Joins: TheFatherMind (~TheFather@user/thefathermind)
+[03:28:30] *** Joins: Ohlov38951749035 (~Ohlov3@dyndsl-085-016-106-213.ewe-ip-backbone.de)
+[03:32:11] *** Joins: betelgeuse (~john2gb@94-225-47-8.access.telenet.be)
+[03:34:49] *** Quits: Lutin (~Lutin@user/lutin) (Quit: Lutin)
+[03:37:11] *** Joins: Lutin (~Lutin@user/lutin)
+[03:37:15] <Lutin> tabakhase back :)
+[03:37:24] *** Quits: thc202 (~thc202@user/thc202) (Quit: thc202)
+[03:37:28] <Lutin> I was hugging my dog :D
+[03:38:44] *** Quits: endigma6 (~endigma@134.41.131.163) (Ping timeout: 268 seconds)
+[03:43:55] *** Joins: endigma6 (~endigma@134.41.133.214)
+[03:45:36] *** Quits: TheFatherMind (~TheFather@user/thefathermind) (Remote host closed the connection)
+[03:46:06] *** Joins: TheFatherMind (~TheFather@user/thefathermind)
+[03:46:43] *** Quits: TheFatherMind (~TheFather@user/thefathermind) (Remote host closed the connection)
+[03:47:20] *** Joins: TheFatherMind (~TheFather@user/thefathermind)
+[03:48:40] *** Quits: treethought (~treethoug@138.68.49.251) (Remote host closed the connection)
+[03:49:33] *** Joins: treethought (treethou@138.68.49.251)
+[03:51:28] <Lutin> why could freeipa complain about IPv6 on lo... I mean.. it's on the host IPv6 on the lo interface, the container then ?
+[04:14:16] <Lutin> artok ping
+[04:14:20] <Lutin> get sober :D
+[04:16:24] *** Joins: gearnode (~gearnode@2a01cb000ce2c1008ca2093f6cef466a.ipv6.abo.wanadoo.fr)
+[04:22:06] *** Joins: jazzy (~jaziz@2600:380:854e:22c1:c558:7a2d:a4b2:cfa6)
+[04:24:06] *** Joins: RougeR (~RougeR@user/rouger)
+[04:34:13] *** Quits: CombatVet (~c4@user/combatvet) (Ping timeout: 252 seconds)
+[04:35:54] *** Joins: CombatVet (~c4@user/combatvet)
+[04:42:30] *** Joins: Alys (~Alys@107-210-166-7.lightspeed.tukrga.sbcglobal.net)
+[04:42:55] <Alys> Quick Question: What is FPM that I keep seeing tagged on pretty much every image?
+[04:42:56] *** Quits: thiras (~thiras@user/thiras) (Ping timeout: 252 seconds)
+[04:43:59] <tabakhase> Alys define "every"?
+[04:44:10] <tabakhase> and fpm as in php and such maybe? 
+[04:45:09] <Alys> Yeah. Like I'm looking at nextcloud and it has 19-fpm-alpine as a tag with lots of tags that all include FPM
+[04:45:38] <tabakhase> https://www.php.net/manual/en/install.fpm.php then i guess
+[04:45:54] <tabakhase> in short, "alternative to letting apache run php internally" (what be mod_php)
+[04:46:11] <Alys> Ok
+[04:46:13] <Alys> Thank you
+[04:46:41] <tabakhase> nginx & php you use that for example -- for you as "image user" it shouldnt matter to much what you pick unless they say something in there docs...
+[04:46:48] *** Quits: endigma6 (~endigma@134.41.133.214) (Quit: Ping timeout (120 seconds))
+[04:46:50] <rawtaz> on other words, what you should be using if you want to run php :)
+[04:47:02] *** Joins: endigma6 (~endigma@134.41.133.214)
+[04:48:00] *** Quits: betelgeuse (~john2gb@94-225-47-8.access.telenet.be) (Quit: The Lounge - https://thelounge.chat)
+[04:48:56] *** Quits: endigma6 (~endigma@134.41.133.214) (Client Quit)
+[04:49:17] *** Joins: endigma6 (~endigma@134.41.133.214)
+[04:49:54] <Alys> So If I plan to use Nginx as a reverse-proxy then I'd want to use the FPM image?
+[04:51:14] <rawtaz> nginx as a reverse proxy has nothing to do with php, and therefore nothing to do with php-fpm
+[04:51:47] *** Joins: brachamh_ (~brachamh@user/brachamh)
+[04:51:51] <rawtaz> if you are looking at something that has php in it, and there's an fpm variant and not, then thats when you can choose to use fpm or not
+[04:54:35] *** Quits: brachamh (~brachamh@user/brachamh) (Ping timeout: 268 seconds)
+[04:54:41] <rawtaz> whether to use fpm or not is simply a matter of how you want to run your php
+[04:56:31] *** Quits: Lutin (~Lutin@user/lutin) (Quit: Lutin)
+[04:57:17] <Alys> Alright. That's good to know. I was also looking at Ghost and it says I have to pass special options if I want to use it behind a proxy. I thought FPM might be a different image that I needed to use when behind a proxy. But I look now and see Ghost doesn't have any FPM tags. And I understand what you're saying: Use the FPM image when I want to use a separate web service instead of having one built into the image.
+[04:58:00] <rawtaz> Alys: fpn is not about separate web services, but it could be :P
+[04:58:03] <rawtaz> err fpm
+[04:58:26] <rawtaz> Alys: are you at all looking at something that is driven by php? if not, fpm isnt relevant to you at this point
+[04:58:47] <rawtaz> to fpm or not fpm is only relevant when you are looking at some PHP-based thing
+[04:59:17] *** Quits: endigma6 (~endigma@134.41.133.214) (Quit: Ping timeout (120 seconds))
+[04:59:21] <rawtaz> e.g. if you were to look at wordpress images. assuming they have both fpm and non-fpm tags. in that case you might have fpm and apache tags to choose from
+[04:59:27] *** Quits: brachamh_ (~brachamh@user/brachamh) (Remote host closed the connection)
+[04:59:40] *** Joins: endigma6 (~endigma@134.41.133.214)
+[04:59:46] <rawtaz> the apache one would run php inside the apache web server, whereas the fpm one would run php separately as its own process
+[04:59:48] *** Joins: brachamh_ (~brachamh@user/brachamh)
+[05:00:10] <rawtaz> so its only a matter of how php is run. it has nothing to do with other things, although sure it affects the in some ways. but trying to keep it simple.
+[05:09:42] *** Quits: brachamh_ (~brachamh@user/brachamh) (Ping timeout: 252 seconds)
+[05:10:57] <Alys> rawtaz, Alright
+[05:11:09] <Alys> rawtaz, tabakhase thank you both for your help
+[05:12:03] *** Joins: zakame (~zakame@user/zakame)
+[05:15:04] <tabakhase> i think these days there is nothing left "for modphp" except multi-user env.s...
+[05:15:26] <tabakhase> and even running fpm and apache isnt unseen tbh
+[05:21:02] <rawtaz> i agree
+[05:22:00] <tabakhase> *cries in .htaccess*
+[05:23:19] <rawtaz> hehe
+[05:31:24] *** Quits: vlm (~vlm@user/vlm) (Quit: "")
+[05:35:48] *** Joins: vlm (~vlm@user/vlm)
+[05:54:42] *** Quits: RougeR (~RougeR@user/rouger) (Quit: Leaving)
+[05:57:43] *** Joins: sed (~sed@pool-100-7-53-231.rcmdva.fios.verizon.net)
+[06:00:35] *** Quits: c10l (~c10l@89.34.167.207) (Read error: Connection reset by peer)
+[06:01:06] *** Joins: c10l (~c10l@89.34.167.207)
+[06:08:58] *** Joins: pete443_ (~pete@user/pete443)
+[06:09:12] *** Quits: pete443 (~pete@user/pete443) (Ping timeout: 268 seconds)
+[06:14:14] *** Quits: tang^ (~doofus@2604:3d09:47c:f970:7864:b824:15e5:4869) (Quit: Bye)
+[06:14:48] *** Joins: tang^ (~doofus@2604:3d09:47c:f970:7864:b824:15e5:4869)
+[06:22:48] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-221.dsl.bell.ca) (Remote host closed the connection)
+[06:31:40] *** Joins: IonTau (~IonTau@106-69-214-62.dyn.iinet.net.au)
+[07:00:39] *** Quits: gearnode (~gearnode@2a01cb000ce2c1008ca2093f6cef466a.ipv6.abo.wanadoo.fr) (Ping timeout: 244 seconds)
+[07:21:28] *** Quits: alicef (~none@gentoo/developer/alicef) (Quit: install gentoo)
+[07:22:18] *** Joins: alicef (~none@gentoo/developer/alicef)
+[07:23:29] *** Quits: tang^ (~doofus@2604:3d09:47c:f970:7864:b824:15e5:4869) (Quit: Bye)
+[07:53:13] *** Quits: night_wulfe_ (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Read error: Connection reset by peer)
+[07:53:40] *** Quits: lmat (~lawsa@c-68-58-60-231.hsd1.in.comcast.net) (Ping timeout: 244 seconds)
+[07:53:53] *** Joins: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[08:00:22] *** Joins: brachamh (~brachamh@user/brachamh)
+[08:25:58] *** Quits: treethought (treethou@138.68.49.251) (Remote host closed the connection)
+[08:26:59] *** Joins: treethought (~treethoug@138.68.49.251)
+[08:29:29] *** Joins: ascetics (~mingk@123.115.147.51)
+[08:34:37] *** Quits: ascetics (~mingk@123.115.147.51) (Read error: Connection reset by peer)
+[08:40:50] *** Quits: CombatVet (~c4@user/combatvet) (Remote host closed the connection)
+[08:41:03] *** Joins: CombatVet (~c4@user/combatvet)
+[08:53:17] *** Quits: metah4ck3r (~meta@user/metah4ck3r) (Quit: WeeChat 3.2)
+[08:53:57] *** Quits: sed (~sed@pool-100-7-53-231.rcmdva.fios.verizon.net) (Ping timeout: 265 seconds)
+[09:03:54] *** Joins: Cleverness (~clevernes@pool-100-2-45-18.nycmny.fios.verizon.net)
+[09:04:04] *** Quits: m1n10n (georgecloo@cpe-76-184-204-251.tx.res.rr.com) ()
+[09:06:48] *** Quits: Cleverness (~clevernes@pool-100-2-45-18.nycmny.fios.verizon.net) (Client Quit)
+[09:19:51] *** Quits: _sean (~xsean@203.86.202.187) (Ping timeout: 268 seconds)
+[09:58:58] *** Joins: lemonzest (~lemonzest@user/lemonzest)
+[10:07:29] *** Joins: CombatVet_ (~c4@user/combatvet)
+[10:07:31] *** Quits: CombatVet (~c4@user/combatvet) (Ping timeout: 252 seconds)
+[10:08:06] *** CombatVet_ is now known as CombatVet
+[10:17:37] *** Joins: schmillin (~schmillin@user/schmillin)
+[10:21:25] *** Joins: vid1 (~vid@dynamic-077-011-116-134.77.11.pool.telefonica.de)
+[10:26:52] *** Quits: vid1 (~vid@dynamic-077-011-116-134.77.11.pool.telefonica.de) (Quit: vid1)
+[10:27:14] *** Joins: vid1 (~vid@dynamic-077-011-116-134.77.11.pool.telefonica.de)
+[10:40:36] *** Quits: vid1 (~vid@dynamic-077-011-116-134.77.11.pool.telefonica.de) (Quit: vid1)
+[10:40:52] *** Joins: vidbina (~vid@dynamic-077-011-116-134.77.11.pool.telefonica.de)
+[10:47:04] *** Quits: gschanuel (~gschanuel@200-181-252-244.user3p.brasiltelecom.net.br) (Read error: Connection reset by peer)
+[10:47:47] *** Joins: gschanuel (~gschanuel@200-181-252-244.user3p.brasiltelecom.net.br)
+[10:58:04] *** Quits: CombatVet (~c4@user/combatvet) (Remote host closed the connection)
+[11:05:39] *** Joins: CombatVet (~c4@user/combatvet)
+[11:09:39] *** Joins: tex (~super@user/dix)
+[11:28:16] *** Quits: zakame (~zakame@user/zakame) (Ping timeout: 258 seconds)
+[11:30:29] *** Quits: cmc (~methos@gateway/tor-sasl/cmc) (Remote host closed the connection)
+[11:31:31] *** Joins: cmc (~methos@gateway/tor-sasl/cmc)
+[11:43:36] *** Joins: brachamh_ (~brachamh@user/brachamh)
+[11:46:57] *** Joins: fedenix (~fedenix@gateway/tor-sasl/fedenix)
+[11:52:28] *** Quits: tkazi (~tkazi@user/tkazi) (Quit: Disconnected)
+[11:53:32] *** Joins: tkazi (~tkazi@user/tkazi)
+[12:04:47] *** Quits: svm_invictvs (~svm_invic@2600:8801:9300:5d:3b0f:ce3:c0e9:b5a0) (Quit: Leaving)
+[12:05:00] *** Joins: svm_invictvs (~svm_invic@2600:8801:9300:5d:3b0f:ce3:c0e9:b5a0)
+[12:12:36] *** Quits: vidbina (~vid@dynamic-077-011-116-134.77.11.pool.telefonica.de) (Ping timeout: 265 seconds)
+[12:21:25] *** Quits: fmy (~fmy@42.191.220.10) (Read error: Connection reset by peer)
+[12:25:59] *** Joins: fmy (~fmy@tp-183-32.tm.net.my)
+[12:35:42] *** Joins: zakame (~zakame@user/zakame)
+[12:42:19] *** Joins: cornduck (~cornduck@2400:8901::f03c:92ff:fe22:2fd4)
+[12:43:40] <cornduck> why might i be unable to bind a service to a port inside a container? the Dockerfile is like this: https://termbin.com/c7dx and the command being run is like './nym-mixnode run --id foo' with --port 20184:20184
+[12:43:58] <cornduck> the port is not bound to any service on the hose, outside the container
+[12:44:24] <cornduck> there should obviously be nothing running inside the container
+[12:54:21] *** Quits: ana1ogv0id (marc@52-119-113-34.PUBLIC.monkeybrains.net) (Remote host closed the connection)
+[12:54:42] *** Joins: ana1ogv0id (marc@52-119-113-34.PUBLIC.monkeybrains.net)
+[12:56:19] *** Quits: wasutton (~wasutton3@75-46-236-127.lightspeed.tukrga.sbcglobal.net) (Ping timeout: 268 seconds)
+[13:01:51] <cornduck> ok as i thought, it was an application configuration issue
+[13:01:59] <cornduck> incorrectly configured listening address
+[13:13:57] *** Quits: brachamh (~brachamh@user/brachamh) (Quit: Oops, I'll be back.)
+[13:13:58] *** brachamh_ is now known as brachamh
+[13:16:17] *** Joins: rgl (~rgl@85.245.47.147)
+[13:41:43] *** Joins: Lutin (~Lutin@user/lutin)
+[13:48:23] *** Joins: coax (uid481900@id-481900.brockwell.irccloud.com)
+[14:04:06] *** Quits: lucerne (~lucerne@ip202.ip-51-178-215.eu) (Remote host closed the connection)
+[14:05:02] *** Quits: Ohlov38951749035 (~Ohlov3@dyndsl-085-016-106-213.ewe-ip-backbone.de) (Ping timeout: 252 seconds)
+[14:22:21] *** Quits: fedenix (~fedenix@gateway/tor-sasl/fedenix) (*.net *.split)
+[14:22:21] *** Quits: cmc (~methos@gateway/tor-sasl/cmc) (*.net *.split)
+[14:22:21] *** Quits: CombatVet (~c4@user/combatvet) (*.net *.split)
+[14:22:48] *** Joins: fedenix (~fedenix@gateway/tor-sasl/fedenix)
+[14:23:08] *** Joins: CombatVet (~c4@user/combatvet)
+[14:23:27] *** Joins: cmc (~methos@gateway/tor-sasl/cmc)
+[14:26:05] *** Joins: lucerne (~lucerne@ip202.ip-51-178-215.eu)
+[14:40:27] *** Quits: CombatVet (~c4@user/combatvet) (Ping timeout: 244 seconds)
+[14:41:56] *** Quits: fedenix (~fedenix@gateway/tor-sasl/fedenix) (Remote host closed the connection)
+[14:42:44] *** Joins: CombatVet (~c4@user/combatvet)
+[14:46:44] *** Quits: yjftsjthsd (~yjftsjths@162.127.123.34.bc.googleusercontent.com) (Ping timeout: 272 seconds)
+[14:49:09] *** Quits: sebastianos (~sebastian@user/sebastianos) (Ping timeout: 258 seconds)
+[14:50:30] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-221.dsl.bell.ca)
+[14:59:34] *** Quits: cornduck (~cornduck@2400:8901::f03c:92ff:fe22:2fd4) (Quit: :V)
+[15:01:30] *** Joins: cornduck (~cornduck@2400:8901::f03c:92ff:fe22:2fd4)
+[15:03:45] *** Joins: yjftsjthsd (~yjftsjths@162.127.123.34.bc.googleusercontent.com)
+[15:04:14] *** Quits: CombatVet (~c4@user/combatvet) (Ping timeout: 244 seconds)
+[15:05:46] *** Joins: CombatVet (~c4@user/combatvet)
+[15:22:52] *** Quits: lucerne (~lucerne@ip202.ip-51-178-215.eu) (Remote host closed the connection)
+[15:23:47] *** Joins: lucerne (~lucerne@ip202.ip-51-178-215.eu)
+[15:24:05] *** Quits: CombatVet (~c4@user/combatvet) (Quit: suck it)
+[15:24:19] *** Joins: CombatVet (~c4@user/combatvet)
+[15:28:31] *** Joins: GoLiath_ (~GoLiath@159.48.55.94)
+[15:35:08] *** Quits: GoLiath_ (~GoLiath@159.48.55.94) (Ping timeout: 265 seconds)
+[15:43:30] *** Joins: gordonjcp (~gordon@boulton.gjcp.net)
+[15:43:44] *** Quits: gordonjcp (~gordon@boulton.gjcp.net) (Client Quit)
+[15:44:14] *** Joins: gordonjcp (~gordon@boulton.gjcp.net)
+[16:00:46] *** Joins: wootehfoot (~wootehfoo@user/wootehfoot)
+[16:09:12] *** Joins: thiras (~thiras@user/thiras)
+[16:13:00] *** Quits: rgl (~rgl@85.245.47.147) (Ping timeout: 252 seconds)
+[16:16:33] *** Joins: schmillin_ (~schmillin@user/schmillin)
+[16:16:39] *** Quits: jazzy (~jaziz@2600:380:854e:22c1:c558:7a2d:a4b2:cfa6) (Ping timeout: 265 seconds)
+[16:20:02] *** Quits: schmillin (~schmillin@user/schmillin) (Ping timeout: 265 seconds)
+[16:31:59] *** Quits: lucerne (~lucerne@ip202.ip-51-178-215.eu) (Remote host closed the connection)
+[16:32:45] *** Joins: lucerne (~lucerne@ip202.ip-51-178-215.eu)
+[16:36:45] *** Joins: rgl (~rgl@85.245.47.147)
+[16:45:46] *** Joins: jazzy (~jaziz@2600:380:854e:22c1:2051:28b0:fcd:d60)
+[16:50:02] *** Quits: Furai (~Furai@cookiehoster.furai.pl) (Ping timeout: 268 seconds)
+[16:58:00] *** Joins: elliott_ (~Alys@107-210-166-7.lightspeed.tukrga.sbcglobal.net)
+[16:59:12] *** Quits: Alys (~Alys@107-210-166-7.lightspeed.tukrga.sbcglobal.net) (Ping timeout: 252 seconds)
+[17:03:47] *** Quits: lucerne (~lucerne@ip202.ip-51-178-215.eu) (Remote host closed the connection)
+[17:04:38] *** Joins: lucerne (~lucerne@ip202.ip-51-178-215.eu)
+[17:12:15] *** Joins: Furai (~Furai@cookiehoster.furai.pl)
+[17:14:00] *** Joins: GoLiath_ (~GoLiath@80.179.69.245.cable.012.net.il)
+[17:45:35] *** Quits: linrox (~metbsd@user/linsux) (Quit: byeircer)
+[17:46:58] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-221.dsl.bell.ca) (Remote host closed the connection)
+[17:49:46] *** Joins: Trieste_ (T@user/pilgrim)
+[17:50:27] *** Quits: Trieste (T@user/pilgrim) (Ping timeout: 272 seconds)
+[17:52:47] *** Joins: linsux (~metbsd@user/linsux)
+[17:56:03] *** Trieste_ is now known as Trieste
+[18:00:03] *** Quits: CB_JD (~Code_Bleu@user/code-bleu/x-6939963) (Ping timeout: 258 seconds)
+[18:03:56] *** Joins: night_wulfe_ (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[18:06:05] *** Quits: cmc (~methos@gateway/tor-sasl/cmc) (Ping timeout: 244 seconds)
+[18:06:36] *** Quits: CombatVet (~c4@user/combatvet) (Ping timeout: 244 seconds)
+[18:06:53] *** Quits: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 265 seconds)
+[18:07:44] *** Joins: cmc (~methos@gateway/tor-sasl/cmc)
+[18:10:38] *** linsux is now known as linrox
+[18:10:46] *** Joins: CB_JD (~Code_Bleu@user/code-bleu/x-6939963)
+[18:11:18] <linrox> is there way to auto update image and recreate containers when new update is available
+[18:12:45] *** Joins: CombatVet (~c4@user/combatvet)
+[18:13:49] <artok> linrox: you need to have service that will do that
+[18:16:09] <linrox> can k8s do that kind of thing?
+[18:16:32] *** Quits: wootehfoot (~wootehfoo@user/wootehfoot) (Read error: Connection reset by peer)
+[18:17:45] <artok> usually rolling updates are pushed by CI/CD system
+[18:20:45] <artok> I'd recommend not to do automatic update of image that you don't manage by yourself
+[18:21:01] <artok> and ones you do, put your CI/CD system to work
+[18:41:22] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-08-70-29-36-36.dsl.bell.ca)
+[18:41:30] *** Quits: GoLiath_ (~GoLiath@80.179.69.245.cable.012.net.il) (Ping timeout: 252 seconds)
+[18:46:28] *** Quits: lucerne (~lucerne@ip202.ip-51-178-215.eu) (Read error: Connection reset by peer)
+[18:48:09] *** Joins: Ivyy (~Ivyy@84.247.50.42)
+[18:49:30] *** Quits: jazzy (~jaziz@2600:380:854e:22c1:2051:28b0:fcd:d60) (Ping timeout: 264 seconds)
+[18:51:46] *** Joins: GoLiath_ (~GoLiath@80.179.69.245.cable.012.net.il)
+[19:04:43[19:28:38] *** Joins: lucerne (~lucerne@ip202.ip-51-178-215.eu)
+[19:29:01] *** Parts: Shariff (~UserNick@starbase26.connected.by.freedominter.net) (Closing Window)
+[19:36:27] *** Joins: Brainium (~brainium@user/brainium)
+[19:43:03] *** Joins: fedenix (~fedenix@gateway/tor-sasl/fedenix)
+[19:50:46] *** Quits: Ivyy (~Ivyy@84.247.50.42) (Ping timeout: 265 seconds)
+[20:03:14] *** Quits: lemonzest (~lemonzest@user/lemonzest) (Quit: Quitting)
+[20:09:05] *** Joins: kevr (~kevr@user/kevr)
+[20:09:19] *** Joins: fibsifan (~quassel@dynamic-077-011-156-038.77.11.pool.telefonica.de)
+[20:09:36] <kevr> How do I persist a background process through intermediate containers?
+[20:10:03] <kevr> I need to start up mariadb via mysqld_safe in the background, when I have a loop test for to wait until it can be connected to.
+[20:10:29] <kevr> using RUN allows me to wait until that loop completes before continuing
+[20:21:09] <BtbN> You mean persist a process from a previous build step of a container?
+[20:21:14] <BtbN> That's not a thing you can do, no.
+[20:21:27] <BtbN> Layers are fully independent, and only include image data, not processes.
+[20:21:37] *** Joins: Skyz (~Skyz@user/skyz)
+[20:22:08] <kevr> Gotcha.
+[20:22:18] <BtbN> If you want to run tests against a Database, you need to start that database and then run your tests against it
+[20:22:28] <kevr> that's what i'm trying to do, yeah.
+[20:24:34] *** Quits: Skyz (~Skyz@user/skyz) (Client Quit)
+[20:26:38] <kevr> so every single RUN command creates its own container?
+[20:27:22] <tabakhase> kevr pretty much - but mysql stuff druirng build "smells" wrong anyhow...
+[20:28:27] <tabakhase> images should contain your program, but not your data, so for example /var/lib/mysql gets wiped in every step anyhow kinda-ish
+[20:28:53] <tabakhase> (exceptions to this obvs. exist)
+[20:29:15] *** Joins: rsx (~dummy@ppp-188-174-151-149.dynamic.mnet-online.de)
+[20:30:16] <tabakhase> so... what are you actually wanting todo there? - credentials are made via ENV on the run, schema or such can be made by just dropping a .sql file into the dbinit.d dir, and anything further is "migrations" and should likely be done by your app, not your db
+[20:32:49] <kevr> i just had an epiphany looking at another contributor's docker stuff
+[20:32:54] <kevr> no worries
+[20:33:00] <kevr> docker-compose, here we go
+[20:37:57] *** Joins: petris_ (sid19918@user/petris)
+[20:37:59] *** Quits: petris (~quassel@user/petris) (Quit: Bye bye.)
+[20:37:59] *** petris_ is now known as petris
+[20:39:40] *** Quits: fibsifan (~quassel@dynamic-077-011-156-038.77.11.pool.telefonica.de) (Quit: https://quassel-irc.org)
+[20:41:43] *** Quits: treethought (~treethoug@138.68.49.251) (Remote host closed the connection)
+[20:42:55] *** Joins: treethought (treethou@138.68.49.251)
+[20:48:24] *** Quits: elliott_ (~Alys@107-210-166-7.lightspeed.tukrga.sbcglobal.net) (Quit: Leaving)
+[20:50:02] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-221.dsl.bell.ca)
+[21:06:18] *** Quits: rsx (~dummy@ppp-188-174-151-149.dynamic.mnet-online.de) (Quit: rsx)
+[21:08:01] *** Joins: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com)
+[21:23:30] *** Joins: oxum (~oxum@122.172.237.95)
+[21:24:37] *** Joins: SomeWeirdAnon (~shwn@2a02:8109:abf:ffb4:6906:756f:b2f4:2084)
+[21:28:26] *** Quits: oxum (~oxum@122.172.237.95) (Ping timeout: 265 seconds)
+[21:49:10] <kevr> Does anybody have a nice example of an app that sets up a mysql service then uses that service from another entrypoint/command?
+[21:56:12] *** Joins: tang^ (~doofus@2604:3d09:47c:f970:550d:aafa:2155:f14c)
+[21:57:35] <artok> https://hub.docker.com/_/mysql has info
+[21:58:39] <artok> have named volume for the data, and give password and user setting on first start at least, so it will initialize db
+[21:59:03] <artok> then deploy your app into same network with your mysql container and you can connect to it by it's name
+[22:11:29] *** Joins: virtualroot (~virtualro@user/virtualroot)
+[22:15:34] *** Parts: virtualroot (~virtualro@user/virtualroot) (Leaving...)
+[22:21:09] *** Quits: iamtheworstdev (~iamthewor@c-98-253-72-149.hsd1.in.comcast.net) (Quit: Leaving)
+[22:22:28] *** night_wulfe_ is now known as night_wulfe
+[22:34:17] *** Quits: lucerne (~lucerne@ip202.ip-51-178-215.eu) (Read error: Connection reset by peer)
+[22:35:13] *** Quits: lilgopher (~textual@c-73-51-174-246.hsd1.il.comcast.net) (Quit: Textual IRC Client: www.textualapp.com)
+[22:36:10] *** Joins: lilgopher (~textual@c-73-51-174-246.hsd1.il.comcast.net)
+[22:42:23] *** Joins: dtux (~dtux@2603-8000-2901-f146-692c-9123-fb87-dc16.res6.spectrum.com)
+[22:45:02] *** Quits: dtux (~dtux@2603-8000-2901-f146-692c-9123-fb87-dc16.res6.spectrum.com) (Client Quit)
+[22:49:55] *** Joins: dtux (~dtux@2603-8000-2901-f146-6bbc-93f4-9af8-6f97.res6.spectrum.com)
+[22:52:08] *** Quits: dtux (~dtux@2603-8000-2901-f146-6bbc-93f4-9af8-6f97.res6.spectrum.com) (Read error: Connection reset by peer)
+[22:53:00] *** Joins: dtux (~dtux@2603-8000-2901-f146-6bbc-93f4-9af8-6f97.res6.spectrum.com)
+[22:53:38] *** Quits: dtux (~dtux@2603-8000-2901-f146-6bbc-93f4-9af8-6f97.res6.spectrum.com) (Read error: Connection reset by peer)
+[23:01:54] *** Joins: Ivyy (~Ivyy@2001:a62:41d:fa01:af4c:e063:c46b:4788)
+[23:03:59] *** Quits: factor (~factor@c-66-30-67-217.hsd1.ma.comcast.net) (Read error: Connection reset by peer)
+[23:06:29] *** Quits: Versageek (~Versageek@user/versageek) (Changing host)
+[23:06:29] *** Joins: Versageek (~Versageek@wikimedia/Versageek)
+[23:07:44] *** Joins: Ohlov38951749035 (~Ohlov3@host-091-097-117-154.ewe-ip-backbone.de)
+[23:13:53] *** Joins: factor (~factor@c-66-30-67-217.hsd1.ma.comcast.net)
+[23:20:22] <Lutin> artok what do you think when a container (freeIPA) says this on start: [Errno 30] Read-only file system: '/etc/hosts'
+[23:20:37] <Lutin> thinking about more beer is not an option
+[23:21:47] *** Quits: chasmo77 (~chas77@71.63.241.168) (Quit: It's just that easy)
+[23:26:30] *** Joins: lucerne (~lucerne@ip202.ip-51-178-215.eu)
+[23:27:15] *** Quits: tang^ (~doofus@2604:3d09:47c:f970:550d:aafa:2155:f14c) (Quit: Bye)
+[23:33:33] <artok> IPA is beer
+[23:35:18] *** Joins: dextercd (~dexter@2a02-a450-f25d-1-76d4-35ff-fefe-34c.fixed6.kpn.net)
+[23:38:25] <artok> is that the service you're running that gives the error?
+[23:40:55] *** Quits: gschanuel (~gschanuel@200-181-252-244.user3p.brasiltelecom.net.br) (Read error: Connection reset by peer)
+[23:41:05] *** Joins: gschanuel2 (~gschanuel@200-181-252-244.user3p.brasiltelecom.net.br)
+[23:46:33] *** Quits: GoLiath_ (~GoLiath@80.179.69.245.cable.012.net.il) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[23:46:56] <Lutin> artok cannot find out...
+[23:47:02] <Lutin> artok LOL it is indeed beer!
+[23:49:47] *** Quits: fedenix (~fedenix@gateway/tor-sasl/fedenix) (Remote host closed the connection)
+[23:50:07] *** Joins: fedenix (~fedenix@gateway/tor-sasl/fedenix)
+[23:50:30] *** Quits: Brainium (~brainium@user/brainium) (Quit: Konversation terminated!)
+[23:50:43] *** Joins: Brainium_ (~brainium@user/brainium)
+[23:50:46] *** Quits: lucerne (~lucerne@ip202.ip-51-178-215.eu) (Remote host closed the connection)
+[23:51:39] *** Joins: lucerne (~lucerne@ip202.ip-51-178-215.eu)

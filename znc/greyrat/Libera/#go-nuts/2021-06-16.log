@@ -1,0 +1,1101 @@
+[00:00:01] <mickey> go.mod is in . and the package is in ./pkg/myprivatemodule
+[00:00:20] <mickey> go.mod has "module myproject" and i'm trying to import myproject/pkg/myprivatemodule
+[00:00:53] <b0nn> ok, and you've tried "pkg/myprivatemodule"
+[00:01:15] <mickey> yes. i get the same error.
+[00:01:48] *** Quits: aead (~aead@pool-96-232-187-142.nycmny.fios.verizon.net) (Ping timeout: 272 seconds)
+[00:03:00] *** Quits: yamchah2 (~yamchah2@user/yamchah2) (Remote host closed the connection)
+[00:03:17] *** Joins: yamchah2 (~yamchah2@user/yamchah2)
+[00:04:27] <b0nn> hmm, why do you call it "myprivatemodule" not "mypackage" is it a separate module?
+[00:08:40] <mickey> whatever, mypackage.
+[00:09:03] <mickey> it's just a package, nothing too fancy
+[00:09:38] <b0nn> you're talking in abstracts and I was trying to figure out why you were using that language
+[00:09:54] <b0nn> OIf it's a problem - I'll let you figure it out on your own
+[00:12:34] <icholy> mickey: from what you've described, it should work. You have a typo somewhere.
+[00:13:10] *** Joins: NoName_ (~idk@8.20.127.195)
+[00:16:42] *** Joins: mmfood (~mmfood@h-158-174-183-217.A980.priv.bahnhof.se)
+[00:18:12] *** Quits: burningserenity (~burningse@142-196-178-216.res.spectrum.com) (Quit: ZNC 1.8.2 - https://znc.in)
+[00:20:35] *** Joins: burningserenity (~burningse@2603:9001:f01:ad99::1002)
+[00:20:57] *** Quits: mmfood (~mmfood@h-158-174-183-217.A980.priv.bahnhof.se) (Ping timeout: 244 seconds)
+[00:24:28] *** Quits: NoName_ (~idk@8.20.127.195) (Quit: https://www.endfgm.eu/what-can-you-do/donate/)
+[00:26:37] <BenLubar> is there some clever way I could optimize this function? I feel like I've run out of non-clever optimizations. https://git.lubar.me/ben/spy-cards/src/branch/develop/gfx/sprites/batch.go#L95 https://share.firefox.dev/3cGvF5B
+[00:28:17] <BenLubar> it's entirely possible that it's as good as I can get it without SIMD support or something like that
+[00:28:27] *** Joins: SebastianM (~seba@user/sebastianm)
+[00:29:30] <lemmi> did you run a profiler? maybe there is something sticking out you missed so far
+[00:29:49] <BenLubar> the profiler output is the share.firefox.dev link
+[00:30:12] *** Joins: tomlazar (~tomlazar@cpe-65-26-56-76.wi.res.rr.com)
+[00:30:33] <lemmi> oh, that was two links
+[00:30:35] <BenLubar> it makes sense that "draw a sprite" is what's taking the most time because that's basically all the program does every frame
+[00:30:39] *** Quits: SebastianM (~seba@user/sebastianm) (Client Quit)
+[00:30:49] <seebs> hmm. gopher-slack #performance may also have insights.
+[00:31:09] <Tv_> BenLubar: have you figured out what the source of that memmove is?
+[00:31:17] <BenLubar> Tv_: I'm guessing the `append` call
+[00:31:24] <Tv_> BenLubar: hard to tell as an outsider which of these assignments would be big
+[00:31:37] <seebs> hmm. one obvious concern would be the repetition of the "spriteDataShared", if you need the same data every time, figuring out a way to, say, encode that into the shader directly might help.
+[00:32:11] <BenLubar> if I had geometry shaders in WebGL I could remove three of the four copies of the data, but unfortunately I don't have access to that on most devices
+[00:33:03] *** Joins: nabromov (~nabromov@217.138.202.132)
+[00:33:19] <seebs> that seems like a *lot* of data per vertex.
+[00:33:23] *** Parts: nabromov (~nabromov@217.138.202.132) ()
+[00:33:40] *** Joins: dr0n (~nabromov@217.138.202.132)
+[00:34:11] <seebs> huh. well, one thing is, you can probably pre-populate sb.elem.
+[00:35:22] <seebs> like, you are always populating it with sequences of the same six values, incremented by 4 each time, but it's absolutely fixed, so you could populate it once, and then at the end of that loop, reslice it to the relevant portion of that data.
+[00:35:32] <Tv_> BenLubar: you're first prepping data and then appending it, that's likely your memmoves
+[00:35:53] <Tv_> BenLubar: e.g. sb.elem, you can append a zero value and then populate it, instead of var elems
+[00:36:16] <Tv_> zero value*s* in this case, it's a bunch of bytes
+[00:36:22] <BenLubar> I can probably make the element buffer shared between all sprite batches
+[00:36:48] <seebs> honestly, yes, because every buffer will be the same element buffer, and you can just use slices of it.
+[00:36:49] <Tv_> BenLubar: and appendData seems to be very similar, argument is a pointer but it's copied out into the []byte
+[00:37:02] *** Joins: mikoto-chan (~mikoto-ch@ip-213-49-189-31.dsl.scarlet.be)
+[00:37:03] <seebs> but also anything that can get you away from duplicating all that data will help.
+[00:39:25] *** Joins: ausserz (~ausserz@user/ausserz)
+[00:40:36] <seebs> it really seems like the SpriteDataShared stuff shouldn't need to be there at all. It's not just that there's multiple copies of it, it's that it's knowable at compile time, so whatever shader can presumably just be hardcoded for it.
+[00:41:34] <seebs> oh, wait, i see. you're inserting a different premade subset for each one. hmm.
+[00:41:52] <seebs> still those feel like pretty huge vertex data, it might be possible to strip some of that.
+[00:43:03] <seebs> anyway, i think i'd probably look first at killing the sb.elem stuff, because i think it's completely redundant.
+[00:47:32] *** Quits: kayprish (~kayprish@46.240.143.86) (Quit: leaving)
+[00:49:51] *** Quits: burningserenity (~burningse@2603:9001:f01:ad99::1002) (Quit: ZNC 1.8.2 - https://znc.in)
+[00:50:17] *** Quits: kulak (~kulak@user/kulak) (Read error: Connection reset by peer)
+[00:50:52] *** Joins: kulak (~kulak@user/kulak)
+[00:51:11] *** Joins: burningserenity (~burningse@142-196-178-216.res.spectrum.com)
+[00:53:53] *** Joins: SebastianM (~seba@user/sebastianm)
+[00:53:59] *** Quits: SebastianM (~seba@user/sebastianm) (Client Quit)
+[00:56:36] *** Quits: shka (~herr@109.231.62.239) (Ping timeout: 244 seconds)
+[01:02:05] *** Joins: MintyPhoenix (~MintyPhoe@c-73-143-208-196.hsd1.ct.comcast.net)
+[01:04:11] *** Techcable_ is now known as Techcable
+[01:10:18] *** Quits: mikoto-chan (~mikoto-ch@ip-213-49-189-31.dsl.scarlet.be) (Ping timeout: 240 seconds)
+[01:14:58] *** Quits: MintyPhoenix (~MintyPhoe@c-73-143-208-196.hsd1.ct.comcast.net) (Quit: Leaving)
+[01:19:55] *** Quits: pac (jonas@193.15.29.216) (Quit: leaving)
+[01:23:21] *** Joins: Guest40 (~Guest40@2a02:8084:a080:9e00:3fae:994c:3fdc:274d)
+[01:29:41] *** Quits: icholy (~icholy@68.71.18.45) (Quit: leaving)
+[01:32:34] *** Quits: burningserenity (~burningse@142-196-178-216.res.spectrum.com) (Quit: ZNC 1.8.2 - https://znc.in)
+[01:34:42] *** Quits: Kane (~Kane@2a01:e34:ee89:5d90:8531:9d10:e5a1:a7e0) (Quit: Leaving)
+[01:37:07] *** Joins: cfjk5 (~cfjk@user/cfjk)
+[01:38:58] *** Quits: cfjk (~cfjk@user/cfjk) (Ping timeout: 244 seconds)
+[01:38:58] *** cfjk5 is now known as cfjk
+[01:42:00] *** Quits: zwr (~Person@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091) (Quit: Reconnecting)
+[01:42:09] *** Joins: zwr (~Person@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091)
+[01:42:21] *** Quits: zwr (~Person@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091) (Client Quit)
+[01:42:29] *** Joins: zwr (~Person@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091)
+[01:45:16] *** Joins: milosz__ (~milosz@user/milosz)
+[01:45:41] *** Quits: milosz_ (~milosz@user/milosz) (Read error: Connection reset by peer)
+[01:47:48] *** Quits: zwr (~Person@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091) (Quit: Reconnecting)
+[01:47:55] *** Joins: zwr (~Person@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091)
+[01:49:07] *** Quits: zwr (~Person@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091) (Client Quit)
+[01:49:14] *** Joins: zwr (~Person@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091)
+[01:50:45] *** Quits: burningserenity_ (~burningse@2603-9001-0f01-ad99-0000-0000-0000-1006.inf6.spectrum.com) (Ping timeout: 272 seconds)
+[01:51:03] *** Joins: burningserenity (~burningse@143.244.34.147)
+[01:51:05] *** Quits: sord937_ (~sord937@gateway/tor-sasl/sord937) (Quit: sord937_)
+[01:51:14] *** Quits: dr0n (~nabromov@217.138.202.132) (Quit: WeeChat 2.8)
+[01:52:58] *** Joins: dkmueller (~dkmueller@2a01:c23:c070:3a00:1107:6617:739e:3380)
+[01:55:23] *** Joins: dcompoze (~dcompoze@5E98D6D9.static.tld.pl)
+[01:57:43] *** Quits: blyat-73 (~hjgkjhgkj@79.101.60.163) (Quit: Leaving)
+[02:01:31] *** Quits: tomlazar (~tomlazar@cpe-65-26-56-76.wi.res.rr.com) (Quit: leaving)
+[02:01:40] *** Joins: endigma5 (~endigma@134.41.87.209)
+[02:02:53] *** Joins: src (~src@user/src)
+[02:03:38] *** Quits: endigma (~endigma@134.41.87.209) (Ping timeout: 252 seconds)
+[02:03:38] *** endigma5 is now known as endigma
+[02:04:57] *** Quits: zwr (~Person@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091) (Quit: Reconnecting)
+[02:05:05] *** Joins: zwr (~Person@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091)
+[02:05:11] *** Quits: zwr (~Person@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091) (Client Quit)
+[02:05:20] *** Joins: zwr (~Person@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091)
+[02:06:54] *** Quits: zwr (~Person@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091) (Client Quit)
+[02:07:01] *** Joins: zwr (~Person@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091)
+[02:07:04] *** Quits: zwr (~Person@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091) (Client Quit)
+[02:07:12] *** Joins: zwr (~Person@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091)
+[02:09:01] *** Quits: paulgrmn (~paulgrmn@user/paulgrmn) (Ping timeout: 268 seconds)
+[02:10:39] *** Quits: SincereFox (uid337158@user/sincerefox) (Quit: Connection closed for inactivity)
+[02:15:26] *** Joins: Celeo (~Celeo@2603-8001-3301-2e00-c88b-d215-4d9e-4b97.res6.spectrum.com)
+[02:16:23] *** Quits: zwr (~Person@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091) (Quit: leaving)
+[02:16:41] *** Joins: zwr (~zwr@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091)
+[02:17:23] *** Quits: foxtrot (~foxtrot@user/foxtrot) (Remote host closed the connection)
+[02:17:37] *** Joins: southey (~foxtrot@user/foxtrot)
+[02:20:55] *** Quits: Guest40 (~Guest40@2a02:8084:a080:9e00:3fae:994c:3fdc:274d) (Quit: Client closed)
+[02:21:07] *** Joins: Guest40 (~Guest40@2a02:8084:a080:9e00:3fae:994c:3fdc:274d)
+[02:24:14] *** Quits: noxim (~noxim@user/noxim) (Quit: Client closed)
+[02:27:02] *** Quits: mrig (~mrig@user/mrig) (Quit: WeeChat 3.2)
+[02:28:32] *** Joins: SincereFox (uid337158@user/sincerefox)
+[02:29:56] *** Quits: zwr (~zwr@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091) (Quit: leaving)
+[02:30:12] *** Joins: zwr (~zwr@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091)
+[02:33:07] *** Joins: falsifian (~falsifian@exoco.falsifian.org)
+[02:35:26] <falsifian> "go install golang.org/x/net@latest" is failing with "does not contain package golang.org/x/net". https://clbin.com/kN3XP
+[02:35:49] <falsifian> Any ideas what's wrong? I've tried deleting ~/go and re-running but I get the same error.
+[02:37:37] <Tv_> falsifian: that's not a package, it contains packages
+[02:38:01] <Tv_> you probably didn't mean install, you meant get
+[02:39:00] <falsifian> Tv_: My goal is to be able to run this program by running "go run f.go": https://clbin.com/FmTvg
+[02:39:26] <falsifian> Currently I get "package x/net/route is not in GOROOT (/usr/local/go/src/x/net/route)". I was hoping "go get" or "go install" or something would fix that, but no luck so far.
+[02:39:34] <Tv_> "x/net/route" ain't gonna exist, that's not the name of the package
+[02:39:54] <Tv_> if you had used the right path, with golang.org, it probably would have worked already
+[02:40:22] <falsifian> Tv_: Thanks. I think last time I ran it I had x/net checked out under GOPATH; that's probably why it worked for me before.
+[02:43:35] *** Parts: Celeo (~Celeo@2603-8001-3301-2e00-c88b-d215-4d9e-4b97.res6.spectrum.com) (Leaving)
+[02:43:39] <falsifian> Okay, got it working by importing "golang.org/x/net/route" and adding a go.mod file. Question: is it possible to make it a standalone file, without a go.mod? I'm hoping to include this as a self-contained example explaining a code change.
+[02:44:05] <falsifian> If I delete go.mod I get "no required module provides package golang.org/x/net/route: working directory is not part of a module"
+[02:44:23] <Tv_> you should not delete go.mod
+[02:45:01] <falsifian> Tv_: Thanks. I guess I will just include go.mod as part of the self-contained example code.
+[02:45:25] <Tv_> examples often reside inside a project with a go.mod already
+[02:45:53] <falsifian> Tv_: I'm hoping to just include this as part of a commit message and/or bug report message.
+[02:46:18] <falsifian> Tv_: It just explains where the old code breaks. I guess ideally there would be a unit test, but x/net doesn't really seem to be set up for that.
+[02:46:28] <Tv_> wat
+[02:46:57] <Tv_> do you think the http/2 implementation has no unit tests?
+[02:47:20] <falsifian> Sorry, misspoke. I just remembered when I looked into testing route/interface.go, nothing was already in place, and I didn't want to break that ground just to fix this bug.
+[02:47:38] *** Quits: amahl (~amahl@dsl-jklbng12-54fbca-64.dhcp.inet.fi) (Remote host closed the connection)
+[02:48:03] <Tv_> it's pure data structures, not much to test there
+[02:48:24] *** Joins: tiaz (~dude@user/tiaz)
+[02:49:15] <tiaz> Hello. I've just run into go 1.15 no longer accepting x509 certificates with the subject only in the CN= field (and not subject alternative names), https://golang.org/doc/go1.15#commonname
+[02:49:17] <falsifian> Tv_: The problem here is that net/route/interface_classic.go fails to correctly parse some routing messages from the DragonflyBSD kernel, because the ABI changed.
+[02:49:27] *** Joins: dp_weasel (~weasel@190.103.233.200)
+[02:49:30] <tiaz> I see that I can set x509ignoreCN=0 in the GODEBUG env variable. My question is does that have to be done during the build, or is this a runtime parameter?
+[02:50:07] <Tv_> falsifian: sounds like a job for interface_classic_test.go
+[02:50:20] <Tv_> tiaz: runtime
+[02:50:26] <tiaz> Tv_: thank you
+[02:51:39] <falsifian> Tv_: Ideally, sure. In practice, I don't think I'm going to invest the time right now.
+[02:52:09] <Tv_> falsifian: i'm not sure why you were looking for a place to put tests, then
+[02:52:29] <falsifian> Tv_: I'm not. But I do want to include this little example program in my git commit message :-)
+[02:52:50] <falsifian> Tv_: Anyway, I think this is resolved as for as I'm concerned. I'll just include go.mod wherever I put the program.
+[02:53:03] <falsifian> Tv_: Thanks for pointing me in the right direction.
+[02:53:18] *** Joins: devx (~devx@151.233.209.35.bc.googleusercontent.com)
+[02:53:27] *** Joins: einalex (~einalex@ip4d15fd2a.dynamic.kabel-deutschland.de)
+[02:54:11] *** Joins: burningserenity_ (~burningse@2603:9001:f01:ad99::1002)
+[02:54:43] <seebs> tiaz: i believe that's a runtime-settable flag for 1.15, but i would also strongly recommend fixing the certificates, not just patching around it, because the ability to support the broken certs is absolutely going to go away.
+[02:57:08] *** Quits: dp_weasel (~weasel@190.103.233.200) (Remote host closed the connection)
+[02:58:13] <tiaz> seebs: no worries, we absolutely will cut certs with SANs. they number in the hundreds though, that's going to take a while and I expect we have to fix the internal CA as well ... so for now I really need the quick workaround
+[02:58:41] <tiaz> thank you though, that is good advice :)
+[02:59:46] *** Quits: theoceaniscool (~theoceani@188.127.173.202) (Ping timeout: 272 seconds)
+[02:59:59] <seebs> okay, i just wanted to avoid the thing where the helpful advice ends up nudging someone towards having a worse problem later
+[03:03:33] *** Quits: Guest40 (~Guest40@2a02:8084:a080:9e00:3fae:994c:3fdc:274d) (Quit: Client closed)
+[03:03:55] *** Joins: Guest40 (~Guest40@2a02:8084:a080:9e00:3fae:994c:3fdc:274d)
+[03:05:50] <b0nn> but but but.. if we didn't make life worse so people have to come back, we'd run out of people asking for help!
+[03:06:42] <seebs> oh no
+[03:06:53] <seebs> it's okay we can always go to freenode to look for more
+[03:07:10] <einalex> rumour has it they have less people now
+[03:07:38] <b0nn> after yesterday I'd be surprised if they have anyone at all
+[03:08:31] <b0nn> <freenode drama> they're apparently migrating to a new ircd, and the db for nickserv wasn't migrated. Yesterday, at least when I checked, nobody's nicks were registered anymore
+[03:08:54] <seebs> yeah, or channels, so it's basically just a whole new thing, which at least gets rid of the "they're taking people's channels" concern.
+[03:09:17] <seebs> and at some point in the process they apparently lost services such that some random person could log in as NickServ and get automatic messages of people's passwords when they logged in
+[03:09:20] <einalex> not migrating is such a nice move. you can practically feel how much they value their userbase
+[03:10:32] <b0nn> I mean, I don't get it, if it was a commercial venture, then the existing userbase /was/ the prize
+[03:13:18] <Sam> Even if it was just an egocentric venture the existing userbase was the prize, so I really don't know
+[03:13:43] <seebs> have seen speculation that, having established that they were likely losing, destroying it completely makes it a tax writeoff.
+[03:13:55] <seebs> could also just be actually that bad at things
+[03:14:30] <Vigdis> b0nn, it was just pocket change anyway https://news.ycombinator.com/item?id=27497019
+[03:15:39] <einalex> with the userbase running away in droves, suicide by botched migration was maybe the face-saving variant of the death of the platform.
+[03:17:25] *** Joins: klltkr (~klltkr@host86-184-164-82.range86-184.btcentralplus.com)
+[03:19:15] *** Joins: NoName_ (~idk@8.20.127.195)
+[03:26:20] *** Quits: andlabs (~andlabs@68.237.68.71) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[03:28:00] *** Joins: andlabs (~andlabs@68.237.68.71)
+[03:31:39] *** Quits: jsrnop (~mark@pool-72-66-97-117.washdc.fios.verizon.net) (Quit: The Lounge - https://thelounge.chat)
+[03:32:21] *** Joins: jsrnop (~mark@pool-72-66-97-117.washdc.fios.verizon.net)
+[03:35:02] *** Parts: Guest40 (~Guest40@2a02:8084:a080:9e00:3fae:994c:3fdc:274d) ()
+[03:37:39] *** Joins: Catatonic (~Catatonic@ariel.whatbox.ca)
+[03:38:10] *** Quits: mzsr (~mzsr@user/mzsr) (Quit: The Lounge - https://thelounge.chat)
+[03:39:33] *** Quits: DeltaNova (~DeltaNova@user/deltanova) (Quit: WeeChat 3.0.1)
+[03:40:20] *** Quits: betelgeuse (~john2gb@94-225-47-8.access.telenet.be) (Read error: Connection reset by peer)
+[03:41:03] *** Joins: everest (~everest@c-76-126-12-166.hsd1.ca.comcast.net)
+[03:41:50] *** Joins: betelgeuse (~john2gb@94-225-47-8.access.telenet.be)
+[03:44:19] *** Quits: koo6 (~koo6@89-24-13-235.customers.tmcz.cz) (Ping timeout: 244 seconds)
+[03:44:26] *** Quits: dkmueller (~dkmueller@2a01:c23:c070:3a00:1107:6617:739e:3380) (Quit: WeeChat 3.1)
+[03:50:42] <everest> I'm having an issue running go tests that ends in what looks like an error internal to go: 'go: failed to remove work dir: unlinkat /tmp/tmp.0R37ccegf7/go-build77471883: directory not empty'. How would I go about diagnosing what's up here? I looked through existing issues but couldn't see anything recent relating to this
+[03:51:44] *** Joins: Guest34 (~Guest34@c-76-126-12-166.hsd1.ca.comcast.net)
+[03:52:16] *** Quits: Guest34 (~Guest34@c-76-126-12-166.hsd1.ca.comcast.net) (Client Quit)
+[03:53:35] *** Joins: gzj (~GZJ0X@96.45.188.111.16clouds.com)
+[03:58:30] *** Quits: R2robot (~R2robot@user/r2robot) (Ping timeout: 264 seconds)
+[04:03:04] *** Quits: omegatron (~some@p5b056bc7.dip0.t-ipconnect.de) (Quit: What happened? You quit!)
+[04:06:27] *** Joins: chasmo77 (~chas77@71.63.241.168)
+[04:07:32] *** Quits: ente_ (~ente@p200300dc5f4037016fbea028d47fea8e.dip0.t-ipconnect.de) (Ping timeout: 272 seconds)
+[04:12:51] *** Quits: jespada (~jespada@90.254.242.55) (Ping timeout: 272 seconds)
+[04:14:31] *** Joins: jespada (~jespada@90.254.247.46)
+[04:14:43] *** Quits: burningserenity_ (~burningse@2603:9001:f01:ad99::1002) (Quit: ZNC 1.8.2 - https://znc.in)
+[04:17:02] *** Joins: raktajino (~raktajino@callisto.raktajino.club)
+[04:24:27] *** Quits: publio (~publio@5.2.79.154) (Remote host closed the connection)
+[04:27:55] *** Quits: NoName_ (~idk@8.20.127.195) (Quit: https://www.endfgm.eu/what-can-you-do/donate/)
+[04:29:41] *** Joins: LiftLeft (~LiftLeft@154.21.114.243)
+[04:37:06] *** Quits: einalex (~einalex@ip4d15fd2a.dynamic.kabel-deutschland.de) (Ping timeout: 240 seconds)
+[04:40:45] *** Joins: fef (~thedawn@user/thedawn)
+[04:43:06] *** Quits: Torr (~Torr@user/torr) (Ping timeout: 240 seconds)
+[04:44:30] <rewt> everest, what are the extra files left in there?  do you have any go directives that might create extra files in there?
+[04:46:02] *** Quits: predmijat (~predmijat@mail.strogopro.com) (Quit: bye)
+[04:47:24] *** Joins: jkl (~jkl1337@2600:1700:2420:6d10::3f1)
+[04:47:34] *** Joins: predmijat (~predmijat@mail.strogopro.com)
+[04:49:36] *** Joins: eck0__ (~Android@047-007-119-133.res.spectrum.com)
+[04:51:58] *** Joins: opaulo (~ff@185.153.176.84)
+[04:53:02] *** Quits: eck0 (~Android@047-007-119-133.res.spectrum.com) (Ping timeout: 268 seconds)
+[04:53:40] *** jiqiren is now known as emptyleg
+[04:53:44] *** emptyleg is now known as emptylegs
+[04:53:55] *** emptylegs is now known as emptyleg
+[04:53:58] *** emptyleg is now known as emptylegs
+[04:54:02] *** emptylegs is now known as jiqiren
+[04:54:43] *** Joins: eck0 (~Android@mobile-166-173-60-247.mycingular.net)
+[04:55:41] <everest> rewt it's got a directory in there named 'b758', containing a '_pkg_.a' and a 'importcfg'. I'm not sure what directives would create extra files in there? I believe the only compiler directives in this codebase are build tags
+[04:57:12] <everest> we actually do have some cgo in the project, but none of the packages listed in the 'go test' output prior to the crash contain or import anything cgo-related
+[04:57:35] <rewt> .a will be a binary... any clues from what's in importcfg?
+[04:58:35] *** Quits: eck0__ (~Android@047-007-119-133.res.spectrum.com) (Ping timeout: 268 seconds)
+[04:58:50] <everest> It's got a list of packages with what looks like corresponding cache directories, but I'm not familiar with the format, so not sure what clues I should look for
+[04:59:42] *** jiqiren is now known as driver
+[04:59:56] <rewt> probably the list of imports in the package compiled into that .a ... not sure where to go from here :(
+[04:59:57] *** driver is now known as thenetmonkey
+[05:00:18] <rewt> does this happen every time you run go test?
+[05:00:27] *** thenetmonkey is now known as lll
+[05:00:38] *** lll is now known as bry
+[05:01:01] *** bry is now known as jiqiren
+[05:01:37] *** jiqiren is now known as bry
+[05:03:17] *** Joins: loosh (~jason@vultr.bastion.pnj1.us.zj.is)
+[05:04:14] *** southey is now known as foxtrot
+[05:04:37] <everest> it does - but it's been an odd situation. It passes on a local machine and on our old CI VM, and fails on a new one we just spun up. All the same go version and OS version
+[05:07:18] <rewt> maybe it's something with the new vm... something might be different from the old one
+[05:08:54] <everest> yeah I've been working through all my options. I figured I'd ask here since the error seemed like something internal
+[05:12:08] <everest> thank you for the help, I'll do some more digging
+[05:13:18] *** Joins: burningserenity_ (~burningse@2603-9001-0f01-ad99-0000-0000-0000-1006.inf6.spectrum.com)
+[05:15:51] *** Quits: burningserenity (~burningse@143.244.34.147) (Ping timeout: 268 seconds)
+[05:17:03] *** Quits: rewt (default@user/rewt) (Killed (NickServ (GHOST command used by rewt__!~default@user/rewt)))
+[05:17:18] *** Joins: rewt (~default@user/rewt)
+[05:20:39] *** Quits: SincereFox (uid337158@user/sincerefox) (Quit: Connection closed for inactivity)
+[05:20:56] *** Joins: hexfive (~eric@50.35.83.177)
+[05:21:18] *** Quits: hexfive (~eric@50.35.83.177) (Client Quit)
+[05:21:31] *** Joins: SincereFox (uid337158@user/sincerefox)
+[05:22:21] *** Quits: bry (~jiqiren@oh-hi.org) (Quit: leaving)
+[05:23:46] *** Joins: jiqiren (~jiqiren@oh-hi.org)
+[05:23:46] *** Quits: jiqiren (~jiqiren@oh-hi.org) (Client Quit)
+[05:25:04] *** Joins: jiqiren (~jiqiren@oh-hi.org)
+[05:26:36] *** Quits: dcompoze (~dcompoze@5E98D6D9.static.tld.pl) (Quit: WeeChat 3.2)
+[05:27:58] *** Quits: llorllale (~llorllale@2607:9880:3a18:69:bcd8:f704:fbfd:98b7) (Ping timeout: 272 seconds)
+[05:34:28] *** Joins: edr (~edr@user/edr)
+[05:35:34] *** Quits: eck0 (~Android@mobile-166-173-60-247.mycingular.net) (Read error: Connection reset by peer)
+[05:35:47] *** Quits: everest (~everest@c-76-126-12-166.hsd1.ca.comcast.net) (Quit: Lost terminal)
+[05:35:58] *** Joins: eck0 (~Android@047-007-119-133.res.spectrum.com)
+[05:38:44] *** Quits: klltkr (~klltkr@host86-184-164-82.range86-184.btcentralplus.com) (Ping timeout: 272 seconds)
+[05:39:22] *** Quits: burningserenity_ (~burningse@2603-9001-0f01-ad99-0000-0000-0000-1006.inf6.spectrum.com) (Ping timeout: 272 seconds)
+[05:39:49] *** Joins: klltkr (~klltkr@2a00:23c5:d198:ad01:446:91f7:bf1d:4f76)
+[05:40:49] *** Joins: burningserenity (~burningse@102.129.153.53)
+[05:41:28] *** Joins: eck0__ (~Android@047-007-119-133.res.spectrum.com)
+[05:41:40] *** Quits: klltkr (~klltkr@2a00:23c5:d198:ad01:446:91f7:bf1d:4f76) (Client Quit)
+[05:43:51] *** Joins: burningserenity_ (~burningse@142-196-178-216.res.spectrum.com)
+[05:45:01] *** Joins: jayvee (~quassel@user/jayvee)
+[05:45:54] *** Quits: eck0 (~Android@047-007-119-133.res.spectrum.com) (Ping timeout: 264 seconds)
+[05:48:32] *** Quits: sudoforge (~sudoforge@wireguard/tunneler/sudoforge) (Read error: Connection reset by peer)
+[05:49:05] *** Joins: sudoforge (~sudoforge@wireguard/tunneler/sudoforge)
+[05:57:54] *** Quits: burningserenity (~burningse@102.129.153.53) (Ping timeout: 240 seconds)
+[05:58:33] *** Joins: jlbribeiro (~jlbribeir@user/jlbribeiro)
+[06:00:42] *** Quits: c10l (~c10l@89.34.167.207) (Read error: Connection reset by peer)
+[06:01:02] *** Quits: saml (~saml@cpe-74-73-80-162.nyc.res.rr.com) (Remote host closed the connection)
+[06:02:49] *** Joins: c10l (~c10l@89.34.167.207)
+[06:04:37] *** Joins: oxum (~oxum@106.201.113.95)
+[06:04:39] *** Quits: jlbribeiro (~jlbribeir@user/jlbribeiro) (Quit: Leaving)
+[06:04:42] *** Joins: parnikkapore (~parnikkap@user/parnikkapore)
+[06:08:24] *** Quits: n3tgh0st (~n3t@209-112-185-154-radius.dynamic.acsalaska.net) (Read error: Connection reset by peer)
+[06:09:30] *** Quits: oxum (~oxum@106.201.113.95) (Ping timeout: 268 seconds)
+[06:10:03] *** Joins: n3tgh0st (~n3t@209-112-185-154-radius.dynamic.acsalaska.net)
+[06:11:15] *** Quits: rewt (~default@user/rewt) (Read error: Connection reset by peer)
+[06:11:46] *** Joins: rewt (~default@user/rewt)
+[06:12:37] *** Quits: novns (~novns@user/novns) (Quit: ZNC 1.8.2 - https://znc.in)
+[06:13:48] *** Joins: novns (~novns@user/novns)
+[06:15:09] *** Joins: orrery (~aza@2600:6c50:407f:5100:918:ca45:21c4:5ca3)
+[06:17:06] *** Quits: novns (~novns@user/novns) (Client Quit)
+[06:18:39] *** Joins: novns (~novns@user/novns)
+[06:22:36] *** Quits: orrery (~aza@2600:6c50:407f:5100:918:ca45:21c4:5ca3) (Quit: Leaving)
+[06:24:40] *** Joins: chimeracoder (sid230642@id-230642.brockwell.irccloud.com)
+[06:30:29] *** Joins: LamePotato (~lamepotat@bras-base-trrbpq6503w-grc-40-142-113-10-238.dsl.bell.ca)
+[06:30:49] *** Joins: orrery (~orrery@2600:6c50:407f:5100:918:ca45:21c4:5ca3)
+[06:53:52] *** Joins: frost (~frost@59.71.241.190)
+[06:58:18] *** Quits: frost (~frost@59.71.241.190) (Ping timeout: 240 seconds)
+[06:58:57] <raktajino> hey folks, first time working with mocks and I thought I had them figured out, but then I got bit by an "Unexpected Method Call", and I can't figure out why. Here's the error and some code - it won't compile but hopefully is enough to give you an idea of what's going on here: https://play.golang.org/p/wZG0f6-T3_4
+[06:59:16] *** Joins: blakeorwhatever[ (~blakeorwh@2001:470:69fc:105::340e)
+[06:59:29] <raktajino> What's weird about this is that I can successfully use this mock with other methods just fine. The only thing I can figure is that my other methods use "GET" rather than "POST"....but I don't see why that should matter
+[06:59:39] <raktajino> also, if it's relevant, the mock was generated with mockery
+[07:08:17] *** Quits: sadg (~odd@45.83.220.210) (Ping timeout: 272 seconds)
+[07:09:54] *** Joins: frost (~frost@59.71.241.190)
+[07:10:20] *** Quits: frost (~frost@59.71.241.190) (Client Quit)
+[07:10:35] *** Joins: frost (~frost@59.71.241.190)
+[07:10:35] *** Quits: frost (~frost@59.71.241.190) (Client Quit)
+[07:12:34] *** Quits: Church (~aleph@pool-98-116-232-112.nycmny.fios.verizon.net) (Read error: Connection reset by peer)
+[07:13:29] *** Joins: frost (~frost@59.71.241.190)
+[07:13:34] *** Quits: fef (~thedawn@user/thedawn) (Ping timeout: 252 seconds)
+[07:14:02] *** Joins: iateadonut (~dan@121.177.17.154)
+[07:14:25] *** Joins: Church (~aleph@pool-98-116-232-112.nycmny.fios.verizon.net)
+[07:16:34] *** Joins: acidfu- (~nicolasbo@96.125.207.152)
+[07:19:11] *** Quits: acidfoo- (~nicolasbo@96.125.207.152) (Ping timeout: 268 seconds)
+[07:21:13] *** Joins: fef (~thedawn@user/thedawn)
+[07:21:16] *** Joins: losinggeneration (~quassel@64.225.54.254)
+[07:23:58] *** Joins: sadg (~odd@45.83.220.210)
+[07:24:56] *** Joins: SebastianM (~seba@user/sebastianm)
+[07:25:04] *** Quits: SebastianM (~seba@user/sebastianm) (Client Quit)
+[07:28:21] *** Joins: Guest8285 (~co@ip72-202-63-108.lv.lv.cox.net)
+[07:30:11] *** Quits: Guest8285 (~co@ip72-202-63-108.lv.lv.cox.net) (Client Quit)
+[07:34:10] <seebs> i know nothing about "mock", but i also note that it apparently expected "/constituents". my vague guess: the "mockHTTPClient" is storing state between multiple different calls, so it's expecting something from a previous test
+[07:34:35] <seebs> try `go test -run TestSearchConstituentDuplicates` and my guess is it'll run okay because the other test didn't get run and confuse it.
+[07:34:42] <raktajino> 👀
+[07:36:06] <raktajino> nope, same failure
+[07:38:05] <seebs> huh. no clue then. you'd have to look at the mock thing to figure out where it's getting the "/constituents" path.
+[07:39:10] <raktajino> what's weird is that the mock doesn't know or care about the path. It (at least in theory) takes an http.Request and spits out an http.Response
+[07:39:28] <raktajino> and the path is just one component of the Request
+[07:42:29] *** Quits: icebattle (~wayne@S010600fc8ddfd2b3.vc.shawcable.net) (Ping timeout: 272 seconds)
+[07:42:47] *** Quits: andlabs (~andlabs@68.237.68.71) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[07:44:04] *** Joins: icebattle (~wayne@S010600fc8ddfd2b3.vc.shawcable.net)
+[07:44:45] *** Joins: andlabs (~andlabs@68.237.68.71)
+[07:50:26] *** Quits: acohn (~acohn@user/alexcohn) (Quit: TTFN)
+[07:50:45] *** Joins: acohn (acohn@user/alexcohn)
+[07:57:45] <b0nn> raktajino: /sounds/ like there's a method called on the mock that isn't specified by the interface (although that would be really weird)
+[07:58:53] <raktajino> right, the interface only has one method (Do) and as I mentioned it works elsewhere in my tests.... is it possible this is some weird concurrency thing I'm overlooking in the test documentation?
+[08:01:52] *** Joins: k3rn31 (~davide@2001:b07:6473:a66d:5a00:e3ff:fea2:2a63)
+[08:04:06] <b0nn> raktajino: "Get: and "POST" are the difference between the calls
+[08:04:12] <b0nn> er "GET"
+[08:04:34] <b0nn> Do you have both verbs implemented on your mock?
+[08:04:42] <rewt> i'd create a new mockHTTPClient and assign it to client.httpClient in each test, to prevent leaking setups between tests and other intial setups
+[08:04:49] *** Joins: vhost- (~vhost@65.102.48.134)
+[08:05:08] <b0nn> It says in the error Difference found in argument 0:
+[08:05:26] <b0nn> and the 0th is the Method: "GET" vs Method: "POST"
+[08:05:33] *** Quits: fef (~thedawn@user/thedawn) (Quit: Leaving)
+[08:06:18] <b0nn> Write your test as POST and it will pass
+[08:06:19] <rewt> Do() only has 1 arg: *http.Request
+[08:06:52] <b0nn> rewt: And what is *http.Request looking like?
+[08:07:13] <b0nn> It spits out in the error what *http.Request it got/expected
+[08:07:23] <rewt> yeah, the actual method and url are both different
+[08:07:48] <b0nn> And I am mixing it up, GET is implemented, because that's the signature it has, POST is what's being sent
+[08:08:00] <rewt> probably something else is setting the GET expectation outside this test
+[08:08:13] <rewt> he's setting up the POST expectation in the test
+[08:08:37] <rewt> and the function being tested is calling the expected POST
+[08:09:03] <b0nn> Yeah
+[08:09:20] <rewt> if the mock has a GET expectation set up beforehand, it would barf on the initial POST request
+[08:09:27] <seebs> it's not just the get/post, there's other things about the expected/got that differ
+[08:09:34] <rewt> even though it's set up for the POST request that's actually made
+[08:10:48] <b0nn> seebs: I suspect once an investigation into how the expected and sent differ starts, then the other differences will start to become clearer
+[08:10:55] <rewt> the test should contain all relevant setup, but it doesn't; mockHTTPClient is set up beforehand, so we don't know what else is set up for it
+[08:12:14] *** Quits: acidfu- (~nicolasbo@96.125.207.152) (Ping timeout: 268 seconds)
+[08:13:17] <rewt> raktajino, where are you setting up that mockHTTPClient?  are you setting up an expected `GET baseURL+"/constituents"` at the same time?
+[08:17:12] <b0nn> Yeah, if it's a sub test that's supplied data by tables, then the setup *and* teardown of the mock has to happen *per* subtest
+[08:18:41] *** Parts: falsifian (~falsifian@exoco.falsifian.org) ()
+[08:22:19] <src> I notice I am tempted to use goto more and more often (for simple things mainly like "do x, if check fails goto back", so almost like a loop, but find it more elegant somehow especially if I already have nested loop structures etc)
+[08:22:46] <rewt> raktajino, as a style side note, instead of assert.Nil(t, err), it should be assert.NoError(t, err)
+[08:22:51] <src> all I know is "GOTOs" are evil, can their somewhat frequent use be justified or should it be a last resort kind of thing?
+[08:22:56] <src> *their use
+[08:23:13] <src> ^ correction doesn't make sense, sorry
+[08:23:16] <raktajino> rewt: oh cheers, did not know that
+[08:23:23] *** Quits: parnikkapore (~parnikkap@user/parnikkapore) (Remote host closed the connection)
+[08:23:39] <raktajino> also re: mockHTTPClient, one sec
+[08:24:02] <b0nn> src: Djikstra's "Goto are evil" actually said "except in these cases" (conditions, loops, and I forget what the other one was
+[08:24:26] <b0nn> But, wrt to your usage, it sounds like a break is a better option
+[08:25:38] <raktajino> https://play.golang.org/p/cBIl3saxIkR updated my paste, mockHTTPClient is just set up as a global var in my tests file for the moment
+[08:25:56] <b0nn> global = polluted by previous state
+[08:26:10] <raktajino> aha. so I should define those per test function?
+[08:26:15] <b0nn> I would
+[08:26:21] <src> b0nn: oh thanks, I actually know that one by name only, and haven't yet read it, going to, thanks
+[08:26:22] <rewt> yes
+[08:28:03] <raktajino> hooray i get a different error now! thank you!
+[08:28:28] <b0nn> nice
+[08:28:56] <b0nn> src: Just conditions and loops http://david.tribble.com/text/goto.html
+[08:30:13] *** Quits: warl (~warl@user/warl) (Quit: Leaving)
+[08:30:32] *** Joins: alienwarlock (~warl@2601:647:5e80:45bc:f9e6:ed06:8056:ef7c)
+[08:30:32] *** Quits: alienwarlock (~warl@2601:647:5e80:45bc:f9e6:ed06:8056:ef7c) (Changing host)
+[08:30:32] *** Joins: alienwarlock (~warl@user/warl)
+[08:30:39] *** Quits: SincereFox (uid337158@user/sincerefox) (Quit: Connection closed for inactivity)
+[08:31:29] *** Joins: ente_ (~ente@p200300dc5f4037016fbea028d47fea8e.dip0.t-ipconnect.de)
+[08:45:33] <b0nn> hrm, function calls are GOTO as well IIRC
+[08:45:47] <rk4> any guesses as to how i can successfully run pprof.StartCPUProfile(f) then 10 seconds later of processing, run pprof.StopCPUProfile() and f.Close() and still have an empty file at the end? :\
+[08:45:55] <b0nn> it's been forever since I wrote BASIC where I /had/ to use GOTO
+[08:46:09] * rk4 checked even the f.Close() for errors
+[08:47:45] <rk4> Go's goto isn't Djikstra's goto, it's pretty restricted in what it can do
+[08:48:51] <rk4> also djikstra wrote a pithy piece, arguing iirc it made proving program correctness hard, meanwhile knuth wrote a much longer followup discussing that sometimes goto is nicest, but sadly all this is condensed down to "goto is evil"
+[08:51:10] <b0nn> so, Djikstra's actual piece (as linked above) argued that it was good for conditions and loops (as mentioned above)
+[08:57:09] <rk4> does he? opening paragraph is that it should be 'I became convinced that the go to statement should be abolished from all "hhigher level" programming languages"
+[08:57:23] <rk4> erm
+[08:57:28] <rk4> +english+syntax
+[08:57:31] * rk4 nods
+[08:58:37] * rk4 returns to pprof woes
+[09:03:43] *** Quits: andlabs (~andlabs@68.237.68.71) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[09:05:06] *** Joins: andlabs (~andlabs@68.237.68.71)
+[09:08:19] *** Parts: cfjk (~cfjk@user/cfjk) (The Lounge - https://thelounge.chat)
+[09:10:54] *** Quits: opaulo (~ff@185.153.176.84) (Ping timeout: 272 seconds)
+[09:13:53] *** Quits: LamePotato (~lamepotat@bras-base-trrbpq6503w-grc-40-142-113-10-238.dsl.bell.ca) (Ping timeout: 268 seconds)
+[09:15:11] *** Quits: veegee (~veegee@ipagstaticip-469c2903-2b07-6dc3-3bc2-98748da5ca77.sdsl.bell.ca) (Remote host closed the connection)
+[09:15:49] *** Joins: veegee (~veegee@ipagstaticip-469c2903-2b07-6dc3-3bc2-98748da5ca77.sdsl.bell.ca)
+[09:16:02] *** Joins: shka (~herr@109.231.62.239)
+[09:16:30] *** Quits: shka (~herr@109.231.62.239) (Client Quit)
+[09:16:42] *** Joins: shka (~herr@109.231.62.239)
+[09:21:56] *** Joins: absc (~absc@dynamic-adsl-94-34-192-209.clienti.tiscali.it)
+[09:27:11] *** Quits: AquaL1te (~AquaL1te@user/aqual1te) (Quit: leaving)
+[09:29:06] *** Quits: arcatech (~arcatech@user/arcatech) (Ping timeout: 240 seconds)
+[09:30:10] *** Quits: absc (~absc@dynamic-adsl-94-34-192-209.clienti.tiscali.it) (Ping timeout: 244 seconds)
+[09:30:38] *** Quits: andlabs (~andlabs@68.237.68.71) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[09:32:24] *** Joins: arcatech (~arcatech@user/arcatech)
+[09:32:24] *** Joins: andlabs (~andlabs@68.237.68.71)
+[09:33:42] *** Joins: jhardy (~jhardy@104.4.30.169)
+[09:34:40] *** Joins: theneo (~sakthig@122.181.48.188)
+[09:35:59] *** Joins: sord937 (~sord937@gateway/tor-sasl/sord937)
+[09:38:46] <src> for h, d := 0;; h++ {}; works perfectly fine, but: for h := 0, d := 1;; h++ {}; doesn't ?!
+[09:38:51] <src> what am I doing wrong?
+[09:39:30] <b0nn> h, d := 0; is the 0 for h or for d, and why doesn't the other one get a val?
+[09:39:54] <src> oh sorry you're right it's for h, d := 0, 0;
+[09:40:03] <src> but the other example actually is the one that doesn't work and makes problems
+[09:40:28] <b0nn> you need to do the first style, not the second
+[09:40:55] <src> b0nn: what if I want to have d a different value than h?
+[09:40:56] <b0nn> because the comma has meaning  and two diff statements would be separated by a ; but that also has meaning
+[09:41:12] <b0nn> d, h := 10000, 1;
+[09:41:13] <src> so there's no way to do what I want here, simply initialize it d somewhere else to be 1 then
+[09:41:18] <src> ...
+[09:41:26] <src> I'm stupid
+[09:41:29] <src> I'm very very very stupid
+[09:41:32] <src> time for a break
+[09:41:34] <src> thanks b0nn
+[09:42:53] *** Quits: LiftLeft (~LiftLeft@154.21.114.243) (Ping timeout: 268 seconds)
+[09:44:02] <b0nn> just, erm, FTR, it's not "stupid" just, it's a different way of doign things that you haven't fully internalised as yet
+[09:44:30] <b0nn> I'm really /against/ calling it smart or stupid
+[09:44:36] <b0nn> s/it/things
+[09:44:42] *** Quits: arcatech (~arcatech@user/arcatech) (Ping timeout: 240 seconds)
+[09:44:42] <src> I said I was stupid, not it was stupid
+[09:44:54] <b0nn> yes, I'm commenting that you weren't
+[09:45:03] *** Joins: FenderQ (~fenderq@user/fenderq)
+[09:45:40] *** Joins: neotheone (~sakthig@122.181.48.188)
+[09:45:42] <src> look if was an obvious cognitive laps to see how h,d := 0, 0; works but think "but since h := 0, d := 1" doesn't how can they be two different values?
+[09:45:48] * bookworm hands src a nice cup of coffee
+[09:46:01] <src> which was basically my issue, it's pretty stupid, and I don't mean that in a self condescending way, it's alright :P
+[09:46:35] <src> bookworm: thanks for the thought, but I've had too much already :P
+[09:48:57] *** Quits: theneo (~sakthig@122.181.48.188) (Quit: Client closed)
+[09:50:40] *** Joins: mikoto-chan (~mikoto-ch@ip-213-49-189-31.dsl.scarlet.be)
+[09:54:53] *** Quits: PedroG2 (~android@45.77.216.181) (Quit: Got you)
+[09:55:32] *** Joins: PedroG1 (~android@45.77.216.181)
+[09:57:27] *** Joins: sixrobin (~jrobin@189.146.237.171)
+[10:10:04] *** Quits: pepee (~user@user/pepee) (Quit: bye $IRC)
+[10:20:16] *** Quits: sixrobin (~jrobin@189.146.237.171) (Quit: WeeChat 3.1)
+[10:23:04] *** Joins: oxum (~oxum@106.201.113.95)
+[10:27:54] *** Quits: oxum (~oxum@106.201.113.95) (Ping timeout: 268 seconds)
+[10:32:52] *** Joins: hikhvar (~thelounge@dslb-178-005-138-126.178.005.pools.vodafone-ip.de)
+[10:35:52] *** Quits: neotheone (~sakthig@122.181.48.188) (Quit: Leaving...)
+[10:37:08] *** Quits: jhardy (~jhardy@104.4.30.169) (Ping timeout: 268 seconds)
+[10:37:45] *** Quits: azidhaka (~azidhaka@gateway.videnov.bg) (Quit: Leaving)
+[10:37:57] *** Joins: azidhaka (~azidhaka@gateway.videnov.bg)
+[10:42:33] *** Joins: Vukan (~drazen@46.235.100.178)
+[10:46:31] *** Joins: mrig (~mrig@user/mrig)
+[10:46:42] *** Quits: Vukan (~drazen@46.235.100.178) (Ping timeout: 240 seconds)
+[10:47:49] *** Joins: jcajka (~jcajka@89-24-144-111.customers.tmcz.cz)
+[10:48:32] *** menace is now known as Deknos
+[10:48:36] *** Joins: absc (~absc@dynamic-adsl-94-34-192-209.clienti.tiscali.it)
+[10:52:42] *** Quits: zwr (~zwr@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091) (Ping timeout: 240 seconds)
+[10:56:34] *** Joins: schmillin (~schmillin@user/schmillin)
+[10:57:07] *** Joins: telboon (~telboon@user/telboon)
+[10:57:18] *** Quits: hikhvar (~thelounge@dslb-178-005-138-126.178.005.pools.vodafone-ip.de) (Ping timeout: 272 seconds)
+[10:59:11] *** Joins: einalex (~einalex@ip4d15fd2a.dynamic.kabel-deutschland.de)
+[11:08:29] <b0nn> Dave Cheney's quiz on twitter https://play.golang.org/p/vggE6yRqrpa
+[11:09:09] *** Joins: Kane (~Kane@2a01:e34:ee89:5d90:cc63:67c3:3511:6547)
+[11:15:00] *** Joins: zwr (~zwr@2804:14c:5bc5:8b2c:d486:b000:9fc0:b091)
+[11:15:58] *** Joins: hikhvar (~thelounge@dslb-178-005-138-126.178.005.pools.vodafone-ip.de)
+[11:17:13] *** Quits: alienwarlock (~warl@user/warl) (Read error: Connection reset by peer)
+[11:17:15] *** Joins: koo6 (~koo6@89-24-13-235.customers.tmcz.cz)
+[11:18:41] *** Quits: k3rn31 (~davide@2001:b07:6473:a66d:5a00:e3ff:fea2:2a63) (Quit: WeeChat 3.2)
+[11:20:50] *** iliaf is now known as iluxa
+[11:21:55] * rk4 wonders what rust equiv is
+[11:26:09] *** Joins: robertcarter (~user@c-24-6-24-249.hsd1.ca.comcast.net)
+[11:26:17] *** Joins: AquaL1te (~AquaL1te@user/aqual1te)
+[11:30:56] *** Quits: robertcarter (~user@c-24-6-24-249.hsd1.ca.comcast.net) (Remote host closed the connection)
+[11:31:36] *** Joins: k3rn31 (~davide@2001:b07:6473:a66d:348f:1c0f:25f5:ef11)
+[11:34:11] *** Quits: teasea (~teasea@user/teasea) (Quit: teasea)
+[11:34:12] *** Joins: Vukan (~drazen@46.235.100.178)
+[11:34:35] *** Joins: teasea (~teasea@user/teasea)
+[11:37:04] *** Joins: alienwarlock (~warl@2601:647:5e80:45bc:f9e6:ed06:8056:ef7c)
+[11:37:04] *** Quits: alienwarlock (~warl@2601:647:5e80:45bc:f9e6:ed06:8056:ef7c) (Changing host)
+[11:37:04] *** Joins: alienwarlock (~warl@user/warl)
+[11:38:26] *** Quits: khyr0n (~khyr0n@2806:2f0:9140:1deb:3346:f463:745e:77a4) (Remote host closed the connection)
+[11:38:39] *** Joins: khyr0n (~khyr0n@2806:2f0:9140:1deb:3346:f463:745e:77a4)
+[11:41:50] *** Joins: fbrx (~fbrx@2001:b07:6477:f4a6:1633:cab2:f240:f7c6)
+[11:41:50] *** Quits: fbrx (~fbrx@2001:b07:6477:f4a6:1633:cab2:f240:f7c6) (Changing host)
+[11:41:50] *** Joins: fbrx (~fbrx@user/fbrx)
+[11:42:02] *** Joins: X-Scale` (~ARM@42.125.108.93.rev.vodafone.pt)
+[11:45:32] *** Quits: X-Scale (~ARM@42.125.108.93.rev.vodafone.pt) (Ping timeout: 252 seconds)
+[11:47:10] *** Joins: dmathieu (~textual@pop.92-184-110-228.mobile.abo.orange.fr)
+[11:48:27] *** Joins: GoLiath_ (~GoLiath@80.179.69.246.cable.012.net.il)
+[11:50:36] *** Joins: theoceaniscool (~theoceani@188.127.173.202)
+[11:57:26] <kinduff> so yesterday i found this package called listmonk which is a go + vue app for newsletters
+[11:57:40] <kinduff> to my surprise the binary had the frontend stuff too
+[11:57:54] <kinduff> compiled with stuffbin, first time i see this pattern
+[11:58:00] <kinduff> is this common?
+[11:58:17] *** Joins: Xjs (~jannis@user/xjs)
+[11:58:34] <kinduff> source https://github.com/knadh/stuffbin
+[12:01:46] <sztanpet> pretty much, especially with the go:embed functionality now
+[12:04:08] *** Joins: NeoCron (~NeoCron@p548a2a2e.dip0.t-ipconnect.de)
+[12:04:53] *** Quits: Jigsy (~Jigsy@user/jigsy) (Killed (NickServ (GHOST command used by Jigsy`)))
+[12:05:01] *** Joins: Jigsy` (~Jigsy@user/jigsy)
+[12:06:54] *** Jigsy` is now known as Jigsy
+[12:10:44] *** Quits: Jigsy (~Jigsy@user/jigsy) (Killed (NickServ (GHOST command used by Jigsy`)))
+[12:10:50] *** Joins: Jigsy` (~Jigsy@user/jigsy)
+[12:11:52] *** Joins: mmfood (~mmfood@h-158-174-183-217.A980.priv.bahnhof.se)
+[12:12:43] *** Jigsy` is now known as Jigsy
+[12:15:18] *** Quits: Vukan (~drazen@46.235.100.178) (Ping timeout: 244 seconds)
+[12:16:09] *** Joins: opaulo (~ff@185.153.176.168)
+[12:21:31] *** Quits: NeoCron (~NeoCron@p548a2a2e.dip0.t-ipconnect.de) (Remote host closed the connection)
+[12:26:34] <mrig> Hello :)
+[12:27:10] <mrig> Is this something that can be made to work? https://play.golang.org/p/NjZr6xS_AAr
+[12:28:16] <mrig> I am trying to separate a custom sort function into a package, wondering if it is possible to work with a slice of interfaces like this?
+[12:29:36] *** Joins: warl (~warl@c-73-222-73-243.hsd1.ca.comcast.net)
+[12:29:36] *** Quits: warl (~warl@c-73-222-73-243.hsd1.ca.comcast.net) (Changing host)
+[12:29:36] *** Joins: warl (~warl@user/warl)
+[12:31:10] <mrig> When the sorting code is in the same package as the data, the interface is an explicit type.
+[12:33:06] *** Quits: alienwarlock (~warl@user/warl) (Ping timeout: 240 seconds)
+[12:33:12] <KirkMcDonald> This code smells XY-ish.
+[12:33:43] <mrig> Well that would be me getting the lay of the land I guess.
+[12:35:06] <mrig> I have some more complicated code which was working until I tried to split it out into packages, I have just spotted a glaring error in that which was posted, and I think seen the solution ... That I need to use an interface{} and then .([]Type)
+[12:36:26] <mrig> https://play.golang.org/p/a9QbXCs90El
+[12:37:34] <mrig> I think that solves it, sorry this is me rubber duck debugging without a duck :| Not sure if that is X Y or not.
+[12:37:52] *** Joins: larkfisherman (~larkfishe@217.75.204.126)
+[12:39:44] <mrig> Oh no it does not solve, just helps me to understand it, I would like the interface to by a slice of interfaces so that it can then go into the sort package, I am also passing in my Less function where I would like to assert the type, as this code is in the calling package.
+[12:41:10] *** Joins: Ergo^ (~ergo@91.238.59.144)
+[12:41:19] *** Quits: synthmeat (~synthmeat@user/synthmeat) (Quit: WeeChat 3.1)
+[12:42:22] *** Quits: gzj (~GZJ0X@96.45.188.111.16clouds.com) (Ping timeout: 244 seconds)
+[12:42:27] <mrig> Right so the real issue, or the crux of the issue is how to use []interface{} for the sort.Sort() function.
+[12:43:36] *** Joins: synthmeat (~synthmeat@user/synthmeat)
+[12:47:30] *** Quits: theoceaniscool (~theoceani@188.127.173.202) (Ping timeout: 240 seconds)
+[12:48:18] <sztanpet> got the generics bug huh
+[12:49:10] <mrig> I am just finding where the limits are, so not really. It is not easy to know where to go when refactoring something until one knows what are some of the best practices.
+[12:49:28] <GoLiath_> .
+[12:50:02] <mrig> That's really why I'm doing this, the code does not have to be in a separate package and works fine when it is not.
+[12:50:22] <mrig> this is the error that I am getting when I do split it out : https://play.golang.org/p/lWY7j8oLVBk
+[12:51:24] <mrig> the same error but quite the same situation, if this is not a feasible route, that's fine; Just need to learn that it is not feasible so that I dont try to sculpt code in this direction :)
+[12:51:47] *** GoLiath_ is now known as Collisio
+[12:52:25] <mrig> This is for question 7.8 in "The Go Programming Language"
+[12:53:14] *** Collisio is now known as Eruditus_Tempus
+[12:53:36] <sztanpet> i can tell you it wont use interface{}
+[12:54:10] <bookworm> mrig: https://golang.org/doc/faq#convert_slice_of_interface
+[12:54:12] <mickey> when i receive a useless warning/error from one of the packages that i imported (go-ethereum), that says "not enough arguments in call to uint256.NewInt, have () want (uint64)" and points to random lines in files of the package, how can i possibly trace it to my code? it was okay but stopped working at some point and even when my main() is pretty
+[12:54:12] <mickey> much empty and does almost nothing related to that package, i still get those
+[12:54:20] <sztanpet> why not just implement the interface as required by the sort package?
+[12:55:37] *** Joins: tedwing (~anon@lfbn-idf3-1-1409-99.w109-221.abo.wanadoo.fr)
+[12:55:42] <mrig> This is the actual code https://github.com/8i8/tgpl/tree/master/ex_07.08-sort.Interface
+[12:55:56] <bookworm> mickey: the compiler tells you where the error is in the "random lines in files of the package"
+[12:56:18] <bookworm> if it stopped working, you may have upgraded the module to a different version
+[12:56:19] <mrig> bookworm: oh superb, thank you for that.
+[12:56:44] <mrig> Makes sense now that I think about it due to the interface having its type slot as well as its value.
+[12:56:45] <bookworm> mrig: read the rest of the faqs, they are faqs for a reason ;)
+[12:56:54] <bookworm> it makes sense yes but is non intuitive
+[12:57:03] <mrig> bookworm: I am reading The Go Programming Language :)
+[12:57:04] <bookworm> as it depends on the actual hardware implementation
+[12:57:22] *** Quits: azidhaka (~azidhaka@gateway.videnov.bg) (Quit: Leaving)
+[12:57:31] <bookworm> (well, memory specifics)
+[12:58:39] <sztanpet> not sure about that bookworm as currently implemented, it always has two pointers for GC reasons even for ints
+[12:58:40] <mickey> bookworm it wasnt updated for about a month and a half
+[12:59:01] <fizzie> Comparing https://pkg.go.dev/github.com/holiman/uint256@v1.1.1 to https://pkg.go.dev/github.com/holiman/uint256@v1.2.0 it looks like that module's author didn't follow semver correctly, and made a backwards-incompatible public API change without bumping the major version.
+[12:59:27] <fizzie> (Namely, added a parameter to the uint256.NewInt function.)
+[12:59:47] <fizzie> So it may have broken just by having MVS select a newer version due to changes in *other* dependencies.
+[13:01:03] <mickey> fizzie but that repository hasnt been updated in a couple of months as well. im not saying you're wrong, but why would it start giving me this now, if i just started this project a few days ago?
+[13:01:32] <fizzie> Because of what I said: a change *anywhere* in your main module's dependencies may have caused MVS to start picking up 1.2.0 over an older version.
+[13:01:47] *** Quits: larkfisherman (~larkfishe@217.75.204.126) (Quit: Leaving)
+[13:01:49] <sztanpet> mickey because MVS has the assumption that authors dont make abi-breaking changes for minor releases
+[13:02:08] *** Joins: Guest1362 (~Guest13@139.59.238.70)
+[13:02:39] <mickey> fine. what would you think i should do about this now?
+[13:03:02] <sztanpet> lock in the 1.1.1 dependency sadly
+[13:03:06] *** Quits: jkl (~jkl1337@2600:1700:2420:6d10::3f1) (Ping timeout: 240 seconds)
+[13:03:13] <fizzie> You might try pinning the version in your own go.mod file to v1.1.1, I think there's a way to do that.
+[13:03:43] *** Quits: k3rn31 (~davide@2001:b07:6473:a66d:348f:1c0f:25f5:ef11) (Read error: Connection reset by peer)
+[13:05:08] <mickey> apparently "There isn't a way to enable locking indirect dependency versions in libraries in the general case, as that would cause problems elsewhere."
+[13:05:20] <bookworm> >libraries
+[13:05:23] <bookworm> the toplevel can
+[13:05:52] <sztanpet> go get -d github.com/holiman/uint256@v1.1.1 maybe?
+[13:05:55] <bookworm> but you should file a bug against holiman
+[13:06:02] <sztanpet> yea
+[13:06:24] <bookworm> then they should mark that version as broken, so that it's not selected anymore
+[13:07:04] <bookworm> https://golang.org/ref/mod#go-mod-file-retract
+[13:09:39] <mickey> fixing holiman/uint256 to 1.1.1 seems to have fixed this. im not even sure how you managed to find the issue was in that specific package
+[13:09:46] <mickey> thanks a lot everyone.
+[13:11:25] <sztanpet> that tool for notifying the dev about them breaking abi without bumping the major version couldnt come soon enough
+[13:11:44] <bookworm> you mean tests ;P
+[13:12:14] *** Joins: das_j (~das_j@2a01:4f8:c17:fa7::1)
+[13:12:15] <bookworm> if you test the public interface as an external module, should be pretty easy to see that
+[13:12:59] <bookworm> if you need to adapt already existing tests you need to bump
+[13:13:21] <sztanpet> well sure, but i remember an in-progress package for detecting abi breaks automatically maybe by rsc
+[13:13:30] *** Quits: warl (~warl@user/warl) (Ping timeout: 240 seconds)
+[13:13:58] <bookworm> not really a abi is it if you distribute the source code
+[13:14:04] <bookworm> api rather
+[13:14:42] <sztanpet> https://pkg.go.dev/golang.org/x/exp/cmd/apidiff i think
+[13:18:31] *** Quits: absc (~absc@dynamic-adsl-94-34-192-209.clienti.tiscali.it) (Quit: Leaving.)
+[13:18:49] *** Joins: absc (~absc@dynamic-adsl-94-34-192-209.clienti.tiscali.it)
+[13:19:52] <fizzie> mickey: Re how I got there, it was basically keying off the "not enough arguments in call to uint256.NewInt, have () want (uint64)" error message, searching for "uint256" on pkg.go.dev (okay, I confess, I just did "uint256 golang" via Google, still haven't set up a keyword for Go packages), and comparing the definitions of `NewInt` in the two newest versions, under the assumption that if there's a call
+[13:19:58] <fizzie> like `NewInt()` in previously-working code, probably a previous version of the package also used to accept it.
+[13:22:19] <bloony> Looking for a go book recomendation.. My background is C++ and I have been working with go for about 9 months now so I know the basics and some patterns.. but I want to go a bit deeper.. something like the effective series for c++? I do know of the effective go page in the docs..
+[13:24:18] <sztanpet> gopl.io is a solid book and is the usual recommendation
+[13:24:44] <sztanpet> no idea if its like the book you are looking for tho
+[13:27:23] <b0nn> bloony: what are you doing with Go?
+[13:27:46] <b0nn> Alex Edwards book is a good "This is how you use Go with Rest/Web"
+[13:28:12] <b0nn> https://lets-go.alexedwards.net/
+[13:28:14] <bloony> looks like a good book, but maybe more of a complete beginner book?
+[13:28:24] <bloony> b0nn: web dev
+[13:28:39] <b0nn> The compiler/interpreter books are nice to know to
+[13:29:10] <b0nn> https://interpreterbook.com/
+[13:29:24] *** Joins: omegatron (~some@p5b056bc7.dip0.t-ipconnect.de)
+[13:30:03] <bloony> I'll check them out
+[13:30:08] <b0nn> Ketherine Cox's book on concurrency was a good "Here's some hand patterns" -it's short though https://katherine.cox-buday.com/concurrency-in-go/
+[13:30:16] <b0nn> Katherine*
+[13:30:37] <bloony> ah cool.. concurrency is important in our project
+[13:31:13] <b0nn> That book made me realise how important Rust's "ownership" model is in concurrent coding
+[13:33:27] <sztanpet> filed https://github.com/holiman/uint256/issues/84 any criticisms?
+[13:33:47] <bloony> ah never done anything with rust
+[13:35:37] <b0nn> You're in luck - I suck at it :)
+[13:35:54] *** Joins: siika_ (~siika@139.226.50.147)
+[13:36:24] <sztanpet> bookworm do you by chance know if a new minor version should be tagged in 1.2.1 with the new go.mod with the retract?
+[13:38:00] <bookworm> no idea, I'd just use the next available version (minor)
+[13:38:16] <bookworm> but I never had to use retract so far
+[13:38:27] *** qwedfg_ is now known as qwedfg
+[13:38:43] *** Quits: jld (~jld@c-24-9-144-115.hsd1.co.comcast.net) (Read error: Connection reset by peer)
+[13:39:20] <sztanpet> eh, hopefully the dev will figure it out, thanks anyway
+[13:40:46] <sztanpet> oh, i read the docs, yea, a new version should be tagged with it
+[13:41:03] *** Joins: jld (~jld@c-24-9-144-115.hsd1.co.comcast.net)
+[13:41:26] <b0nn> AIUI the old version number stays - it's a soft delete
+[13:41:39] <sztanpet> it does, it just wont get selected
+[13:41:40] <b0nn> If that's where you were heading
+[13:41:49] <sztanpet> no
+[13:42:56] *** Joins: SebastianM (~seba@user/sebastianm)
+[13:46:40] <src> I read some stuff and watched some videos about onivim2, have to admit I'm kind of hyped
+[13:47:12] *** Joins: dr0n (~nabromov@94.11.23.235)
+[13:47:29] <src> modal editing, not electron based, faster, largely vim compatible, vscode extensions compatible
+[13:47:32] <src> awesome project
+[13:47:56] <src> anyone using the current alpha by any chance?
+[13:48:10] <src> (building it from source is kind of non-trivial sadly)
+[13:48:26] *** Quits: purpleidea (~james@user/purpleidea) (Ping timeout: 268 seconds)
+[13:49:39] <b0nn> There might be a slack channel for it (every other editor used to have one)
+[13:50:03] <src> I think they use discord
+[13:51:19] *** Quits: das_j (~das_j@2a01:4f8:c17:fa7::1) (Remote host closed the connection)
+[13:51:27] *** Joins: das_j (~das_j@2a01:4f8:c17:fa7::1)
+[13:51:40] <das_j> Hey everyone is there potentially a regression related to timing in runtime 1.16? My code which aims to modulate 433mhz singals onto a gpio port fails when switing from 1.15 to 1.16. I didn't find anything that seemed relevant in the changelog
+[13:52:46] *** Quits: rthur (~arthur@2a02:390:9151:0:1c94:e381:bf81:7129) (Remote host closed the connection)
+[13:53:03] <rk4> hm, do you stop the gc?
+[13:53:11] *** Joins: rthur (~arthur@2a02:390:9151:0:1c94:e381:bf81:7129)
+[13:54:11] *** Joins: siika__ (~siika@139.226.50.205)
+[13:54:29] *** Quits: siika_ (~siika@139.226.50.147) (Ping timeout: 268 seconds)
+[13:54:46] *** Joins: purpleidea (~james@user/purpleidea)
+[13:55:04] <das_j> I do nothing gc-related. Is that an environment variable?
+[13:56:51] <das_j> exporting GOGC=off doesn't change anything
+[13:59:22] *** Quits: rthur (~arthur@2a02:390:9151:0:1c94:e381:bf81:7129) (Read error: Connection reset by peer)
+[14:01:29] <das_j> Oh that looks related: https://github.com/golang/go/issues/44343
+[14:01:32] *** Quits: Guest1362 (~Guest13@139.59.238.70) (Quit: Client closed)
+[14:01:36] *** Joins: theoceaniscool (~theoceani@188.127.173.202)
+[14:01:37] *** Quits: kadoban (~kadoban@user/kadoban) (Quit: Bridge terminating on SIGTERM)
+[14:01:37] *** Quits: archwizard (~archwizar@2001:470:69fc:105::929) (Quit: Bridge terminating on SIGTERM)
+[14:01:37] *** Quits: phoenix[m] (~phoenixma@2001:470:69fc:105::f9b) (Quit: Bridge terminating on SIGTERM)
+[14:01:37] *** Quits: ubh (~ubh@2001:470:69fc:105::852) (Quit: Bridge terminating on SIGTERM)
+[14:01:37] *** Quits: speatzle_ (~speatzles@2001:470:69fc:105::1003) (Quit: Bridge terminating on SIGTERM)
+[14:01:37] *** Quits: bat[m] (~batdice-t@2001:470:69fc:105::19b8) (Quit: Bridge terminating on SIGTERM)
+[14:01:38] *** Quits: mambang[m] (~mambang@user/mambang) (Quit: Bridge terminating on SIGTERM)
+[14:01:40] *** Quits: jai (~darkapex@user/darkapex) (Quit: Bridge terminating on SIGTERM)
+[14:01:40] *** Quits: spudly[m] (~spudly@2001:470:69fc:105::18) (Quit: Bridge terminating on SIGTERM)
+[14:01:41] *** Quits: meain (~meain@2001:470:69fc:105::2db) (Quit: Bridge terminating on SIGTERM)
+[14:01:41] *** Quits: worr (~worr@2001:470:69fc:105::78c) (Quit: Bridge terminating on SIGTERM)
+[14:01:41] *** Quits: mrjumper[m] (~mr-jumper@2001:470:69fc:105::7f1) (Quit: Bridge terminating on SIGTERM)
+[14:01:42] *** Quits: blakeorwhatever[ (~blakeorwh@2001:470:69fc:105::340e) (Quit: Bridge terminating on SIGTERM)
+[14:02:44] *** Joins: mambang (~mambang@user/mambang)
+[14:03:50] *** Joins: spudly[m] (~spudly@2001:470:69fc:105::18)
+[14:03:52] *** Quits: mambang (~mambang@user/mambang) (Client Quit)
+[14:04:28] *** Quits: AquaL1te (~AquaL1te@user/aqual1te) (Quit: leaving)
+[14:05:03] *** Joins: ubh (~ubh@2001:470:69fc:105::852)
+[14:05:04] *** Joins: meain (~meain@2001:470:69fc:105::2db)
+[14:05:04] *** Joins: jai (~darkapex@user/darkapex)
+[14:05:04] *** Joins: worr (~worr@2001:470:69fc:105::78c)
+[14:05:04] *** Joins: mrjumper[m] (~mr-jumper@2001:470:69fc:105::7f1)
+[14:05:04] *** Joins: archwizard (~archwizar@2001:470:69fc:105::929)
+[14:05:04] *** Joins: phoenix[m] (~phoenixma@2001:470:69fc:105::f9b)
+[14:05:04] *** Joins: kadoban (~kadoban@user/kadoban)
+[14:05:04] *** Joins: mambang[m] (~mambang@user/mambang)
+[14:05:04] *** Joins: blakeorwhatever[ (~blakeorwh@2001:470:69fc:105::340e)
+[14:05:18] *** Joins: speatzle_ (~speatzles@2001:470:69fc:105::1003)
+[14:05:18] *** Joins: bat[m] (~batdice-t@2001:470:69fc:105::19b8)
+[14:06:18] *** Quits: tedwing (~anon@lfbn-idf3-1-1409-99.w109-221.abo.wanadoo.fr) (Ping timeout: 240 seconds)
+[14:07:40] <das_j> Does anyone know of a more precise third-party library? Linux as the only supported system is okay
+[14:15:58] *** Joins: tedwing (~anon@lfbn-idf3-1-1409-99.w109-221.abo.wanadoo.fr)
+[14:18:49] *** Quits: Xjs (~jannis@user/xjs) (Quit: Good night.)
+[14:22:18] *** Quits: mmfood (~mmfood@h-158-174-183-217.A980.priv.bahnhof.se) (Ping timeout: 240 seconds)
+[14:28:22] *** Joins: egon_ (~egon@user/egon)
+[14:30:42] *** egon_ is now known as egon
+[14:31:22] *** Quits: purpleidea (~james@user/purpleidea) (Ping timeout: 272 seconds)
+[14:32:06] *** Quits: dmathieu (~textual@pop.92-184-110-228.mobile.abo.orange.fr) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[14:37:18] *** Quits: SebastianM (~seba@user/sebastianm) (Quit: Bye)
+[14:38:01] *** Joins: purpleidea (~james@user/purpleidea)
+[14:42:36] *** Joins: Xjs (~jannis@user/xjs)
+[14:43:39] *** Joins: id (jeda@hellomouse/dev/cryb.jeda)
+[14:46:31] *** Quits: Xjs (~jannis@user/xjs) (Client Quit)
+[14:47:18] *** Joins: Xjs (~jannis@user/xjs)
+[14:48:13] *** Joins: zenbit (~matt@cpc97858-walt21-2-0-cust224.13-2.cable.virginm.net)
+[14:51:11] *** Joins: llorllale (~llorllale@2607:9880:3a18:69:a980:2bfc:4149:5344)
+[14:52:31] *** Quits: egon (~egon@user/egon) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[14:55:57] *** Joins: egon (~egon@user/egon)
+[14:56:42] *** Quits: absc (~absc@dynamic-adsl-94-34-192-209.clienti.tiscali.it) (Ping timeout: 240 seconds)
+[14:56:58] *** Joins: cation21 (cation@user/cation)
+[14:57:18] *** Quits: cation (cation@user/cation) (Ping timeout: 264 seconds)
+[14:58:19] <beeza> If I want to parse "YYYY-MM-DD" with golang json into a time object, what options are there? One is to delcare a new type with TextMarshaller/TextUnmarshaller
+[14:58:22] <beeza> are there other options?
+[15:00:33] *** cation21 is now known as cation
+[15:00:43] *** Parts: jayvee (~quassel@user/jayvee) (Segmentation fault)
+[15:01:08] *** Quits: Eruditus_Tempus (~GoLiath@80.179.69.246.cable.012.net.il) (Ping timeout: 272 seconds)
+[15:02:01] *** Quits: egon (~egon@user/egon) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[15:02:26] *** Joins: menace (~someone@ppp-93-104-175-110.dynamic.mnet-online.de)
+[15:04:19] <beeza> e.g. of textMarshaller/unmarshaler: https://gist.github.com/lummie/2cd6240378372079a8be7df782b380fc
+[15:04:59] *** Quits: Deknos (~someone@user/menace) (Ping timeout: 272 seconds)
+[15:08:34] <b0nn> https://mobile.twitter.com/fatih/status/1405107129560834056
+[15:09:19] <b0nn> ^nice workaround to make local changes to dependencies
+[15:10:45] *** Joins: dmathieu (~textual@pop.92-184-110-228.mobile.abo.orange.fr)
+[15:10:51] *** Joins: SebastianM (~seba@user/sebastianm)
+[15:13:38] *** Joins: egon (~egon@user/egon)
+[15:13:51] <beeza> maybe there is some go pkg that provides these types?
+[15:14:21] *** Quits: egon (~egon@user/egon) (Client Quit)
+[15:14:58] *** Joins: egon (~egon@user/egon)
+[15:15:44] *** Joins: GoLiath_ (~GoLiath@80.179.69.241.cable.012.net.il)
+[15:16:50] <beeza> is there some way I can check if I correctly implemented an interface in go?
+[15:18:18] <fizzie> `var _ SomeInterface = valueOfYourType` works as compile-time assert that the latter technically implements the former.
+[15:18:21] <siXy> beeza: var _ thing = (*myType)(nil)
+[15:19:16] <fizzie> Also described at the tail end of https://golang.org/doc/effective_go#blank_implements
+[15:20:06] <beeza> thanks
+[15:32:06] *** Joins: Vukan (~drazen@46.235.100.178)
+[15:34:16] *** Quits: sono (~sono@107-209-210-210.lightspeed.sntcca.sbcglobal.net) (Read error: Connection reset by peer)
+[15:36:07] *** GoLiath_ is now known as Quizzicalliodd
+[15:37:43] *** Quizzicalliodd is now known as WTaF
+[15:42:34] *** Joins: AquaL1te (~AquaL1te@user/aqual1te)
+[15:45:37] *** Joins: tmpm697 (~tmpm697@171.241.87.193)
+[15:46:01] *** Quits: tmpm697 (~tmpm697@171.241.87.193) (Client Quit)
+[15:47:05] *** Quits: Xjs (~jannis@user/xjs) (Quit: Good night.)
+[15:49:27] *** Quits: egon (~egon@user/egon) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[15:50:21] *** Joins: egon (~egon@user/egon)
+[15:51:28] *** Joins: Xjs (~jannis@user/xjs)
+[15:53:05] *** Quits: SebastianM (~seba@user/sebastianm) (Quit: Bye)
+[15:56:49] *** Joins: Subjective (~Subjectiv@181.126.91.118)
+[15:56:58] *** Quits: egon (~egon@user/egon) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[15:57:07] *** Parts: Subjective (~Subjectiv@181.126.91.118) (Leaving)
+[15:57:28] *** Joins: egon (~egon@user/egon)
+[15:59:54] *** Quits: dmathieu (~textual@pop.92-184-110-228.mobile.abo.orange.fr) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[16:00:36] *** Joins: mib_5ugsfm (553e7b59@ircip1.mibbit.com)
+[16:02:21] *** Joins: absc (~absc@dynamic-adsl-94-34-192-209.clienti.tiscali.it)
+[16:02:53] *** Quits: mib_5ugsfm (553e7b59@ircip1.mibbit.com) (Client Quit)
+[16:04:12] *** Quits: egon (~egon@user/egon) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[16:05:00] *** Joins: egon (~egon@user/egon)
+[16:05:04] *** Joins: kayprish (~kayprish@46.240.143.86)
+[16:06:56] *** Joins: y04nn (~y04nn@81.17.24.204)
+[16:09:37] *** Quits: kayprish (~kayprish@46.240.143.86) (Client Quit)
+[16:09:50] *** Joins: kayprish (~kayprish@46.240.143.86)
+[16:14:37] *** Joins: kayyyypreeesh (~kayprish@46.240.143.86)
+[16:15:57] *** Quits: kayyyypreeesh (~kayprish@46.240.143.86) (Client Quit)
+[16:17:04] *** Quits: cross (~cross@spitfire.i.gajendra.net) (Quit: leaving)
+[16:18:11] *** Joins: cross (~cross@spitfire.i.gajendra.net)
+[16:20:18] *** Quits: hikhvar (~thelounge@dslb-178-005-138-126.178.005.pools.vodafone-ip.de) (Ping timeout: 240 seconds)
+[16:22:36] *** Quits: Vukan (~drazen@46.235.100.178) (Ping timeout: 268 seconds)
+[16:23:43] *** Joins: Dieterbe (~Dieterbe@user/dieterbe)
+[16:23:50] *** Quits: y04nn (~y04nn@81.17.24.204) (Ping timeout: 252 seconds)
+[16:27:14] *** Joins: arthur (~arthur@2a02:390:9151:0:1c94:e381:bf81:7129)
+[16:29:25] *** Quits: koo6 (~koo6@89-24-13-235.customers.tmcz.cz) (Ping timeout: 272 seconds)
+[16:32:08] *** Joins: yoonkn (~user@175.197.208.79)
+[16:33:27] *** Joins: burningserenity (~burningse@2603-9001-0f01-ad99-0000-0000-0000-1006.inf6.spectrum.com)
+[16:37:30] *** Quits: opaulo (~ff@185.153.176.168) (Ping timeout: 240 seconds)
+[16:42:53] *** Joins: masoudd (~masoudd@user/masoudd)
+[16:45:47] *** Joins: arcatech (~arcatech@user/arcatech)
+[16:46:32] *** Joins: noxim (~noxim@user/noxim)
+[16:47:50] *** Joins: SebastianM (~seba@user/sebastianm)
+[16:57:21] *** Joins: paulgrmn (~paulgrmn@user/paulgrmn)
+[17:00:14] *** X-Scale` is now known as X-Scale
+[17:00:43] *** Quits: Xjs (~jannis@user/xjs) (Quit: Good night.)
+[17:03:32] *** Quits: andlabs (~andlabs@68.237.68.71) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[17:05:52] *** Joins: y04nn (~y04nn@81.17.24.204)
+[17:06:25] <gpeskens[w]> When profiling allocs is it possible to see the line number of a specific allocation?
+[17:09:42] *** Joins: dcprime (~dcprime@110.226.28.160)
+[17:11:27] <src> I just had a nasty bug and the reason was that I used := instead of =, what I don't understand is that I have := and := again (with the same variable) yet I did not get any error in vscode, see https://paste.ubuntu.com/p/nYCmvcg3dx/ line 5 and 8, shouldn't this give a warning?
+[17:11:36] *** Joins: menace_ (~someone@ppp-93-104-178-177.dynamic.mnet-online.de)
+[17:12:08] <Vigdis> src, that's shadowing
+[17:13:14] <src> Vigdis: thanks, googled it and that makes sense, so I declared a new variable for that scope by using :=
+[17:13:28] <Vigdis> go install golang.org/x/tools/go/analysis/passes/shadow/cmd/shadow@latest and then run that shadow binary if you want to detect such issue
+[17:13:31] <Sam> Correct; within the loop the new variable will be used, outside the loop the old one will be
+[17:13:35] *** Joins: Xjs (~jannis@user/xjs)
+[17:13:36] *** Joins: arinov_ (~arinov@212.156.215.30)
+[17:13:37] <src> so I can have multiple variables with the same name and different values in different scopes
+[17:14:03] *** Joins: acidfu- (~nicolasbo@96.125.207.152)
+[17:14:15] <Sam> Yes. It's sometimes useful, but also frequently a source of bugs where someone does it without noticing.
+[17:14:15] <src> well... I learned that the hard way... it took me an eternity to find that error
+[17:14:23] <Sam> It is very hard to debug sometimes :)
+[17:14:24] *** Quits: menace (~someone@ppp-93-104-175-110.dynamic.mnet-online.de) (Ping timeout: 268 seconds)
+[17:16:03] <src> Sam: Vigdis: thanks a lot
+[17:21:41] *** Joins: dmathieu (~textual@laubervilliers-659-1-148-137.w92-154.abo.wanadoo.fr)
+[17:25:01] *** Joins: mic4ael (~mic4ael@kolodzie-pc.cern.ch)
+[17:26:46] *** Quits: mic4ael (~mic4ael@kolodzie-pc.cern.ch) (Client Quit)
+[17:27:09] *** Joins: mic4ael (~mic4ael@kolodzie-pc.cern.ch)
+[17:31:00] *** Joins: andlabs (~andlabs@68.237.68.71)
+[17:31:29] *** Quits: y04nn (~y04nn@81.17.24.204) (Ping timeout: 252 seconds)
+[17:31:33] *** Quits: dr0n (~nabromov@94.11.23.235) (Ping timeout: 268 seconds)
+[17:32:34] *** Joins: saml (~saml@cpe-74-73-80-162.nyc.res.rr.com)
+[17:38:31] <mickey> what would be the best way to create a list? map[]string is invalid
+[17:39:32] <lemmi> drop the map?
+[17:39:34] <siXy> mickey: Would a slice not work?
+[17:40:01] <mickey> lemmi lol, thanks
+[17:40:18] *** Quits: krjst (~krjst@2604:a880:800:c1::16b:8001) (Quit: bye)
+[17:40:40] *** Quits: AquaL1te (~AquaL1te@user/aqual1te) (Quit: leaving)
+[17:44:08] <siXy> mickey: please consider having a run through tour.golang.org, it's a great into to the language and will save a lot of time
+[17:48:55] *** Joins: krjst (~krjst@2604:a880:800:c1::16b:8001)
+[17:50:15] *** Quits: kayprish (~kayprish@46.240.143.86) (Remote host closed the connection)
+[17:50:58] *** Quits: krjst (~krjst@2604:a880:800:c1::16b:8001) (Client Quit)
+[17:51:57] *** Quits: absc (~absc@dynamic-adsl-94-34-192-209.clienti.tiscali.it) (Remote host closed the connection)
+[17:52:30] *** Quits: SebastianM (~seba@user/sebastianm) (Quit: Bye)
+[17:52:42] *** Joins: absc (~absc@access03.colt-engine.it)
+[17:53:04] <mrig> dang, whether to assume a single user or to import my fangled server that passes state to answer this question; Best go with the single user solution for brevity I guess :D
+[17:55:22] *** Joins: krjst (~krjst@2604:a880:800:c1::16b:8001)
+[18:00:39] *** Quits: Xjs (~jannis@user/xjs) (Ping timeout: 268 seconds)
+[18:00:39] *** Quits: c10l (~c10l@89.34.167.207) (Read error: Connection reset by peer)
+[18:01:05] *** Joins: c10l (~c10l@89.34.167.207)
+[18:02:16] *** Joins: eck0 (~Android@047-007-119-133.res.spectrum.com)
+[18:03:46] *** Joins: eck0___ (~Android@mobile-166-173-61-245.mycingular.net)
+[18:04:25] *** Joins: Xjs (~jannis@user/xjs)
+[18:04:46] *** Quits: dcprime (~dcprime@110.226.28.160) (Quit: dcprime)
+[18:05:30] *** Quits: eck0__ (~Android@047-007-119-133.res.spectrum.com) (Ping timeout: 240 seconds)
+[18:07:19] *** Quits: eck0 (~Android@047-007-119-133.res.spectrum.com) (Ping timeout: 268 seconds)
+[18:08:17] <obviyus> o/, can someone recommend a (simple!) API servers to use as a reference? i liked photoprism a lot (uses gin + gorm) but it's a bit complex for a beginner :>
+[18:08:28] <obviyus> s/servers/server
+[18:09:00] <mrig> obviyus: the mux server in the standard http lib is good for just starting out with.
+[18:09:13] *** Quits: dmathieu (~textual@laubervilliers-659-1-148-137.w92-154.abo.wanadoo.fr) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[18:09:40] <mrig> even the global mux server that is called using http. is fine for experimenting.
+[18:09:57] <obviyus> mrig: so i've heard but i'm looking for some examples of APIs built using Go (should've phrased that better)
+[18:10:20] <obviyus> something simple just to get a handle of things; routing, orms etc.
+[18:10:23] <mrig> obviyus: the mux server is really an API.
+[18:10:27] <obviyus> ah
+[18:13:55] <mrig> obviyus: The hardest thing at first is learning to make sense of the http.HandlerFunc and the Handler interface.
+[18:14:32] <mrig> Once you get this down, and the use of the decorator or middleware design pattern then it all starts to become much easier to use.
+[18:15:04] <mrig> This will also make using other API's rather more logical too.
+[18:15:57] <obviyus> mrig: ahhh, seems like i have some reading to do. ty!
+[18:16:30] <mrig> obviyus: helps to get some pointers as to what to look at, you are welcome.
+[18:17:07] <mrig> It is very simple when you know how, but somewhat mysterious until that time :)
+[18:17:28] <mrig> one could go-nuts figuring it all out!
+[18:18:53] *** Parts: krthnz_ (~quassel@dslb-092-072-061-158.092.072.pools.vodafone-ip.de) ()
+[18:19:06] <obviyus> :D
+[18:22:44] *** Joins: dmathieu (~textual@laubervilliers-659-1-148-137.w92-154.abo.wanadoo.fr)
+[18:22:55] *** Joins: SebastianM (~seba@user/sebastianm)
+[18:22:55] *** Quits: egon (~egon@user/egon) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[18:26:03] *** Joins: fputs (~fputs@67.59.83.166)
+[18:27:49] *** Quits: Doc_X (~Doc_X@186.219.232.35.bc.googleusercontent.com) (Quit: WeeChat 2.8)
+[18:32:17] *** Quits: eck0___ (~Android@mobile-166-173-61-245.mycingular.net) (Read error: Connection reset by peer)
+[18:32:40] *** Joins: eck0 (~Android@047-007-119-133.res.spectrum.com)
+[18:32:48] *** Quits: SebastianM (~seba@user/sebastianm) (Quit: Bye)
+[18:36:06] *** Joins: dcprime (~dcprime@110.226.28.160)
+[18:39:51] *** Quits: Xjs (~jannis@user/xjs) (Quit: Good night.)
+[18:41:42] *** Quits: mikeputnam (~mikeputna@wilug/mikeputnam) (Quit: WeeChat 2.8)
+[18:45:14] *** Joins: Xjs (~jannis@user/xjs)
+[18:46:11] *** Quits: burningserenity_ (~burningse@142-196-178-216.res.spectrum.com) (Quit: ZNC 1.8.2 - https://znc.in)
+[18:47:13] *** Quits: iateadonut (~dan@121.177.17.154) (Quit: Leaving.)
+[18:48:17] *** Joins: cskr (~cskr@49.207.206.119)
+[18:50:58] *** Joins: bit4bit (~bit4bit@190.128.123.78)
+[18:53:12] <beeza> is there some standard interface for copyable objects?
+[18:54:57] <CommunistWolf> Clone?
+[18:55:08] <CommunistWolf> it's not standard, but there's at least a convention
+[18:55:17] <beeza> Ah, great
+[18:55:18] <beeza> let me check
+[18:55:51] <CommunistWolf> an stdlib example: https://golang.org/pkg/net/http/#Request.Clone
+[18:56:05] <mickey> when i have a type x struct {} with _exactly_ the same structure as a struct {}, can i somehow cast the struct into an object of type x?
+[18:56:06] <CommunistWolf> the signature isn't consistent, I think, but the name crops up
+[18:58:25] *** Joins: Vukan (~drazen@46.235.100.178)
+[18:58:58] <mrusme> is there any way to specify multiple git URLs for a go.mod dependency?
+[18:59:53] <mrusme> or like.. alias it somehow?
+[18:59:53] <fizzie> mickey: Yes, you can, and the syntax is the same as for any other allowed conversion: https://play.golang.org/p/jBbPUVCzdMv
+[19:01:53] *** Quits: andlabs (~andlabs@68.237.68.71) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[19:02:02] <fizzie> (And https://golang.org/ref/spec#Conversions lists the specific rules of what exactly can be converted.)
+[19:03:23] *** Joins: andlabs (~andlabs@68.237.68.71)
+[19:09:16] *** Joins: davidkrauser (~davidkrau@user/davidkrauser)
+[19:09:17] *** Joins: SincereFox (uid337158@user/sincerefox)
+[19:11:15] *** Joins: amahl (~amahl@dsl-jklbng12-54fbca-64.dhcp.inet.fi)
+[19:11:39] <mickey> fizzie and to get the pointer to that v2? &x(v1) doesn't work for me
+[19:12:03] <fizzie> Well, no, it wouldn't, the result of a conversion isn't assignable.
+[19:12:52] *** Quits: menace_ (~someone@ppp-93-104-178-177.dynamic.mnet-online.de) (Quit: menace_)
+[19:14:19] *** Joins: fef (~thedawn@user/thedawn)
+[19:14:27] <fizzie> You can do `(*x)(&v1)` though.
+[19:15:25] <fizzie> The pointy equivalent: https://play.golang.org/p/dgpPOi13Hsr
+[19:15:26] <mickey> thanks
+[19:18:23] *** Joins: bodhi (~bodhi@c-73-93-87-220.hsd1.ca.comcast.net)
+[19:20:20] *** Joins: y04nn (~y04nn@81.17.24.204)
+[19:23:20] *** Joins: tomlazar (~tomlazar@cpe-65-26-56-76.wi.res.rr.com)
+[19:23:31] <beeza> Many noob questions today, so normally if I have a bunch of code and I want consistent error handling I just wrap it in a function and handle errors there, is there some standard or widely used library/interfaces to facilitate this pattern
+[19:24:49] <bpalmer> putting code in a function and handling errors within it seems like a straightforward approach; not sure what else you're thinking of.
+[19:24:58] *** Joins: Giedrius (~giedrius@5.133.65.65)
+[19:27:01] <beeza> no I mean, I put like: func myFunc() (err error) { err = func() (err error) { actual.code().here() }; if err != nil { log.Errorf("got error: %v", err) }; return err; }
+[19:27:07] <beeza> or something like that
+[19:29:53] *** Joins: mlokpc (~mlok@94.230.145.34)
+[19:30:49] *** Quits: dcprime (~dcprime@110.226.28.160) (Quit: dcprime)
+[19:32:59] <mlokpc> Hello, how could I introduce a blacklist of certain directories for something like this please?
+[19:33:02] <mlokpc>                 https://play.golang.org/p/Fy6GdGLdSHf
+[19:33:27] <mlokpc> e.g. if I didn't want ioutil.ReadDir to read a directory such as /home/
+[19:33:46] *** Joins: rsanti_ (~rsanti_@89-66-3-64.dynamic.chello.pl)
+[19:34:19] <bpalmer> beeza: I think super-generic stuff is usually avoided
+[19:34:54] <bpalmer> beeza: I did have a colleague who routinely used small inline funcs to do that sort of thing, because they could capture over the variables easily and provide a guaranteed exit point along with defer functionality.
+[19:35:31] *** Joins: tebruno99 (~tb@c-67-175-180-140.hsd1.il.comcast.net)
+[19:35:58] *** Joins: Guest57 (~Guest57@cm105-202.liwest.at)
+[19:36:29] *** Quits: rsanti_ (~rsanti_@89-66-3-64.dynamic.chello.pl) (Client Quit)
+[19:37:37] *** Joins: maroloccio (~marolocci@200.243.99.194)
+[19:37:40] *** Quits: dmathieu (~textual@laubervilliers-659-1-148-137.w92-154.abo.wanadoo.fr) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[19:38:23] *** Parts: tebruno99 (~tb@c-67-175-180-140.hsd1.il.comcast.net) ()
+[19:39:00] *** Joins: dmathieu (~textual@laubervilliers-659-1-148-137.w92-154.abo.wanadoo.fr)
+[19:39:24] *** Joins: tebruno99 (~liberacha@c-67-175-180-140.hsd1.il.comcast.net)
+[19:39:56] *** tomlazar is now known as deafpiano
+[19:39:57] *** Parts: tebruno99 (~liberacha@c-67-175-180-140.hsd1.il.comcast.net) ()
+[19:40:00] *** Joins: egon (~egon@user/egon)
+[19:40:11] *** Quits: maroloccio (~marolocci@200.243.99.194) (Quit: Client closed)
+[19:41:12] *** Quits: deafpiano (~tomlazar@cpe-65-26-56-76.wi.res.rr.com) (Quit: leaving)
+[19:42:40] *** Quits: absc (~absc@access03.colt-engine.it) (Quit: Leaving.)
+[19:42:48] *** Quits: hedy (hedy@user/hedy) (Changing host)
+[19:42:48] *** Joins: hedy (hedy@tilde.team/user/hedy)
+[19:43:35] *** Joins: cada (~liberacha@c-67-175-180-140.hsd1.il.comcast.net)
+[19:43:48] *** Quits: cada (~liberacha@c-67-175-180-140.hsd1.il.comcast.net) (Client Quit)
+[19:44:06] *** Joins: tebruno99 (~liberacha@c-67-175-180-140.hsd1.il.comcast.net)
+[19:45:21] <beeza> Okay thanks, was just checking in case I was missing something
+[19:47:28] <bpalmer> mlokpc: use path/filepath  Abs() to turn a relative directory into an absolute path, then probably use EvalSymLinks to handle any symlinks
+[19:47:48] <bpalmer> mlokpc: and then decide whether you want to be secure against hard links
+[19:48:08] *** Quits: tebruno99 (~liberacha@c-67-175-180-140.hsd1.il.comcast.net) (Client Quit)
+[19:48:24] *** Joins: tebruno99 (~AdminUser@c-67-175-180-140.hsd1.il.comcast.net)
+[19:48:30] <mlokpc> bpalmer: thanks, I'll try it out
+[19:48:55] *** Quits: tebruno99 (~AdminUser@c-67-175-180-140.hsd1.il.comcast.net) (Client Quit)
+[19:49:04] *** Quits: Vukan (~drazen@46.235.100.178) (Ping timeout: 268 seconds)
+[19:49:10] *** Joins: tebruno99 (~quassel@c-67-175-180-140.hsd1.il.comcast.net)
+[19:49:31] *** Joins: maroloccio (~marolocci@200.243.99.194)
+[19:49:58] *** Quits: davidkrauser (~davidkrau@user/davidkrauser) (Quit: Leaving)
+[19:50:53] *** Joins: Torr (~Torr@user/torr)
+[19:52:18] *** Joins: NoName_ (~NoName@8.20.126.9)
+[19:52:23] <mlokpc> bpalmer: I am mainly interested in how I would exclude that specific directory from being read
+[19:52:38] *** Quits: anonfunc[m] (~idleganda@anquietas.harting.hosting) (Quit: Bridge terminating on SIGTERM)
+[19:52:38] *** Quits: faceonkeyboard (~faceonkey@anquietas.harting.hosting) (Quit: Bridge terminating on SIGTERM)
+[19:52:43] <bpalmer> if you're not too worried about shenigans, just use Abs() and then HasPrefix
+[19:52:49] <bpalmer> from filepath
+[19:52:49] *** Joins: LiftLeft (~LiftLeft@154.21.114.153)
+[19:53:00] *** Joins: faceonkeyboard (~faceonkey@anquietas.harting.hosting)
+[19:53:09] <mlokpc> bpalmer: cool, will try it thanks
+[19:53:12] *** Joins: tomlazar (~tomlazar@cpe-65-26-56-76.wi.res.rr.com)
+[19:53:12] *** tomlazar is now known as deafpiano
+[19:54:05] *** Joins: rothandrew (~rothandre@c-73-213-69-254.hsd1.va.comcast.net)
+[19:55:59] *** Quits: fbrx (~fbrx@user/fbrx) (Quit: Leaving)
+[19:57:34] *** Quits: tebruno99 (~quassel@c-67-175-180-140.hsd1.il.comcast.net) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[19:57:54] *** Joins: tebruno99 (~quassel@c-67-175-180-140.hsd1.il.comcast.net)
+[19:58:13] *** Joins: edrocks (~Ed@user/edrocks)
+[19:58:42] *** Joins: arinov (~arinov@5.24.125.219)
+[19:58:56] *** Quits: arinov_ (~arinov@212.156.215.30) (Ping timeout: 268 seconds)
+[19:59:22] *** Quits: NoName_ (~NoName@8.20.126.9) (Remote host closed the connection)
+[20:00:19] *** Quits: egon (~egon@user/egon) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[20:00:20] *** Joins: rsanti_ (~rsanti_@89-66-3-64.dynamic.chello.pl)
+[20:01:28] *** Quits: rothandrew (~rothandre@c-73-213-69-254.hsd1.va.comcast.net) (Quit: Textual IRC Client: www.textualapp.com)
+[20:03:06] *** Parts: rsanti_ (~rsanti_@89-66-3-64.dynamic.chello.pl) ()
+[20:04:20] *** Quits: Guest57 (~Guest57@cm105-202.liwest.at) (Quit: Client closed)
+[20:04:57] *** Joins: rsanti_ (~rsanti_@89-66-3-64.dynamic.chello.pl)
+[20:07:13] *** Joins: thulium (~Thulium@2601:2c0:457f:b21b:e9ab:7bd0:630d:eacc)
+[20:07:27] *** Quits: thulium (~Thulium@2601:2c0:457f:b21b:e9ab:7bd0:630d:eacc) (Client Quit)
+[20:07:56] *** Joins: thulium (~Thulium@2601:2c0:457f:b21b:e9ab:7bd0:630d:eacc)
+[20:08:02] *** Quits: rsanti_ (~rsanti_@89-66-3-64.dynamic.chello.pl) (Quit: Connection closed)
+[20:09:40] *** Joins: xcombelle (~xavie@176-139-252-198.abo.bbox.fr)
+[20:10:03] *** Joins: rsanti_ (~rsanti_@89-66-3-64.dynamic.chello.pl)
+[20:10:14] *** Joins: NoName_ (~NoName@8.20.126.9)
+[20:12:37] *** Quits: cskr (~cskr@49.207.206.119) (Remote host closed the connection)
+[20:12:56] *** Quits: rsanti_ (~rsanti_@89-66-3-64.dynamic.chello.pl) (Client Quit)
+[20:13:01] *** Joins: cskr (~cskr@49.207.206.119)
+[20:13:06] *** Quits: cskr (~cskr@49.207.206.119) (Client Quit)
+[20:13:29] *** Quits: mlokpc (~mlok@94.230.145.34) (Quit: Lost terminal)
+[20:13:35] *** Quits: NoName_ (~NoName@8.20.126.9) (Client Quit)
+[20:13:53] *** Joins: NoName_ (~NoName@8.20.126.9)
+[20:19:41] *** Quits: be3uykpy (~be3uykpy@141.226.9.247) (Read error: Connection reset by peer)
+[20:20:03] *** Joins: be3uykpy (~be3uykpy@141.226.9.247)
+[20:20:04] *** Quits: src (~src@user/src) (Quit: leaving)
+[20:23:05] *** Joins: thulium_ (~thulium@c-73-155-255-96.hsd1.tx.comcast.net)
+[20:23:13] *** Quits: Giedrius (~giedrius@5.133.65.65) (Remote host closed the connection)
+[20:23:33] *** Quits: thulium_ (~thulium@c-73-155-255-96.hsd1.tx.comcast.net) (Client Quit)
+[20:23:46] *** Quits: dmathieu (~textual@laubervilliers-659-1-148-137.w92-154.abo.wanadoo.fr) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[20:28:19] *** Quits: edrocks (~Ed@user/edrocks) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[20:34:51] *** Quits: andlabs (~andlabs@68.237.68.71) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[20:36:41] *** Joins: andlabs (~andlabs@68.237.68.71)
+[20:40:21] *** Joins: lauraaah (uid156848@id-156848.charlton.irccloud.com)
+[20:40:23] *** Quits: NoName_ (~NoName@8.20.126.9) (Quit: https://www.endfgm.eu/what-can-you-do/donate/)
+[20:42:52] *** Quits: maroloccio (~marolocci@200.243.99.194) (Quit: Client closed)
+[20:44:20] *** Joins: abyx (~abyx@user/abyx)
+[20:45:24] <abyx> Why does fmt.Printf("%#+v", someUint32) print in hex format?
+[20:46:29] <abyx> As opposed to say, rendering as if the field were %d ?
+[20:47:49] <fizzie> It's what it's specced to do; possibly because unsigned types are often used for things that aren't strictly speaking all that numeric?
+[20:48:20] <fizzie> https://golang.org/pkg/fmt/ "The default format for %v is: -- uint, uint8 etc.: %d, %#x is printed with %#v"
+[20:49:55] <lauraaah> 😶
+[20:50:00] *** Joins: sagax (~sagax@213.138.71.146)
+[20:51:28] *** Joins: rothandrew (~rothandre@c-73-213-69-254.hsd1.va.comcast.net)
+[20:51:58] <fizzie> And in general I feel like %#v is for a "verbose" / "debugging" representation, and if you *do* happen to have a uint32 that represents a bunch of flags, 0x100208 is a lot more parseable (bits 3, 9 and 20 are set) than 1049096 would be.
+[20:55:35] *** Joins: davidkrauser (~davidkrau@user/davidkrauser)
+[20:58:20] *** Joins: maroloccio (~marolocci@200.243.99.194)
+[21:01:10] *** Joins: frm (~frm@user/frm)
+[21:05:07] <siXy> using unsigned ints for actual numbers is almost always a very bad idea.
+[21:05:16] *** Joins: icholy (~icholy@68.71.18.45)
+[21:06:28] *** Quits: maroloccio (~marolocci@200.243.99.194) (Quit: Client closed)
+[21:06:57] *** Joins: Guest9_ (~textual@c-73-51-174-246.hsd1.il.comcast.net)
+[21:07:39] *** Joins: dmathieu (~textual@pop.92-184-110-165.mobile.abo.orange.fr)
+[21:08:01] <ikke> even for counters where negative values make no sense?
+[21:08:34] *** Quits: yoonkn (~user@175.197.208.79) (Read error: Connection reset by peer)
+[21:11:00] <fizzie> The argument is that if you must have a discontinuity (which you do, with a fixed-width type), it's best to put it as far out of the way as possible, not right next to 0, which is maybe the most common of numbers.
+[21:11:09] *** Joins: zoey (~zoey@2a02:8084:a080:9e00:3fae:994c:3fdc:274d)
+[21:12:05] <fizzie> There's some discussion at https://github.com/golang/go/issues/27460 for example, in the context of why the built-in `len` function returns a (signed) int.
+[21:12:46] <siXy> ikke: Counters are a potential exception, however it does mean you can't distinguish between a counter reset and an overflow
+[21:14:59] *** Quits: rothandrew (~rothandre@c-73-213-69-254.hsd1.va.comcast.net) (Quit: Textual IRC Client: www.textualapp.com)
+[21:16:02] *** Joins: spirgel (spirgel@gateway/vpn/protonvpn/spirgel)
+[21:17:11] *** Quits: masoudd (~masoudd@user/masoudd) (Read error: Connection reset by peer)
+[21:18:44] *** Quits: mikoto-chan (~mikoto-ch@ip-213-49-189-31.dsl.scarlet.be) (Quit: mikoto-chan)
+[21:18:59] *** Joins: mikoto-chan (~mikoto-ch@ip-213-49-189-31.dsl.scarlet.be)
+[21:20:27] *** Quits: zenbit (~matt@cpc97858-walt21-2-0-cust224.13-2.cable.virginm.net) (Ping timeout: 268 seconds)
+[21:28:09] *** Quits: arinov (~arinov@5.24.125.219) (Ping timeout: 272 seconds)
+[21:36:46] *** Quits: zoey (~zoey@2a02:8084:a080:9e00:3fae:994c:3fdc:274d) (Quit: Client closed)
+[21:37:12] *** Joins: zoey (~zoey@2a02:8084:a080:9e00:3fae:994c:3fdc:274d)
+[21:38:19] *** Quits: andlabs (~andlabs@68.237.68.71) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[21:38:58] *** Quits: SincereFox (uid337158@user/sincerefox) (Quit: Connection closed for inactivity)
+[21:39:34] *** Quits: noxim (~noxim@user/noxim) (Quit: Client closed)
+[21:39:51] *** Joins: andlabs (~andlabs@68.237.68.71)
+[21:40:08] *** Joins: noxim (~noxim@user/noxim)
+[21:41:27] *** Quits: bodhi (~bodhi@c-73-93-87-220.hsd1.ca.comcast.net) (Ping timeout: 272 seconds)
+[21:45:29] *** Joins: jkl (~jkl@12.216.111.80)
+[21:47:57] *** Quits: mickey (~user@user/mickey) (Quit: Ping timeout (120 seconds))
+[21:48:09] *** Joins: mickey (~user@user/mickey)
+[21:48:25] *** Joins: hikhvar (~thelounge@dslb-178-005-138-126.178.005.pools.vodafone-ip.de)
+[21:51:51] *** Joins: thulium_ (~Thulium@c-73-155-255-96.hsd1.tx.comcast.net)
+[21:54:54] *** Quits: thulium (~Thulium@2601:2c0:457f:b21b:e9ab:7bd0:630d:eacc) (Ping timeout: 264 seconds)
+[22:07:53] *** Quits: tedwing (~anon@lfbn-idf3-1-1409-99.w109-221.abo.wanadoo.fr) (Quit: leaving)
+[22:09:45] *** Quits: Kyros (~kyros@user/kyros) (Quit: ZNC 1.7.5+deb4 - https://znc.in)
+[22:18:18] *** Quits: frost (~frost@59.71.241.190) (Ping timeout: 268 seconds)
+[22:20:26] *** Joins: Kyros (~kyros@user/kyros)
+[22:26:43] *** Quits: kulak (~kulak@user/kulak) (Read error: Connection reset by peer)
+[22:29:38] *** Joins: pepee (~user@user/pepee)
+[22:30:11] *** Quits: WTaF (~GoLiath@80.179.69.241.cable.012.net.il) (Read error: Connection reset by peer)
+[22:31:16] *** Quits: zoey (~zoey@2a02:8084:a080:9e00:3fae:994c:3fdc:274d) (Quit: Client closed)
+[22:31:37] *** Joins: GoLiath_ (~GoLiath@80.179.69.245.cable.012.net.il)
+[22:32:27] *** Joins: kulak (~kulak@user/kulak)
+[22:33:18] *** Quits: jkl (~jkl@12.216.111.80) (Ping timeout: 264 seconds)
+[22:33:33] *** Joins: edrocks (~Ed@user/edrocks)
+[22:35:13] *** Quits: kulak (~kulak@user/kulak) (Read error: Connection reset by peer)
+[22:35:46] *** Joins: kulak (~kulak@user/kulak)
+[22:36:32] *** Quits: einalex (~einalex@ip4d15fd2a.dynamic.kabel-deutschland.de) (Remote host closed the connection)
+[22:38:42] *** Quits: dmathieu (~textual@pop.92-184-110-165.mobile.abo.orange.fr) (Ping timeout: 264 seconds)
+[22:39:10] *** Joins: SebastianM (~seba@user/sebastianm)
+[22:39:43] *** Quits: SebastianM (~seba@user/sebastianm) (Client Quit)
+[22:40:11] *** Quits: jcajka (~jcajka@89-24-144-111.customers.tmcz.cz) (Quit: Leaving)
+[22:40:37] *** Joins: Vukan (~drazen@46.235.100.178)
+[22:43:05] *** Joins: rothandrew (~rothandre@c-73-213-69-254.hsd1.va.comcast.net)
+[22:44:02] *** Quits: GoLiath_ (~GoLiath@80.179.69.245.cable.012.net.il) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[22:44:29] *** Joins: GoLiath_ (~GoLiath@80.179.69.241.cable.012.net.il)
+[22:46:32] *** Joins: NoName_ (~NoName@8.20.126.9)
+[22:46:47] *** Joins: DeltaNova (~DeltaNova@user/deltanova)
+[22:48:55] *** Quits: Kyros (~kyros@user/kyros) (Quit: ZNC 1.8.2 - https://znc.in)
+[22:49:45] *** Joins: Kyros (~kyros@user/kyros)
+[22:54:22] *** darkmuggle is now known as darkmugglet
+[22:55:24] *** darkmugglet is now known as lordvoldemort
+[22:55:57] *** lordvoldemort is now known as voldemort
+[22:56:15] *** voldemort is now known as darkmuggle
+[22:56:49] *** Quits: be3uykpy (~be3uykpy@141.226.9.247) (Quit: Leaving)
+[22:59:58] *** Joins: maroloccio (~marolocci@200.243.99.194)
+[22:59:59] *** Quits: burningserenity (~burningse@2603-9001-0f01-ad99-0000-0000-0000-1006.inf6.spectrum.com) (Quit: ZNC 1.8.2 - https://znc.in)
+[23:00:01] *** Joins: burningserenity_ (~burningse@2603-9001-0f01-ad99-0000-0000-0000-1000.inf6.spectrum.com)
+[23:02:53] *** Quits: Vukan (~drazen@46.235.100.178) (Ping timeout: 244 seconds)
+[23:06:24] *** Quits: hikhvar (~thelounge@dslb-178-005-138-126.178.005.pools.vodafone-ip.de) (Ping timeout: 268 seconds)
+[23:10:12] *** Quits: maroloccio (~marolocci@200.243.99.194) (Quit: Client closed)
+[23:12:09] *** Joins: komish (~quassel@47-184-205-144.dlls.tx.frontiernet.net)
+[23:13:20] *** Joins: vptr (~tadas@user/vptr)
+[23:16:16] *** Quits: darkmuggle (darkmuggle@2607:5300:203:3f52::13) (Changing host)
+[23:16:16] *** Joins: darkmuggle (darkmuggle@redhat/darkmuggle)
+[23:17:00] *** Quits: Xjs (~jannis@user/xjs) (Ping timeout: 268 seconds)
+[23:19:08] *** Joins: Xjs (~jannis@user/xjs)
+[23:20:18] *** Quits: thulium_ (~Thulium@c-73-155-255-96.hsd1.tx.comcast.net) (Ping timeout: 240 seconds)
+[23:26:34] *** Joins: hikhvar (~thelounge@dslb-178-005-138-126.178.005.pools.vodafone-ip.de)
+[23:30:47] *** Quits: mohan43u (~mohan@user/mohan43u) (Quit: WeeChat 3.1)
+[23:31:06] *** Joins: mohan43u (~mohan@user/mohan43u)
+[23:33:08] *** Quits: FenderQ (~fenderq@user/fenderq) (Remote host closed the connection)
+[23:33:42] *** Joins: FenderQ (~fenderq@user/fenderq)
+[23:35:09] *** Joins: solar_sea (~solar@78.130.184.220)
+[23:35:54] *** Joins: spirgel_ (spirgel@gateway/vpn/protonvpn/spirgel)
+[23:36:04] <bloony> is there a way to flatten the fields of a struct and its embeded struct into one anonymous struct? I could recurse and store all values in a map[string]interface{}, but I also need tags..
+[23:37:50] *** Quits: davidkrauser (~davidkrau@user/davidkrauser) (Quit: Leaving)
+[23:38:20] *** Quits: mountolive (~mountoliv@188.240.132.112) (Read error: Connection reset by peer)
+[23:39:19] <Tv_> bloony: type A struct { B; C; D }
+[23:39:53] *** Quits: spirgel (spirgel@gateway/vpn/protonvpn/spirgel) (Ping timeout: 272 seconds)
+[23:41:44] <bloony> Tv_: hmm.. I realize I am asking the wrong question.. and I am too tired to think :p I'll try again later :)
+[23:41:51] *** Joins: klltkr (~klltkr@host86-186-21-201.range86-186.btcentralplus.com)
+[23:48:13] *** Joins: SebastianM (~seba@user/sebastianm)
+[23:48:52] *** Joins: Celeo (~Celeo@2603-8001-3301-2e00-8c77-d35a-f4b2-66eb.res6.spectrum.com)
+[23:51:07] *** Joins: davidkrauser (~davidkrau@user/davidkrauser)
+[23:54:18] *** Quits: hikhvar (~thelounge@dslb-178-005-138-126.178.005.pools.vodafone-ip.de) (Ping timeout: 264 seconds)
+[23:57:03] *** Joins: logarus (~logarus@101.186.60.205)
+[23:58:49] *** Quits: logarus2 (~logarus@2001:8003:4d47:a500:fc19:6bd2:ed16:1c0d) (Ping timeout: 256 seconds)

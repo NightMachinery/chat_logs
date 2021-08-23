@@ -1,0 +1,481 @@
+[00:00:01] <znf> I appreciate that you did most of the work to include it, tough :)
+[00:01:29] <JEEB> me? I've only done some fixes in the windows schannel stuff  so that it actually works with keepalive (because I'm lazy to build gnutls), and maybe I have merged someone else's fix in the gnutls module :)
+[00:02:25] <znf> no, sorry, I mean BtbN, but I think I tagged him enough
+[00:02:31] <JEEB> :)
+[00:02:48] <BtbN> znf, it's a dependency of some other dependency. That's why it's there.
+[00:02:53] <BtbN> Windows uses schannel for TLS
+[00:03:23] <znf> other than passing --enable-openssl, do you recon I need to do anything else?
+[00:03:49] <BtbN> It will also need --enable-nonfree and will in turn make the resulting binaries non-distributable
+[00:04:02] <BtbN> and you cannot push that to github ever, since it would start distributing binaries on its own
+[00:04:58] <znf> I could just remove the workflows, couldn't I? and keep it in a private repo
+[00:07:55] <Exa> furq / znf: I can reproduce the crash with -vf 'format=p010,hwupload' on my self build on latest master, here is a traceback https://ewd.xyz/9ffff2.txt  (libavutil/imgutils.c:353 is a memmove)
+[00:08:55] <Exa> I'm not sure I want to debug things today, and I'm don't even know if the parameters could work (since the output is grey colored, I don't think parameters are right)
+[00:09:42] <JEEB> so vaapi hwupload is somehow derping up :)
+[00:10:02] <znf> midn repeating the command without 10bit?
+[00:10:20] <Exa> with gdb colors: https://ewd.xyz/def349.png
+[00:10:45] <Exa> znf: which one?
+[00:11:15] <znf> -vf 'format=nv12,hwupload', or did you already do that?
+[00:11:31] <Exa> yes, with main profile and this, it works
+[00:11:50] <znf> and you said that -vf 'scale_vaapi=format=p010' fails?
+[00:12:29] <znf> ah, you did
+[00:13:37] <Exa> znf: it automatically adds filters and the result is not compatible  https://ewd.xyz/004e3e.txt
+[00:13:42] <znf> that filter error is kind of weird to me tough, why would it try to add an auto_scale between the input and scale_vaapi
+[00:14:23] <znf> that .dot output thing would be really useful :P
+[00:14:54] *** Quits: Sylirana (~Sylirana@user/sylirana) (Ping timeout: 252 seconds)
+[00:15:09] <Exa> this could explain:  [h264 @ 0x561b6b3dbd00] Reinit context to 1920x1088, pix_fmt: yuv420p 🤔
+[00:15:12] <Exa> "1088"
+[00:15:18] <JEEB> that's normal
+[00:15:20] <Exa> ok
+[00:15:24] <JEEB> it then gets cropped in decoder
+[00:15:29] <JEEB> that's just the internal decoder resolution
+[00:15:31] <furq> h264 is always mod16
+[00:15:33] <JEEB> since images are coded mod16
+[00:15:34] <Exa> I see
+[00:15:43] *** Joins: Sylirana (~Sylirana@user/sylirana)
+[00:15:47] <JEEB> anyways, that just means that you have yuv420p coming in
+[00:15:59] <JEEB> and then scale_vaapi wants vaapi
+[00:16:01] <furq> you would think with that in mind that the most common resolution for video would also be mod16 but never mind
+[00:16:17] <znf> >math calc 576 / 16
+[00:16:19] <znf> erm
+[00:16:25] <JEEB> and scale filter tries to add a conversion
+[00:16:35] <JEEB> but since scale filter does not know how to produce a vaapi pix_fmt
+[00:16:37] <JEEB> it fails
+[00:16:42] <JEEB> so that one is completely understandable
+[00:16:58] <JEEB> you fix that by either using vaapi decoding with a vaapi surface (as opposed to sw surface), or having that hwupload
+[00:17:05] <znf> I think he is?
+[00:17:19] <znf> ah! he's only passing -vaapi_device /dev/dri/renderD128
+[00:17:47] <JEEB> yea hwaccel_output_format
+[00:18:04] <JEEB> basically -hwaccel_output_format vaapi
+[00:18:09] <JEEB> I think
+[00:18:17] <JEEB> that then never pushes the image to RAM
+[00:18:39] <znf> would -hwaccel_output_format also set -hwaccel vaapi automatically?
+[00:18:50] <JEEB> no
+[00:18:56] <znf> doesn't he also need that?
+[00:19:00] *** Parts: Sebastinas (znc@alphacentauri.ramacher.at) ()
+[00:19:03] <JEEB> yes, I expected that to be there
+[00:19:14] <znf> nope, it's not :)
+[00:19:28] <Exa> that argument is given here: https://trac.ffmpeg.org/wiki/Hardware/VAAPI
+[00:19:43] <znf> yeah, but you need the whole set, for... reasons?
+[00:19:51] <znf> not just -hwaccel_device /dev/dri/renderD128
+[00:20:05] <JEEB> well if the encoding side was utilized before
+[00:20:12] <JEEB> the device might be relevant there
+[00:20:30] <JEEB> (since hw encoders are not technically "hwaccels")
+[00:20:48] <JEEB> then hwaccel says that you want hwaccel X, and unless you set the output format, it will automagically pull the image to RAM
+[00:20:52] <JEEB> I think that's how ffmpeg.c works
+[00:20:58] <znf> I believe you just need to add  -hwaccel vaapi -hwaccel_output_format vaapi
+[00:21:23] <JEEB> that should move decoding to the hardware, yes
+[00:21:36] <JEEB> (and keep the surfaces in VRAM)
+[00:22:39] <Exa> nice, the command worked, let me check the video
+[00:22:44] <znf> meanwhile, my openssl endeavour didn't go well
+[00:22:54] <znf> wonder why
+[00:23:11] <Exa> colors are normal, and "Video: hevc (Main 10)"
+[00:23:42] <Exa> with -vf 'scale_vaapi=format=p010'
+[00:24:16] <JEEB> yea since you're not utilizing the hwupload filter since your decoded result starts being already on the VAAPI VRAM side
+[00:24:37] <JEEB> 43
+[00:25:35] <Exa> decoded, as in, between h264 (source) and yuv?
+[00:26:49] <JEEB> the raw YCbCr result from decoding ends up being still in the VRAM
+[00:27:00] <JEEB> as opposed to actual system RAM
+[00:27:22] <JEEB> hwupload is RAM->VRAM
+[00:27:27] <JEEB> hwdownload is VRAM->RAM
+[00:27:28] *** Quits: troyt (troyt@2601:681:4100:d591:44dd:acff:fe85:9c8e) (Quit: AAAGH!  IT BURNS!)
+[00:27:50] *** Joins: troyt (troyt@2601:681:4100:d591:44dd:acff:fe85:9c8e)
+[00:27:58] *** Quits: idesmi[m] (~idesmitch@2001:470:69fc:105::f2b) (Quit: Bridge terminating on SIGTERM)
+[00:27:58] *** Quits: yakoyakoyokuyoku (~yakoyakoy@2001:470:69fc:105::780) (Quit: Bridge terminating on SIGTERM)
+[00:28:50] *** Joins: jai (~darkapex@user/darkapex)
+[00:29:18] *** Quits: Blacker47 (~Blacker47@user/blacker47) (Quit: Life is short. Get a V.90 modem fast!)
+[00:29:33] <Exa> what is vram?  how is it virtual?  is it gpu ram mapped on ram?
+[00:29:33] *** Joins: kepstin (~kepstin@user/kepstin)
+[00:29:48] *** Joins: luc65r (~luc65r@2001:470:69fc:105::ee1)
+[00:29:59] <znf> Video RAM
+[00:30:00] *** Joins: memst[m] (~memst@2001:470:69fc:105::716)
+[00:30:08] <znf> usually called VRAM in these contexts :P
+[00:32:09] <Exa> ok
+[00:33:59] *** Joins: xkuru (~xkuru@user/xkuru)
+[00:37:43] *** Joins: idesmi[m] (~idesmitch@2001:470:69fc:105::f2b)
+[00:44:07] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 264 seconds)
+[00:44:40] <znf> BtbN, uh, help - libavcodec/x86/hevcdsp_init.c:1152:1: fatal error: closing dependency file libavcodec/x86/hevcdsp_init.d: No space left on device
+[00:44:44] <znf> oh shit
+[00:44:48] <znf> it filled my disk wth
+[00:50:47] <Exa> tmpfs ?
+[00:52:48] *** Quits: tsenko (~zeno@91-148-149-81.dimitrovgrad.ddns.bulsat.com) (Quit: Lost terminal)
+[00:53:23] <znf> no, I just forget that I only have 120GB SSD on this thing
+[00:53:28] <znf> and I was running thin already
+[00:54:12] <znf> laughably, I have more RAM (220GB) than actual storage (120GB) on this system
+[00:54:41] *** Quits: luni-4 (uid453292@id-453292.charlton.irccloud.com) (Quit: Connection closed for inactivity)
+[00:56:29] *** Joins: Nact (~l@2a02:a03f:c0b0:f600:3253:5994:1b4f:e854)
+[01:01:03] *** Quits: Nact (~l@2a02:a03f:c0b0:f600:3253:5994:1b4f:e854) (Client Quit)
+[01:02:59] <znf> yay! Added OpenSSL support, too!
+[01:06:51] *** Joins: yakoyakoyokuyoku (~yakoyakoy@2001:470:69fc:105::780)
+[01:06:55] <znf> Would it actually be possible to make scale_cuda support format= as scale_npp does without having to rely on libnpp?
+[01:07:22] <BtbN> If you write format conversion kernels for every possible combination, sure.
+[01:07:28] <BtbN> But even then, it's going to be a separate filter.
+[01:07:30] <JEEB> I think scale_cuda even had something that seemed like input and output conversion stuff?
+[01:07:43] <BtbN> no
+[01:07:45] <JEEB> since the inputs and outputs weren't checked to be exactly the same
+[01:07:47] <BtbN> it's pure scaling
+[01:07:47] <JEEB> oh, ok
+[01:08:12] <JEEB> I was just confused due to
+[01:08:13] <JEEB> > out_format    = (s->format == AV_PIX_FMT_NONE) ? in_format : s->format;
+[01:08:31] <JEEB> and then it just checks that in_format and out_format are supported
+[01:08:36] <JEEB> not that they are the same thing
+[01:09:58] *** Quits: Flabb (~Flabb@89.169.84.117) (Remote host closed the connection)
+[01:10:24] <znf> Sadly my coding skills are not up to par, just wondering if it's possible somehow :)
+[01:15:54] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 245 seconds)
+[01:17:07] <BtbN> If you write the feature from scratch, of course it's possible
+[01:18:03] *** Joins: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se)
+[01:37:37] <sfan5> btw this channel is still marked as +r
+[01:37:45] <sfan5> possibly not intended at this point
+[01:38:00] <znf> yeah, it was from the weirdo for last night, BtbN asked for someone to remind him :)
+[01:38:24] <BtbN> ah, right
+[01:38:35] *** ChanServ sets mode: +o BtbN
+[01:38:38] *** BtbN sets mode: -r 
+[01:38:41] *** BtbN sets mode: -o BtbN
+[01:45:15] <Exa> znf: wait, 220GB RAM?
+[01:45:24] <znf> Exa, yes
+[01:45:54] <znf> 8 x 32GB
+[01:46:14] <Exa> = 256
+[01:46:57] <Exa> are you using a motherboard with 2 socks?
+[01:47:26] <znf> yeah
+[01:47:52] *** Quits: Volgaar (~volgaar@104.66.13.93.rev.sfr.net) (Quit: WeeChat 3.1)
+[01:47:52] <BtbN> You don't need two sockets for 256GB
+[01:48:00] <znf> it's dual xeon platinum 6164
+[01:48:05] <Exa> this would surprise me more out of this channel tho, is it for cpu encoding?
+[01:48:45] <znf> no, it's a server that only gets used during big events, rest of the time it's idle, so I build stuff on it when I need it :)
+[01:49:31] <znf> but it does do video streaming, no transcoding, just mpegts -> HLS
+[01:49:45] <znf> and storing everything in tmpfs
+[01:50:22] <Exa> my 32GB are more than enough for my builds :P
+[01:50:43] <Exa> at home, not a server
+[01:51:05] <znf> It's on a 100Gbit link, but it kind of "tops out" at ~48Gbit when the poorly written app that the client uses tends to max out the CPU
+[01:51:33] *** Joins: Nact (~l@2a02:a03f:c0b0:f600:3253:5994:1b4f:e854)
+[01:52:15] <furq> python or ruby
+[01:52:24] <znf> heh, I said poorly written, think lower :D
+[01:52:40] <furq> that's true you wouldn't have needed to specify
+[01:52:53] <znf> It's PHP :)
+[01:53:00] <furq> oh dear
+[01:53:18] <furq> well that explains how it's maxing out 52c/104t
+[01:53:26] <furq> it's by not using 51 of those cores
+[01:54:33] <znf> it's not "actual" CPU usage, but turns out moving that much data from memory to the NIC is really expensive, so IRQ % usage is trough the roof
+[01:54:58] <furq> nice
+[01:55:54] <znf> wait, it's only 2 x 48 Cores
+[01:56:12] <znf> I can't even find a Platinum 6164 online
+[01:56:30] <furq> oh right google returned the 8164 when i typed in 6164
+[01:56:39] <znf> yet: https://pastie.dev/raw/NjIJPd
+[01:56:50] <furq> it's mentioned on wikipedia
+[01:57:40] <furq> ark doesn't have it at all and wikipedia thinks it's a xeon gold
+[01:57:57] <furq> good stuff
+[01:58:20] <znf> I assume that if the app would be re-written to take advantage of NUMA nodes, it *could* work better, but the nic is still bound to one NUMA node, so I'm not sure that would help much, so kind of at a stalemate
+[01:58:47] <znf> I just do some freelance work for the client, so not my server, not my app, I just keep an eye on their services
+[01:59:21] <znf> I did recommend them to go for EPYCs instead, but their DC doesn't have them
+[01:59:43] <znf> DCs are still resist to go the AMD way
+[02:00:17] <znf> At my day job, when we had to replace our vmware cluster, took some convincing work to get the boss to go for EPYC
+[02:01:07] <znf> He run the numbers and figured out that instead of doing Xeon Gold, we can just go AMD EPYC and have about 25% of our budget unused or something
+[02:01:16] <znf> Now he can't stop raving about them heh
+[02:03:54] *** Quits: intrac (~intracube@user/intracube) (Quit: Konversation terminated!)
+[02:12:42] <znf> On the NPP docs @ nVidia, it says that you should be able to use the static libs, but my ld throws a fit in regards to unresolved symbols, even tough I'm using the exact flags that they are listing
+[02:13:19] <znf> undefined reference to `shm_unlink'
+[02:13:26] *** Joins: linjie (~linjie@58.247.210.251)
+[02:15:04] <znf> ah, got it
+[02:16:14] *** Joins: intrac (~intracube@user/intracube)
+[02:17:34] *** Quits: linjie (~linjie@58.247.210.251) (Ping timeout: 245 seconds)
+[02:18:27] <znf> or not... got it working with g++, but not with clang
+[02:20:29] *** Quits: amahl (~amahl@dsl-jklbng12-54fbca-64.dhcp.inet.fi) (Ping timeout: 245 seconds)
+[02:24:09] <znf> What's the difference between:
+[02:24:09] <znf> v
+[02:24:10] <znf> check_lib libnpp npp.h nppGetLibVersion -lnppig -lnppicc -lnppc -lnppidei
+[02:24:11] <znf> and
+[02:24:14] <znf> check_lib libnpp npp.h nppGetLibVersion -lnppi -lnppc -lnppidei
+[02:24:20] <znf> in configure?
+[02:24:53] <znf> I don't see any nppi in my SDK, is this for an old version?
+[02:27:55] <BtbN> Different CUDA SDK versions need different libs
+[02:28:44] <znf> shouldn't --disable-debug prevent creating ffmpeg_g ?
+[02:32:15] <znf> my static_npp build now fails when it's trying to link ffmpeg_g :-/
+[02:32:41] <BtbN> static libnpp is probably just straight up impossible
+[02:33:08] <znf> I'd still like to try :)
+[02:34:36] *** Joins: meinside (uid24933@id-24933.brockwell.irccloud.com)
+[02:35:01] <znf> oh, it doesn't fail the linking
+[02:35:03] <znf> it fails before that
+[02:35:25] <znf> nope, scratch that, my scroll buffer confused me,
+[02:41:41] *** Joins: keypushe- (keypusher@user/keypusher)
+[02:41:50] *** Quits: keypusher (keypusher@user/keypusher) (Ping timeout: 252 seconds)
+[02:43:18] <znf> yeah, so much for that https://pastie.dev/raw/ZdI0tV
+[02:44:43] *** keypushe- is now known as keypusher
+[02:45:53] <znf> Oh.
+[02:46:00] <znf> Using g++ actually... worked?
+[02:46:38] <znf> https://pastie.dev/Wy5TgZ.yaml
+[02:48:53] <znf> And it didn't segfault!
+[02:51:00] <znf> Why does the final linking work with g++ but not with gcc ? :-/
+[02:52:09] *** niko is now known as o
+[03:06:09] *** Quits: keypusher (keypusher@user/keypusher) (Quit: bye)
+[03:07:27] *** Joins: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com)
+[03:10:02] *** Joins: keypusher (keypusher@user/keypusher)
+[03:11:44] *** Joins: Vonter (~Vonter@user/vonter)
+[03:14:49] *** Quits: keypusher (keypusher@user/keypusher) (Remote host closed the connection)
+[03:15:16] *** Joins: keypusher (keypusher@user/keypusher)
+[03:38:24] *** Quits: troyt (troyt@2601:681:4100:d591:44dd:acff:fe85:9c8e) (Quit: AAAGH!  IT BURNS!)
+[03:39:21] *** Joins: troyt (troyt@2601:681:4100:d591:44dd:acff:fe85:9c8e)
+[03:53:40] *** Quits: der_richter (~Akemi@p4fde4e37.dip0.t-ipconnect.de) (Quit: Leaving.)
+[04:08:36] *** Quits: troyt (troyt@2601:681:4100:d591:44dd:acff:fe85:9c8e) (Quit: AAAGH!  IT BURNS!)
+[04:09:50] *** Joins: troyt (troyt@2601:681:4100:d591:44dd:acff:fe85:9c8e)
+[04:19:30] *** Quits: ocrete (~ocrete@halloumi.collabora.co.uk) (Quit: Ping timeout (120 seconds))
+[04:20:41] *** Joins: ocrete (~ocrete@halloumi.collabora.co.uk)
+[05:12:02] *** Quits: TheSashm_ (~TheSashmo@207.35.238.34) (Quit: Leaving...)
+[05:20:02] *** Quits: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se) (Ping timeout: 272 seconds)
+[05:26:48] *** Joins: tlacatlc6 (~tlacatlc6@097-101-132-062.res.spectrum.com)
+[05:30:21] *** Quits: vlm (~vlm@user/vlm) (Quit: "")
+[05:30:51] *** Joins: TheSashmo (~TheSashmo@207.35.238.34)
+[05:34:39] *** Joins: vlm (~vlm@user/vlm)
+[06:14:56] *** Joins: linjie (~linjie@58.247.210.251)
+[06:19:33] *** Quits: linjie (~linjie@58.247.210.251) (Ping timeout: 252 seconds)
+[06:20:11] *** Quits: AnK70 (~AnK@pool-173-72-4-103.cmdnnj.fios.verizon.net) (Quit: Client closed)
+[06:20:22] *** Quits: Sylirana (~Sylirana@user/sylirana) (Read error: Connection reset by peer)
+[06:20:48] *** Joins: Sylirana (~Sylirana@user/sylirana)
+[06:20:52] *** Joins: x_kuru (~xkuru@user/xkuru)
+[06:24:19] *** Quits: xkuru (~xkuru@user/xkuru) (Ping timeout: 264 seconds)
+[06:28:36] *** Joins: AnK66 (~AnK@pool-173-72-4-103.cmdnnj.fios.verizon.net)
+[06:28:50] *** Quits: AnK66 (~AnK@pool-173-72-4-103.cmdnnj.fios.verizon.net) (Client Quit)
+[06:35:41] *** Quits: x_kuru (~xkuru@user/xkuru) (Quit: Leaving)
+[06:36:11] *** Joins: xkuru (~xkuru@user/xkuru)
+[06:37:00] *** Quits: richbridger (~richbridg@213-225-37-94.nat.highway.a1.net) (Ping timeout: 245 seconds)
+[07:31:43] *** Quits: tlacatlc6 (~tlacatlc6@097-101-132-062.res.spectrum.com) (Quit: Leaving)
+[07:36:04] *** Joins: thebombzen (~thebombze@71.73.92.220)
+[07:46:27] *** Quits: mega (~iglosiggi@129-73-17-190.fibertel.com.ar) (Ping timeout: 252 seconds)
+[07:59:17] *** Joins: Retr0id (~Retr0id@user/retr0id)
+[08:24:16] *** Quits: xkuru (~xkuru@user/xkuru) (Quit: Unvirtualizing)
+[08:28:06] *** Joins: blue_penquin (~blue_penq@gateway/tor-sasl/bluepenquin/x-11613850)
+[08:41:08] *** Joins: llyyr (~llyyr@51.15.176.87)
+[08:42:22] *** Quits: TanoMarcelo (~TanoMarce@179.63.242.126) (Quit: WeeChat 3.1)
+[08:45:18] *** Quits: foobar__ (~motorslav@c-73-195-7-177.hsd1.nj.comcast.net) (Ping timeout: 264 seconds)
+[09:01:34] *** Joins: foobar__ (~motorslav@c-73-195-7-177.hsd1.nj.comcast.net)
+[09:08:55] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[09:29:56] *** Joins: zerymo (~zerymo@ppp-110-169-69-111.revip5.asianet.co.th)
+[09:29:56] *** Quits: zerymo (~zerymo@ppp-110-169-69-111.revip5.asianet.co.th) (K-Lined)
+[10:00:47] *** Quits: arcatech (~arcatech@user/arcatech) (Quit: Bye.)
+[10:06:26] *** Joins: fkaa (~fkaa@81-226-20-99-no256.tbcn.telia.com)
+[10:09:30] *** Quits: fkaa (~fkaa@81-226-20-99-no256.tbcn.telia.com) (Remote host closed the connection)
+[10:12:12] *** Joins: fkaa (~fkaa@81-226-20-99-no256.tbcn.telia.com)
+[10:15:13] *** Joins: der_richter (~Akemi@p4fde4ff3.dip0.t-ipconnect.de)
+[10:17:00] *** Joins: linjie (~linjie@58.247.210.251)
+[10:19:13] *** Quits: fkaa (~fkaa@81-226-20-99-no256.tbcn.telia.com) (Remote host closed the connection)
+[10:19:35] *** Joins: fkaa (~fkaa@81-226-20-99-no256.tbcn.telia.com)
+[10:21:26] *** Quits: fkaa (~fkaa@81-226-20-99-no256.tbcn.telia.com) (Remote host closed the connection)
+[10:21:33] *** Quits: linjie (~linjie@58.247.210.251) (Ping timeout: 252 seconds)
+[10:23:13] *** Joins: fkaa (~fkaa@81-226-20-99-no256.tbcn.telia.com)
+[10:31:16] *** Joins: Flabb (~Flabb@89.169.84.117)
+[10:32:31] *** Joins: attronarch (~gerovit@user/attronarch)
+[10:46:18] *** Quits: Flat (~flat@35.137.99.241) (Ping timeout: 252 seconds)
+[11:04:20] *** Quits: blue_penquin (~blue_penq@gateway/tor-sasl/bluepenquin/x-11613850) (Remote host closed the connection)
+[11:05:04] *** Joins: blue_penquin (~blue_penq@gateway/tor-sasl/bluepenquin/x-11613850)
+[11:42:51] *** Quits: TheSashmo (~TheSashmo@207.35.238.34) (Read error: Connection reset by peer)
+[11:43:28] *** Joins: TheSashmo (~TheSashmo@207.35.238.34)
+[11:44:32] *** Quits: Nact (~l@2a02:a03f:c0b0:f600:3253:5994:1b4f:e854) (Quit: Konversation terminated!)
+[11:55:07] *** Joins: gloomy_desktop (~ldorigo@81.161.149.37)
+[11:59:13] *** Quits: sfan5 (~sfan5@user/sfan5) (Quit: Quit)
+[11:59:26] *** Joins: sfan5 (~sfan5@user/sfan5)
+[12:00:12] *** Quits: der_richter (~Akemi@p4fde4ff3.dip0.t-ipconnect.de) (Read error: Connection reset by peer)
+[12:00:21] *** Joins: der_richter (~Akemi@p4fde4ff3.dip0.t-ipconnect.de)
+[12:03:15] *** Quits: KombuchaKip (~kip@192.252.230.5) (Ping timeout: 245 seconds)
+[12:08:22] *** Joins: Blacker47 (~Blacker47@user/blacker47)
+[12:21:13] *** Joins: Flat (~flat@35.137.99.241)
+[12:21:29] *** Joins: luni-4 (uid453292@id-453292.charlton.irccloud.com)
+[12:30:23] *** Joins: Volgaar (~volgaar@104.66.13.93.rev.sfr.net)
+[12:59:39] *** Joins: KombuchaKip (~kip@192.252.230.5)
+[13:03:42] *** Quits: justBull (~justache@user/justache) (Remote host closed the connection)
+[13:04:48] *** Joins: justBull (~justache@user/justache)
+[13:09:34] *** Quits: Icedream (~icedream@hzn-b.serverkomplex.de) (Quit: A lol made me boom.)
+[13:10:15] *** Joins: Icedream (~icedream@hzn-b.serverkomplex.de)
+[13:24:29] *** Quits: blue_penquin (~blue_penq@gateway/tor-sasl/bluepenquin/x-11613850) (Remote host closed the connection)
+[13:25:11] *** Joins: blue_penquin (~blue_penq@gateway/tor-sasl/bluepenquin/x-11613850)
+[13:26:06] *** Quits: a0z (~a0z@90.244.140.171) (Ping timeout: 264 seconds)
+[13:48:45] *** Joins: houlei (uid497843@id-497843.stonehaven.irccloud.com)
+[13:54:40] *** Joins: uos_zhuyuliang (~uos_zhuyu@119.4.240.125)
+[14:06:16] <houlei>  Does ffmpeg have assembly optimization for alpha architecture？
+[14:09:11] <houlei> Rotate the screen, the screen cannot be recorded normally.
+[14:09:21] <houlei> https://trac.ffmpeg.org/ticket/9282#ticket
+[14:10:57] <sfan5> https://github.com/FFmpeg/FFmpeg/tree/master/libavcodec/alpha
+[14:18:37] *** Joins: linjie (~linjie@58.247.210.251)
+[14:22:35] <uos_zhuyuliang> sfan5:No assembly optimization for h264?
+[14:23:05] *** Quits: linjie (~linjie@58.247.210.251) (Ping timeout: 258 seconds)
+[14:25:03] <furq> ffmpeg doesn't have an h264 encoder
+[14:25:21] <furq> if you want optimisations for x264 then you need to ask the x264 guys
+[14:31:54] *** Quits: Sylirana (~Sylirana@user/sylirana) (Ping timeout: 258 seconds)
+[14:32:19] *** Quits: Fusl (fusl@user/fusl) (Quit: freenode)
+[14:32:20] *** Joins: Sylirana (~Sylirana@user/sylirana)
+[14:32:48] *** Joins: Fusl (fusl@1.0.0.127.in-addr.arpa.li)
+[14:36:29] *** Quits: brontosaurusrex (~woot@user/brontosaurusrex) (Quit: WeeChat 2.3)
+[14:58:10] *** Quits: s55 (~s55@user/s55) (Ping timeout: 268 seconds)
+[15:00:58] *** Joins: s55 (~s55@user/s55)
+[15:05:12] *** betelgeuse01 is now known as betelgeuse
+[15:10:18] *** Quits: uos_zhuyuliang (~uos_zhuyu@119.4.240.125) (Ping timeout: 250 seconds)
+[15:12:54] *** Quits: Volgaar (~volgaar@104.66.13.93.rev.sfr.net) (Ping timeout: 250 seconds)
+[15:23:07] *** Quits: dostoyevsky2 (~sck@user/dostoyevsky2) (Ping timeout: 264 seconds)
+[15:24:02] *** Joins: dostoyevsky2 (~sck@user/dostoyevsky2)
+[15:30:10] *** Quits: dostoyevsky2 (~sck@user/dostoyevsky2) (Ping timeout: 258 seconds)
+[15:30:52] *** Joins: dostoyevsky2 (~sck@user/dostoyevsky2)
+[15:34:16] *** Joins: uos_zhuyuliang (~uos_zhuyu@119.4.240.125)
+[15:35:56] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[15:42:31] *** Quits: blue_penquin (~blue_penq@gateway/tor-sasl/bluepenquin/x-11613850) (Remote host closed the connection)
+[15:43:20] *** Joins: blue_penquin (~blue_penq@gateway/tor-sasl/bluepenquin/x-11613850)
+[15:54:49] *** Quits: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com) (Quit: WeeChat 3.0.1)
+[16:17:55] *** Joins: angular_mike (~angular_m@46.109.204.120)
+[16:18:09] <angular_mike> what is the origin of the name for "-ss" option? how do you decypher it?
+[16:19:34] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 244 seconds)
+[16:20:48] *** Quits: TheCoffeMaker (~TheCoffeM@user/thecoffemaker) (Quit: So long and thanks for all the fish)
+[16:21:08] *** Joins: TheCoffeMaker (~TheCoffeM@user/thecoffemaker)
+[16:21:23] <JEEB> angular_mike: probably something with seek and start since the variable internally is `start_time`
+[16:21:54] *** Quits: Nex8192_ (~Nex8192@user/nex8192) (Quit: Don't watch me die)
+[16:22:01] <JEEB> 254abc2ec6b6d0bff590bf113095debd5a03687e
+[16:22:04] <JEEB> in 2003
+[16:22:07] <JEEB> is where the option was renamed
+[16:22:15] <JEEB> from -start to -ss (apparently to match mplayer?) :D
+[16:22:15] *** Joins: Nex8192 (~Nex8192@user/nex8192)
+[16:22:57] <JEEB> angular_mike: so I guess the question now goes towards why mplayer had it called like that :)
+[16:23:17] <angular_mike> I see, time to go to their channel ig
+[16:24:16] *** Quits: TheCoffeMaker (~TheCoffeM@user/thecoffemaker) (Max SendQ exceeded)
+[16:24:50] <DeHackEd> if that's the case, then their variable name is seek_to_sec
+[16:25:09] *** Joins: TheCoffeMaker (~TheCoffeM@user/thecoffemaker)
+[16:26:00] <JEEB> I actually wondered the history of that option myself, but never thought of going as far as checking :)
+[16:26:05] <JEEB> but yes, Seek to Sec
+[16:26:11] <JEEB> StS -> SS
+[16:26:54] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[16:36:54] *** Quits: yakoyakoyokuyoku (~yakoyakoy@2001:470:69fc:105::780) (Quit: Reconnecting)
+[16:37:14] *** Joins: yakoyakoyokuyoku (~yakoyakoy@2001:470:69fc:105::780)
+[16:48:23] *** Quits: yakoyakoyokuyoku (~yakoyakoy@2001:470:69fc:105::780) (Quit: Reconnecting)
+[16:48:40] *** Joins: yakoyakoyokuyoku (~yakoyakoy@2001:470:69fc:105::780)
+[16:49:37] *** Quits: yakoyakoyokuyoku (~yakoyakoy@2001:470:69fc:105::780) (Client Quit)
+[16:49:52] *** Joins: yakoyakoyokuyoku (~yakoyoku@2001:470:69fc:105::780)
+[16:52:22] *** Quits: blue_penquin (~blue_penq@gateway/tor-sasl/bluepenquin/x-11613850) (Remote host closed the connection)
+[16:57:45] *** Joins: TanoMarcelo (~TanoMarce@179.63.242.126)
+[16:57:50] *** Quits: yakoyakoyokuyoku (~yakoyoku@2001:470:69fc:105::780) (Quit: issued !quit command)
+[17:06:10] *** Joins: adanwan (~adanwan@gateway/tor-sasl/adanwan)
+[17:45:30] <kepstin> huh, i always thought it stood for "start seek"
+[17:49:09] <JEEB> yea same for me, since it was start_time internally :)
+[18:02:13] *** Quits: attronarch (~gerovit@user/attronarch) (Quit: Konversation terminated!)
+[18:20:28] *** Joins: linjie (~linjie@58.247.210.251)
+[18:21:09] *** Quits: uos_zhuyuliang (~uos_zhuyu@119.4.240.125) (Ping timeout: 252 seconds)
+[18:24:52] *** Quits: linjie (~linjie@58.247.210.251) (Ping timeout: 250 seconds)
+[18:27:00] *** Joins: ivanich (~ivanich@host-176-36-233-131.b024.la.net.ua)
+[18:27:31] *** Joins: Guest14 (~Guest14@91.199.223.245)
+[18:30:16] *** Joins: arcatech (~arcatech@user/arcatech)
+[18:40:00] *** Quits: arcatech (~arcatech@user/arcatech) (Quit: Bye.)
+[18:58:29] *** Quits: mateo`_ (~mateo@ffmpeg/developer/mateo) (Ping timeout: 265 seconds)
+[18:59:37] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 272 seconds)
+[19:00:18] *** Joins: linjie (~linjie@58.247.210.251)
+[19:01:09] *** Quits: linjie (~linjie@58.247.210.251) (Remote host closed the connection)
+[19:02:37] *** Joins: linjie (~linjie@58.247.210.251)
+[19:04:16] *** Joins: mega (~iglosiggi@129-73-17-190.fibertel.com.ar)
+[19:04:52] *** Quits: Guest14 (~Guest14@91.199.223.245) (Quit: Client closed)
+[19:07:08] *** Quits: linjie (~linjie@58.247.210.251) (Ping timeout: 258 seconds)
+[19:11:03] *** Joins: mateo`_ (~mateo@ffmpeg/developer/mateo)
+[19:16:33] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[19:18:03] *** Joins: linjie (~linjie@58.247.210.251)
+[19:23:03] *** Quits: luc65r (~luc65r@2001:470:69fc:105::ee1) (Remote host closed the connection)
+[19:23:03] *** Quits: jai (~darkapex@user/darkapex) (Read error: Connection reset by peer)
+[19:23:04] *** Quits: memst[m] (~memst@2001:470:69fc:105::716) (Remote host closed the connection)
+[19:23:04] *** Quits: idesmi[m] (~idesmitch@2001:470:69fc:105::f2b) (Remote host closed the connection)
+[19:23:04] *** Quits: kepstin (~kepstin@user/kepstin) (Read error: Connection reset by peer)
+[19:23:46] *** Joins: jai (~darkapex@user/darkapex)
+[19:24:45] *** Joins: kepstin (~kepstin@user/kepstin)
+[19:24:55] *** Joins: memst[m] (~memst@2001:470:69fc:105::716)
+[19:24:55] *** Joins: luc65r (~luc65r@2001:470:69fc:105::ee1)
+[19:25:00] *** Joins: idesmi[m] (~idesmitch@2001:470:69fc:105::f2b)
+[19:28:10] *** Quits: realies (~realies@user/realies) (Remote host closed the connection)
+[19:30:00] *** Joins: arcatech (~arcatech@user/arcatech)
+[20:06:17] *** Quits: therobin (~UserNick@2607:f2c0:93c6:800:f88b:abe4:8e9:45e2) (Ping timeout: 252 seconds)
+[20:17:00] <znf> So... is there a way for me to override the build process and have the last linking step done with the CXX compiler instead of the C one?
+[20:18:20] <BtbN> Why?
+[20:18:24] <BtbN> they both just invoke ld
+[20:19:46] *** Joins: AbleBacon (~AbleBacon@user/AbleBacon)
+[20:20:02] *** Joins: therobin (~UserNick@2607:f2c0:920b:aa00:2d50:d410:723:f75c)
+[20:21:22] *** Joins: pprap (~pprap@78.199.12.209)
+[20:22:18] <znf> BtbN, because I've managed to compile with libnpp_static, but gcc/clang fail on the last step linking the binary... while g++/clang++ work
+[20:22:22] <znf> I have no idea why
+[20:22:42] <BtbN> Sounds like you forgot a dependency, nothing more
+[20:22:45] <znf> and yes, the binary runs and works with scale_npp filters
+[20:22:49] <BtbN> probably libstdc++
+[20:22:55] <znf> I fail to see which one tough
+[20:23:03] <BtbN> Should be fairly obvious from the error.
+[20:23:16] <pprap> Hello ! I m trying to trim and reencode a file with this command : ffmpeg -loglevel error -progress pipe:1 -y -ss 0 -i input.mov -to 3 -c:a pcm_s16be -ar 48000 -ac 2 output.aif
+[20:24:03] <pprap> But when I ffprobe to get media duration I get 2.1 seconds (my original media duration is 12.03s seconds)
+[20:24:39] <znf> Unfortunately it's really not obvious, at least not to me: https://pastie.dev/raw/vHKm5V
+[20:24:39] <znf> :-/
+[20:24:59] <BtbN> You're telling it to cut to 3 seconds, so it does something reasonably close to that, pprap
+[20:25:27] <BtbN> znf, grep your libs for that function, and you found the missing dep
+[20:25:28] <znf> And the command is:
+[20:25:29] <znf> clang -Llibavcodec -Llibavdevice -Llibavfilter -Llibavformat -Llibavutil -Llibpostproc -Llibswscale -Llibswresample -L/usr/local/cuda/lib64  -Wl,--as-needed -Wl,-z,noexecstack -Wl,--warn-common -Wl,-rpath-link=:libpostproc:libswresample:libswscale:libavfilter:libavdevice:libavformat:libavcodec:libavutil -Qunused-arguments   -o ffmpeg_g fftools/ffmpeg_opt.o fftools/ffmpeg_filter.o fftools/ffmpeg_hw.o fftools/cmdutils.o fftools/ffmpeg.o  -lavdevice
+[20:25:29] <znf> -lavfilter -lavformat -lavcodec -lpostproc -lswresample -lswscale -lavutil  -lm -pthread -lm -lnppig_static -lnppicc_static -lnppc_static -lnppidei_static -lcudart_static -lculibos -lpthread -lrt -ldl -lva -ldl -lm -lz -lssl -lcrypto -ldl -pthread -pthread -lm -lz -lfdk-aac -lm -lva -ldl -lm -lm -lm -pthread -lva-drm -lva -lm -lva -ldl
+[20:25:49] <znf> damn, that's a long one
+[20:25:57] <BtbN> Looks like C++ standard lib to me
+[20:26:19] <BtbN> You most likely cannot use clang with static C++ libs that weren't also built with clang
+[20:26:43] <znf> gcc throw the same error, I just tried clang to see if there's any difference
+[20:26:54] <znf> altough I'm on a very old gcc (8.x) on Ubuntu 18
+[20:26:55] <pprap> I found a lot of topics about seeking accuracy problem and I tryed each solution. I don't understand how to precisely trim my video :/
+[20:27:18] <BtbN> Just add the missing dependency to the c++ stdlib and hope it doesn't crash due to c++ standard lib differences or clashes
+[20:28:10] <DeHackEd> pprap: -ss behaviour varies based on what file it's associated with. on an input it tries an input seek before processing, which has the downside that it must snap to a keyframe. on an output it will discard data until it reaches the requested time, starting processing from there.
+[20:28:23] <znf> BtbN, so just -stdlib=libc++ ?
+[20:28:41] <BtbN> No, you need to literally link it
+[20:28:49] <DeHackEd> if it were gcc I would say -lstdc++
+[20:28:55] <BtbN> and given the lack of a pkg-config file for npp, you will have to edit the configure file to add it
+[20:29:10] <BtbN> __cxa_allocate_exception specifcally seems to be a libc++ symbol even
+[20:29:19] <BtbN> so that could get fun if other libs use a different C++ stdlib
+[20:29:20] <znf> I'm already doing that, do I need to add it just in the npp section or?
+[20:29:38] <znf> let's see
+[20:31:43] <znf> yeah! that worked!
+[20:41:31] *** Joins: amahl (~amahl@dsl-jklbng12-54fbca-64.dhcp.inet.fi)
+[20:43:43] <pprap> DeHackEd I readed https://trac.ffmpeg.org/wiki/Seeking and tryed ss & to before my input and between ss and to parameters but I never get an accuracy trim. There is a way to get an exactness result?
+[20:47:44] <DeHackEd> you're missing the point. ffmpeg's commandline is like:  ffmpeg [options for file1] -i file1   [options for file2] file2  [options for file3] file3...
+[20:47:55] <DeHackEd> in this case you have only 2 files, 1 input and 1 output
+[20:48:04] <DeHackEd> whether -ss is for the input or the output matters
+[20:53:42] *** Joins: TheSashm_ (~TheSashmo@207.35.238.34)
+[20:55:07] *** Joins: Volgaar (~volgaar@104.66.13.93.rev.sfr.net)
+[20:55:42] *** Quits: TheSashmo (~TheSashmo@207.35.238.34) (Ping timeout: 252 seconds)
+[20:56:56] *** Quits: linjie (~linjie@58.247.210.251) (Remote host closed the connection)
+[20:57:34] *** Joins: linjie (~linjie@58.247.210.251)
+[21:01:44] *** Quits: linjie (~linjie@58.247.210.251) (Ping timeout: 245 seconds)
+[21:09:53] *** Quits: glguy (x@libera/staff/glguy) (Quit: Quit)
+[21:10:00] *** Joins: glguy (x@libera/staff/glguy)
+[21:11:34] *** Quits: LjL (~ljl@user/ljl) (*.net *.split)
+[21:11:34] *** Quits: nurupo (~nurupo.ga@user/nurupo) (*.net *.split)
+[21:11:35] *** Quits: DarkG (~DarkG@user/darkg) (*.net *.split)
+[21:11:35] *** Quits: bencoh (~bencoh@user/bencoh) (*.net *.split)
+[21:11:35] *** Quits: ops (~echelon@user/echelon) (*.net *.split)
+[21:11:35] *** Quits: GTAXL (~gtaxlnetw@user/gtaxl) (*.net *.split)
+[21:11:40] *** Joins: bencoh_ (~bencoh@nautica.notk.org)
+[21:11:46] *** Joins: ops (~ops@5.2.77.173)
+[21:11:46] *** Quits: ops (~ops@5.2.77.173) (Excess Flood)
+[21:11:48] *** Joins: DarkG (~DarkG@zeus.bnc.cakeforce.uk)
+[21:12:04] *** Joins: nurupo_ (~nurupo.ga@user/nurupo)
+[21:12:08] *** Joins: LjL^ (~ljl@user/ljl)
+[21:12:13] *** Joins: ops (~ops@5.2.77.173)
+[21:12:18] *** Quits: ops (~ops@5.2.77.173) (Changing host)
+[21:12:18] *** Joins: ops (~ops@user/echelon)
+[21:12:23] *** DarkG is now known as Guest6146
+[21:13:49] *** Quits: bencoh_ (~bencoh@nautica.notk.org) (Changing host)
+[21:13:49] *** Joins: bencoh_ (~bencoh@user/bencoh)
+[21:14:04] *** bencoh_ is now known as bencoh
+[21:14:49] *** nurupo_ is now known as nurupo
+[21:19:13] *** LjL^ is now known as LjL
+[21:20:35] *** Quits: Flat (~flat@35.137.99.241) (Quit: Rip internet)
+[21:35:19] *** Joins: Flat (~flat@35.137.99.241)
+[21:37:51] *** Joins: linjie (~linjie@58.247.210.251)
+[21:38:09] *** Quits: Flat (~flat@35.137.99.241) (Client Quit)
+[21:42:15] *** Quits: houlei (uid497843@id-497843.stonehaven.irccloud.com) (Quit: Connection closed for inactivity)
+[21:42:27] *** Joins: GTAXL (~gtaxlnetw@user/gtaxl)
+[21:44:22] *** Joins: Flat (~flat@35.137.99.241)
+[21:45:30] *** Quits: linjie (~linjie@58.247.210.251) (Ping timeout: 250 seconds)
+[21:54:51] *** Quits: Atsuko (~x@vm15.serversite.dk) (Remote host closed the connection)
+[22:08:18] *** Joins: realies (~realies@user/realies)
+[22:09:58] *** Joins: Atsuko (~x@vm15.serversite.dk)
+[22:17:39] *** Joins: ariedro (~ariedro@user/ariedro)
+[22:21:43] *** Joins: linjie (~linjie@58.247.210.251)
+[22:27:59] *** Quits: linjie (~linjie@58.247.210.251) (Ping timeout: 245 seconds)
+[22:29:31] *** Joins: Nact (~l@2a02:a03f:c0b0:f600:3253:5994:1b4f:e854)
+[22:32:30] *** Joins: YakoYoku (~yakoyoku@2001:470:69fc:105::780)
+[22:45:20] *** Parts: Guest6146 (~DarkG@zeus.bnc.cakeforce.uk) ()
+[22:48:03] *** Joins: DarkG (~DarkG@user/darkg)
+[22:48:45] *** Joins: Flole (~Flole@94.31.96.37)
+[22:53:41] *** Quits: realies (~realies@user/realies) (Ping timeout: 258 seconds)
+[22:56:31] *** Quits: reynaldo (~reynaldo@ec2-34-200-7-37.compute-1.amazonaws.com) (Remote host closed the connection)
+[22:57:04] *** Quits: Nact (~l@2a02:a03f:c0b0:f600:3253:5994:1b4f:e854) (Read error: Connection reset by peer)
+[23:08:19] *** Joins: der_richter1 (~Akemi@p4fde4ff3.dip0.t-ipconnect.de)
+[23:08:19] *** Quits: der_richter (~Akemi@p4fde4ff3.dip0.t-ipconnect.de) (Read error: Connection reset by peer)
+[23:26:23] *** Joins: xkuru (~xkuru@user/xkuru)

@@ -1,0 +1,442 @@
+[00:00:40] <Xliff> This error was not reported in g0de28ae72.
+[00:01:25] <Xliff> Can someone take a quick load at that code and see if they can find an eror. Note I have used this code in previous raku, no proble.
+[00:05:59] *** Quits: RandalSchwartz (~Adium@c-73-221-215-233.hsd1.wa.comcast.net) (Quit: Leaving.)
+[00:13:30] <Xliff> This error appears again, here:
+[00:13:30] <Xliff> Cannot modify an immutable Block (-> |c { #`(Block|941...)
+[00:13:30] <Xliff>     at /home/cbwood/Projects/p6-GUPnP/lib/GUPnP/Roles/ACL.pm6 (GUPnP::Roles::ACL):124
+[00:35:37] <lizmat> could you golf this to something bisectable, or do you know the offending commit already?
+[00:36:01] <lizmat> ah, I should drop the g  :-)
+[00:36:38] <lizmat> Xliff: can you provide a full stack trace ?
+[00:37:17] <Xliff> lizmat: This is over 500,000 lines of code. Where do you golf?
+[00:37:39] <Xliff> Am attempting to find the commit, but that is time-consuming and might not finish, today.
+[00:37:55] <Xliff> Full stack trace incoming
+[00:38:00] <lizmat> ah, you're saying that 0de28ae72 is not it 
+[00:38:01] <lizmat> ?
+[00:38:34] *** Quits: linkable6 (~lin-able@ns306169.ip-94-23-219.eu) (Remote host closed the connection)
+[00:38:38] <Xliff> No. Checked that one and it produced the same error.
+[00:38:51] <Xliff> It's within the last 3 weeks. Thought last week had a no error week.
+[00:39:00] <Xliff> I'll have to check the stat files.
+[00:39:46] <Xliff> I might need to install bot code to get this one.
+[00:40:49] <lizmat> ++Xliff
+[00:41:10] *** Joins: linkable6 (~lin-able@ns306169.ip-94-23-219.eu)
+[00:42:40] <raydiak> generally you would golf it by making a copy of the project, then rippinng out giant chunks one at a time, checking if the failure still exists after each one. repeat until the only thing left is the failing code, then reduce that to the shortest possible thing you can write which still triggers the bug
+[00:45:42] <Xliff> radiak: Yep. I get the gist of that, but what happens when you are 3 projects into a dependency chain?
+[00:46:51] <raydiak> start by removing the dependencies. if you're lucky, the bug will still exist without them
+[00:47:07] <Xliff> Can't remove the dependencies and expect the code to compile! 
+[00:47:26] <raydiak> remove the part that won't compile without them
+[00:47:43] <Xliff> Unfortunately that is most of the code
+[00:48:03] <Xliff> So I have to show examples from the code. Golfing doesn't work with what I have.
+[00:48:14] <Xliff> Especially this part. It's more types than anything else.
+[00:48:36] <Xliff> If you use a type from a previous dependency (which is all over the code.... see GObject) 
+[00:48:44] <raydiak> remove the type constraints
+[00:48:46] <Xliff> You have to include the dependencies
+[00:48:59] <Xliff> Humm.... I'll think about that.
+[00:49:00] <lizmat> Xliff: full stack trace ?
+[00:49:08] <Xliff> But what if the dependencies are a part of the issue?
+[00:49:17] <Xliff> lizmat: Still working on dependency installs.
+[00:49:36] <raydiak> then you at least know that, which is a start
+[00:49:57] <lizmat> ok, whenever you have one  :-)
+[00:50:00] <raydiak> then you start ripping apart the dependencies too
+[00:50:16] <lizmat> raydiak: I think Xliff gets the concept of golfing :-)
+[00:51:02] <raydiak> he asked. I answered.
+[00:51:09] <Xliff> radiak: At that point, it's probably just easier for someone to download the code and look at it.
+[00:52:46] <raydiak> I looked. didn't see anything obvious. if it's 500,000 lines and the error is elsewhere, that's going to be a tall order
+[00:53:20] <raydiak> anyway, apparently I'm not being helpful. going to move on with my morning. good luck, I hope someone can help you
+[00:53:27] <Xliff> Now you feel my pain.
+[00:53:40] <Xliff> Fortunately at the GIO level it's not over 100k
+[00:57:04] <Xliff> lizmat: stack trace generated. Creating a gist.
+[00:58:45] <Xliff> lizmat: https://gist.github.com/Xliff/b9067702a014a9beee2a9f98ee8f3f79
+[01:01:54] <lizmat> Ah, looks like Method::Also is involved
+[01:03:49] <lizmat> does it happen at compile time ?
+[01:04:18] <Xliff> Looks like it.
+[01:04:30] <Xliff> And o crap. I think I know why. I made recent changes.
+[01:04:51] <Xliff> Will the use of "but" modify a block?
+[01:05:17] <Xliff> If that is true, then I will need to wrap the block in a sub. *sigh*
+[01:06:13] <lizmat> yup  :-(
+[01:07:01] <Xliff> Maybe this: 
+[01:07:02] <Xliff> my \me = -> |c { o."{ $p.value.name }"( |c.list.skip(1), |c.hash ) };
+[01:07:02] <Xliff>               me = me but Method::Also::AliasedMethod;
+[01:07:38] <Xliff> So could that be wrapped in a sub?
+[01:08:34] <Xliff> m: role Subby { }; my $a = sub { say "Hi!" } but Subby; $a.^name.say
+[01:08:34] <camelia> rakudo-moar 750c5d04a: OUTPUT: «Sub+{Subby}␤»
+[01:08:38] <Xliff> Cool!
+[01:08:40] <vrurg> Xliff: the error rather points at an attempt to assign to a non-Scalar.
+[01:08:59] <Xliff> vrurg: Then wouldn't \me count?
+[01:09:05] <vrurg> Xliff: sure it will.
+[01:09:21] <vrurg> \me becomes a binding to a Block.
+[01:09:45] <vrurg> You don't need a sub, perhaps. Just use $me =
+[01:10:01] <Xliff> Hah! OK. Then changing it to $me should fix it. Checking.
+[01:11:00] <vrurg> As a matter of fact, you can still use \me, but then `me := me but ...`
+[01:12:26] <vrurg> Ah, pardon me, `me := ` won't work. :( Though I always expect it to be ok.
+[01:13:34] <vrurg> m: my $r := { say "foo" }; role R { }; $r := $r but R
+[01:13:35] <camelia> rakudo-moar 750c5d04a: ( no output )
+[01:13:49] <vrurg> Anyway, the above is faster and more memory-efficient.
+[01:17:50] <Xliff> vrurg: What about "my $me := -> |c { o."{ $p.value.name }"( |c.list.skip(1), |c.hash ) } but Method::Also::AliasedMethod;"
+[01:18:26] <vrurg> Xliff: Then just `\me = ` will do too, if you prefer this form.
+[01:18:47] <Xliff> I attempted that version of \me and it still generated the error.
+[01:19:20] <vrurg> Xliff: I'd say an attempt to assign into `me` is lurking somewhere.
+[01:19:38] <moritz>  m: my $r := { say "foo" }; role R { }; $r does R; say $r
+[01:19:38] <camelia> rakudo-moar 750c5d04a: OUTPUT: «-> ;; $_? is raw = OUTER::<$_> { #`(Block+{R}|79142800) ... }␤»
+[01:20:11] <vrurg> m: role R { }; my \me = -> |c { } but R;
+[01:20:11] <camelia> rakudo-moar 750c5d04a: ( no output )
+[01:20:23] <vrurg> m: role R { }; my \me = -> |c { } but R; say me
+[01:20:23] <camelia> rakudo-moar 750c5d04a: OUTPUT: «-> |c { #`(Block+{R}|87593896) ... }␤»
+[01:23:33] <Xliff> cd
+[01:23:41] <Xliff> LOL!
+[01:24:10] <raydiak> Xliff last note before I'm afk: I hope you understand I'm never trying to be counterprodocutive. I've golfed bugs out of codebases twice as large. it does take some time and thought, but it does work if you do it right. I only wanted to point out that a tool you already have in your belt can work even here. I hope you don't feel like I'm picking on you. that is never my intention
+[01:26:17] <Xliff> raydiak: I understand that. Thanks for your input. It's just when I come to my p6-GLib projects, golfing is not an easy or quick way to reach a problem. --ll-exception is almost faster.
+[01:26:38] *** Joins: monkey_ (~user@190.104.116.134)
+[01:29:01] *** Joins: yewscion (~yewscion@c-73-214-119-161.hsd1.pa.comcast.net)
+[01:31:21] <raydiak> for the cases where it works, it definitely is. sometimes the cause is not obvious in the current stack
+[01:31:37] <raydiak> did this work when you originally made the change? I wonder what the difference is
+[01:33:03] *** Joins: Xliff_ (~Cliff@pool-71-255-227-73.washdc.east.verizon.net)
+[01:33:31] *** Joins: yewscion_ (~yewscion@2601:547:a00:7720::c63e)
+[01:34:38] *** Quits: cnx (~cnxhaloge@2001:470:69fc:105::61f) (Remote host closed the connection)
+[01:34:38] *** Quits: ComplYue[m] (~complyuem@2001:470:69fc:105::9b0) (Remote host closed the connection)
+[01:34:39] *** Quits: juanfra (~juanfra@user/juanfra) (Read error: Connection reset by peer)
+[01:34:39] *** Quits: demostanis[m] (~demostani@2001:470:69fc:105::2c2) (Read error: Connection reset by peer)
+[01:34:39] *** Quits: AlexDaniel (~alexdanie@2001:470:69fc:105::15e1) (Remote host closed the connection)
+[01:34:39] *** Quits: tyil[m] (~tyilmatri@2001:470:69fc:105::9a1) (Remote host closed the connection)
+[01:34:39] *** Quits: CIAvash (~ciavash@2001:470:69fc:105::264) (Remote host closed the connection)
+[01:35:28] *** Joins: juanfra (~juanfra@user/juanfra)
+[01:35:57] *** Quits: Xliff (~Cliff@pool-71-255-227-73.washdc.east.verizon.net) (Ping timeout: 245 seconds)
+[01:35:57] *** Quits: yewscion (~yewscion@c-73-214-119-161.hsd1.pa.comcast.net) (Ping timeout: 245 seconds)
+[01:35:57] *** Quits: monkey_ (~user@190.104.116.134) (Ping timeout: 245 seconds)
+[01:35:57] *** Quits: MasterDuke (~MasterDuk@94.7.197.239) (Ping timeout: 245 seconds)
+[01:36:39] *** Joins: monkey_ (~user@190.104.116.134)
+[01:36:46] *** Joins: Xliff (~Cliff@pool-71-255-227-73.washdc.east.verizon.net)
+[01:39:20] *** Joins: demostanis[m] (~demostani@2001:470:69fc:105::2c2)
+[01:39:20] *** Joins: AlexDaniel (~alexdanie@2001:470:69fc:105::15e1)
+[01:39:20] *** Joins: cnx (~cnxhaloge@2001:470:69fc:105::61f)
+[01:39:25] *** Joins: gabiruh_ (~gabiruh@vps19177.publiccloud.com.br)
+[01:39:33] *** Joins: ComplYue[m] (~complyuem@2001:470:69fc:105::9b0)
+[01:39:33] *** Joins: tyil[m] (~tyilmatri@2001:470:69fc:105::9a1)
+[01:39:33] *** Joins: samcv_ (~samcv@194.233.102.77)
+[01:39:34] *** Joins: CIAvash (~ciavash@2001:470:69fc:105::264)
+[01:39:35] *** Joins: andinus` (andinus@tilde.institute)
+[01:41:27] *** Joins: pierrot_ (~pi@user/pierrot)
+[01:41:29] *** Joins: sivoais_ (~zaki@199.19.225.239)
+[01:42:22] *** Joins: broquain1 (~dbrook@static.140.30.69.159.clients.your-server.de)
+[01:42:25] *** Joins: Ulti_ (~matt@ec2-35-178-236-167.eu-west-2.compute.amazonaws.com)
+[01:42:32] *** Joins: bartolin_ (~christian@mail.aglaz.de)
+[01:42:49] *** Quits: Xliff_ (~Cliff@pool-71-255-227-73.washdc.east.verizon.net) (Ping timeout: 272 seconds)
+[01:42:51] *** Joins: gfldex_ (~dex@ip5f5ab722.dynamic.kabel-deutschland.de)
+[01:44:07] *** Joins: RandalSchwartz (~Adium@c-73-221-215-233.hsd1.wa.comcast.net)
+[01:44:21] *** Joins: jjatria_ (~jjatria@68.183.32.235)
+[01:44:47] *** Quits: linkable6 (~lin-able@ns306169.ip-94-23-219.eu) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: unicodable6 (~uni-able@ns306169.ip-94-23-219.eu) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: squashable6 (~squ-able@ns306169.ip-94-23-219.eu) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: benchable6 (~ben-able@ns306169.ip-94-23-219.eu) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: tellable6 (~tel-able@ns306169.ip-94-23-219.eu) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: notable6 (~not-able@ns306169.ip-94-23-219.eu) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: LizBot (~RakuIRC@ipv4-wenzperl.connected.by.freedominter.net) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: jjatria (~jjatria@68.183.32.235) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: bisectable6 (~bis-able@ns306169.ip-94-23-219.eu) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: quotable6 (~quo-able@ns306169.ip-94-23-219.eu) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: committable6 (~com-able@ns306169.ip-94-23-219.eu) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: shareable6 (~sha-able@ns306169.ip-94-23-219.eu) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: Ekho (~Ekho@user/ekho) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: Ulti (~matt@ec2-35-178-236-167.eu-west-2.compute.amazonaws.com) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: monkey_ (~user@190.104.116.134) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: samcv (~samcv@194.233.102.77) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: gfldex (~dex@ip5f5ab722.dynamic.kabel-deutschland.de) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: bartolin (~christian@mail.aglaz.de) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: sivoais (~zaki@199.19.225.239) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: cognominal_ (~cognomina@lfbn-idf1-1-1374-85.w90-79.abo.wanadoo.fr) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: gabiruh (~gabiruh@vps19177.publiccloud.com.br) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: broquaint (~dbrook@static.140.30.69.159.clients.your-server.de) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: pierrot (~pi@user/pierrot) (Ping timeout: 264 seconds)
+[01:44:47] *** Quits: andinus (andinus@tilde.institute) (Ping timeout: 264 seconds)
+[01:44:58] *** Joins: Sgeo_ (~Sgeo@ool-18b9875e.dyn.optonline.net)
+[01:45:25] *** jjatria_ is now known as jjatria
+[01:46:02] *** Joins: Xliff_ (~Cliff@pool-71-255-227-73.washdc.east.verizon.net)
+[01:47:04] *** Joins: vrurg_ (~vrurg@45.74.95.181)
+[01:48:09] *** Joins: Ekho- (~Ekho@user/ekho)
+[01:48:10] *** Joins: cognominal (~cognomina@lfbn-idf1-1-1374-85.w90-79.abo.wanadoo.fr)
+[01:48:38] *** Joins: samcv (~samcv@194.233.102.77)
+[01:49:40] *** Joins: ecocode_ (~ecocode@ks39550.kimsufi.com)
+[01:49:44] *** Quits: SmokeMachine (sid19088@2a03:5180:f::4a90) (Ping timeout: 264 seconds)
+[01:49:45] *** Quits: leont (sid489095@id-489095.highgate.irccloud.com) (Ping timeout: 265 seconds)
+[01:49:45] *** Quits: vrurg (~vrurg@45.74.95.181) (Ping timeout: 265 seconds)
+[01:49:45] *** Quits: ecocode (~ecocode@2001:41d0:1:6a74::1) (Ping timeout: 265 seconds)
+[01:49:46] *** Quits: moon-child (~moon-chil@cardinal.elronnd.net) (Read error: Connection reset by peer)
+[01:49:48] *** Joins: childlikempress (~moon-chil@cardinal.elronnd.net)
+[01:50:04] *** Joins: SmokeMachine (sid19088@tinside.irccloud.com)
+[01:51:54] *** Joins: leont (sid489095@highgate.irccloud.com)
+[01:52:02] *** Quits: tonyo (~tonyo@ec2-54-190-144-97.us-west-2.compute.amazonaws.com) (Ping timeout: 265 seconds)
+[01:52:04] *** Quits: charsbar (~charsbar@ik1-311-15861.vs.sakura.ne.jp) (Ping timeout: 265 seconds)
+[01:52:05] *** Joins: charsbar_ (~charsbar@ik1-311-15861.vs.sakura.ne.jp)
+[01:52:29] *** charsbar_ is now known as charsbar
+[01:53:18] *** Joins: perlbot_ (~perlbot@perlbot/bot/simcop2387/perlbot)
+[01:53:19] *** gfldex_ is now known as gfldex
+[01:54:51] *** Quits: perlbot (~perlbot@perlbot/bot/simcop2387/perlbot) (Ping timeout: 265 seconds)
+[01:54:51] *** Quits: jercos (jercos@xyl.be) (Ping timeout: 265 seconds)
+[01:54:51] *** Quits: jdv (~jdv79@jdv.devuyst.com) (Ping timeout: 265 seconds)
+[01:54:53] *** Quits: samcv_ (~samcv@194.233.102.77) (*.net *.split)
+[01:54:54] *** Quits: Xliff (~Cliff@pool-71-255-227-73.washdc.east.verizon.net) (*.net *.split)
+[01:54:54] *** Quits: Sgeo (~Sgeo@user/sgeo) (*.net *.split)
+[01:54:58] *** Joins: jdv (~jdv79@jdv.devuyst.com)
+[01:55:01] *** vrurg_ is now known as vrurg
+[01:55:03] *** perlbot_ is now known as perlbot
+[01:55:14] *** Joins: tonyo (~tonyo@ec2-54-190-144-97.us-west-2.compute.amazonaws.com)
+[01:55:21] *** Quits: m6locks (thebbo@2001:708:30:2160::4) (Ping timeout: 265 seconds)
+[01:55:49] *** GoneDomattps is now known as domattps
+[01:56:00] *** Joins: jercos (jercos@xyl.be)
+[01:56:46] *** Joins: m6locks (thebbo@2001:708:30:2160::4)
+[02:00:29] *** Quits: raydiak (~raydiak@cyberuniverses.com) (Quit: WeeChat 0.3.8)
+[02:09:03] *** Joins: monkey_ (~user@190.104.116.134)
+[02:17:49] *** Quits: monkey_ (~user@190.104.116.134) (Ping timeout: 244 seconds)
+[02:19:05] *** Joins: MasterDuke (~MasterDuk@94.7.197.239)
+[02:19:11] *** childlikempress is now known as moon-child
+[02:21:05] <MasterDuke> Xliff_: are you using rakudo at HEAD? if so, have you noticed any compilation speedup in the past day or so?
+[02:27:26] *** Quits: sivoais_ (~zaki@199.19.225.239) (Quit: leaving)
+[02:27:48] *** Joins: sivoais (~zaki@199.19.225.239)
+[02:31:34] *** Quits: yewscion_ (~yewscion@2601:547:a00:7720::c63e) (Ping timeout: 244 seconds)
+[02:37:19] *** Joins: committable6 (~com-able@ns306169.ip-94-23-219.eu)
+[02:37:20] *** Joins: squashable6 (squ-able@2001:41d0:2:5eb5::)
+[02:37:43] *** Joins: bisectable6 (bis-able@2001:41d0:2:5eb5::)
+[02:37:52] *** Joins: tellable6 (tel-able@2001:41d0:2:5eb5::)
+[02:37:58] *** Joins: benchable6 (ben-able@2001:41d0:2:5eb5::)
+[02:38:10] *** Joins: quotable6 (quo-able@2001:41d0:2:5eb5::)
+[02:38:56] *** Joins: notable6 (~not-able@ns306169.ip-94-23-219.eu)
+[02:39:13] *** Joins: unicodable6 (~uni-able@ns306169.ip-94-23-219.eu)
+[02:39:30] *** Joins: linkable6 (~lin-able@ns306169.ip-94-23-219.eu)
+[02:43:18] *** Joins: shareable6 (sha-able@2001:41d0:2:5eb5::)
+[03:28:16] <Xliff_> MasterDuke: Just compiled at like midnight.
+[03:28:22] <Xliff_> Or slightly after.
+[03:28:45] <Xliff_> Won't know overall until the singular job completes
+[03:28:51] <Xliff_> That'll be a while
+[03:29:16] *** Xliff_ is now known as Xliff
+[04:29:16] *** Quits: linkable6 (~lin-able@ns306169.ip-94-23-219.eu) (Remote host closed the connection)
+[04:29:16] *** Quits: evalable6 (eva-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[04:29:16] *** Quits: releasable6 (rel-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[04:30:13] *** Joins: evalable6 (~eva-able@ns306169.ip-94-23-219.eu)
+[04:30:34] *** Joins: linkable6 (lin-able@2001:41d0:2:5eb5::)
+[04:30:39] *** Joins: releasable6 (rel-able@2001:41d0:2:5eb5::)
+[04:32:56] *** Quits: reportable6 (rep-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[04:35:25] *** Joins: reportable6 (~rep-able@ns306169.ip-94-23-219.eu)
+[04:41:13] *** Joins: jess (~jess@libera/staff/jess)
+[05:16:17] *** Quits: domattps (~domattps@2600:4040:1115:800:6e62:6dff:feec:930f) (Quit: bye for now.)
+[05:42:06] *** Joins: skids (~bri@c-71-192-19-138.hsd1.ma.comcast.net)
+[05:50:45] *** Parts: skids (~bri@c-71-192-19-138.hsd1.ma.comcast.net) ()
+[05:51:12] *** Joins: skids (~bri@c-71-192-19-138.hsd1.ma.comcast.net)
+[06:03:12] *** Joins: domattps (~domattps@2600:4040:1115:800:6e62:6dff:feec:930f)
+[06:21:54] *** domattps is now known as GoneDomattps
+[06:23:28] *** GoneDomattps is now known as domattps
+[06:51:19] *** domattps is now known as GoneDomattps
+[06:55:40] *** Quits: Xliff (~Cliff@pool-71-255-227-73.washdc.east.verizon.net) (Quit: Leaving)
+[07:10:34] *** Ekho- is now known as Ekho
+[07:17:53] *** Quits: skids (~bri@c-71-192-19-138.hsd1.ma.comcast.net) (Ping timeout: 252 seconds)
+[07:21:59] *** Joins: guifa (~guifa@host-68-169-135-99.MIDOLT1.epbfi.com)
+[07:35:13] *** GoneDomattps is now known as domattps
+[07:57:55] *** Quits: Tirifto (~Tirifto@47-186-67-89.dlls.tx.frontiernet.net) (Ping timeout: 272 seconds)
+[08:04:59] *** Joins: Tirifto (~Tirifto@47-186-67-89.dlls.tx.frontiernet.net)
+[08:05:12] *** domattps is now known as GoneDomattps
+[08:13:03] *** Quits: Tirifto (~Tirifto@47-186-67-89.dlls.tx.frontiernet.net) (Quit: Ĝis revido!)
+[08:14:00] *** Joins: Tirifto (~Tirifto@47-186-67-89.dlls.tx.frontiernet.net)
+[08:16:45] <guifa> lizmat: if I did some Date[Time].fmt work should I stub it in Datish and implement separately for the two?  Or just implement in Datish and have it bomb if unavailable atributes (like hours/minutes) are in the format string (or use default values of 0)?
+[09:03:12] *** GoneDomattps is now known as domattps
+[09:13:12] *** domattps is now known as GoneDomattps
+[09:17:27] *** Joins: sono (~sono@107-209-210-210.lightspeed.sntcca.sbcglobal.net)
+[09:18:01] *** GoneDomattps is now known as domattps
+[09:39:00] *** domattps is now known as GoneDomattps
+[10:04:43] *** Quits: RandalSchwartz (~Adium@c-73-221-215-233.hsd1.wa.comcast.net) (Quit: Leaving.)
+[10:32:24] *** Quits: reportable6 (~rep-able@ns306169.ip-94-23-219.eu) (Remote host closed the connection)
+[10:32:58] *** Joins: reportable6 (rep-able@2001:41d0:2:5eb5::)
+[10:35:44] *** Joins: ufobat_ (~martin@dynamic-095-115-140-171.95.115.pool.telefonica.de)
+[10:51:00] *** Quits: Sgeo_ (~Sgeo@ool-18b9875e.dyn.optonline.net) (Read error: Connection reset by peer)
+[11:26:18] *** Quits: Manifest0 (~Manifest0@1-nat1-1.centrio.cz) (Quit: WeeChat 3.1)
+[11:30:18] *** Joins: Manifest0 (~Manifest0@1-nat1-1.centrio.cz)
+[11:31:36] *** Joins: stoned75 (~seb@78.203.129.116)
+[11:45:53] *** Joins: abraxxa (~ahartmai@smtp.hartmaier.priv.at)
+[11:53:26] *** Quits: abraxxa (~ahartmai@smtp.hartmaier.priv.at) (Ping timeout: 252 seconds)
+[11:54:20] *** Joins: abraxxa (~ahartmai@tsa-tc-flod-1.t-systems.at)
+[11:55:21] *** Joins: Altai-man_ (~koto@94.142.239.45)
+[11:58:00] *** Quits: guifa (~guifa@host-68-169-135-99.MIDOLT1.epbfi.com) (Quit: guifa)
+[11:58:27] *** Quits: Altai-man_ (~koto@94.142.239.45) (Client Quit)
+[11:59:47] *** Joins: dolmen (~X@91.206.7.93.rev.sfr.net)
+[12:15:28] *** Joins: dakkar (~dakkar@home.thenautilus.net)
+[12:15:37] *** Quits: dolmen (~X@91.206.7.93.rev.sfr.net) (Quit: This computer has gone to sleep)
+[12:28:29] *** Joins: dolmen (~X@91.206.7.93.rev.sfr.net)
+[14:11:25] <lizmat> guifa: I'd use default values of 0 and always use accessors in the code, so that subclasses would have a possibility to intervene
+[14:11:27] <tellable6> lizmat, I'll pass your message to guifa
+[14:18:18] *** Quits: gfldex (~dex@ip5f5ab722.dynamic.kabel-deutschland.de) (Ping timeout: 272 seconds)
+[14:29:00] <Altreus> I like that bot feature
+[14:29:07] *** Quits: dustinm`_ (~dustinm@static.38.6.217.95.clients.your-server.de) (Quit: Leaving)
+[14:34:29] *** Joins: dustinm` (~dustinm@static.38.6.217.95.clients.your-server.de)
+[14:43:07] *** Quits: Altai-man (~sena_kun_@94.142.239.45) (Quit: Leaving)
+[14:54:30] *** Joins: sena_kun (~sena_kun_@94.142.239.45)
+[15:54:31] *** Quits: linkable6 (lin-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[15:54:31] *** Quits: evalable6 (~eva-able@ns306169.ip-94-23-219.eu) (Remote host closed the connection)
+[15:54:59] *** Joins: evalable6 (~eva-able@ns306169.ip-94-23-219.eu)
+[15:56:22] *** Joins: linkable6 (~lin-able@ns306169.ip-94-23-219.eu)
+[16:06:56] *** Quits: sono (~sono@107-209-210-210.lightspeed.sntcca.sbcglobal.net) (Quit: When You're Taught Through Feelings~♪)
+[16:14:15] *** Quits: dolmen (~X@91.206.7.93.rev.sfr.net) (Quit: This computer has gone to sleep)
+[16:24:21] *** Joins: holly_ (~zara@2a02:a03f:64c8:9200:1b3d:3086:77f6:caa4)
+[16:32:55] *** Quits: reportable6 (rep-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[16:33:25] *** Joins: reportable6 (~rep-able@ns306169.ip-94-23-219.eu)
+[16:34:39] *** Joins: yewscion_ (~yewscion@2601:547:a01:2900::cf47)
+[16:41:42] *** Quits: yewscion_ (~yewscion@2601:547:a01:2900::cf47) (Ping timeout: 264 seconds)
+[16:55:36] *** Joins: dolmen (~X@91.206.7.93.rev.sfr.net)
+[17:13:22] *** Quits: cognominal (~cognomina@lfbn-idf1-1-1374-85.w90-79.abo.wanadoo.fr) (Quit: Leaving)
+[17:16:10] <lizmat> weekly: https://propuestas.eslib.re/2021/salas/raku-and-friends
+[17:16:10] <notable6> lizmat, Noted! (weekly)
+[17:22:57] <MasterDuke> anybody here know how to use windbg's time traveling debugger with rakudo?
+[17:36:39] *** Quits: abraxxa (~ahartmai@tsa-tc-flod-1.t-systems.at) (Remote host closed the connection)
+[17:39:53] *** Joins: abraxxa (~ahartmai@smtp.hartmaier.priv.at)
+[17:40:18] *** andinus` is now known as andinus
+[17:42:33] *** Quits: abraxxa (~ahartmai@smtp.hartmaier.priv.at) (Remote host closed the connection)
+[17:42:42] <El_Che> jjmerelo is a bag of vitamine C (and I suppose amphetamines): so much energy!
+[17:43:40] <El_Che> (no fan of the perl+raku sister thing in 2021, though)
+[17:44:30] <Altreus> I believe that should say "whippupitude" not "whippipitude"
+[17:46:01] *** Joins: abraxxa (~ahartmai@smtp.hartmaier.priv.at)
+[17:52:15] *** Joins: morayj (~morayj@31.124.158.221)
+[17:53:26] <Juerd> whipituptitude (whip-it-up)
+[17:54:28] <Juerd> Oh, more results for whipuptitude without "it" than for whipuptitude with "it"
+[17:54:54] *** Quits: abraxxa (~ahartmai@smtp.hartmaier.priv.at) (Ping timeout: 272 seconds)
+[17:56:05] *** Joins: abraxxa (~ahartmai@tsa-tc-flod-1.t-systems.at)
+[18:29:00] *** Quits: juanfra (~juanfra@user/juanfra) (Read error: Connection reset by peer)
+[18:29:01] *** Quits: CIAvash (~ciavash@2001:470:69fc:105::264) (Read error: Connection reset by peer)
+[18:29:04] *** Quits: AlexDaniel (~alexdanie@2001:470:69fc:105::15e1) (Read error: Connection reset by peer)
+[18:29:04] *** Quits: cnx (~cnxhaloge@2001:470:69fc:105::61f) (Read error: Connection reset by peer)
+[18:29:05] *** Quits: demostanis[m] (~demostani@2001:470:69fc:105::2c2) (Read error: Connection reset by peer)
+[18:29:05] *** Quits: ComplYue[m] (~complyuem@2001:470:69fc:105::9b0) (Read error: Connection reset by peer)
+[18:29:05] *** Quits: tyil[m] (~tyilmatri@2001:470:69fc:105::9a1) (Read error: Connection reset by peer)
+[18:30:36] *** Joins: juanfra (~juanfra@user/juanfra)
+[18:32:29] *** Joins: demostanis[m] (~demostani@2001:470:69fc:105::2c2)
+[18:32:29] *** Joins: AlexDaniel (~alexdanie@2001:470:69fc:105::15e1)
+[18:32:29] *** Joins: cnx (~cnxhaloge@2001:470:69fc:105::61f)
+[18:32:41] *** Joins: tyil[m] (~tyilmatri@2001:470:69fc:105::9a1)
+[18:32:42] *** Joins: CIAvash (~ciavash@2001:470:69fc:105::264)
+[18:32:42] *** Joins: ComplYue[m] (~complyuem@2001:470:69fc:105::9b0)
+[18:57:09] *** Joins: Sgeo (~Sgeo@user/sgeo)
+[19:07:13] <xinming> Hi, I always get confused about .hyper/.race, which one ensures order of results, the other doesn't, Any hints on how I can remember this? Thx
+[19:07:32] <xinming> I've looked-up the raku doc over and over again :-(
+[19:08:09] <dakkar> xinming: in a `.race`, you never know who's goinig to arrive first
+[19:08:59] *** Joins: ufobat__ (~martin@dynamic-077-002-008-069.77.2.pool.telefonica.de)
+[19:10:00] <dakkar> xinming: does that help?
+[19:12:26] <xinming> dakkar: got it, thx
+[19:12:38] <xinming> this helped a lot.
+[19:12:49] <dakkar> maybe https://docs.raku.org/type/Iterable#method_race should say that…
+[19:12:53] *** Quits: ufobat_ (~martin@dynamic-095-115-140-171.95.115.pool.telefonica.de) (Ping timeout: 251 seconds)
+[19:13:36] <xinming> It's quite a bit like in school, I always get confused with am/pm before, But teacher told us remember that letter a is before p, so we'll know which is mornining. :-)
+[19:13:40] <dakkar> I think it's one of those things that are "obvious" to (near) native English speaker
+[19:14:01] <dakkar> xinming: and the am/pm is clearer to Latin speakers 😜
+[19:14:07] <dakkar> (am 
+[19:14:36] <dakkar> (am → ante meridiem → before mid-day; pm → post meridiem → after mid-day)
+[19:15:03] <xinming> Ok, I just get curious about what am/pm mean in google, and your answer showed.
+[19:15:15] <xinming> google's AI is amazing. :-)
+[19:19:38] *** Joins: RandalSchwartz (~Adium@c-73-221-215-233.hsd1.wa.comcast.net)
+[19:31:21] *** Quits: b2gills (~brad@64.191.7.0) (Ping timeout: 272 seconds)
+[19:41:42] *** Quits: jast (jast@zoidberg.org) (Ping timeout: 264 seconds)
+[19:43:36] <Juerd> By convention, the meridiem itself is pm :)
+[19:45:06] *** Quits: holly_ (~zara@2a02:a03f:64c8:9200:1b3d:3086:77f6:caa4) (Quit: Konversation terminated!)
+[19:45:42] <RandalSchwartz> sounds like a fairly boring convention… no parties at night?
+[19:49:43] *** Joins: cognominal (~cognomina@lfbn-idf1-1-1374-85.w90-79.abo.wanadoo.fr)
+[19:51:10] *** GoneDomattps is now known as domattps
+[19:57:33] *** Joins: b2gills (~brad@subscriber-dhcp-cgn-64-191-7-0.wcufiber.net)
+[20:01:26] <tonyo> isn't the meridiem the fine line between being ante and post?
+[20:03:31] <RandalSchwartz> "there's a fine line between ante and post, son.  Be sure to observe it!"
+[20:04:39] <tonyo> sit in this nice char i've made
+[20:04:54] <RandalSchwartz> is it an emoji?
+[20:05:04] <tonyo> 'tisn't
+[20:05:26] <RandalSchwartz> all the cool kids have emoji chars!
+[20:05:56] <tonyo> i'm sure there's one somewhere
+[20:06:07] <tonyo> 💺
+[20:06:23] <lizmat> 🍺!
+[20:06:30] <lizmat> m: dd "💺".uninames
+[20:06:30] <camelia> rakudo-moar 750c5d04a: OUTPUT: «("SEAT",).Seq␤»
+[20:11:16] *** Joins: suman (~suman@27.34.50.220)
+[20:11:23] *** Joins: jast (jast@zoidberg.org)
+[20:13:22] <suman> How to do this in raku? https://stackoverflow.com/questions/3462143/get-difference-between-two-lists
+[20:14:27] <suman> I was expecting similar in raku. m: my @set1 = set(1..4); my @set2=  set(3..6); say @set1-@set2
+[20:14:34] <suman> m: my @set1 = set(1..4); my @set2=  set(3..6); say @set1-@set2
+[20:14:34] <camelia> rakudo-moar 750c5d04a: OUTPUT: «0␤»
+[20:15:13] <lizmat> m: dd <a b c d> (-) <b d>
+[20:15:13] <camelia> rakudo-moar 750c5d04a: OUTPUT: «Set.new("a","c")␤»
+[20:15:36] <lizmat> suman ^^ ?
+[20:16:10] <lizmat> m: dd <a b c d> (^) <b d>   # symmetric version
+[20:16:11] <camelia> rakudo-moar 750c5d04a: OUTPUT: «Set.new("c","a")␤»
+[20:16:34] <lizmat> m: dd <b d> (-) <a b c d>   # non symmetric
+[20:16:34] <camelia> rakudo-moar 750c5d04a: OUTPUT: «Set.new()␤»
+[20:16:39] <lizmat> m: dd <b d> (^) <a b c d>   # non symmetric
+[20:16:39] <camelia> rakudo-moar 750c5d04a: OUTPUT: «Set.new("a","c")␤»
+[20:16:50] <lizmat> *symmetric  :-)
+[20:17:07] <suman> lizmat Got it. Thanks
+[20:17:23] <lizmat> you don't need to coerce to Sets to get Set semantics  :-)
+[20:17:57] <lizmat> you *will* get a Set as the result (unless the set op returns a Bool, such as (elem))
+[20:18:12] <lizmat> m: say "a" (elem) <a b c d>
+[20:18:12] <camelia> rakudo-moar 750c5d04a: OUTPUT: «True␤»
+[20:18:15] <lizmat> m: say "e" (elem) <a b c d>
+[20:18:16] <camelia> rakudo-moar 750c5d04a: OUTPUT: «False␤»
+[20:28:34] *** Quits: suman (~suman@27.34.50.220) (Ping timeout: 250 seconds)
+[20:30:46] *** Joins: melezhik (~melezhik@174.128.60.162)
+[20:32:18] <melezhik> .tell @uzluisf I probably found a bug in Colorizable  - https://gist.github.com/melezhik/a305679841d2bf838b523883fdc224c9 , hope it helps. regards
+[20:32:18] <tellable6> melezhik, I cannot recognize this command. See wiki for some examples: https://github.com/Raku/whateverable/wiki/Tellable
+[20:32:46] <melezhik> .tell uzluisf I probably found a bug in Colorizable  - https://gist.github.com/melezhik/a305679841d2bf838b523883fdc224c9 , hope it helps. regards
+[20:32:47] <tellable6> melezhik, I haven't seen uzluisf around, did you mean Ovidius?
+[20:35:01] <lizmat> melezhik  o/   long time no see!
+[20:35:24] <melezhik> yeah, 0/
+[20:35:38] <melezhik> I know, I know )))
+[20:36:45] <cnx> hi all, what do you think of hosting the upcoming raku conf on a more libre platform like bigbluebutton or jitsi instead of zoom?
+[20:37:29] <cnx> is there any technical hindrence to preferring zoom, e.g. sponsorship or it was just not thought after?
+[20:41:42] <melezhik> I've created an issue in Colorrzable gitlab repo - https://gitlab.com/uzluisf/raku-colorized/-/issues/3
+[20:42:20] <melezhik> lizmat: always my pleasure to talk to Raku people )))
+[20:43:59] <lizmat> cnx: please talk to the organizer Andrew Shitov
+[20:44:21] <lizmat> melezhik: always good to see you around!
+[20:44:40] <Geth> ¦ doc: dakkar++ created pull request #3897: add a mnemonic for `Iterable.race`
+[20:44:41] <Geth> ¦ doc: review: https://github.com/Raku/doc/pull/3897
+[20:45:44] <cnx> lizmat, i've just emailed the official contact, i'd love to know how others think about it as well
+[20:45:56] <melezhik> yeah, I slowdown my opensource activities recently, but Raku is always on my radar and congratulations with a new irc host !
+[20:46:06] <lizmat> fwiw, I'm not in favour of Zoom either
+[20:46:43] <cnx> huh the raku community is small enough that I think i remember all of your faces from last fosdem d-;
+[20:46:44] <lizmat> melezhik: thank you  ....  hope you'll be able to become more active again soon
+[20:47:10] <lizmat> they're plenty of Raku people who've never been to FOSDEM  :-)
+[20:47:35] * cnx is excited for trc
+[20:52:53] *** Quits: morayj (~morayj@31.124.158.221) (Quit: morayj)
+[20:55:10] *** Quits: ufobat__ (~martin@dynamic-077-002-008-069.77.2.pool.telefonica.de) (Ping timeout: 244 seconds)
+[20:56:40] <xinming> How do we get the version info of the installed module?
+[20:56:51] <xinming> Let's say, how do we check which DBIish version we are installed?
+[20:58:09] <melezhik> zef info <module-name>
+[20:58:30] <xinming> thx
+[20:58:59] <melezhik> welcome
+[21:05:12] *** Quits: dakkar (~dakkar@home.thenautilus.net) (Ping timeout: 268 seconds)
+[21:07:52] *** Quits: melezhik (~melezhik@174.128.60.162) (Quit: Connection closed)
+[21:13:32] <Geth> ¦ doc: 0ba6d45fcb | (Gianni Ceccarelli)++ (committed by Juan Julián Merelo Guervós) | doc/Type/Iterable.pod6
+[21:13:32] <Geth> ¦ doc: add a mnemonic for `Iterable.race`
+[21:13:32] <Geth> ¦ doc: 
+[21:13:32] <Geth> ¦ doc: From IRC:
+[21:13:33] <Geth> ¦ doc: 
+[21:13:33] <Geth> ¦ doc: Jun 14 15:37:13 <xinming>	Hi, I always get confused about .hyper/.race, which one ensures order of results, the other doesn't, Any hints on how I can remember this? Thx
+[21:13:33] <Geth> ¦ doc: Jun 14 15:37:32 <xinming>	I've looked-up the raku doc over and over again :-(
+[21:13:34] <Geth> ¦ doc: Jun 14 15:38:09 <dakkar>	xinming: in a `.race`, you never know who's goinig to arrive first
+[21:13:35] <linkable6> Link: https://docs.raku.org/type/Iterable
+[21:13:36] <Geth> ¦ doc: Jun 14 15:40:00 <dakkar>	xinming: does that help?
+[21:13:38] <Geth> ¦ doc: Jun 14 15:42:26 <xinming>	dakkar: got it, thx
+[21:13:40] <Geth> ¦ doc: Jun 14 15:42:38 <xinming>	this helped a lot.
+[21:13:42] <Geth> ¦ doc: Jun 14 15:42:48 <dakkar>	maybe https://docs.raku.org/type/Iterable#method_race should say that…
+[21:13:44] <Geth> ¦ doc: review: https://github.com/Raku/doc/commit/0ba6d45fcb
+[21:21:32] *** domattps is now known as GoneDomattps
+[21:28:54] *** GoneDomattps is now known as domattps
+[21:37:09] *** Joins: gfldex (~dex@ip5f5ab722.dynamic.kabel-deutschland.de)
+[22:28:08] *** Quits: stoned75 (~seb@78.203.129.116) (Ping timeout: 252 seconds)
+[22:32:39] *** Quits: reportable6 (~rep-able@ns306169.ip-94-23-219.eu) (Remote host closed the connection)
+[22:34:42] *** Joins: reportable6 (~rep-able@ns306169.ip-94-23-219.eu)
+[22:35:53] <lizmat> and another Rakudo Weekly News hits the Net: https://rakudoweekly.blog/2021/06/14/2021-24-missing/
+[22:41:09] *** domattps is now known as GoneDomattps
+[22:46:16] *** GoneDomattps is now known as domattps
+[22:56:16] *** domattps is now known as GoneDomattps
+[23:03:39] *** Joins: stoned75 (~seb@78.203.129.116)
+[23:11:18] <gfldex> lolibloggedalittle: https://gfldex.wordpress.com/2021/06/14/matching-nothing/
+[23:27:01] *** Quits: stoned75 (~seb@78.203.129.116) (Ping timeout: 272 seconds)
+[23:33:10] *** Joins: guifa (~guifa@host-68-169-135-99.MIDOLT1.epbfi.com)
+[23:35:11] <guifa> o/
+[23:35:13] <tellable6> 2021-06-14T09:41:27Z #raku <lizmat> guifa: I'd use default values of 0 and always use accessors in the code, so that subclasses would have a possibility to intervene
+[23:35:30] <guifa> lizmat++
+[23:37:07] *** Joins: berber44 (~berber44@78.107.92.50)
+[23:37:28] *** Joins: guifa_ (~guifa@host-68-169-135-99.MIDOLT1.epbfi.com)
+[23:39:02] *** Quits: berber44 (~berber44@78.107.92.50) (Client Quit)
+[23:40:59] *** Joins: MoC (~moc@user/moc)
+[23:41:25] *** Joins: stoned75 (~seb@78.203.129.116)
+[23:49:11] *** Quits: stoned75 (~seb@78.203.129.116) (Read error: Connection reset by peer)
+[23:59:04] *** Quits: guifa_ (~guifa@host-68-169-135-99.MIDOLT1.epbfi.com) (Quit: guifa_)

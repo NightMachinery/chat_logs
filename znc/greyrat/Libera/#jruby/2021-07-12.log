@@ -1,0 +1,178 @@
+[02:36:15] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Quit: Textual IRC Client: www.textualapp.com)
+[09:41:25] *** Quits: fidothe (sid1130@id-1130.highgate.irccloud.com) (*.net *.split)
+[09:42:20] *** Joins: fidothe (sid1130@2001:67c:2f08:1::46a)
+[09:44:58] *** Quits: subbu (~subbu@user/subbu) (*.net *.split)
+[09:44:58] *** Quits: satyanash (~satyanash@143.110.247.92) (*.net *.split)
+[09:44:58] *** Quits: Freaky (~freaky@user/freaky) (*.net *.split)
+[09:45:06] *** Joins: subbu_ (~subbu@static.47.57.9.5.clients.your-server.de)
+[09:45:29] *** Joins: Freaky (~freaky@ita.aagh.net)
+[09:45:30] *** subbu_ is now known as subbu
+[09:45:47] *** Quits: Freaky (~freaky@ita.aagh.net) (Signing in (Freaky))
+[09:45:47] *** Joins: Freaky (~freaky@user/freaky)
+[09:46:19] *** subbu is now known as Guest7284
+[09:46:23] *** Joins: satyanash (~satyanash@143.110.247.92)
+[11:44:12] *** Quits: lucf117 (~lucf117@user/lucf117) (Remote host closed the connection)
+[13:12:07] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[14:03:34] *** Quits: aquijoule__ (~richbridg@213-225-7-126.nat.highway.a1.net) (Ping timeout: 252 seconds)
+[14:07:47] *** Joins: richbridger (~richbridg@mobiledyn-185-69-244-156.mrsn.at)
+[15:12:34] *** Joins: aquijoule_ (~richbridg@089144202018.atnat0011.highway.a1.net)
+[15:13:32] *** Quits: richbridger (~richbridg@mobiledyn-185-69-244-156.mrsn.at) (Read error: Connection reset by peer)
+[16:34:00] *** Quits: rapha (~jrs@user/rapha) (Ping timeout: 268 seconds)
+[16:34:25] *** Joins: rapha (~jrs@46.4.31.69)
+[16:37:42] *** Quits: rapha (~jrs@46.4.31.69) (Changing host)
+[16:37:42] *** Joins: rapha (~jrs@user/rapha)
+[19:02:36] *** Quits: aquijoule_ (~richbridg@089144202018.atnat0011.highway.a1.net) (Quit: Leaving)
+[19:29:00] *** Quits: Guest7284 (~subbu@static.47.57.9.5.clients.your-server.de) (Changing host)
+[19:29:00] *** Joins: Guest7284 (~subbu@user/subbu)
+[19:29:10] *** Guest7284 is now known as subbu
+[20:24:12] <headius> enebo: sent you some messages about this but jeremyevans pointed out that cbase and cref are different... I asked him for clarification
+[20:27:50] <headius> do you remember what the different is?
+[20:27:55] <headius> difference
+[20:30:23] <headius> cbase may be equivalent to the old ruby_class stack we eliminated... I am not sure what is equivalent now
+[20:35:23] <headius> I might have it working
+[20:35:53] <headius> found a reference to cbase being where methods get defined and used logic from DefineInstanceMethodInstr for autoload and it seems to work
+[20:36:45] <headius> class variables also come from cbase
+[20:51:04] <headius> pushed a fix using the logic that method def uses
+[21:00:06] <headius> damn, triggered other failures
+[21:00:13] <headius> even though it passed the cases I was interested in
+[21:00:57] <headius> enebo: according to ruby hackers guide, which is admittedly old (1.8 or earlier), cbase is the same place where class variables go
+[21:01:17] <headius> but I think we are calculating class variable target differently than CRuby
+[21:03:46] <enebo[m]> oh hey
+[21:04:04] <enebo[m]> This class vars thing I think is the same issue are .clone no module
+[21:04:13] <headius> I am looking at how class vars are done in this context (Class.new instance method) and I see GetClassVarContainerModuleInstr
+[21:04:22] <headius> trying that logic now
+[21:04:33] <enebo[m]> So if you NewModule = MyModule.clone they both have different cvars?
+[21:04:35] <headius> where are you getting clone from in this case?
+[21:04:39] <headius> there is no clone here
+[21:04:42] <enebo[m]> I have been trying to remember this since last week :)
+[21:05:09] <enebo[m]> no clone has nothing to do with this per se but I think it may be the same underlying cause
+[21:05:19] <headius> `Class.new do; def foo; autoload :X, 'x'; end; end`
+[21:06:09] <headius> damn, using cvar logic goes back to old behavior and isn't the right target
+[21:08:17] <headius> of course I do not know if we are 100% right with where we store cvars
+[21:08:39] <enebo[m]> https://gist.github.com/enebo/062897e326608c325b33b419c86f8ed4
+[21:08:54] <enebo[m]> so Bar ends up with its own space for cvars
+[21:09:25] <headius> and we do not do that right currently
+[21:09:36] <enebo[m]> yeah but I think this is the same cbasei ssue
+[21:09:44] <headius> DefineInstMethod passed both my cases but failed others
+[21:09:52] <headius> I mean using the same logic to find a target class
+[21:10:03] <enebo[m]> Assuming I am correct and both use cbase
+[21:10:13] <headius> findInstanceMethodContainer
+[21:10:28] <enebo[m]> but the fact jeremyevans said it brought up this incompatibility
+[21:10:53] <enebo[m]> or that cbase is not always cref
+[21:11:09] <headius> I think we need to consider that this regression spec was never really fixed
+[21:11:19] <headius> we modified the logic to always use Object as the target which allowed it to pass
+[21:11:26] <headius> but that is not correct either of course
+[21:11:47] <enebo[m]> yeah that is probably true we just happened to pass a single case
+[21:12:00] <enebo[m]> and not really since we could see it was using Object
+[21:12:02] <headius> such a spec does not exist anywhere and using autoload in this way would be problematic because the very constant lookups you want to autoload would not see it
+[21:12:23] <headius> so I am on the fence about spending more time trying to resolve this
+[21:12:23] <enebo[m]> It also begs a big question of why you would want this to work
+[21:12:45] <enebo[m]> but I think the larger issue is if you clone a type you want a new place for constants
+[21:12:47] <headius> perhaps I should just make a "getClassBase" utility method that both class vars and this use and eventually we can fix that to do the right thing
+[21:13:04] <enebo[m]> which is my tangent here but I think the bigger issue
+[21:13:21] <headius> yeah there are many missing piece for cloned modules in JRuby
+[21:13:42] <enebo[m]> if you autoload onto the wrong thing is obviously bad but if we fixed this use case it would autoload twice and why would you want that
+[21:13:59] <headius> using the same logic as GetClassVarContainerModule passes the original autoload case and fails the regression spec in the same way, but at least it is sharing logic with class vars
+[21:14:13] <headius> and passes specs that using instance method target failed
+[21:14:20] <enebo[m]> So I think that test is bogus in showing the main issue which is that we need to show the constants are really defined on the instance of Class.new 
+[21:14:32] <headius> yes
+[21:14:36] <headius> it does not test the right thing and just happened to pass with the old logic
+[21:17:29] * headius  < https://libera.ems.host/_matrix/media/r0/download/libera.chat/1a8c7a86f6b40b8b33df54b435e2bcd0a3ed49cf/message.txt >
+[21:17:46] <headius> this is for class var in method body in Class.new body
+[21:17:51] <enebo[m]> yeah I am looking at classVarContainer in IRBuilder right now
+[21:18:21] <enebo[m]> this does not consider Class.new as a scope but treats this as purely lexical
+[21:18:29] <headius> I am moving forward with using the same logic under a new name "getCurrentClassBase" which will call the same logic for class vars
+[21:18:58] <headius> if we fix our "cbase" at some point then this other case will work as well as cloned class var contexts
+[21:20:17] <enebo[m]> We record the static scope for cvar and this feels partially wrong since we probably walk up to top lexical scope in your original autoload test
+[21:20:43] <headius> the original test does do the autoload at top scope
+[21:20:52] <headius> the regression example does it within Class.new
+[21:20:59] <headius> https://github.com/jruby/jruby/issues/6708
+[21:21:07] <enebo[m]> well I mean the regression one
+[21:21:08] <enebo[m]> sorry
+[21:21:14] <headius> yeah
+[21:21:15] <enebo[m]> it should be within the Class.new
+[21:21:26] <headius> right it should be and yes it does go up to Object
+[21:21:26] <enebo[m]> and IRBuilder walks static scopes which is not right
+[21:21:36] <headius> which is why it is nil, because Time is already defined at that level
+[21:21:43] <headius> autoload just noops when the const is define
+[21:22:26] <enebo[m]> a 99% solution is to look for {Module,Class}.new perhaps in build but that is not a total solution but could make a make a more dynamic lookup
+[21:23:00] <enebo[m]> Otheriwse constants a site optimized for more live work probably will have no perf affect on them
+[21:23:17] <enebo[m]> Do we callsite cache cvars?
+[21:23:55] <enebo[m]> Not starting at the wrong place is only part of the solution but this builder logic needs to change
+[21:24:36] <enebo[m]> The maintenance burder of .new { } sorts of issues is surprisingly high :)
+[21:25:30] <headius> no we don't optimize class vars in any way
+[21:25:45] <headius> edipo.federle mentioned this the other day since TR did finally optimize class vars
+[21:25:53] <enebo[m]> headius: so your new method (I am looking at getModuleFromScope in IRRuntime) should start from its current scope and go down in this helper (or whatever name it gets)
+[21:25:59] <headius> I want to as well but not until we are sure we are doing them right (and TR may not be right either)
+[21:26:20] <enebo[m]> optimizing cvars then maybe will be more of a visible thing since we will do some more walking every access
+[21:26:20] <headius> yeah my new method just calls getModuleFromScope against context.getCurrentStaticScope
+[21:26:29] <headius> which feels roughly equivalent to vm_getcbase
+[21:26:50] <enebo[m]> does Class.new make a live static scope?
+[21:26:57] <enebo[m]> in the block form
+[21:27:16] <headius> I think it does via module_eval/yieldUnder
+[21:27:33] <headius> it is not a cref scope so constants are not defined there but it is a cbase scope
+[21:27:38] <headius> 🙄
+[21:28:01] <headius> I will file an issue with CRuby to deprecate this Kernel#autoload behavior in any case because nobody would want this
+[21:28:27] <headius> autoload should always go to the same place constants will be retrieved from
+[21:28:34] <headius> in this case, it does not
+[21:28:34] <enebo[m]> ok so I guess maybe getclassvarcontainermodule is just always starting at current and we don't try and calculate the jump off point in that instruction
+[21:29:08] <enebo[m]> s/current/current static scope+module/
+[21:29:49] <enebo[m]> but that means constants and class vars will do a first time walk on callsite cache but with no cache then it will happen every access until a cache is made
+[21:30:43] <enebo[m]> I think in both cases once the location is found it will never change locations (realistically)
+[21:32:34] <headius> if we were cloning the actual method body I would agree
+[21:32:37] <headius> but we don't do that right now either
+[21:33:14] <headius> in any case, are we in agreement that failing this regression test is not reason enough to fail this fix?
+[21:33:41] <headius> I do not think we can fix this until the class variable base logic works properly
+[21:33:57] <enebo[m]> I think we already know we were broken before and after just a little differently
+[21:34:04] <headius> the "big" change in this PR is that it no longer uses the "super" class from frame to target autoload
+[21:34:21] <enebo[m]> I am not sure if the wallpaper which made the regression pass somehow makes people magically work in other cases
+[21:34:22] <headius> which fixes the real case from #6708 but exposes the fact that we never really fixed the regression case
+[21:34:29] <headius> yeah I do not know either
+[21:34:54] <headius> how about this... I will delete our regression spec but move it into a rubyspec for discussion
+[21:35:04] <headius> that will likely lead to a deprecation of this behavior since it is so unexpected
+[21:35:06] <enebo[m]> I think we should really consider fixing this but I know it is complicated because we need to introduce something for the new home 
+[21:35:27] <enebo[m]> well yeah for autoload I don't care
+[21:35:45] <enebo[m]> I am more thinking about any constants 
+[21:35:48] <headius> I can't run rbx but I would wager they failed this too
+[21:36:31] <enebo[m]> So any constants defined within these sorts of metaprogrammed types will just parent above it
+[21:37:16] <enebo[m]> So if you end up doing n types at lets say a module scope and different types define the same constant one will overwrite the other
+[21:37:24] <enebo[m]> (or cvar)
+[21:38:49] <enebo[m]> I don't think that is a common thing either
+[21:40:56] <headius> yeah
+[21:41:05] <headius> Ruby is a reverse democracy
+[21:41:17] <headius> the minority view usually wins because nobody wants to break anyone's code
+[21:41:26] <headius> so we have weird stuff like this and class variables lingering forever
+[21:42:13] <enebo[m]> lunch...bbiab
+[22:02:51] <headius> $ bin/rbx ../jruby/blah.rb 
+[22:02:51] <headius> nil
+[22:02:51] <headius> Time
+[22:02:51] <headius> nil
+[22:03:01] <headius> same behavior as us and TR
+[22:28:56] <headius> enebo: I have moved that spec into rubyspec (https://github.com/ruby/spec/pull/839)
+[22:43:35] <headius> enebo: PR is green with the removed regression spec
+[22:48:56] <enebo[m]> coolio
+[22:50:57] <enebo[m]> final version of those changes look good to me too (on PR to get*Base
+[22:54:58] <headius> ok
+[22:59:59] <enebo[m]> headius: just to button this up for today: https://gist.github.com/enebo/68e59c08f4a6c7c9839a3e598e8fe371
+[23:00:48] <headius> yeah the autoload in this regression spec behaves like self.class.const_set
+[23:01:01] <headius> what is curious to me is that this changed in 1.9
+[23:01:12] <headius> that may have been unintentional during the changeover to yarv
+[23:01:23] <enebo[m]> So this confirms to me we create a new static scope based evalBelow (or whatever it is called).  If we changed lookup logic from what we are doing now in builder and had a helper walk I think we would work for cvars too?
+[23:01:26] <headius> 1.8.7 behaves like we do now
+[23:01:28] <enebo[m]> with the cost of walking per access
+[23:01:40] <headius> yeah maybe
+[23:01:56] <headius> but ideally we wouldn't have to walk, which is how it would behave if autoload just used cref
+[23:02:39] <enebo[m]> well I am ignoring autoload itself just talking about solving what I think may also ultimately ending up solving the 'include MyModule.clone'
+[23:03:11] <enebo[m]> I think more is needed on the clone since I doubt we duplicate a scope for clone
+[23:06:31] <enebo[m]> oh funny
+[23:07:27] <enebo[m]> headius: in initCopy in module we syncClassVariables (which dup calls which maybe somehow we have a path from clone?) and it so a putAll(other.getClassVariablesForRead())
+[23:07:58] <enebo[m]> Will the cvar snippet I used earlier get fixed if we just clone() on each CVar from that list?
+[23:08:56] <enebo[m]> err ignore that...heh I will check but this dup logic I bet is not getting called by clone since this looks to be doing the right thing
+[23:10:26] <enebo[m]> nope..I may step debug this.  It seems like we have logic to duplicate new cvars in this case
+[23:21:19] <headius> yeah I am not sure what the correct behavior for the cloning case is
+[23:21:19] <enebo[m]> I also removed the lexical pre-calc on IRBuilder
+[23:22:02] <enebo[m]> well I have seen at least one library use 'include Foo.clone' and in that case they expect the cvars in both to be their own storage
+[23:22:35] <headius> 9.3 back down to 38 open items
+[23:22:54] <headius> I am moving on to the handle_interrupt issue to make sure that is 100%
+[23:24:58] <headius> rebased https://github.com/jruby/jruby/pull/6569 and taking a lunch break while that settles
+[23:27:08] <enebo[m]> grrrrreeeeen

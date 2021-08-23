@@ -1,0 +1,76 @@
+[00:04:19] <headius> enebo: ok I am confused
+[00:04:24] <headius> this windows symlink thing is broken after my PR, my bad for not actually testing it
+[00:04:30] <headius> but I assumed it worked and it doesn't appear to
+[00:04:59] <headius> it requires 'ffi' and then checks if `::FFI::Config` is defined to know it loaded correctly
+[00:05:08] <headius> as far as I can tell there is no FFI::Config
+[00:08:10] <headius> I have it working now checking instead for FFI::Platform but I will look into why it used Config
+[00:08:26] <headius> this code was borrowed from a djberg win32 library
+[00:11:14] <enebo[m]> headius: yeah based on last comment from the issue on this the original fix never worked either so I guess maybe that could be part of the reason?
+[00:11:33] <enebo[m]> Or something changed in last few years and we didn't notice
+[00:11:43] <headius> well I have it back to not working like it did at some point but it just raises EACCES
+[00:12:02] <headius> and djberg96 on GH no longer has this repo
+[00:12:06] <headius> it moved or he killed it
+[00:12:23] <enebo[m]> ah
+[00:13:04] <headius> https://github.com/chef/win32-file/blob/ffi/lib/win32/file.rb#L224
+[00:13:13] <headius> this is what ours is based on
+[00:13:17] <headius> the FFI bits are in a subdir
+[00:13:36] <headius> I got permission from djberg to include it in JRuby at whatever point we attempted to fix this
+[00:14:10] <headius> this code does not do the FFI::Config check so I think maybe we just borked that
+[00:14:25] <headius> probably to let it start up without FFI present
+[00:14:55] <headius> do you know what permissions are needed to be able to do symlinks on Windows?
+[00:16:13] <enebo[m]> oh
+[00:16:30] <enebo[m]> it used to be admin but who knows if it is still true
+[00:16:37] <enebo[m]> I think on windows they are called channels?
+[00:17:08] <enebo[m]> err junctions
+[00:17:44] <enebo[m]> "On Windows 10’s Creators Update, you can use a normal Command Prompt window, without running it as an Administrator. However, to do this without an Administrator Command Prompt window, you must first enable Developer Mode from Settings > Update & Security > For Developers."
+[00:17:54] <enebo[m]> So weird setting OR run as admin
+[00:18:13] <headius> why did CRuby bother with this
+[00:18:16] <enebo[m]> Windows 15 will allow normal users to do it :)
+[00:18:24] <headius> whatevs
+[00:19:01] <enebo[m]> Windows 11 is coming out but is there a reason to move to it
+[00:20:19] <enebo[m]> "Price: Free upgrade for existing Windows 10 users"
+[00:20:51] <enebo[m]> lol so I wonder how much MS strategy on monetizing windows changed
+[00:23:45] <headius> I haven't understood why they charge for unsupported use at all
+[00:23:53] <headius> let everyone run it, who cares
+[00:24:34] <headius> https://github.com/jruby/jruby/pull/6762
+[00:27:22] <enebo[m]> OEM bundling used to be a lion share of their revenue but I don't know how they do it now
+[00:28:52] <enebo[m]> headius: you know when I originally saw FFI::Config I did wonder why FFI by itself was not used
+[00:29:12] <enebo[m]> It makes me wonder still :)
+[00:30:50] <headius> FFI is used below for the Solaris chunk
+[00:30:51] <headius> so I just used that
+[00:32:15] <headius> enebo: https://github.com/jruby/jruby/commit/e3556a4b90184cb927e2b32b53804d362940fb27
+[00:32:29] <headius> you got some 'splainin to do Lucy
+[00:32:45] <headius> so the FFI check is not sufficient because parts will load even if native is turned off I guess?
+[00:33:46] <enebo[m]> ah ok.  makes sense that it was not just FFI before then
+[00:34:58] <headius> I'm just going to modify this code to do the whole FFI setup in the begin/rescue and if anything fails just define it to raise NotImplemented
+[00:35:03] <enebo[m]> makes me wish Ruby had transactional loads
+[00:35:06] <headius> and not check for FFI constants or whatever
+[00:35:32] <headius> I already started doing this in the PR because it checks for FFI and then checks for the proper win32 function
+[00:35:36] <headius> and both paths just silently fail
+[00:37:00] <enebo[m]> FFI can fail to load on any esoteric OS where no one has tried to run it.   I guess as a cext they assume if it compiles it will work but that clearly is not true
+[00:37:29] <headius> yeah they don't have the sort of platform options we do either
+[00:37:58] <headius> like disabling all native calls
+[00:38:11] <enebo[m]> I half wonder if adding a FFI::loaded? would be a reasonable feature but I guess then there would need to be a sensible test
+[00:39:27] <enebo[m]> What thing in FFI is a reasonable test that it loaded?
+[00:39:54] <enebo[m]> from a black block perspective we could only try and use it but that is way too expensive
+[00:46:47] <headius> it might be a reasonable thing to add to FFI proper
+[00:46:53] <headius> and then we would just inherit it
+[00:47:11] <headius> I have no idea if there are cases in CRuby FFI that might partially load
+[00:48:05] <enebo[m]> FFI::Version is the last file required in ffi/ffi
+[00:48:25] <enebo[m]> but we probably load and then don't work
+[00:51:26] <headius> yeah I am not sure what we can use in there so I think this is best... do the entire load + define logic in the begin and if either thing fails fall back on NotImpl
+[00:51:48] <headius> I am fixing the Solaris logic below also, and will split these into separate files for readability
+[00:52:22] <enebo[m]> cool
+[00:55:32] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Quit: Textual IRC Client: www.textualapp.com)
+[01:01:03] <headius> seems good
+[01:01:03] * headius  < https://libera.ems.host/_matrix/media/r0/download/libera.chat/d0581b48980bd937694686972d627623d64afde9/message.txt >
+[01:01:18] <headius> had to run as admin on 10 of course
+[01:01:52] <headius> PR should be ready now
+[01:37:55] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[01:45:08] <headius> enebo: take a quick look over https://github.com/jruby/jruby/pull/6762
+[01:45:20] <headius> it is green and I confirmed all expected cases work
+[01:45:21] <headius> I have not written tests
+[01:46:13] <enebo[m]> looks good to me
+[19:15:27] *** Quits: _whitelogger (~whitelogg@uruz.whitequark.org) (Remote host closed the connection)
+[19:15:38] *** Joins: _whitelogger (~whitelogg@uruz.whitequark.org)
+[23:45:33] <headius> enebo: did you push that 0644 permission fix?

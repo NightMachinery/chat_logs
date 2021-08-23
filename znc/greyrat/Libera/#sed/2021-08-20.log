@@ -1,0 +1,198 @@
+[00:04:09] *** Quits: Torr (~Torr@user/torr) (Ping timeout: 268 seconds)
+[00:10:24] *** Joins: Torr (~Torr@user/torr)
+[00:10:40] *** Joins: bn_work (uid268505@id-268505.highgate.irccloud.com)
+[00:29:05] *** Joins: re101-jaguar-75 (~re101-jag@106.51.107.26)
+[00:30:20] <re101-jaguar-75> Can someone help me with a sed substitution problem I'm having?
+[00:30:29] <lopid> in #sed?
+[00:30:59] <re101-jaguar-75> Yes, trying to use sed for substitution
+[00:31:25] <re101-jaguar-75> Getting the following error: sed: -e expression #1, char 177: unterminated `s' command
+[00:31:41] <lopid> you're missing the final delimiter
+[00:32:44] <re101-jaguar-75> Am I missing something here: sed -i -e 's/\"equalToXml\" : \"<.*?<\/soap:Envelope>\"/"matches" : ".*'$airline'.*'$cid'.*'$action'.*'$command'.*"/' -- $fname
+[00:33:31] <geirha> sed injection done badly
+[00:34:09] <lopid> looks matched to me, so you probably have "/" in one of those variabels
+[00:34:15] <geirha> one of the variables you try to inject probably contain whitespace
+[00:34:41] <geirha> as they are unquoted, word splitting will occur
+[00:35:00] <lopid> would that sed had awk's -v
+[00:35:30] <geirha> would that sed had variables at all
+[00:35:49] <re101-jaguar-75> Yes, the sed has multiple variables, and it's one variable that's causing the issue
+[00:36:36] <geirha> when you inject data into code, you have to make sure the data is safely escaped for injection, so that the data will not be treated as code
+[00:36:37] <re101-jaguar-75> It's mainly this expression that I'm trying to substitute: CC*PAY/TRN3&#x87;ITEM-ID/0B5&#x87;ITEM-DESC/PAID SEATING&#x87;LOCATION/SYDMEL15SEP&#x87;DOCUMENT-NUMBER/7951511645803-1.1
+[00:36:53] <geirha> ok, lopid wins
+[00:37:02] * lopid \o/
+[00:37:14] <geirha> ah, but there is a space too!
+[00:37:21] <lopid> hehe
+[00:38:32] <geirha> re101-jaguar-75: var=x/y; sed "s/foo/$var/"    will expand to   sed "s/foo/x/y/"  which sed will fail on
+[00:38:34] <lopid> you'll have to sanitise for all possible sed special (or non-?) characters
+[00:39:14] <re101-jaguar-75> geirha: Ah okay, makes sense
+[00:39:31] <re101-jaguar-75> lopid: I've done for almost everything, including slashes, & and #
+[00:39:44] <re101-jaguar-75> Do I have to do it for space too?
+[00:40:09] <geirha> you clearly didn't
+[00:40:35] <geirha> space is not special to sed, but it's special to bash, you failed to quote it so bash split on that space
+[00:40:50] <re101-jaguar-75> command=$(sed -e 's/\//\\\//g;' <<< "$command")
+[00:40:51] <lopid> is bash's %q good enough?
+[00:40:51] <re101-jaguar-75> command=$(sed -e 's/*/.*/g;' <<< "$command")
+[00:40:51] <re101-jaguar-75> command=$(sed -e 's/&/.*/g;' <<< "$command")
+[00:40:52] <re101-jaguar-75> command=$(sed -e 's/#/.*/g;' <<< "$command")
+[00:40:52] <re101-jaguar-75> command=$(sed -e 's/ /\\ /g;' <<< "$command")
+[00:41:20] <re101-jaguar-75> I've tried to escape all the above hoping that something would work
+[00:41:34] <re101-jaguar-75> lopid: First time I'm working on bash, so I can't answer that
+[00:41:36] <geirha> you didn't escape slashes
+[00:42:32] <re101-jaguar-75> Does this not escape slashes: command=$(sed -e 's/\//\\\//g;' <<< "$command") ?
+[00:43:21] <geirha> ah lopid's message hid it
+[00:43:43] <geirha> for the space, you simply need to quote the variable in "" quotes
+[00:43:55] <geirha> sed 's/foo/'"$bar"'/g'
+[00:45:36] <re101-jaguar-75> How do I use that here: sed -i -e 's/\"equalToXml\" : \"<.*?<\/soap:Envelope>\"/"matches" : ".*'$airline'.*'$cid'.*'$action'.*'$command'.*"/'?
+[00:45:57] <re101-jaguar-75> I tried to use the variables in "", it just directly uses $variable_name instead of the value
+[00:45:59] <lopid> replace $airline with "$airline", etc
+[00:47:00] <geirha> or use "" quotes around the whole argument to avoid alternating between '' and "" quotes
+[00:48:01] <lopid> i was about to suggest "${airline//\//\\/}" to also escape the forward slashes
+[00:49:14] <re101-jaguar-75> Tried this, doesn't do anything to my file: sed -i -e "s/\"equalToXml\" : \"<.*?<\/soap:Envelope>\"/"matches" : ".*'$airline'.*'$cid'.*'$action'.*'$command'.*"/"
+[00:49:33] <re101-jaguar-75> If I echo the variable, it displays properly: CC.*PAY\/TRN3.*.*x87;ITEM-ID\/0B5.*.*x87;ITEM-DESC\/PAID SEATING.*.*x87;LOCATION\/SYDMEL15SEP.*.*x87;DOCUMENT-NUMBER\/7951511645803-1.1
+[00:49:59] <re101-jaguar-75> Oops, this: CC.*PAY\/TRN3.*.*x87;ITEM-ID\/0B5.*.*x87;ITEM-DESC\/PAID\ SEATING.*.*x87;LOCATION\/SYDMEL15SEP.*.*x87;DOCUMENT-NUMBER\/7951511645803-1.1
+[00:50:35] <geirha> \"matches\" and remove the ' inside there
+[00:51:04] <geirha> and ... wait, more ... this whole thing is such a giant mess
+[00:51:39] <lopid> use the single quoted one and replace the variables as above
+[00:51:49] <geirha> oh and I just noticed you also tried to use non-greedy matching with .*?   that's a perl-ism. Doesn't work in sed
+[00:52:25] <re101-jaguar-75> I need the \"matches\" , need to replace "equalToXml" : "<soap:Envelope Random Text </soap:Envelope>" with "matches" : ".*$V1.*$V2.*$V3.*"
+[00:52:42] <re101-jaguar-75> So I should just use .* instead of .*?
+[00:54:07] <geirha> is this xml enclosed in json?
+[00:55:04] <re101-jaguar-75> Yes it is
+[00:55:18] <geirha> would be much easier to do it with jq then
+[00:56:29] <re101-jaguar-75> Would it be feasible to do it in bash using sed/awk? Been asked to do so
+[00:56:51] <geirha> It's a bit like parsing xml/html with regex
+[00:57:30] <geirha> https://xrl.us/p0ny
+[00:58:12] <geirha> depends on what the json looks like, but the jq solution could look something like  jq --arg var ".*$v1.*$v2.*$v3.*" 'del(.equalToXml) | .matches = $var'
+[00:59:28] <re101-jaguar-75> The JSON looks like this: {
+[00:59:29] <re101-jaguar-75>     "url" : "/",
+[00:59:29] <re101-jaguar-75>     "method" : "POST",
+[00:59:30] <re101-jaguar-75>     "bodyPatterns" : [ {
+[00:59:30] <re101-jaguar-75>       "equalToXml" : "<soap:Envelope RANDOM TEXT </soap:Envelope>"
+[00:59:31] <re101-jaguar-75>     } ]
+[00:59:31] <re101-jaguar-75>   }
+[01:00:31] <re101-jaguar-75> I do not have JQ knowledge and my bash knowledge is also limited ,so I'm not sure I can explore different options 
+[01:00:49] <geirha> jq --arg matches ".*$v1.*$v2.*$v3.*" '.bodyPatterns = [{$matches}]'
+[01:00:54] *** Quits: tirnanog (~tirnanog@user/tirnanog) (Quit: = "")
+[01:02:49] <lopid> sed 's/yourstuff'"${foo//\//\\/}"'more of your stuff'"${bar//\//\\/}"'etc/'
+[01:03:16] <geirha> # v1=foo v2='bar/baz space'; jq --arg matches ".*$v1.*$v2.*$v3.*" '.bodyPatterns = [{$matches}]' <<< '{"url" : "/","method" : "POST","bodyPatterns" : [ {"equalToXml" : "<soap:Envelope RANDOM TEXT </soap:Envelope>"} ]}'
+[01:03:18] <shbot> geirha: 15{2"url"15:3"/"15,2"method"15:3"POST"15,2"bodyPatterns"15:15[15{2"matches"15:3".*foo.*bar/baz space.*.*"1515}1515]1515}
+[01:03:44] <lopid> and replace .*? with .\{0,\}
+[01:03:57] <geirha> or just .*
+[01:04:05] <lopid> they want non-greedy
+[01:04:29] <geirha> .* and .\{0,\} are identical; both are greedy
+[01:04:52] <lopid> # sed 's/a\{0,\}b/aXb/' <<<a----b--c--b
+[01:04:54] <shbot> lopid: a----aXb--c--b
+[01:05:13] <lopid> that wasn't the input i wanted to use :|
+[01:05:19] <geirha> there is only greedy in standard regex dialects
+[01:05:44] <lopid> # sed 's/a\{0,\}b/aXb/' <<<a--b--c--b
+[01:05:45] <shbot> lopid: a--aXb--c--b
+[01:05:56] <lopid> # sed 's/a.\{0,\}b/aXb/' <<<a--b--c--b
+[01:05:57] <shbot> lopid: aXb
+[01:06:01] <lopid> hm
+[01:06:49] <geirha> anyway, if you must use sed for this. Just replace the whole line, don't bother with s///
+[01:07:57] <geirha> sed "/equalToXml/c\ \"matches\" : \".*$v1.*$v2.*$v3.*\""
+[01:08:19] <geirha> using a GNUism there, but you're already using the -i GNUism, so
+[01:08:39] <re101-jaguar-75> But, what's wrong with this now: CC.*PAY\/TRN3.*.*x87;ITEM-ID\/0B5.*.*x87;ITEM-DESC\/PAID\ SEATING.*.*x87;LOCATION\/SYDMEL15SEP.*.*x87;DOCUMENT-NUMBER\/7951511645803-1.1
+[01:08:49] <re101-jaguar-75> Even with everything escaped, it still gives sed: -e expression #1, char 178: unterminated `s' command
+[01:08:50] <re101-jaguar-75>  error
+[01:08:55] <lopid> .*.* ?
+[01:09:06] <geirha> It's ok-ish, but you're still messing up the shell quoting
+[01:09:15] <re101-jaguar-75> Yeah, it had a & and a #
+[01:09:35] <re101-jaguar-75> That's why the .*.*
+[01:10:06] <geirha> s/[*&#]\{1,\}/.*/g
+[01:11:06] <geirha> The reason why this is hard is because you have to escape some things from the shell and some things from the sed, and when you're not sure what needs to be escaped for either, you're left at guessing wildly
+[01:11:25] *** Joins: nate1 (~nate@108-233-125-227.lightspeed.sntcca.sbcglobal.net)
+[01:12:27] <re101-jaguar-75> geirha: It's rough
+[01:12:44] <re101-jaguar-75> So I've reduced my variables to these: command=$(sed -e 's/\//\\\//g;' <<< "$command")
+[01:12:45] <re101-jaguar-75> command=$(sed -e 's/[*&#]\{1,\}/.*/g;' <<< "$command")
+[01:12:45] <re101-jaguar-75> command=$(sed -e 's/ /\\ /g;' <<< "$command")
+[01:13:34] <re101-jaguar-75> echo $command returns CC.*PAY\/TRN3.*x87;ITEM-ID\/0B5.*x87;ITEM-DESC\/PAID\ SEATING.*x87;LOCATION\/SYDMEL15SEP.*x87;DOCUMENT-NUMBER\/7951511645803-1.1
+[01:13:35] <re101-jaguar-75>  which is something I am fine with
+[01:14:10] <geirha> 's/[*&#]\{1,\}/.*/g;s,[ /]/\\&/g'
+[01:14:24] <re101-jaguar-75> But the sed -i -e 's/\"equalToXml\" : \"<.*?<\/soap:Envelope>\"/"matches" : ".*'$airline'.*'$cid'.*'$action'.*'$command'.*"/' -- $fname still returns sed: -e expression #1, char 174: unterminated `s' command
+[01:14:25] <re101-jaguar-75>  :'(
+[01:14:42] <geirha> still not quoting any of the variables
+[01:14:51] <geirha> "$airline" instead of $airline
+[01:15:01] <geirha> same with the other threww
+[01:15:34] <re101-jaguar-75> Double quoting it returns this: *"$command".*"
+[01:15:58] *** Joins: chasmo77 (~chas77@71.63.241.168)
+[01:18:14] <re101-jaguar-75> Oh no nevermind
+[01:18:23] <re101-jaguar-75> I had to put the entire sed in "" and the variables also in ""
+[01:20:17] <geirha> no, that was an either/or thing
+[01:23:06] <re101-jaguar-75> Ah, I see, it also misses all the double quotes now after the substitution
+[01:23:19] <re101-jaguar-75> Wow, can't catch a break at all
+[01:29:22] <re101-jaguar-75> Should I escape the double quotes here to put the whole thing inside double quotes: ".*"$airline".*"$cid".*"$action".*"$command".*"/"?
+[01:30:13] <lopid> escape the double quotes if you want it to match a literal double quote
+[01:31:43] <re101-jaguar-75> Yeah  I want the end result to be like this:  "matches" : ".*$V1.$V2.*"
+[01:32:07] *** Quits: rando25892 (~sthk@user/rando25892) (Ping timeout: 245 seconds)
+[01:32:39] <re101-jaguar-75> Ah wonderful, looks like this worked: sed -i -e "s/\"equalToXml\" : \"<.*<\/soap:Envelope>\"/\"matches\" : \"".*"$airline".*"$cid".*"$action".*"$command".*"\"/"
+[01:33:29] *** Quits: nate1 (~nate@108-233-125-227.lightspeed.sntcca.sbcglobal.net) (Ping timeout: 248 seconds)
+[01:39:15] *** Joins: rando25892 (~sthk@c-98-240-233-64.hsd1.mn.comcast.net)
+[01:42:58] *** Joins: danisztl1 (~weechat@user/danisztls)
+[01:45:29] <geirha> all the non-escaped " inside there can simply be removed; they are pointless
+[01:45:49] <re101-jaguar-75> lopid geirha: Thank you so much for your help, couldn't have figured out that clunky code without your help
+[01:46:01] *** Quits: totenkoph (~scythe@user/totenkoph) (Ping timeout: 244 seconds)
+[01:46:02] <geirha> \"".*"$airline -> \".*$airline
+[01:46:53] *** Quits: rando25892 (~sthk@c-98-240-233-64.hsd1.mn.comcast.net) (Changing host)
+[01:46:53] *** Joins: rando25892 (~sthk@user/rando25892)
+[01:46:56] <geirha> it's still ugly and messy code, so please don't put my name anywhere near it. It's still a terrible idea to do this with sed
+[01:47:36] <re101-jaguar-75> I know I know, but this is all I can manage in my sleep deprived state
+[01:49:15] <re101-jaguar-75> Also, apologies about the condition of the code
+[02:14:31] *** Joins: totenkoph (~scythe@user/totenkoph)
+[02:19:38] <e36freak> sed -i -e "s/\"equalToXml\" : \"<.*<\/soap:Envelope>\"/\"matches\" : \"".*"$airline".*"$cid".*"$action".*"$command".*"\"/" # thanks geirha!
+[02:21:13] <geirha> gah!
+[02:21:36] <geirha> I'll lose all my street creds!
+[02:22:19] <re101-jaguar-75> Will keep this handy though, will clean up my code
+[02:47:34] <earnestly> To the extent that this can be cleaned up
+[02:48:41] *** Quits: Torr (~Torr@user/torr) (Ping timeout: 248 seconds)
+[03:29:51] *** Joins: nate1 (~nate@108-233-125-227.lightspeed.sntcca.sbcglobal.net)
+[03:34:05] *** Quits: re101-jaguar-75 (~re101-jag@106.51.107.26) (Quit: Client closed)
+[03:34:40] *** Quits: nate1 (~nate@108-233-125-227.lightspeed.sntcca.sbcglobal.net) (Ping timeout: 240 seconds)
+[03:45:45] *** Joins: nate1 (~nate@108-233-125-227.lightspeed.sntcca.sbcglobal.net)
+[03:49:54] *** Joins: ferdna (~ferdna@user/ferdna)
+[03:50:36] *** Quits: nate1 (~nate@108-233-125-227.lightspeed.sntcca.sbcglobal.net) (Ping timeout: 250 seconds)
+[04:03:49] *** Quits: danisztl1 (~weechat@user/danisztls) (Ping timeout: 252 seconds)
+[04:48:25] *** Quits: earnestly (~earnest@user/earnestly) (Ping timeout: 268 seconds)
+[05:02:58] <Riviera> # test
+[05:02:59] <shbot> Riviera: no output
+[05:09:01] *** Joins: tirnanog (~tirnanog@user/tirnanog)
+[05:20:49] *** Joins: danisztl1 (~weechat@user/danisztls)
+[05:30:34] *** Quits: vlm (~vlm@user/vlm) (Quit: "")
+[05:34:32] *** Joins: vlm (~vlm@user/vlm)
+[06:10:07] *** Quits: lgc (~lgc@user/lgc) (Quit: WeeChat 3.2-dev)
+[07:11:57] *** Joins: nate1 (~nate@108-233-125-227.lightspeed.sntcca.sbcglobal.net)
+[07:16:52] *** Quits: nate1 (~nate@108-233-125-227.lightspeed.sntcca.sbcglobal.net) (Ping timeout: 252 seconds)
+[08:26:03] *** Joins: nate1 (~nate@108-233-125-227.lightspeed.sntcca.sbcglobal.net)
+[08:39:22] *** Quits: nate1 (~nate@108-233-125-227.lightspeed.sntcca.sbcglobal.net) (Ping timeout: 252 seconds)
+[08:52:55] *** Quits: pyre (~pyre@crimeboss.nillas-power.com) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[08:55:54] *** Joins: pyre (~pyre@crimeboss.nillas-power.com)
+[09:24:28] *** Quits: danisztl1 (~weechat@user/danisztls) (Ping timeout: 252 seconds)
+[09:45:38] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[09:47:08] *** Joins: nerozero (~nerozero@87.253.63.54)
+[10:32:07] *** Quits: plitter (~plitter@user/plitter) (Ping timeout: 245 seconds)
+[10:33:24] *** Joins: plitter (~plitter@78.31.86.243)
+[10:33:24] *** Quits: plitter (~plitter@78.31.86.243) (Changing host)
+[10:33:24] *** Joins: plitter (~plitter@user/plitter)
+[10:42:22] *** Joins: jetchisel (jetchisel@user/jetchisel)
+[11:49:00] *** Joins: Atque (~Atque@user/atque)
+[13:01:08] *** Joins: earnestly (~earnest@user/earnestly)
+[13:21:23] *** Quits: tirnanog (~tirnanog@user/tirnanog) (Quit: = "")
+[13:21:25] *** Quits: [diablo] (~diablo]@user/diablo/x-9068044) (Quit: The Lounge - https://thelounge.chat)
+[13:22:09] *** Joins: [diablo] (~diablo]@user/diablo/x-9068044)
+[13:58:38] *** Quits: plitter (~plitter@user/plitter) (Quit: WeeChat 3.2)
+[14:51:56] *** Joins: optative (~optative@198.13.159.235)
+[15:58:15] *** Joins: danisztl1 (~weechat@user/danisztls)
+[16:07:44] *** Quits: optative (~optative@198.13.159.235) (Quit: Good bye libera and take care.)
+[17:10:53] *** Joins: Torr (~Torr@user/torr)
+[18:05:19] *** Quits: Atque (~Atque@user/atque) (Ping timeout: 252 seconds)
+[19:07:23] *** Joins: lgc (~lgc@user/lgc)
+[19:33:32] *** Quits: nitro (~nitro@c-73-165-183-88.hsd1.pa.comcast.net) (Read error: Connection reset by peer)
+[19:53:06] *** Joins: tirnanog (~tirnanog@user/tirnanog)
+[19:54:20] *** Quits: jetchisel (jetchisel@user/jetchisel) (Ping timeout: 250 seconds)
+[19:56:47] *** Quits: mobius (sid478273@id-478273.highgate.irccloud.com) (Ping timeout: 245 seconds)
+[19:57:10] *** Quits: bn_work (uid268505@id-268505.highgate.irccloud.com) (Ping timeout: 240 seconds)
+[20:02:21] *** Joins: mobius (sid478273@id-478273.highgate.irccloud.com)
+[20:02:56] *** Joins: bn_work (uid268505@id-268505.highgate.irccloud.com)
+[21:21:52] *** Quits: danisztl1 (~weechat@user/danisztls) (Ping timeout: 250 seconds)
+[22:28:10] *** Quits: nerozero (~nerozero@87.253.63.54) (Ping timeout: 240 seconds)
+[22:46:38] *** Joins: danisztl1 (~weechat@user/danisztls)
+[23:58:47] *** Quits: ccl (ccl@shell.xshellz.com) (Ping timeout: 245 seconds)

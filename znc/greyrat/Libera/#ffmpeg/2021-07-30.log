@@ -1,0 +1,410 @@
+[00:04:42] *** Quits: darkapex (~darkapex@user/darkapex) (Ping timeout: 240 seconds)
+[00:04:49] *** Joins: microchip_ (~neutrino@user/microchip/x-0766185)
+[00:06:18] *** Joins: darkapex (~darkapex@user/darkapex)
+[00:07:30] *** Quits: Gaboradon (~Gaboradon@cpe-86-58-57-5.static.triera.net) (Quit: Shutdown)
+[00:15:31] *** Quits: Flabb (~Flabb@89.169.84.117) (Quit: Leaving)
+[00:22:53] *** Joins: finsternis (~X@23.226.237.192)
+[00:30:43] *** Quits: Blacker47 (~Blacker47@user/blacker47) (Quit: Life is short. Get a V.90 modem fast!)
+[01:16:58] *** Quits: someuser (~user@41.35.146.158) (Ping timeout: 240 seconds)
+[01:25:51] *** Quits: Seirdy (~Seirdy@sourcehut/user/seirdy) (Ping timeout: 250 seconds)
+[01:26:31] *** Joins: someuser (~user@41.35.146.158)
+[01:27:44] *** Joins: Seirdy (~Seirdy@sourcehut/user/seirdy)
+[01:45:54] *** Quits: Mister_Magister (~Mister_Ma@user/mister-magister/x-2636733) (Quit: bye)
+[01:46:45] *** Joins: Mister_Magister (~Mister_Ma@user/mister-magister/x-2636733)
+[01:49:52] *** Quits: dreamon (~dreamon@p54b148db.dip0.t-ipconnect.de) (Ping timeout: 265 seconds)
+[01:50:28] *** Joins: hazmi35 (~Hazmi35@36.75.154.231)
+[01:57:07] *** Quits: Buster_ (~Buster@46.160.36.66) (Ping timeout: 265 seconds)
+[02:01:28] *** Joins: aphysically (~aphysical@user/aphysically)
+[02:04:58] <aphysically> sorry got disconnected, let's see if I can make a reproducer for the loudnorm thing kepstin
+[02:10:40] <aphysically> ok, so input is dts-hd 5.1(side), 24 bit, samplerate is 48 kHz
+[02:10:54] <aphysically> if I run ffmpeg -i loudnorm_samp.mkv -af loudnorm=print_format=json -f null -, I get: https://dpaste.com/52YCKPBNH
+[02:11:10] <aphysically> i.e. "input_i" : "-21.21", expected
+[02:13:25] <aphysically> if I run ffmpeg -i loudnorm_samp.mkv -af aresample=ocl=stereo:dither_method=shibata:osr=48000,loudnorm=print_format=json -f null -, I get: https://dpaste.com/DU7KXJJJE
+[02:13:38] <aphysically> i.e., "input_i" : "0.13", seemingly obviously wrong
+[02:15:40] <aphysically> if I remove osr=48000 the integrated loudness goes about to ~-21, or if I change the dither method it jumps around dramatically to various values
+[02:16:17] <aphysically> so the obviously wrong loudnorm measurements explain why it sounded absolutely terrible, but I'm not sure if this is a bug or an expected quirk of aresample or what
+[02:17:09] <aphysically> this was used in a script so I was jut unconditionally resampling to 48 kHz while changing the channel layout to stereo and such
+[02:22:03] <aphysically> I have a small file that can be used for reproducing
+[02:22:59] <aphysically> https://stream.gably.net/images/loudnorm_samp.mkv
+[02:23:18] <aphysically> (4.7 MB)
+[02:24:16] <kepstin> interesting. can you reproduce the issue with measured integrated  loudness with the ebur128 filter?
+[02:25:54] *** Quits: Narrat (~omnius@p200300df5f15d87906ea56fffe2e7cdc.dip0.t-ipconnect.de) (Quit: They say a little knowledge is a dangerous thing, but it's not one half so bad as a lot of ignorance.)
+[02:27:44] <aphysically> let me pull up its documentation and check
+[02:28:17] <kepstin> just replace the loudnorm= with 'ebur128', it'll print out a bunch of log messages and a summary at the end
+[02:29:44] <aphysically> no, ebur128 does not have the same issue
+[02:29:57] <kepstin> fwiw, loudnorm works on double samples at 192kHz internally, so doing any resampling/dithering before it is completely unnecessary
+[02:30:01] <kepstin> (if anything, do it after)
+[02:30:06] <aphysically>     I:         -22.2 LUFS for ebur128
+[02:30:18] <aphysically>         "input_i" : "0.13",
+[02:30:21] <aphysically> for loudnorm
+[02:30:32] <kepstin> interesting. in theory the loudnorm should be using the same library code for that measurement
+[02:30:51] <aphysically> I was doing the step before so the downmix happened first mostly, and just did resampling since i already had aresample
+[02:31:13] <aphysically> I posted the sample if you want to play with it yourself
+[02:31:37] <kepstin> yeah, only do the downconversion, remove the sample rate/dithering. doesn't make sense to do at that point.
+[02:32:10] <kepstin> since it's doing more conversions after that, the dithering is unnecessary loss
+[02:32:59] <kepstin> but still, does seem to be an issue with high frequency noise not being handled correctly in loudnorm, yeah
+[02:33:05] <aphysically> all right - I'll move it after. That fixes the problem the way I ran into it, but it's probably still weirdness you want to look at
+[02:33:08] <kepstin> i'm not very familiar with how that filter actually works :(
+[02:35:59] <kepstin> (indeed with your current filter chain it's actually inserting another aconvert after yours to do the conversion to 192kHz)
+[02:51:33] *** Quits: Nact (~l@host-85-27-122-107.dynamic.voo.be) (Quit: Konversation terminated!)
+[03:00:21] *** Quits: amahl (~amahl@dsl-jklbng12-54fbca-64.dhcp.inet.fi) (Ping timeout: 276 seconds)
+[03:02:57] *** Quits: der_richter (~Akemi@p4fde4f4e.dip0.t-ipconnect.de) (Quit: Leaving.)
+[03:06:11] *** Joins: hzmi35 (~Hazmi35@36.75.154.231)
+[03:08:21] *** Quits: hzmi35 (~Hazmi35@36.75.154.231) (Client Quit)
+[03:08:57] *** Quits: hazmi35 (~Hazmi35@36.75.154.231) (Ping timeout: 252 seconds)
+[03:10:11] *** Quits: beaver (~beaver@user/pong) (Remote host closed the connection)
+[03:10:22] <aphysically> huh I guess if I have the spare CPU I can just set "-resampler soxr" to use it globally
+[03:11:45] *** Joins: beaver (~beaver@user/pong)
+[03:12:35] <aphysically> kepstin: do you want me to file a trac bug for the loudnorm thing, are you planning to do something with it, or what would you prefer
+[03:14:06] <kepstin> i'm unlikely to be able to do anything on it - i just use that filter, not develop on it :) A bug would be better to find the right people to work on it.
+[03:14:34] <aphysically> all right cool, I'll file one and send a one off ping to whoever maintains it if you know who
+[03:14:55] <aphysically> looks like trac is down right now so I'll do it later :P
+[03:15:02] <kepstin> (i actually use loudnorm in mpv to watch livestreams quite a bit, it's nice to fix up volume when the streamers aren't very consistent, heh)
+[03:15:12] <kepstin> (it does add 3s of latency tho)
+[03:15:34] <aphysically> (alternatively, do you know how I can find who maintains it?)
+[03:16:21] <aphysically> oh it's a separate file so I can check history maybe
+[03:18:13] <aphysically> looks like kylophone authored and richardpl has poked at it; I don't see the latter on IRC in an obvious nick but kylo is in -devel so I'll send a one-off ping
+[03:18:45] <aphysically> trac is back so I'll file first
+[03:19:09] <furq> richardpl is durandal_1707
+[03:19:16] <furq> although he's not here now
+[03:21:12] <aphysically> I'll write the trac bug first before bothering them
+[03:21:13] *** Joins: anotheruser (~user@41.35.146.158)
+[03:24:56] *** Quits: someuser (~user@41.35.146.158) (Ping timeout: 258 seconds)
+[03:28:40] *** Joins: demon__ (~user@45.91.21.53)
+[03:31:45] *** Quits: iive (~iive@87.119.101.204.client.entry.bg) (Quit: They came for me...)
+[03:32:13] *** Quits: anotheruser (~user@41.35.146.158) (Ping timeout: 258 seconds)
+[03:33:52] *** Quits: bencc1 (~bencc1@2a00:a040:197:3af:333e:266e:357c:e752) (Ping timeout: 245 seconds)
+[03:36:56] *** Quits: demon__ (~user@45.91.21.53) (Ping timeout: 256 seconds)
+[03:48:47] <aphysically> all right, bug filed at https://trac.ffmpeg.org/ticket/9352 thanks for help, I'll send durandel a ping about it later
+[03:56:34] *** Joins: someuser (~user@41.35.146.158)
+[03:56:39] *** Quits: Volgaar (~volgaar@2a01:cb1d:8151:9600:3dd9:4b02:6c50:a34b) (Ping timeout: 250 seconds)
+[04:32:36] *** Quits: betelgeuse (~john2gb@94-225-47-8.access.telenet.be) (Quit: The Lounge - https://thelounge.chat)
+[04:36:36] *** Quits: arcatech (~arcatech@user/arcatech) (Quit: Bye.)
+[04:39:36] *** Quits: ketas (~ketas@0011-0000-0000-0000-d7dc-830e-07d0-2001.dyn.estpak.ee) (Ping timeout: 272 seconds)
+[04:50:16] *** Quits: Mister_Magister (~Mister_Ma@user/mister-magister/x-2636733) (Quit: bye)
+[04:55:40] *** Joins: Mister_Magister (~Mister_Ma@user/mister-magister/x-2636733)
+[05:06:38] *** Quits: beaver (~beaver@user/pong) (Quit: leaving)
+[05:09:34] *** Joins: beaver (~beaver@user/pong)
+[05:10:02] *** Joins: ketas (~ketas@0011-0000-0000-0000-d7dc-830e-07d0-2001.dyn.estpak.ee)
+[05:12:46] *** Joins: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com)
+[05:20:45] *** Quits: Mister_Magister (~Mister_Ma@user/mister-magister/x-2636733) (Quit: bye)
+[05:21:43] *** Joins: Mister_Magister (~Mister_Ma@user/mister-magister/x-2636733)
+[05:22:44] *** Quits: Mister_Magister (~Mister_Ma@user/mister-magister/x-2636733) (Remote host closed the connection)
+[05:23:43] *** Joins: Mister_Magister (~Mister_Ma@user/mister-magister/x-2636733)
+[05:30:33] *** Quits: vlm (~vlm@user/vlm) (Quit: "")
+[05:30:40] *** Quits: someuser (~user@41.35.146.158) (Ping timeout: 258 seconds)
+[05:34:25] *** Joins: vlm (~vlm@user/vlm)
+[05:39:36] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 276 seconds)
+[06:05:31] *** Joins: Fohsap (~Muimi@221.201.2.254)
+[07:16:39] *** Joins: jos2 (~jos3@dyndsl-091-096-037-011.ewe-ip-backbone.de)
+[07:16:44] <aphysically> trac sure is spotty today
+[07:20:00] <aphysically> looks like you can also get wrong integrated loudness measurement swings the other way (-30 instead of -22) with different dither shapes
+[07:20:28] *** Quits: jos1 (~jos3@dyndsl-178-142-068-198.ewe-ip-backbone.de) (Ping timeout: 265 seconds)
+[07:20:35] <aphysically> definitely something wonky going on
+[07:27:53] <kepstin> yeah, that's very weird, especially if you can't reproduce with the ebur128 filter that is supposed to measure in the same way
+[07:31:12] *** Joins: houlei (uid497843@id-497843.stonehaven.irccloud.com)
+[07:33:51] *** Quits: KombuchaKip (~kip@192.252.230.5) (Quit: Leaving.)
+[07:37:17] <kepstin> interesting. the ebur128 filter always runs through the loudness calculations at 48kHz, while loudnorm does it at 192kHz
+[07:37:37] <kepstin> i wonder if there's an error with the K-weighted filter parameters at 192kHz?
+[07:45:16] <kepstin> ah, apparently the limit of ebur128 filter to 48kHz was fixed in ffmpeg master
+[07:46:08] <aphysically> I am running on master
+[07:47:06] <kepstin> so if you run ",aformat=r=192000,ebur128" (in place of loudnorm, after the other resampling / dithering filters) what does it give you?
+[07:47:42] <kepstin> if you get the same wrong values with that as you get with loudnorm, then it's a problem with the filter coefficient calculations at 192khz
+[07:48:18] <kepstin> (in ffmpeg master, ebur128 filter uses the same coefficient calculation as loudnorm; in older ffmpeg versions it used a different set of fixed filter coefficients)
+[07:49:14] <aphysically> ffmpeg -i loudnorm_samp.mkv -af aresample=ocl=stereo:dither_method=shibata:osr=48000,aformat=r=192000,ebur128 -f null -
+[07:49:26] <aphysically> this gives -0.1 for integrated loudness, similar to loudnorm
+[07:49:33] <aphysically> although I don't understand your explanation, since I'm already on master
+[07:50:08] <kepstin> ok, that confirms my hypothesis
+[07:50:32] <kepstin> the calculation of K-weighted filter coefficients in the ebur128 code in ffmpeg is incorrect at 192kHz :/
+[07:50:35] <furq> aphysically: loudnorm automatically resamples the input to 192k, ebur128 doesn't
+[07:50:42] <aphysically> oh I see
+[07:50:54] <aphysically> so the ebur was still run at 48 kHz correctly without the extra filter
+[07:51:11] <furq> right
+[07:52:17] <aphysically> do you want to add a comment to the trac bug to this effect since I'm sure you can explain it better
+[07:53:03] <kepstin> if you could provide the result of running the ffmpeg command using the ebur128 filter with and without the aformat=r=192000 that would be helpful
+[07:53:15] <kepstin> since that's a direct demonstration of the issue
+[07:54:35] <aphysically> I'll add a comment with both commands and both outputs attached as .txt, and you can add something about k-filters before/after if you like
+[07:54:59] <kepstin> (note that this code isn't really ffmpeg's; my understanding is that it's taken from the "libebur128" implementation which got copied into ffmpeg)
+[07:56:30] <aphysically> https://github.com/FFmpeg/FFmpeg/commit/005d058f4230f3207ebcf1131df7426d4f57392f
+[07:56:51] <kepstin> and i can't actually rule out that the problem is ffmpeg's resampler when converting 48kHz to 192kHz is adding some nasty ultrasonic noise that's messing up the loudness calculation, too - although that seems unlikely :)
+[07:57:47] <furq> that would have been my guess honestly but your thing sounds more likely
+[07:57:58] <furq> especially if you tried it with soxr and swr
+[07:58:17] <aphysically> I did actually try it with and without soxr and they both have the issue
+[07:58:23] <furq> right
+[07:58:33] <furq> seems very unlikely then
+[07:58:44] <furq> they're more or less entirely separate things
+[08:00:01] <kepstin> an interesting thing is that the weighting curve the algorithm uses doesn't actually have anything that reduces the impact of high frequency or ultrasonics on the calculation
+[08:01:01] <kepstin> but the results at 48kHz are fine, and resampling 48kHz to 192kHz shouldn't add ultrasonics
+[08:01:02] *** Joins: gnoo (~gnoo@user/gnoo)
+[08:01:03] <kepstin> so...
+[08:05:04] *** Joins: hazmi35 (~Hazmi35@36.75.154.231)
+[08:05:21] *** Quits: hazmi35 (~Hazmi35@36.75.154.231) (Client Quit)
+[08:05:38] *** Joins: hazmi35 (~Hazmi35@36.75.154.231)
+[08:06:01] <aphysically> kepstin: I added the two outputs to the ticket, you may have to refresh a few times since trac is being spotty. I'm not sure if you want to say something about your weighting idea https://trac.ffmpeg.org/ticket/9352
+[08:06:08] *** Quits: hazmi35 (~Hazmi35@36.75.154.231) (Client Quit)
+[08:07:01] <kepstin> i should try running the calibration signal through the filter at a few different sample rates to  see if there's any obvious issues - a 0db FS 997Hz sine wave in a single channel (not using dual mono mode) should report -3.01 LUFS
+[08:08:06] <kepstin> (the 997Hz is specific because it tests a critical point in the K-weighting filter)
+[08:09:37] *** Joins: hazmi35 (~Hazmi35@36.75.154.231)
+[08:11:51] *** Joins: paddymahoney (~paddymaho@cpe9050ca207f83-cm9050ca207f80.cpe.net.cable.rogers.com)
+[08:19:51] <aphysically> sorry about my edit spam >.<
+[08:20:17] <kepstin> anyways, a good rule of thumb is don't dither at any point except the last step before converting to lower bit depth integer audio format just prior to encoding.
+[08:20:45] <kepstin> (and note that many lossy audio codecs in ffmpeg encode from floating point, not integer, so you shouldn't dither before encoding to them)
+[08:21:34] <kepstin> the point of dither is to reduce quantization error when going from a higher bit depth audio format to a lower bit depth audio format
+[08:22:25] <kepstin> when doing audio filtering in ffmpeg, you'll find that most of the filters will work on floating point audio internally
+[08:22:36] <aphysically> yeah I had shibata leftover when I was doing 24 bit -> 16 bit in my script, which I removed when I realized lossy encoding is float anyway
+[08:22:51] <aphysically> >.<
+[08:23:24] <kepstin> the lossy encoders of course do their own quantization, but it's up to the encoder to make that sound alright :)
+[08:24:15] <kepstin> (and it's often done in the frequency domain after the mdct, too, so it behaves differently)
+[08:24:59] *** Joins: KombuchaKip (~kip@192.252.230.5)
+[08:25:06] <aphysically> at least it helped me catch this weird behavior
+[08:40:24] <aphysically> kepstin: other dither shapes being able to change the loudness from -22 to -30 make me think it's less likely the high frequency signal thing too? let me know if you run the calibration signalt est
+[08:48:36] *** hazmi35 is now known as hzmi
+[08:48:45] *** hzmi is now known as hazmi35
+[09:27:06] *** Joins: bestbotdev9 (~bestbotde@ip68-231-85-199.ph.ph.cox.net)
+[09:28:19] <bestbotdev9> Hi I was here yesterday asking about ffmpeg receiving input in the form of a mp4 stream or buffer. I know this is not possible since the mp4 has details at the end of the file that need to be read for ffmpeg to use it, and ffmpeg needs to be able to seek through the file. But is there any format of video which ffmpeg can read directly from a stream
+[09:28:20] <bestbotdev9> or a buffer?
+[09:42:05] *** Quits: zsoltiv_ (~zsoltiv@fibhost-67-12-35.fibernet.hu) (Ping timeout: 252 seconds)
+[09:47:21] *** Joins: zsoltiv_ (~zsoltiv@fibhost-67-12-35.fibernet.hu)
+[09:59:50] *** Quits: MightyBOB (~MightyBOB@76.99.21.35) (Remote host closed the connection)
+[10:09:00] *** Joins: der_richter (~Akemi@p4fde4f91.dip0.t-ipconnect.de)
+[10:32:48] *** Joins: Flabb (~Flabb@89.169.84.117)
+[11:04:57] *** Joins: dreamon (~dreamon@p54b148db.dip0.t-ipconnect.de)
+[11:12:07] *** Quits: bestbotdev9 (~bestbotde@ip68-231-85-199.ph.ph.cox.net) (Quit: Connection closed)
+[11:29:44] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Ping timeout: 255 seconds)
+[11:32:38] *** Quits: Icedream (~icedream@hzn-b.serverkomplex.de) (Quit: A lol made me boom.)
+[11:35:15] *** Quits: Case_Of (~Case_Of@user/caseof) (Quit: ZNC - https://znc.in)
+[11:35:24] *** Joins: Case_Of (~Case_Of@user/caseof)
+[11:36:30] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[11:37:00] *** Joins: Icedream (~icedream@hzn-b.serverkomplex.de)
+[11:39:49] *** Quits: dreamon (~dreamon@p54b148db.dip0.t-ipconnect.de) (Ping timeout: 258 seconds)
+[11:40:37] *** Quits: houlei (uid497843@id-497843.stonehaven.irccloud.com) (Quit: Connection closed for inactivity)
+[11:43:09] *** Quits: Aelius (~Aelius@user/aelius) (Quit: quit)
+[11:44:04] *** Joins: Aelius (~Aelius@user/aelius)
+[12:00:58] *** Joins: Nact (~l@host-85-27-122-107.dynamic.voo.be)
+[12:01:01] *** Quits: Nact (~l@host-85-27-122-107.dynamic.voo.be) (Client Quit)
+[12:07:19] *** Joins: Nact (~l@host-85-27-122-107.dynamic.voo.be)
+[12:11:47] *** Joins: dreamon (~dreamon@ppp-88-217-93-68.dynamic.mnet-online.de)
+[12:26:10] *** Quits: mickey (~user@user/mickey) (Remote host closed the connection)
+[12:31:21] *** Joins: mickey (~user@user/mickey)
+[12:39:55] *** Joins: betelgeuse (~john2gb@94-225-47-8.access.telenet.be)
+[12:59:44] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[13:17:36] *** Joins: Hibana_ (~zsoltiv@fibhost-67-12-35.fibernet.hu)
+[13:17:59] *** Hibana_ is now known as Guest7559
+[13:19:06] *** Quits: zsoltiv_ (~zsoltiv@fibhost-67-12-35.fibernet.hu) (Ping timeout: 265 seconds)
+[13:19:06] *** Guest7559 is now known as zsoltiv_
+[13:29:57] *** Quits: zsoltiv_ (~zsoltiv@fibhost-67-12-35.fibernet.hu) (Ping timeout: 250 seconds)
+[13:35:20] *** Joins: Guest89 (~Guest89@2a02:8308:a088:7100:9822:d487:f75f:a5cf)
+[13:40:40] *** Joins: Volgaar (~volgaar@2a01:cb1d:8151:9600:3dd9:4b02:6c50:a34b)
+[13:41:58] <Guest89> Hello, can I ask for a help with FHD encoding please? I create 3 renditions (FHD, HD, SD) with HLS but player stops playing FHD after some time (HD, SD seems to be fine) and logs errors. I checked segments using mp4dump, tried bitmovin stream test but I'm already clueless. If there would be someone willing to help, I will provide more information.
+[13:41:59] <Guest89> Thanks, Tomas
+[13:42:39] <JEEB> you would have to actually debug a player what errors it gives out
+[13:42:54] <JEEB> in the developer console or whatever debug interface you have
+[13:47:39] <Guest89> Shaka says (video:9) – "failed fetch and append: code=3014", (audio:1) – "failed fetch and append: code=3015". Cannot find out what it means
+[13:48:50] <JEEB> you can check alternative players as well, such as jwplayer's test player
+[13:54:21] <Guest89> jwplayer and bitmovin stream test stops about the same time when playing FHD
+[13:54:42] <JEEB> yea but they might - you know - give more info on the failure :P
+[13:59:03] *** Quits: dreamon (~dreamon@ppp-88-217-93-68.dynamic.mnet-online.de) (Ping timeout: 252 seconds)
+[13:59:18] <Guest89> Thanks for the help :)  here is my master.m3u8 (https://stream.flash.tv/ts/c-15-discovery/1/1627540200/1627542000/master.m3u8). My player is shaka (errors above) and for testing I use https://bitmovin.com/demos/stream-test and https://www.jwplayer.com/developers/web-player-demos/live-streaming/.
+[14:00:24] <Guest89> If I put FHD (https://stream.flash.tv/ts/c-15-discovery/1/1627453800/1627455600/v-1-1080/variant.m3u8) into the bitmovin player for example, it stops at 2:47. jwplayer the same
+[14:01:25] *** Quits: mickey (~user@user/mickey) (Quit: Ping timeout (120 seconds))
+[14:02:21] *** Joins: mickey (~user@user/mickey)
+[14:07:15] <Guest89> I'm sorry, you cannot play it (VPN). I will find out how to get better error messages
+[14:07:53] <Helmholtz> quit
+[14:09:54] *** Quits: ketas (~ketas@0011-0000-0000-0000-d7dc-830e-07d0-2001.dyn.estpak.ee) (Ping timeout: 240 seconds)
+[14:11:08] *** Joins: ketas (~ketas@0011-0000-0000-0000-d7dc-830e-07d0-2001.dyn.estpak.ee)
+[14:11:36] *** Joins: dreamon (~dreamon@ppp-88-217-93-68.dynamic.mnet-online.de)
+[14:12:16] *** Joins: zsoltiv_ (~zsoltiv@fibhost-67-12-35.fibernet.hu)
+[14:22:37] *** Quits: linetrace (~linetrace@c-76-19-81-84.hsd1.vt.comcast.net) (Read error: Connection reset by peer)
+[14:23:59] *** Quits: Guest89 (~Guest89@2a02:8308:a088:7100:9822:d487:f75f:a5cf) (Quit: Client closed)
+[14:26:28] *** Joins: linetrace (~linetrace@c-76-19-81-84.hsd1.vt.comcast.net)
+[14:40:59] *** Quits: milkt (~debian@gateway/tor-sasl/milkt) (Quit: leaving)
+[15:01:15] *** Joins: omegatron (~some@p54bd5da4.dip0.t-ipconnect.de)
+[15:11:54] *** Joins: Blacker47 (~Blacker47@user/blacker47)
+[15:14:17] *** Joins: bencc1 (~bencc1@2a00:a040:197:3af:558b:1843:a7be:4d70)
+[15:21:25] *** Quits: hazmi35 (~Hazmi35@36.75.154.231) (Quit: Konversation terminated!)
+[16:18:52] *** Quits: shokohsc (~shokohsc@161.88.195.77.rev.sfr.net) (Remote host closed the connection)
+[16:19:57] *** Joins: shokohsc (~shokohsc@161.88.195.77.rev.sfr.net)
+[16:54:39] *** Joins: someuser (~user@92.119.18.178)
+[16:57:42] *** Joins: anotheruser (~user@41.35.146.158)
+[17:01:22] *** Quits: someuser (~user@92.119.18.178) (Ping timeout: 245 seconds)
+[17:07:02] *** Quits: keypusher (keypusher@user/keypusher) (Quit: bye)
+[17:08:20] *** Quits: anotheruser (~user@41.35.146.158) (Ping timeout: 258 seconds)
+[17:10:58] *** Joins: someuser (~user@41.35.146.158)
+[17:35:29] *** Joins: anotheruser (~user@83.136.182.105)
+[17:39:14] *** Quits: someuser (~user@41.35.146.158) (Ping timeout: 272 seconds)
+[17:40:19] *** Joins: demon__ (~user@41.35.146.158)
+[17:44:27] *** Quits: anotheruser (~user@83.136.182.105) (Ping timeout: 265 seconds)
+[17:45:46] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Ping timeout: 240 seconds)
+[17:46:26] *** Joins: shibboleth (~shibbolet@user/shibboleth)
+[17:48:14] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[17:51:13] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[17:53:33] *** Joins: ocrete9 (~ocrete@halloumi.collabora.co.uk)
+[17:53:37] *** Quits: gnoo (~gnoo@user/gnoo) (Remote host closed the connection)
+[17:55:41] *** Joins: intrac_ (~intracube@user/intracube)
+[17:55:57] *** Joins: pulec_ (~pulec@37-97-160-172.colo.transip.net)
+[17:55:59] *** Quits: hpkn (~hpkn@gateway/tor-sasl/hpkn) (Remote host closed the connection)
+[17:56:07] *** Joins: noarb- (~noarb@user/noarb)
+[17:56:20] *** Joins: hpkn (~hpkn@gateway/tor-sasl/hpkn)
+[17:58:31] *** Joins: gnoo (~gnoo@user/gnoo)
+[18:02:45] *** Joins: dbal (~dbal@2603:300c:b04:b100:dc5e:df20:3b79:f237)
+[18:02:57] *** Quits: ocrete (~ocrete@halloumi.collabora.co.uk) (Killed (NickServ (GHOST command used by ocrete9)))
+[18:02:59] *** ocrete9 is now known as ocrete
+[18:04:08] *** Quits: noarb (~noarb@user/noarb) (*.net *.split)
+[18:04:09] *** Quits: pulec (~pulec@user/pulec) (*.net *.split)
+[18:04:09] *** Quits: intrac (~intracube@user/intracube) (*.net *.split)
+[18:05:57] *** Quits: dbal_ (~dbal@2603:300c:b04:b100:e50b:420b:dd82:f52d) (Ping timeout: 245 seconds)
+[18:06:59] *** Joins: anotheruser (~user@41.35.146.158)
+[18:10:26] *** Quits: demon__ (~user@41.35.146.158) (Ping timeout: 258 seconds)
+[18:28:46] *** Joins: keypusher (keypusher@user/keypusher)
+[18:33:33] *** Joins: demon__ (~user@103.137.12.132)
+[18:36:58] *** Quits: anotheruser (~user@41.35.146.158) (Ping timeout: 240 seconds)
+[18:42:00] *** intrac_ is now known as intrac
+[18:42:51] *** Quits: berndj (~berndj@ns2.linksynergy.co.za) (Ping timeout: 252 seconds)
+[18:55:07] *** Quits: zsoltiv_ (~zsoltiv@fibhost-67-12-35.fibernet.hu) (Ping timeout: 245 seconds)
+[18:55:29] *** Quits: jos2 (~jos3@dyndsl-091-096-037-011.ewe-ip-backbone.de) ()
+[19:05:54] *** Quits: jkqxz (~mrt@jkqxz.net) (Ping timeout: 240 seconds)
+[19:06:01] *** Joins: jkqxz (~mrt@jkqxz.net)
+[19:13:04] *** Joins: jos1 (~jos3@dyndsl-091-096-037-011.ewe-ip-backbone.de)
+[19:17:05] *** Quits: hpkn (~hpkn@gateway/tor-sasl/hpkn) (Remote host closed the connection)
+[19:17:34] *** Joins: AbleBacon (~AbleBacon@user/AbleBacon)
+[19:18:16] *** Joins: hpkn (~hpkn@gateway/tor-sasl/hpkn)
+[19:20:57] *** pulec_ is now known as pulec
+[19:21:37] *** Joins: berndj (~berndj@ns1.linksynergy.co.za)
+[19:22:19] *** Quits: pulec (~pulec@37-97-160-172.colo.transip.net) (Changing host)
+[19:22:19] *** Joins: pulec (~pulec@user/pulec)
+[19:33:30] *** Quits: dreamon (~dreamon@ppp-88-217-93-68.dynamic.mnet-online.de) (Ping timeout: 240 seconds)
+[19:44:40] *** Quits: Hackerpcs (~user@user/hackerpcs) (Quit: Hackerpcs)
+[19:45:53] *** Joins: Hackerpcs (~user@user/hackerpcs)
+[20:11:16] *** Quits: Fohsap (~Muimi@221.201.2.254) (Read error: Connection reset by peer)
+[20:13:37] *** Quits: hpkn (~hpkn@gateway/tor-sasl/hpkn) (Remote host closed the connection)
+[20:14:54] *** Joins: hpkn (~hpkn@gateway/tor-sasl/hpkn)
+[20:17:02] *** Joins: iive (~iive@87.119.101.204.client.entry.bg)
+[20:20:15] *** Joins: minimal (~minimal@user/minimal)
+[20:20:28] *** Joins: minimalist (~minimal@user/minimal)
+[20:20:48] *** Quits: minimalist (~minimal@user/minimal) (Remote host closed the connection)
+[20:20:48] *** Quits: minimal (~minimal@user/minimal) (Remote host closed the connection)
+[20:21:01] *** Joins: minimal (~minimal@user/minimal)
+[20:25:13] *** Quits: hpkn (~hpkn@gateway/tor-sasl/hpkn) (Remote host closed the connection)
+[20:26:09] *** Joins: hpkn (~hpkn@gateway/tor-sasl/hpkn)
+[20:28:22] *** Quits: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com) (Quit: WeeChat 3.0.1)
+[20:34:31] *** Joins: mfwitten (~unknown@gateway/tor-sasl/mfwitten)
+[20:39:17] <mfwitten> Hi there. Forgive me if this is actually a question about the behavior of "aomenc" (AV1 encoder).
+[20:39:25] <mfwitten> The command "ffprobe iphone-12.MOV 2>&1 | grep -o 'yuv420[^)]\{1,\})'" shows: yuv420p10le(tv, bt2020nc/bt2020/arib-std-b67)
+[20:39:36] <mfwitten> So, I then transcode to a more useful format (using "-strict -1" to allow encoding non-standard "yuv420p10le" in the yuv4mpegpipe stream): ffmpeg -i iphone-12.MOV -strict -1 -f yuv4mpegpipe - | aomenc --pass 2 --output=transcoded.webm "${other_args[@]}" --bit-depth=10 --matrix-coefficients=bt2020ncl --color-primaries=bt2020 --transfer-characteristics=hlg
+[20:39:41] <mfwitten> The result (transcoded.webm) shows the same color space and range information; namely, the command "ffprobe transcoded.webm 2>&1 | grep -o 'yuv420[^)]\{1,\})'" shows: yuv420p10le(tv, bt2020nc/bt2020/arib-std-b67)
+[20:39:47] <mfwitten> Yet, the image is very washed out; everything is very overexposed to the point that it looks like a nuclear bomb is going off.
+[20:39:54] <mfwitten> However, if I instead use "--transfer-characteristics=bt2020-10bit", so that I get "yuv420p10le(tv, bt2020nc/bt2020/bt2020-10)" for 'transcoded.webm', then everything looks at least acceptable (whether it's actually "correct", I cannot say).
+[20:40:00] <mfwitten> Any ideas what's going on? Thanks in advance for your insights!
+[20:42:17] <galad> what are you using to play it back?
+[20:42:37] <galad> ffmpeg doesn't make any colorspace conversion, so it must be something on the player side
+[20:45:31] <galad> you will lose all the dynamic dolby video metadata by converting it, btw
+[20:46:57] <mfwitten> galad: Yes. ffmpeg's hevc decoder complains loudly about ignoring lots of NAL units that are dolby vision metadata. Could the removal of this metadata be the problem?
+[20:47:07] <galad> no
+[20:51:06] <mfwitten> galad: I'm playing it back with the Chrome browser or with a Chromebook's builtin media player (which is probably basically the same thing)
+[20:51:37] <galad> probably it has got no idea on how to handle hlg correctly
+[20:53:02] <mfwitten> galad: Presumably, though, the data is *actually* encoded as per hlg. So, is hlg close enough to btc2020-10bit that it doesn't matter?
+[20:53:21] <mfwitten> (excuse me. "data are" :-))
+[20:53:23] <galad> the encoded data is actually the same
+[20:53:59] <galad> the only difference is that transfer characteristics
+[20:54:05] <mfwitten> galad: Right. But the original file basically says HLG should be.... "used"?
+[20:54:18] <galad> yes
+[20:55:02] <galad> hlg is supposed to be backwards compatible with sdr, so it will look kinda ok even if you set it to 2020 or 709
+[20:55:06] <mfwitten> So, if I tell it to use something else (e.g., btc2020-10bit), and yet it looks at least ok, then does that suggest HLG is similar to btc2020-10bit, at least for my data?
+[20:55:15] <mfwitten> ok
+[20:55:47] <galad> but it won't look the way it's supposed to look
+[20:56:05] <galad> if you don't care about hdr, it would be easier to disable the option in the iPhone camera settings
+[20:56:06] <mfwitten> galad: So, what is the smart thing to do here? Tell ffmpeg to convert the transfer characteristics to something more widely understood?
+[21:04:49] *** Joins: furrymcgee (~devuan@31.179.186.66)
+[21:19:42] *** Quits: hpkn (~hpkn@gateway/tor-sasl/hpkn) (Remote host closed the connection)
+[21:19:48] *** Joins: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com)
+[21:21:00] *** Joins: hpkn (~hpkn@gateway/tor-sasl/hpkn)
+[21:40:18] *** Quits: hpkn (~hpkn@gateway/tor-sasl/hpkn) (Remote host closed the connection)
+[21:41:14] *** Joins: hpkn (~hpkn@gateway/tor-sasl/hpkn)
+[21:47:16] <aphysically> JEEB: I've been meaning to ask, what's the alternative downmix to stereo formula you're using? I've been looking at options to change it up and maybe avoid normalizing
+[21:48:06] <aphysically> I see some options at https://superuser.com/questions/852400/properly-downmix-5-1-to-stereo-using-ffmpeg
+[21:48:37] <JEEB> I'm just utilizing standard downmix and DRC
+[21:48:44] <JEEB> since you know - it's by the books :P
+[21:49:22] <aphysically> https://superuser.com/a/1616102 mentions some coefficients in a opus RFC that extend to stuff other than 5.1; I'm not sure how I should handle 5.1(side) instead of 5.1, I guess I could just give SL/SR the same coefficients as BL/BR in 5.1
+[21:49:57] <JEEB> 5.1 (back) and 5.1 (side) are a mess. originalyl because MPEG kept mentioning rear
+[21:50:03] <JEEB> Dolby utilizes side
+[21:50:10] <JEEB> then in 2013 MPEG finally went "uhhh, actually"
+[21:50:34] <aphysically> ah, I must have wrongly remembered you mentioning using a different formula
+[21:50:52] <JEEB> https://0x0.st/-cCn.png
+[21:51:11] <JEEB> see how while whistling in 2013 they removed references to the word "rear"
+[21:51:16] <aphysically> right now I use standard downmix and then a loudnorm pass if it's way too quiet, but my loudnorm parameters means it has always had to run in dynamic mode anyway
+[21:51:37] <aphysically> heh, yeah
+[21:51:37] <JEEB> in channel config=6,7
+[21:52:30] <JEEB> I need to update the FFmpeg stuff to match that when I get the time -_-
+[21:54:00] <aphysically> -_-
+[21:54:09] <aphysically> right now I target I=-19, lra=11, tp=-1 with loudnorm
+[21:54:31] *** Quits: gnoo (~gnoo@user/gnoo) (Ping timeout: 244 seconds)
+[21:55:43] <aphysically> which inevitably ends up in dynamic mode instead of linear for anything I actually want to use it on
+[21:56:45] <aphysically> I actually found a really insane swresample bug via loudnorm
+[21:57:32] <aphysically> I'm sure you saw it last night
+[21:58:46] <aphysically> I only really found it due to some silly unqualified resample usage that I changed in my code, but still something is going haywire
+[22:00:20] <aphysically> kepstin: oh you're probably interested that it ended up being a resample bug (I updated the trac ticket) https://trac.ffmpeg.org/ticket/9352
+[22:00:43] <kepstin> yeah, i saw the ticked updates
+[22:00:51] <aphysically> I had a question about loudnorm though: if I'm using it in dynamic mode does it still make sense to do normalization in two passes
+[22:00:55] <aphysically> is the first pass info actually used?
+[22:01:00] <aphysically> (if i run it and insert it?)
+[22:01:38] <aphysically> I was under the impression it was only used to decide if it can use linear mode or not, but I'm not actually sure that's the case
+[22:02:05] <aphysically> i.e. the measured I,lra,tp info
+[22:02:08] <kepstin> I think so; even in dynamic mode it ends up knowing the overall integrated loudness in advance?
+[22:02:25] <kepstin> but I honestly use it mostly in single-pass mode on live content
+[22:07:25] *** Joins: milkt (~debian@gateway/tor-sasl/milkt)
+[22:13:43] <kepstin> i wonder if providing the input I and LRA values helps avoid the initial adaptation you get on inputs that start out quiet before reaching normal volume later.
+[22:13:47] <kepstin> I haven't tested that.
+[22:19:18] <aphysically> kepstin: most of the stuff I use is for a monolithic script I wrote that lets me stream files or OBS or whatever to a private stream that I started poking at when my friend couldn't visit anymore for movietime during covid
+[22:19:25] <aphysically> https://dpaste.com/CZNRGH38B
+[22:20:09] <aphysically> it's sort of insane at this point, but it works and automates everything like cropping, loudnorm if I want it, streaming to srt, rendering and placing subtitles, concat demuxing a folder together, or whatever
+[22:20:49] <aphysically> it's been a nice learning experience for bash at least :P
+[22:22:54] <mfwitten> Hmmm.... ffmpeg doesn't easily offer support for converting the HLG transfer function
+[22:23:51] <aphysically> it's nice cause we can sync up youtube videos or whatever really
+[22:25:59] *** Quits: kurosu (uid342582@id-342582.stonehaven.irccloud.com) (Quit: Connection closed for inactivity)
+[22:34:16] <jab416171> 1000 line shell script :D
+[22:41:06] *** Quits: shibboleth (~shibbolet@user/shibboleth) (Quit: shibboleth)
+[22:41:59] *** Joins: dreamon (~dreamon@p54b148db.dip0.t-ipconnect.de)
+[22:44:06] <aphysically> :D
+[22:44:55] <furq> while getopts ":b:A:t:eFs:f:a:N:uc:xSDETvOoqQdCBHVinpgzPLl83579246w" opt; do
+[22:45:01] <furq> calling an ambulance
+[22:52:40] *** Joins: jihi (~jihi@p200300de270d5f005963d3de772d986f.dip0.t-ipconnect.de)
+[22:53:06] *** Parts: jihi (~jihi@p200300de270d5f005963d3de772d986f.dip0.t-ipconnect.de) (I'm a happy Miranda IM user! Get it here: http://miranda-im.org)
+[22:53:23] <mfwitten> Is there a filter for doing a calculation on every sample? I want to manually try to convert HLG values to linear or some other transfer characteristic function values
+[22:53:48] *** Quits: witchcraft (~witch@user/witch) (Quit: Leaving)
+[22:58:28] *** Joins: blerd (blerd@71.182.169.24)
+[22:59:50] <JEEB> mfwitten: I think you'd be interested in the zscale filter based on the zimg library, that can convert from various trcs to linear
+[23:00:04] *** Quits: dreamon (~dreamon@p54b148db.dip0.t-ipconnect.de) (Ping timeout: 265 seconds)
+[23:00:24] <JEEB> FFmpeg does have the HLG trc around, but unfortunately I don't think many things utilize that
+[23:01:13] <mfwitten> JEEB: Thanks for the ideas.
+[23:03:04] *** Quits: minimal (~minimal@user/minimal) (Quit: Leaving)
+[23:12:34] *** Joins: Buster_ (~Buster@buster-net.ru)
+[23:26:59] <blerd> Still trying to figure out this concat thing.. Some reason the video buffer stops working after the first file (100 buffers queued in Parsed_buffersink_19, something may be wrong.)
+[23:27:21] *** Quits: furrymcgee (~devuan@31.179.186.66) (Quit: leaving)
+[23:28:59] <mfwitten> blerd: It might help to produce a minimal example of your filter graph
+[23:29:43] <mfwitten> blerd: If all else fails, a good workaround for such things is to break your filter graph into multiple runs of ffmpeg, using intermediate files (or perhaps piping from one to the next).
+[23:31:12] *** Joins: anotheruser (~user@41.35.146.158)
+[23:32:33] <blerd> you mean write a full example in C++? I'm using C# autobindings for my actual project.
+[23:33:04] <blerd> I'm just just using vfilter_graph_parse2 with a string for the filter part
+[23:35:10] *** Quits: demon__ (~user@103.137.12.132) (Ping timeout: 272 seconds)
+[23:35:25] <blerd> intermediate files dont really work for me because I want a clean file. Everytime I tried to concat clips I get a small drop in fps when reading the file info
+[23:40:27] <mfwitten> blerd: What is your string?
+[23:41:09] <mfwitten> blerd: Is this supposed to be real-time streaming or something?
+[23:41:09] <blerd> It's pretty long
+[23:41:16] <blerd> no a normal transcode
+[23:41:18] <blerd> "buffer=video_size=1920x1080:pix_fmt=yuv420p:time_base=1001/60000:pixel_aspect=1/1:frame_rate=30000/1001,yadif=1,scale=1280:720,setsar=1,fps=60000/1001[vin_0];abuffer=time_base=1/48000:sample_rate=48000:sample_fmt=fltp:channel_layout=0x3,aresample=48000:async=1,asetnsamples=n=1024[ain_0];buffer=video_size=1920x1080:pix_fmt=yuv420p:time_base=1001/60000:pixel_aspect=1/1:frame_rate=30000/1001,yadif=1,scale=1280:720,setsar=1,fps=60000/1001[vin_1];abuffer=time_bas
+[23:41:18] <blerd> e=1/48000:sample_rate=48000:sample_fmt=fltp:channel_layout=0x3,aresample=48000:async=1,asetnsamples=n=1024[ain_1];[vin_0][ain_0][vin_1][ain_1]concat=n=2:v=1:a=1[outv][outa];[outv]format=pix_fmts=yuv420p,settb=expr=1001/60000,buffersink;[outa]aformat=sample_fmts=fltp:channel_layouts=stereo,asettb=expr=1/48000,abuffersink"
+[23:41:25] <mfwitten> blerd: Well, that's why it would be a good idea to produce a minimal example.
+[23:46:20] <blerd> I didnt change much from the transcode example but I guess I can redo it in C++.
+[23:46:54] <blerd> but that might take a few days
+[23:47:33] <mfwitten> blerd: I doubt that will help. I've not used the programmatic interface like this before. Is this "buffer" filter video source required in that case? For example, there's usually no need for it when using the ffmpeg command-line tool
+[23:48:05] <blerd> yeah have to use it
+[23:49:23] <blerd> in fact that line works in ffmpeg.c if I use the O:v: syntax
+[23:52:22] <mfwitten> blerd: Does your program never complete?
+[23:52:47] <blerd> it completes but the video frames stop after the first clip then its just a still frame
+[23:52:55] <blerd> until audio is done for 2nd fiel
+[23:53:53] <blerd> I haven't found another example online of someone doing concat with audio and video.
+[23:53:59] <blerd> that would help
+[23:55:43] <mfwitten> So, "[vin_0][ain_0]" plays just fine, and then the last frame of "[vin_0]" is left on screen while "[ain_1]" plays, and then the whole video is done?
+[23:55:54] <blerd> yeah
+[23:56:22] <blerd> i'm thinking I need to do something in order to flush the buffer. once first file is done.. but that is just a guess lol
+[23:56:57] <blerd> all that time base filter stuff is because I dont want to have to do the math in code

@@ -1,0 +1,63 @@
+[00:01:22] <headius> Yeah this broke on my pr
+[00:02:01] <headius> enebo PR removes using the frame class because
+[00:02:46] <headius> CRuby only uses cref so I made ours use scope module
+[00:10:12] <enebo[m]> oh I see
+[00:10:59] <enebo[m]> sorry I was trying to find a report where people were doing module.clone() and then setting different values.  It is foggy but I thought the issue was MRI was cloning and making a new cref for the clone
+[00:11:10] <enebo[m]> Maybe I can see evidence in module.clone in MRI source
+[00:12:36] * enebo[m]  < https://libera.ems.host/_matrix/media/r0/download/libera.chat/49163a847561f060fcee3c1c1346e215fdf08893/message.txt >
+[00:12:48] <enebo[m]> maybe rb_single_class_clone_and_attach
+[00:13:08] <enebo[m]> This is constant table and not cref
+[00:13:55] <enebo[m]> This is not what I am looking for but for a module with an autoload it seems you would autoload twice here
+[00:14:13] <enebo[m]> although not if they shared same cref
+[00:14:13] <enebo[m]> which I guess is where you are stuckl
+[00:14:16] <headius> It is just a Class.new though
+[00:14:25] <headius> Yeah you see my conundrum
+[00:14:53] <enebo[m]> yeah I am just trying to see something odd but I do think they may be a case they dup static scope equiv 
+[00:15:07] <headius> Const lookup needs to go to Object but autoload goes to that anon class
+[00:15:29] <headius> So I am missing something about how they each get the target module
+[00:15:52] <headius> The frame does have the right place but I can't use both
+[00:16:24] <headius> I think this worked previously because it always used Object's singleton class
+[00:16:34] <headius> So it looked like it worked but was not on the right module
+[00:19:01] <enebo[m]> looking for cref in MRI so far I only see clone_method making new ones
+[00:27:14] <headius> Look at rb_f_autoload for the Kernel impl
+[00:27:18] <headius> load.c
+[00:29:23] <enebo[m]>     VALUE klass = rb_class_real(rb_vm_cbase());
+[00:29:24] <enebo[m]> hmm
+[00:31:52] <enebo[m]> so I notive autoload_p just uses rb_vm_cbase
+[00:32:07] <enebo[m]> but actual autoload() will get the rb_class_real of that
+[00:37:31] <headius> Yeah I don't know why
+[00:37:37] <headius> Probably because it searched up hierarchy
+[00:37:54] <headius> I made us match and then this other case broke
+[00:53:34] <headius> if my logic for autoload is right then the problem might be in Class.new handling
+[00:53:51] <headius> I just don't see how constants would go to one place and autoload with cbase/cref would go to another
+[00:54:16] <enebo[m]> I am confused by that difference
+[00:54:56] <enebo[m]> So for the actual autoload it goes potentially to some place different to store the constant than when it just sees if it is defined I guess
+[00:55:07] <headius> yes
+[00:55:23] <headius> I confirmed that assigning a constant in that method (via eval) also goes to Object, not to the anon class
+[00:55:31] <headius> but autoloads go to the anon class
+[00:55:39] <headius> 🤷‍♂️
+[00:55:57] <enebo[m]> HAH
+[00:56:23] <enebo[m]> I really don't get this..now unless .new { } somehow gets really funky
+[00:56:35] <enebo[m]> which is why I was looking there originally
+[00:56:52] <headius> yeah I looked at that a bit but I couldn't figure out how it would affect the method, which will have its own frame and scope
+[00:56:57] <enebo[m]> we see autoload_p uses same method
+[00:57:06] <headius> and as far as I know we are doing that right
+[00:57:08] <enebo[m]> err same c call
+[00:57:47] <enebo[m]> rb_vm_cbase is perhaps doing something weird here and not just hitting cref
+[00:57:58] <headius> possibly yes
+[00:58:18] <headius> I don't quite know all of the CRuby frame internals but it looked like it just goes to current frame and gets the cref
+[00:58:18] <enebo[m]>     const rb_control_frame_t *cfp = rb_vm_get_ruby_level_next_cfp(ec, ec->cfp);
+[00:59:09] <enebo[m]> so execution context perhaps is different within class/module.new block
+[00:59:47] <headius> I just don't see how it could be different target for autoload and constant lookup within the body
+[01:00:01] <headius> they are looking for the target differently but I don't see how
+[01:00:50] <enebo[m]> yeah but I am working backwards from the premise they are based on the c method seemingly just calling the same thing so I figure it must be giving a diferent result
+[01:05:05] <headius> constant lookup is buried in the bowels of yarv so I am looking for that
+[01:05:32] <enebo[m]> yeah that is probably a better path than looking at autoload_p
+[01:06:46] <headius> hmm maybe I will ask for help in ruby-core slack
+[01:17:19] <headius> only this one regression spec regressed so this is clearly not tested well... may be undoc behavior or even a bug
+[01:21:35] <headius> I posted something on slack about this
+[01:24:30] <headius> this appears to have changed around 1.9
+[01:24:38] <headius> 1.8.7 behaves like we do on my PR
+[10:54:38] *** Quits: aquijoule__ (~richbridg@213-225-7-126.nat.highway.a1.net) (*.net *.split)
+[10:54:56] *** Joins: aquijoule__ (~richbridg@213-225-7-126.nat.highway.a1.net)
+[22:08:21] *** Joins: GGibson[m] (~mistergib@2001:470:69fc:105::8ddc)

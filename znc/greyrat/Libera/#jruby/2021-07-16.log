@@ -1,0 +1,89 @@
+[00:46:00] *** subbu|lunch is now known as subbu
+[02:09:26] *** Joins: lucf117 (~lucf117@user/lucf117)
+[09:46:25] *** Quits: lucf117 (~lucf117@user/lucf117) (Remote host closed the connection)
+[12:25:38] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 252 seconds)
+[12:25:46] *** Joins: subbu (~subbu@user/subbu)
+[17:48:49] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (*.net *.split)
+[17:54:25] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[19:27:18] <enebo[m]> kares: https://github.com/jruby/jruby/issues/6242#issuecomment-880983097
+[19:28:14] <enebo[m]> Is it possible that an inspect on various packages may still display as Java::Package?
+[19:38:53] <headius> Maybe? I started to try to make packages a bit more normal but they are very tricky
+[19:51:04] <enebo[m]> headius: if you look at my comment after that Java::Package does not think it is_a? Class so I am pretty confused what is happening
+[19:53:36] <enebo[m]> This is almost mor of a curiousity at this point too since I believe superclass on this single Module will not be the only problem we have with sorbet since it binds like 6 other methods but it is so odd I kind of want to figure ito ut
+[19:56:34] <headius> We really need a sort of blank slate module
+[19:56:40] <headius> I will look at issue
+[19:57:12] <enebo[m]> I also think sorbet probably needs some robustness here since any Ruby class can remove any of the methods they assume will exist
+[19:57:24] <enebo[m]> That obviously is a really odd thing to do but it is possible
+[20:14:35] <enebo[m]> lol...sometimes the longer the time I spend on something the more obvious the answer will be once I realize what is up
+[20:14:50] <headius> I just got into the guts of packages, what did you find?
+[20:14:53] <enebo[m]> JavaPackage is actually a class
+[20:15:02] <headius> yeah that was what I suspected from your comments
+[20:15:03] <enebo[m]>         RubyClass superClass = new BlankSlateWrapper(runtime, runtime.getModule(), runtime.getKernel());
+[20:15:03] <enebo[m]>         RubyClass JavaPackage = RubyClass.newClass(runtime, superClass);
+[20:15:03] <enebo[m]>         JavaPackage.setMetaClass(runtime.getModule());
+[20:15:29] <enebo[m]> well yeah but if you print is_a? on Java::JavaPackage with Class it says false
+[20:16:03] <enebo[m]> but not once in srb so perhaps my repro attempt is wrong in some way
+[20:16:54] <enebo[m]> lol
+[20:17:01] <enebo[m]> Java::Package vs Java::JavaPackage
+[20:17:02] <enebo[m]> gah
+[20:17:29] <enebo[m]> bleh that was a huge waste of time
+[20:18:27] <enebo[m]> The oddity of this CLASS still remains that :
+[20:18:29] <enebo[m]> jruby -rjava -e 'p Java::JavaPackage.class'
+[20:18:32] <enebo[m]> -> Module
+[20:18:33] <headius> this stuff goes way back
+[20:18:38] <headius> hah
+[20:18:52] <enebo[m]> This was what sent me down the rabbit hole
+[20:19:03] <enebo[m]> so we make a class but set the metaclass to be module
+[20:19:30] <headius> hmm
+[20:19:42] <enebo[m]> You can see it right above in that snippet :)
+[20:20:12] <enebo[m]> My first debug was to print out the .class value where it blows up..."Module...how the fuck is that happening?"
+[20:21:11] <headius> hmm yeah
+[20:21:24] <enebo[m]> So we made it a class to instantiate it and it will be a BlankSlate but we wanted :: so we made it a module
+[20:21:52] <enebo[m]> well classes would allow that
+[20:21:55] <enebo[m]> hmm
+[20:22:07] <enebo[m]> I wonder what happens if I remove the setMetaClass :)
+[20:22:45] <headius> I am not sure why we need these to be Class instead of Module... I guess because they have a superclass?
+[20:23:10] <enebo[m]> or we use some form of new internally?
+[20:23:25] <enebo[m]> seems like we can make a new module simply enough too though
+[20:24:00] <headius> my initial attempt to improve this was flawed because I tried to use BasicObject, but for :: we need it to be a module or class
+[20:24:10] <headius> switching it to module might work
+[20:28:29] <enebo[m]> Seems like BlankSlateWrapper could be a module and not a class
+[20:29:49] <enebo[m]> actually I guess I see you want the module to be whatever it is but all method delegation to metaclass you want to be a blankslate
+[20:29:58] <headius> making the JavaPackage class into a module gets messy
+[20:30:17] <headius> it is expected to be a RubyClass along several call paths
+[20:31:14] <enebo[m]> yeah this is pretty confusing.  I might for fun just add a hacked superclass to see what breaks next
+[20:31:22] <enebo[m]> I am certain we will hit more method issues
+[20:35:43] <enebo[m]> LOL
+[20:36:28] <enebo[m]> We cannot just add a superclass since this asks for an unbound method off of class but because we mark the packages metaclass as module bind fails because it thinks it is not a class
+[20:40:37] <headius> I still can't see why it needs to be a class other than we propagate instances of it as RubyClass everywhere
+[20:44:43] <enebo[m]> yeah but there has to be some reason :)
+[20:44:56] <headius> dig up Bill Dortch and ask him
+[20:48:00] <enebo[m]> does it go back that far?  I figuer this used to be all in Ruby so this had to be after we started pushing into Java
+[20:48:19] <headius> when it was all in Ruby I don't think we had this functionality
+[20:49:26] <enebo[m]> I thought we could always java.awt.Color as a syntax
+[20:49:27] <headius> hmm looks like this logic in JavaPackage was from kares 
+[20:49:29] <enebo[m]> I think it used to just be a method_missing
+[20:49:47] <headius> I know we added that after I started on the project but I don't remember when
+[20:49:56] <headius> it was not there before
+[20:49:56] <enebo[m]> I see it switch from .inherit to the setMetaClass
+[20:50:27] <enebo[m]> I guess my only point was I thought we had a method_missing version of package in Ruby before we moved to Java
+[20:50:48] <headius> yeah this commit from kares moved the package template from Ruby into Java in 2015
+[20:51:50] <enebo[m]> which would not have had this platypus of a thing
+[20:51:51] <headius> 3f59565851db3f0fbdb442649d3996d6acd000ba
+[20:51:54] <headius> the old template was a module
+[20:52:00] <enebo[m]> you gave me the wrong commit I think
+[20:52:01] <headius> 516fa6b39c6c17be5a844644d2646a848147d248
+[20:52:07] <headius> not sure what that other one was
+[20:54:51] <enebo[m]> so another question I wonder about...is this particular problem just OS picking up this top-level one and choking?
+[20:55:09] <enebo[m]> Like we do not need to expose this publicly to OS if so
+[20:55:59] <enebo[m]> I am pretty sure I have seen packages being processed by srb
+[20:56:37] <headius> I know we have talked about filtering them out of OS when scanning for Class or Module instances
+[20:58:57] <enebo[m]> and I only mean just this one but we could omit all blackslate backed ones
+[20:59:19] <enebo[m]> It is not like someone will sig(SomePackage)
+[20:59:52] <enebo[m]> At least adorning and adding signatures onto a package Moduclass seems like a weird thing to do
+[21:00:01] <enebo[m]> "Moduclass" (tm)
+[21:00:42] <enebo[m]> I will say that it appears these packages are our sole problem with srb
+[22:02:22] *** Joins: lucf117 (~lucf117@user/lucf117)
+[22:43:43] <kares[m]> even before the JavaPackage move to Java I recall the blank-state-wrapper existed prior to that
+[22:44:07] <kares[m]> believe I wanted it to be a Module but than run into issues and so faked a module with a class :)
+[22:44:11] <headius> yeah I didn't think that you introduced that
