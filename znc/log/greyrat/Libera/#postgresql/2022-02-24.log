@@ -1,0 +1,1378 @@
+[00:01:29] *** Joins: zeden (~zeden@user/zeden)
+[00:01:29] *** Quits: ThorMojito (~Adium@modemcable212.77-202-24.mc.videotron.ca) (Quit: Leaving.)
+[00:05:39] *** Joins: ur5us_ (~ur5us@2406:e002:6804:8a01:f026:9131:1160:dcf8)
+[00:05:39] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[00:05:57] *** Joins: jazzy (~jaziz@user/jaziz)
+[00:07:21] *** Quits: ees-mobile (~ees-mobil@pool-108-18-30-46.washdc.fios.verizon.net) (Ping timeout: 256 seconds)
+[00:07:40] *** Quits: BadAdviceCat (~BadAdvice@user/badadvicecat) (Remote host closed the connection)
+[00:08:05] *** Joins: BadAdviceCat (~BadAdvice@user/badadvicecat)
+[00:08:52] *** Quits: rendar (~rendar@user/rendar) (Quit: Leaving)
+[00:09:49] <Yngve> for fear of sounding like an x-y question, but is there some tricks i can use to limit the amount of memory postgres uses to store my resultset? I have a query that generates a rather large resultset, some 900k, and around 40 columns, all aggregates. The query itself isen't that slow, but just watching free mem towards the end of the query run, it quickly eats up all my memory - and kills off my pid with
+[00:09:51] <Yngve> -9 (which i assume is the OOM-killer).
+[00:11:39] *** Joins: Elodin (~elodin@user/elodin)
+[00:11:48] <Yngve> here is an explain from a run that actually succeded; https://explain.depesz.com/s/ykko
+[00:12:33] <mbanck> what is work_mem set to?
+[00:12:35] <kjetilho> you can confirm OOM-killer by looking at dmesg(1).  in any case, `workmem` would be the obvious parameter to tweak.
+[00:12:35] <Yngve> well, it's slightly wider than initally outlined, but you get the idea (I think).
+[00:13:07] <Yngve> mbanck: It was set to 512(!)mb initially, but i reduced it to 64mb
+[00:13:32] <mbanck> and this is what platform/distribution, and Postgres version?
+[00:13:38] <kjetilho> how much RAM does the box have, and how many concurrent queries?
+[00:13:56] <Yngve> kjetilho: this runs in a container, dmesg doesent help much.
+[00:14:08] <kjetilho> ouch.
+[00:14:14] <Yngve> I know.
+[00:14:25] <Yngve> its k8s-patroni
+[00:14:35] <Yngve> has neat things, but also neat headaches
+[00:14:43] <kjetilho> well, what's your pod's resource limit?
+[00:15:02] *** Joins: xenoterracide (~xenoterra@2600:1700:71d4:81f:6e:2be2:8546:ba26)
+[00:15:18] <Yngve> kjetilho: 2 core req, 4 core limit, 14Gb req, 20gb limit
+[00:15:32] <kjetilho> the other big tunable is shared_buffers.  and possibly temp_buffers, but that is seldom set very high.
+[00:16:09] <Yngve> it was set to 768mb, i pulled it way down to 64mb
+[00:16:14] <mbanck> Yngve: how do you execute the query exactly?
+[00:16:41] <mbanck> I mean, is this a prepared query, what driver, what client, is the client in the same container (I guess not)?
+[00:16:45] <Yngve> mbanck: re: version; psql (13.2 (Ubuntu 13.2-1.pgdg18.04+1), server 11.11 (Ubuntu 11.11-1.pgdg18.04+1))
+[00:17:20] <Yngve> mbanck: it usually goes through psycopg2 in a python3 application, but for testing and tuning right now I'm using psql and just feeding it the query
+[00:17:33] <mbanck> and psql runs where?
+[00:17:39] <Yngve> in the container
+[00:17:55] <mbanck> then my guess is psql is eating up the memory getting the resultset
+[00:18:01] <Yngve> not a bad idea
+[00:18:02] <mbanck> try from elesewhere
+[00:18:10] <Yngve> I will, thanks for the input
+[00:18:11] *** Joins: ees-mobile (~ees-mobil@pool-108-18-30-46.washdc.fios.verizon.net)
+[00:21:11] *** Joins: funhouse (~funhouse@user/funhouse)
+[00:26:17] *** Quits: mizi (~mizi@user/mizi) (Ping timeout: 240 seconds)
+[00:28:14] *** Quits: lkw (~lkw@user/lkw) (Remote host closed the connection)
+[00:30:33] *** Joins: Xof (~Xof@157-131-136-66.dedicated.static.sonic.net)
+[00:30:46] <peerce> weird its a v13 psql with a v11 database
+[00:33:12] <azlev> Just checking. What options do I have to replicate a table in a multi-master fashion?
+[00:33:45] *** Joins: NCS_One_ (~NCS_One@bl11-90-133.dsl.telepac.pt)
+[00:34:12] *** Quits: xenoterracide (~xenoterra@2600:1700:71d4:81f:6e:2be2:8546:ba26) (Ping timeout: 240 seconds)
+[00:35:03] *** Quits: funhouse (~funhouse@user/funhouse) (Quit: Client closed)
+[00:35:15] *** Quits: GNUmoon (~GNUmoon@gateway/tor-sasl/gnumoon) (Ping timeout: 240 seconds)
+[00:35:39] *** Quits: NCS_One_ (~NCS_One@bl11-90-133.dsl.telepac.pt) (Client Quit)
+[00:35:56] *** Joins: NCS_One (~NCS_One@bl11-90-133.dsl.telepac.pt)
+[00:39:25] <peerce> azlev; logical replication, or 2ndq/EDB's BDR, but you'll get the great fun of managing data conflicts
+[00:40:19] *** Quits: ufk (~textual@bzq-84-108-89-219.cablep.bezeqint.net) (Quit: My Mac Pro has gone to sleep. ZZZzzz…)
+[00:41:31] *** Joins: ThorMojito (~Adium@modemcable212.77-202-24.mc.videotron.ca)
+[00:42:47] *** Joins: xenoterracide (~xenoterra@2600:1700:71d4:81f:6e:2be2:8546:ba26)
+[00:44:33] *** Joins: test1` (~user@p200300f3a70c0d1cbf84fe8d5a452160.dip0.t-ipconnect.de)
+[00:44:48] *** Quits: test1` (~user@p200300f3a70c0d1cbf84fe8d5a452160.dip0.t-ipconnect.de) (Client Quit)
+[00:44:51] *** Joins: kitsunenokenja (~kitsunech@68.91.220.96)
+[00:45:12] *** Joins: test1` (~user@p200300f3a70c0d1cbf84fe8d5a452160.dip0.t-ipconnect.de)
+[00:53:12] *** Quits: xenoterracide (~xenoterra@2600:1700:71d4:81f:6e:2be2:8546:ba26) (Remote host closed the connection)
+[00:53:25] *** Quits: Junxter (~Junxter@222.95.164.193) (Ping timeout: 240 seconds)
+[00:53:29] *** Joins: xenoterracide (~xenoterra@2600:1700:71d4:81f:6e:2be2:8546:ba26)
+[00:54:26] *** Joins: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de)
+[00:54:30] *** Quits: ThorMojito (~Adium@modemcable212.77-202-24.mc.videotron.ca) (Quit: Leaving.)
+[00:54:42] *** Quits: magla (~gelignite@d5360aa7.access.ecotel.net) (Quit: Stay safe!)
+[00:55:21] *** Quits: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de) (Read error: Connection reset by peer)
+[00:57:30] *** Quits: ponsfrilus (~Thunderbi@adsl-178-39-226-100.adslplus.ch) (Ping timeout: 256 seconds)
+[00:57:43] *** Joins: ponsfrilus (~Thunderbi@vpn-254-056.epfl.ch)
+[01:01:36] *** Joins: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de)
+[01:01:41] *** Quits: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de) (Read error: Connection reset by peer)
+[01:04:00] *** Joins: xenoterracide_ (~xenoterra@99-124-139-34.lightspeed.iplsin.sbcglobal.net)
+[01:04:28] *** Joins: newdimension (~newdimens@user/newdimension)
+[01:06:09] *** Quits: rewrit3 (~rewrit3@user/rewrit3) (Read error: Connection reset by peer)
+[01:06:17] *** Quits: xenoterracide (~xenoterra@2600:1700:71d4:81f:6e:2be2:8546:ba26) (Ping timeout: 240 seconds)
+[01:07:57] *** Joins: Reiner_Unsinn_ (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de)
+[01:09:30] *** Joins: xenoc__ (~xenoterra@2600:1700:71d4:81f:6e:2be2:8546:ba26)
+[01:09:43] *** Quits: Reiner_Unsinn_ (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de) (Read error: Connection reset by peer)
+[01:12:02] *** Quits: xenoterracide_ (~xenoterra@99-124-139-34.lightspeed.iplsin.sbcglobal.net) (Ping timeout: 240 seconds)
+[01:13:39] *** Joins: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de)
+[01:16:35] *** Joins: funhouse (~funhouse@user/funhouse)
+[01:17:29] <azlev> peerce: does logical replication can be 2 ways?
+[01:18:43] *** Quits: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de) (Read error: Connection reset by peer)
+[01:18:48] *** Quits: Teraii (~teraii@juraii-s1-1.teraii.net) (Ping timeout: 252 seconds)
+[01:18:56] <peerce> what are you planning on doing with multi-master ?
+[01:20:55] *** Quits: ees-mobile (~ees-mobil@pool-108-18-30-46.washdc.fios.verizon.net) (Read error: Connection reset by peer)
+[01:20:56] <azlev> peerce: I don't plan, but my boss asked me for alternatives.
+[01:21:13] <azlev> I envision a very painful monster to take care
+[01:21:28] *** Joins: ees-mobile (~ees-mobil@pool-108-18-30-46.washdc.fios.verizon.net)
+[01:21:29] <peerce> alternatives to what?
+[01:22:09] *** Quits: john_johnk (~Thunderbi@232.58.140.77.rev.sfr.net) (Ping timeout: 256 seconds)
+[01:22:34] <azlev> peerce: the problem is the scalability. I proposed shards but they want to study more.
+[01:22:48] *** Joins: Reiner_Unsinn_ (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de)
+[01:22:49] *** Quits: ben_ (~ben@bglloyd.plus.com) (Remote host closed the connection)
+[01:23:25] <Berge> azlev: Scalability for what?
+[01:23:34] *** Quits: Reiner_Unsinn_ (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de) (Read error: Connection reset by peer)
+[01:23:45] <peerce> so you're exceeding the performance capabilities of a beefy modern unix server ?   thats 10s of 1000s of transactions per second from a well architected system
+[01:23:49] *** Quits: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net) (Ping timeout: 240 seconds)
+[01:24:00] <Berge> It's hundreds of thousands, even
+[01:26:49] <azlev> peerce: it's not a well architected system, but it's doing 1000s of transactions per second
+[01:27:00] <Berge> acidsys: Writes?
+[01:27:15] <Berge> Thousands of writes per second should be no match for even a pretty modest box.
+[01:28:54] *** Joins: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de)
+[01:29:07] <peerce> remember, with a multimaster system, each one of those writes has to be replicated across the whole cluster
+[01:30:05] <azlev> Berge: I'm aware of how many transactions I can do in one system, but that's not what I asked. Also, showing alternatives with their drawbacks is a good way to think about a problem
+[01:30:27] <OliverMT> for analytical style queries (towards citusdb), do I need to worry overly about latency? will latency affect COPY based batch inserting to any great degree for example? our app runs in azure norway but citusdb is only supported in west europe.. about 40-60ms latency. Postgres and "high" latency is not a subject I am very familiar with
+[01:30:46] <peerce> alternatives with no metrics or goals are meaningless.    An alternative to multimaster would be to take a walk in the woods on a nice day.
+[01:31:16] <OliverMT> I have more or less decided to go with deploying our analytic batch inserters in our main codebase (in different region) to start with, just curious if that is something I should identify as stupid up front :D
+[01:31:25] <Berge> azlev: Multi-primary is a problem that comes with inherently unsolveable problems, lots of complexity and thus lower reliability
+[01:33:04] *** Joins: GNUmoon (~GNUmoon@gateway/tor-sasl/gnumoon)
+[01:33:17] <OliverMT> if your workload is shardable I'd rather reach for something a bit more battle tested like citusDB which I just mentioned rather than hand rolling your own multi primary system, but considering the vertical scale you can achieve with almost no lead time in both the cloud and most hosting providers its something I would reach for a long way down the road :P
+[01:33:25] *** Quits: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de) (Read error: Connection reset by peer)
+[01:34:02] <peerce> or a $5000 proliant running as a dedicated postgres server
+[01:34:12] <peerce> probably far faster than most any cloud thing
+[01:34:32] <OliverMT> yeah if you have hard requirements then you look at stuff like that
+[01:34:44] <OliverMT> the point was that you can scale to extreme lengths without even preparing to scale these days
+[01:34:56] *** Quits: zer0bitz (~zer0bitz@2001:2003:f74d:b800:b4a7:dec3:a543:4b87) (Ping timeout: 245 seconds)
+[01:35:11] *** Quits: Klinda (~superleag@user/klinda) (Ping timeout: 256 seconds)
+[01:35:24] *** Quits: EvanCarroll (~ecarroll@68-78-105-35.lightspeed.hstntx.sbcglobal.net) (Ping timeout: 240 seconds)
+[01:35:36] *** Joins: Klinda (~superleag@user/klinda)
+[01:35:48] <azlev> peerce: We don't have a datacenter
+[01:35:51] <OliverMT> peerce: since you reached for the HPE proliant as an example, what would you do to stand one up? are there semi-iaas providers like softlayer from ibm that host them or something?
+[01:36:29] <azlev> neither a team capable of managing hardware properly
+[01:36:54] <OliverMT> you can scale to 15TB ram and 212 cpus in azure with almost no lead time :P
+[01:36:54] <peerce> we hosted everything inhouse, i last stood up our dev stack in a rack at a company datacenter cross town
+[01:37:45] <peerce> azlev; sounds like you should outsource your development, too.
+[01:37:48] <OliverMT> from a db perspective your db itself is probably very well managed, but the complexity of everything that is not your db goes up a lot :D
+[01:38:03] *** Quits: xenoc__ (~xenoterra@2600:1700:71d4:81f:6e:2be2:8546:ba26) (Read error: Connection reset by peer)
+[01:39:49] *** Joins: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de)
+[01:40:00] *** Quits: ees-mobile (~ees-mobil@pool-108-18-30-46.washdc.fios.verizon.net) (Ping timeout: 250 seconds)
+[01:40:04] *** Quits: maret (~maret@nat-88-212-37-89.antik.sk) (Quit: maret)
+[01:40:17] *** Quits: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de) (Read error: Connection reset by peer)
+[01:40:22] *** Quits: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk) (Quit: Leaving)
+[01:40:37] <azlev> peerce: I didn't get why you think that everyone should run your own metal and it's the same as software, I think it's a huge extrapolation.
+[01:40:48] *** Joins: ees-mobile (~ees-mobil@pool-108-18-30-46.washdc.fios.verizon.net)
+[01:41:06] *** Quits: BadAdviceCat (~BadAdvice@user/badadvicecat) (Remote host closed the connection)
+[01:41:15] *** Joins: james_lavin (~jameslavi@ool-457981b2.dyn.optonline.net)
+[01:41:31] *** Joins: BadAdviceCat (~BadAdvice@user/badadvicecat)
+[01:41:33] <nbjoerg> azlev: virtualisation comes at a high enough price that in many cases it kills the benefit from using it in first place when you care about load
+[01:42:10] <peerce> and cloudy is almost always virtualized
+[01:42:29] <peerce> shared hardware
+[01:42:41] <dive> I've run postgres on VMs in GCP for a while now, sure it's virtualized, but I get good performance.
+[01:42:49] *** Quits: enoq (~enoq@2a05:1141:1f5:5600:b9c9:721a:599:bfe7) (Quit: enoq)
+[01:43:00] *** Quits: wasutton (~wasutton3@75-46-236-127.lightspeed.tukrga.sbcglobal.net) (Ping timeout: 240 seconds)
+[01:43:15] <dive> used to be disk IO was a limit more than anything on gcp if you didn't want local SSDs
+[01:43:55] <pnorman> I've always found storage latency (not throughput) the biggest limit in the cloud
+[01:44:05] *** Quits: test1` (~user@p200300f3a70c0d1cbf84fe8d5a452160.dip0.t-ipconnect.de) (Ping timeout: 252 seconds)
+[01:44:12] <dive> yeah, google has new "extreme" persistent disks now that you can get much bigger IOPs on
+[01:44:27] <dive> I haven't personally exceeded what I can do with the regular ssds in gcp, but i'm very close.
+[01:44:39] <dive> and that's serving up to 19k qps
+[01:44:56] <azlev> Most of my performance issues tend to be LWLocks and other postgres bottlenecks, not memory or CPU. Again it's an old django application, but it made billions to the company.
+[01:44:58] *** Joins: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de)
+[01:46:03] <azlev> and I'm trying to explore alternatives. Build a datacenter of find collocation aren't in my arrat of possibilities right now
+[01:46:28] <azlev> but thanks
+[01:46:43] <azlev> or find*
+[01:46:50] *** Quits: james_lavin (~jameslavi@ool-457981b2.dyn.optonline.net) (Ping timeout: 272 seconds)
+[01:46:56] <peerce> if this softtware has made you billions, its probably a good idea to take a tiny bit of that and refactor the whole app with an eye towards improving performance and scalability
+[01:46:56] <nbjoerg> how old is your pg version?
+[01:47:36] <azlev> peerce: that's why I'm doing
+[01:47:57] *** Quits: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de) (Read error: Connection reset by peer)
+[01:48:47] *** Quits: Komzpa (~kom@46.216.155.91) (Ping timeout: 256 seconds)
+[01:49:06] *** Joins: ThorMojito (~Adium@modemcable212.77-202-24.mc.videotron.ca)
+[01:49:54] *** Quits: ur5us_ (~ur5us@2406:e002:6804:8a01:f026:9131:1160:dcf8) (Remote host closed the connection)
+[01:50:26] <azlev> nbjoerg: 11
+[01:51:41] <OliverMT> you can host extreme loads on cloud without doing anything with bare metal
+[01:51:58] <OliverMT> and suggestions like the ones from peerce just flat out ignores the complexity of TCO and risk management :P
+[01:52:08] <OliverMT> but it does require you to actually understand the IOPS model on clouds
+[01:52:19] <OliverMT> and GCP has the best disks of them all
+[01:52:35] <OliverMT> GCP regular premium ssd performs almost as good as azure ultra disk
+[01:52:57] *** Quits: shokohsc (~shokohsc@lfbn-idf2-1-1472-129.w92-169.abo.wanadoo.fr) (Quit: Ping timeout (120 seconds))
+[01:53:26] <OliverMT> but azure has native netapp storage, so once you reach the 4TB range, you can go to that as well.. there is always a solution, but not like you can wave a magic wand to get postgres to run well on the cloud
+[01:53:31] <OliverMT> gotta know what your lego pieces do
+[01:54:04] <kjetilho> nice.  I had to take a peek what this is.  https://moneyinc.com/loggi/
+[01:54:05] *** Joins: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de)
+[01:54:10] <nbjoerg> interesting choice of words given the danish pricing scheme ;)
+[01:54:23] *** Joins: Komzpa (~kom@46.216.248.103)
+[01:54:25] *** Joins: shokohsc (~shokohsc@lfbn-idf2-1-1472-129.w92-169.abo.wanadoo.fr)
+[01:54:52] *** Joins: maret (~maret@nat-88-212-37-89.antik.sk)
+[01:54:56] <funhouse> trying to do this query
+[01:55:04] *** Quits: volga629 (~volga629@72.139.93.26) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[01:55:04] <funhouse> UPDATE addresses SET postal_code = 'DD25SD' WHERE postal_code = '' AND addresses.full_addr = '5343 OLE'S COVE RD' AND addresses.city_pcs = 'SUNSHINE COAST';
+[01:55:20] <funhouse> PHP Fatal error:  Uncaught PDOException: SQLSTATE[42601]: Syntax error: 7 ERROR:  syntax error at or near "S"
+[01:55:21] <funhouse> LINE 1: ...al_code = '' AND addresses.full_addr = '5343 OLE\'S COVE RD'...
+[01:55:23] <azlev> kjetilho: what's the point?
+[01:55:36] <funhouse> it wont take apostophes?
+[01:55:44] *** Quits: maret (~maret@nat-88-212-37-89.antik.sk) (Client Quit)
+[01:55:51] <kjetilho> azlev: the point?  it's an interesting company
+[01:55:52] <OliverMT> nbjoerg: haha :D
+[01:56:37] <funhouse> im doing a prepare in pdo
+[01:56:37] *** Quits: ees-mobile (~ees-mobil@pool-108-18-30-46.washdc.fios.verizon.net) (Ping timeout: 240 seconds)
+[01:57:00] <OliverMT> not using parameters, or it would be escaping that '
+[01:57:40] <funhouse> hmm OliverMT thank you, I add addslashes but still happening?
+[01:57:42] <peerce> E'5343 OLE\'S COVE RD'
+[01:57:42] <OliverMT> you need to use $1 and pass the address in through that binding
+[01:57:49] <funhouse> ok bind
+[01:57:56] <peerce> you have to specify E'string' if you use escapes in it
+[01:58:01] <OliverMT> or pdo wont escape / sanitize your sql
+[01:58:05] *** Quits: shokohsc (~shokohsc@lfbn-idf2-1-1472-129.w92-169.abo.wanadoo.fr) (Quit: Ping timeout (120 seconds))
+[01:58:09] <peerce> or yes, MUCH better.
+[01:58:16] <peerce> to use parameters
+[01:58:25] <OliverMT> azlev: what are you hosting this thing on?
+[01:58:47] *** Joins: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net)
+[01:58:58] <azlev> OliverMT: vms in Azure
+[01:59:32] <OliverMT> you cant be remotely close to the vertical scaling limits for IOPS
+[01:59:34] *** Joins: shokohsc (~shokohsc@lfbn-idf2-1-1472-129.w92-169.abo.wanadoo.fr)
+[01:59:41] <OliverMT> at just a few thousand tps
+[01:59:50] *** Quits: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de) (Read error: Connection reset by peer)
+[02:00:14] *** Joins: ees-mobile (~ees-mobil@pool-108-18-30-46.washdc.fios.verizon.net)
+[02:00:21] <azlev> If you are interested in my real problem, it is read-after-write. Because of this I need replicas with synchronous_commit = 'remote_apply'. We are figuring out how to start to isolate such code
+[02:00:50] <azlev> multi-master is an alternative here? I dunno, but sure metal isnt
+[02:01:06] <dive> multi-master is the wrong solution to the problem imo
+[02:01:11] *** Joins: quazimodo (~quazimodo@n110-21-88-214.bla2.nsw.optusnet.com.au)
+[02:01:35] <azlev> dive: while I agree, it's part of the design documentation show such thinkings
+[02:01:49] <azlev> "Alternatives considered"
+[02:01:52] <kjetilho> azlev: can you separate out some traffic, e.g., apps status updates, which doesn't have to be fully up-to-date?  or do you do that already?
+[02:02:26] <azlev> kjetilho: done already
+[02:02:28] <OliverMT> are you using the paas or vms? azlev
+[02:02:29] <kjetilho> ok
+[02:03:11] <azlev> vms. DBaaS in Azure is far from ideal. We cant even spin read replicas in postgres 13
+[02:03:37] <OliverMT> yeah they messed up a bit on delaying flexible server for so long and then releasing it gimped
+[02:03:54] <OliverMT> you will get psql13 with replica support very soon though, and fwiw you can set it up manually even with the dbaas
+[02:03:58] <OliverMT> but its capped at 18k IOPS too
+[02:04:48] *** Joins: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de)
+[02:04:52] *** Quits: ThorMojito (~Adium@modemcable212.77-202-24.mc.videotron.ca) (Quit: Leaving.)
+[02:04:55] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[02:05:03] <OliverMT> I'd still try to shard this on the application level before starting to solve multi master though :P
+[02:05:29] <azlev> OliverMT: indeed, I prefer that approach too
+[02:05:30] <OliverMT> unless you truly need complete table wide read after write that cant live in some kind of separated isolation
+[02:05:41] *** Quits: zeden (~zeden@user/zeden) (Quit: WeeChat 3.4)
+[02:05:59] *** Quits: manti7 (~manti7@176.10.104.94) (Quit: WeeChat 3.3)
+[02:07:27] *** Joins: EvanCarroll (~ecarroll@198-0-91-126-static.hfc.comcastbusiness.net)
+[02:08:37] *** Quits: Komzpa (~kom@46.216.248.103) (Ping timeout: 240 seconds)
+[02:08:47] *** Joins: Komzpa (~kom@46.216.112.41)
+[02:08:49] *** Quits: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de) (Client Quit)
+[02:09:25] *** Joins: ano (~ano@user/ano)
+[02:09:55] *** Joins: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de)
+[02:10:32] *** Joins: maret (~maret@nat-88-212-37-89.antik.sk)
+[02:11:16] *** Joins: Atque (~Atque@user/atque)
+[02:11:21] *** Quits: maret (~maret@nat-88-212-37-89.antik.sk) (Client Quit)
+[02:12:07] *** Joins: james_lavin (~jameslavi@ool-457981b2.dyn.optonline.net)
+[02:13:09] *** Joins: gambl0re (~gambl0re@2607:fea8:a59f:c360::78dd)
+[02:15:17] *** Joins: wasutton (~wasutton3@75-46-236-127.lightspeed.tukrga.sbcglobal.net)
+[02:15:17] *** Quits: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de) (Read error: Connection reset by peer)
+[02:16:00] <ano> what's the best practice to access local db in/from backend src? plain text password in connection string doesn't look like a great idea, not sure about unix_socket_group='backend_grp', access tokens?
+[02:17:03] <nbjoerg> peer authentication
+[02:17:08] <nbjoerg> ?
+[02:17:18] *** Quits: Simplar (~Simplar@188.163.93.241) (Quit: Going offline, see ya! (www.adiirc.com))
+[02:17:32] <ano> >unix_socket_group='backend_grp'
+[02:20:47] *** Joins: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de)
+[02:21:16] *** Quits: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de) (Read error: Connection reset by peer)
+[02:22:34] <nbjoerg> ano: that's just the owner of the pg socket
+[02:23:52] *** Quits: mowcat (~mowcat@2a00:23c5:d190:1901:f22f:74ff:fe77:1e1c) (Remote host closed the connection)
+[02:26:41] *** Joins: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de)
+[02:27:08] *** Quits: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de) (Read error: Connection reset by peer)
+[02:30:17] <ano> y but it should be set to backend usr primary grp while unix_socket_permissions = 0770 if understand correctly, don't want to expose socket to anyone, also in my case backend usr is uwsgi so any uwsgi app can access any db because with auth method peer and uwsgi dbroot map while uwsgi apps run as uwsgi
+[02:30:18] *** Quits: fcr (~fran@r167-60-28-161.dialup.adsl.anteldata.net.uy) (Read error: Connection reset by peer)
+[02:31:33] <ano> so i expose all dbs to all apps in this case
+[02:31:37] <nbjoerg> you can run the uwsgi apps as different users
+[02:31:52] *** Joins: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de)
+[02:31:54] <nbjoerg> ...which you should likely be doing anyway if you care about isolation
+[02:32:32] <nbjoerg> restricting access to the socket likely doesn't buy you that much in terms of security, though pre-auth bugs can happen of course
+[02:33:00] <ano> nbjoerg: it will be sort of permission/selinux/systemd hell while httpd should have access to uwsgi socket etc
+[02:33:50] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[02:34:01] <nbjoerg> put httpd into a group and make the uwsgi sockets accessible to that group
+[02:35:14] *** Joins: B-| (~Unknown@93.186.210.16)
+[02:35:36] <ano> is there a way to create sort of "restricted" socket, per db etc? would be rly nice
+[02:36:09] *** Joins: maret (~maret@nat-88-212-37-89.antik.sk)
+[02:36:15] *** Quits: Haudegen (~quassel@178.115.237.87.static.drei.at) (Read error: Connection reset by peer)
+[02:36:16] <B-|> is it possible to return the result of a window function separately from the rows
+[02:36:27] <peerce> ano; um, pg_hba.conf lets you manage source addressses, database and usernames.
+[02:36:44] <B-|> returning identical values in all rows seems off
+[02:36:56] <peerce> like,   HOST   somedb  someuser  192.168.0.100/32  shascram
+[02:37:15] <peerce> ano; otherwise, I'm not sure what you mean by a 'restricted socket'
+[02:37:31] <peerce> each socket connection to the pg server can only access the database as the role that was authenticated
+[02:39:00] <peerce> B-| a query can only return a result set of N rows of M named fields where each field has a specified type
+[02:39:29] *** Joins: Teraii (~teraii@185.219.206.44)
+[02:40:23] *** Joins: Haudegen (~quassel@178.115.237.87.static.drei.at)
+[02:40:57] *** Joins: fcr (~fran@r167-60-68-118.dialup.adsl.anteldata.net.uy)
+[02:41:15] *** Quits: GNUmoon (~GNUmoon@gateway/tor-sasl/gnumoon) (Ping timeout: 240 seconds)
+[02:41:32] *** Quits: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de) (Ping timeout: 250 seconds)
+[02:46:24] <B-|> peerce: thanks
+[02:53:57] *** Joins: GNUmoon (~GNUmoon@gateway/tor-sasl/gnumoon)
+[02:54:56] *** Quits: shka (~herr@109.231.3.55) (Ping timeout: 245 seconds)
+[02:57:14] *** Quits: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net) (Ping timeout: 260 seconds)
+[02:57:45] <ano> nbjoerg: uwsgi in emperor mode and set vassals owner/group via libcap setgid,setuid, so vassals always will be run as uwsgi:httpd, they are isolated via chroot per app, only way i see for now postgresql instance with unix_socket_directories per app
+[02:59:31] <ano> but postgresql instance per app look like a total overkill
+[03:00:06] *** Quits: jmarsac (~jmarsac@2a01:cb1d:1f5:ca00:4d9b:d806:652d:f6d8) (Read error: Connection reset by peer)
+[03:01:45] *** Quits: maret (~maret@nat-88-212-37-89.antik.sk) (Quit: maret)
+[03:05:17] *** Quits: cliluw (~cliluw@47.147.77.43) (Ping timeout: 256 seconds)
+[03:05:50] *** Joins: cliluw (~cliluw@47.147.77.43)
+[03:06:39] *** Joins: velix (~velix@user/velix)
+[03:06:55] <velix> Meh... I need a subquery for this, don't I?  array_agg(DISTINCT (contributor) contributor ORDER BY score DESC)
+[03:08:27] *** Quits: palasso (~palasso@user/palasso) (Remote host closed the connection)
+[03:12:58] *** Quits: gp5st (~gp5st@pool-72-77-44-213.pitbpa.fios.verizon.net) (Ping timeout: 272 seconds)
+[03:14:28] *** Joins: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net)
+[03:15:59] *** Quits: B-| (~Unknown@93.186.210.16) (Quit: leaving)
+[03:16:18] *** Quits: funhouse (~funhouse@user/funhouse) (Quit: Client closed)
+[03:17:11] *** Quits: Guest6792 (~vit@chello085216193138.chello.sk) (Ping timeout: 256 seconds)
+[03:21:15] <velix> ah, I'm just calculating the sum for the score. That also works.
+[03:21:16] <velix> Thanks
+[03:22:57] *** Quits: ponsfrilus (~Thunderbi@vpn-254-056.epfl.ch) (Ping timeout: 240 seconds)
+[03:26:18] *** Quits: NCS_One (~NCS_One@bl11-90-133.dsl.telepac.pt) (Quit: Lost terminal)
+[03:29:12] *** Quits: Haudegen (~quassel@178.115.237.87.static.drei.at) (Ping timeout: 250 seconds)
+[03:31:20] *** Quits: martti (~martti@46-126-48-136.dynamic.hispeed.ch) (Ping timeout: 272 seconds)
+[03:35:52] *** Joins: ThorMojito (~Adium@modemcable212.77-202-24.mc.videotron.ca)
+[03:36:15] *** Joins: volga629 (~volga629@72.139.93.26)
+[03:40:01] *** Quits: hoppity (~hoppity@user/hoppity) (Remote host closed the connection)
+[03:41:58] *** Quits: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp) (Quit: ncwbqcfe)
+[03:46:00] *** Quits: Klinda (~superleag@user/klinda) (Quit: Konversation terminated!)
+[03:46:55] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[03:47:48] *** Quits: Kohe (~Kohe@77.49.10.102.dsl.dyn.forthnet.gr) (Ping timeout: 240 seconds)
+[03:53:23] *** Quits: ThorMojito (~Adium@modemcable212.77-202-24.mc.videotron.ca) (Quit: Leaving.)
+[03:54:45] *** Quits: Dragoon (~Dragoon@user/dragoon) (Ping timeout: 250 seconds)
+[04:03:20] *** Quits: pedja (~pedja@user/deus-ex/x-7934090) (Quit: Leaving)
+[04:04:54] *** Quits: EvanCarroll (~ecarroll@198-0-91-126-static.hfc.comcastbusiness.net) (Ping timeout: 260 seconds)
+[04:08:04] *** Joins: tozhu (~tozhu@180.168.6.186)
+[04:08:05] *** Joins: held (~heldchen@user/held)
+[04:09:01] *** Joins: Dragoon (~Dragoon@user/dragoon)
+[04:10:29] *** Joins: zachxz (~zachary@124.133.18.218)
+[04:11:16] *** Joins: zeden (~zeden@user/zeden)
+[04:11:28] *** Quits: Dragoon (~Dragoon@user/dragoon) (Read error: Connection reset by peer)
+[04:12:03] *** Quits: volga629 (~volga629@72.139.93.26) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[04:12:22] *** Quits: heldchen (~heldchen@user/held) (Ping timeout: 260 seconds)
+[04:14:18] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[04:16:10] *** Joins: EvanCarroll (~ecarroll@50.222.187.218)
+[04:17:02] *** Quits: Tenchi (~Tenchi@user/tenchi) (Quit: Textual IRC Client: www.textualapp.com)
+[04:17:22] *** Joins: Tenchi (~Tenchi@user/tenchi)
+[04:18:35] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[04:20:18] *** Quits: asmodai (~asmodai@31-151-100-72.dynamic.upc.nl) (Ping timeout: 252 seconds)
+[04:20:44] *** Quits: EvanCarroll (~ecarroll@50.222.187.218) (Ping timeout: 272 seconds)
+[04:21:09] *** Joins: EvanCarroll (~ecarroll@50.222.187.218)
+[04:21:32] *** Joins: tdwybrv^ (~tdwybrv@50-202-219-146-static.hfc.comcastbusiness.net)
+[04:21:54] *** Shells is now known as Michelle
+[04:22:38] *** Quits: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net) (Ping timeout: 272 seconds)
+[04:24:16] *** Joins: randir_ (~randir@85.249.36.97)
+[04:24:32] *** Quits: randir (~randir@2.92.196.208) (Ping timeout: 272 seconds)
+[04:25:40] *** Joins: chenxuezhao (~chenxuezh@106.39.157.10)
+[04:26:36] *** Quits: gambl0re (~gambl0re@2607:fea8:a59f:c360::78dd) (Ping timeout: 245 seconds)
+[04:29:09] *** Quits: quazimodo (~quazimodo@n110-21-88-214.bla2.nsw.optusnet.com.au) (Ping timeout: 256 seconds)
+[04:29:41] *** Joins: richard_h (~richard@2406:e001:8:a900:6e62:6dff:fe05:ae29)
+[04:29:46] *** Joins: Dragoon (~Dragoon@user/dragoon)
+[04:30:52] *** Quits: chenxuezhao (~chenxuezh@106.39.157.10) ()
+[04:33:01] *** Joins: asmodai (~asmodai@31-151-100-72.dynamic.upc.nl)
+[04:33:56] *** Quits: richard_h (~richard@2406:e001:8:a900:6e62:6dff:fe05:ae29) (Client Quit)
+[04:35:32] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[04:41:20] *** Quits: MrZeus (~MrZeus@185.248.85.38) (Ping timeout: 256 seconds)
+[04:43:47] *** Quits: bsliger (~bsliger@ip68-97-47-19.ok.ok.cox.net) (Quit: Unexpected signal 11)
+[04:51:22] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Remote host closed the connection)
+[04:53:18] *** Quits: Caerus (~Caerus@170.246.157.60) (Quit: Leaving)
+[04:53:52] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[04:58:37] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Ping timeout: 256 seconds)
+[04:59:59] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[05:01:34] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Remote host closed the connection)
+[05:03:10] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[05:08:46] *** Joins: ThorMojito (~Adium@modemcable212.77-202-24.mc.videotron.ca)
+[05:08:52] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Ping timeout: 272 seconds)
+[05:11:22] *** Quits: sreve (~quassel@p549d70eb.dip0.t-ipconnect.de) (Quit: No Ping reply in 180 seconds.)
+[05:12:06] *** Quits: ThorMojito (~Adium@modemcable212.77-202-24.mc.videotron.ca) (Client Quit)
+[05:12:32] *** Joins: sreve (~quassel@p549d70eb.dip0.t-ipconnect.de)
+[05:13:04] *** Quits: EvanCarroll (~ecarroll@50.222.187.218) (Ping timeout: 256 seconds)
+[05:14:00] *** Joins: EvanCarroll (~ecarroll@50.222.187.218)
+[05:18:17] *** Quits: peteyboy1 (~peteyboy1@95.169.226.66) (Remote host closed the connection)
+[05:18:40] *** Joins: peteyboy1 (~peteyboy1@95.169.226.66)
+[05:19:35] *** Quits: EvanCarroll (~ecarroll@50.222.187.218) (Ping timeout: 256 seconds)
+[05:20:16] *** Quits: Warped (~Warped@user/warped) (Read error: Connection reset by peer)
+[05:20:42] *** Joins: Warped (~Warped@user/warped)
+[05:20:50] *** Quits: aremaref (~aremaref@107-198-1-161.lightspeed.irvnca.sbcglobal.net) (Read error: Connection reset by peer)
+[05:20:58] *** Quits: tdwybrv^ (~tdwybrv@50-202-219-146-static.hfc.comcastbusiness.net) (Remote host closed the connection)
+[05:21:04] *** Joins: aremaref (~aremaref@160.72.16.74)
+[05:21:33] *** Joins: richard_h (~richard@2406:e001:8:a900:6e62:6dff:fe05:ae29)
+[05:21:50] *** Quits: SamM (~SamM@69.215.61.130) (Quit: Ping timeout (120 seconds))
+[05:22:03] *** Quits: phx (~phoemix@marvin.harmless.hu) (Read error: Connection reset by peer)
+[05:22:09] *** Joins: SamM (~SamM@69.215.61.130)
+[05:22:17] *** Joins: phx (~phoemix@marvin.harmless.hu)
+[05:22:25] *** Quits: op2 (~op2@user/op2) (Ping timeout: 256 seconds)
+[05:22:40] *** Quits: kyshoc (~kyshoc@user/kyshoc) (Quit: ZNC 1.8.2 - https://znc.in)
+[05:22:54] *** Joins: kyshoc (~kyshoc@adsl-99-93-208-248.dsl.mtry01.sbcglobal.net)
+[05:22:54] *** Quits: kyshoc (~kyshoc@adsl-99-93-208-248.dsl.mtry01.sbcglobal.net) (Changing host)
+[05:22:54] *** Joins: kyshoc (~kyshoc@user/kyshoc)
+[05:23:10] *** Quits: peteyboy1 (~peteyboy1@95.169.226.66) (Ping timeout: 250 seconds)
+[05:24:41] *** Quits: buu (~buu@70-142-48-147.lightspeed.austtx.sbcglobal.net) (Ping timeout: 256 seconds)
+[05:25:23] *** Joins: EvanCarroll (~ecarroll@50.222.187.218)
+[05:25:28] *** Joins: buu (~buu@70-142-48-147.lightspeed.austtx.sbcglobal.net)
+[05:25:44] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Ping timeout: 252 seconds)
+[05:30:06] *** Quits: tozhu (~tozhu@180.168.6.186) (Quit: tozhu)
+[05:30:06] *** Joins: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net)
+[05:31:12] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[05:32:37] *** Quits: indy (~indy@dsl-static-104.213-160-167.telecom.sk) (Ping timeout: 256 seconds)
+[05:34:50] *** Quits: aremaref (~aremaref@160.72.16.74) (Ping timeout: 272 seconds)
+[05:35:21] *** Quits: EvanCarroll (~ecarroll@50.222.187.218) (Ping timeout: 245 seconds)
+[05:36:26] *** Joins: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp)
+[05:36:52] *** Quits: f3f3lix (~weechat@55d410a1.access.ecotel.net) (Ping timeout: 256 seconds)
+[05:37:13] *** Joins: EvanCarroll (~ecarroll@172.58.103.163)
+[05:38:20] *** Quits: ephemer0l (~ephemer0l@organizedmagnetism.com) (Ping timeout: 250 seconds)
+[05:38:49] *** Joins: f3f3lix (~weechat@55d4a96a.access.ecotel.net)
+[05:41:15] *** Joins: gambl0re (~gambl0re@2607:fea8:a59f:c360::78dd)
+[05:41:35] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[05:43:04] *** Quits: mahlon (~mahlon@martini.nu) (Ping timeout: 272 seconds)
+[05:44:48] *** Joins: indy (~indy@dsl-static-104.213-160-167.telecom.sk)
+[05:45:56] *** Quits: Su-Shee (~Susanne@p4ffc7ff3.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[05:47:29] *** Joins: Su-Shee (~Susanne@p508945cf.dip0.t-ipconnect.de)
+[05:48:26] *** Joins: fstd_ (~fstd@xdsl-78-34-125-135.nc.de)
+[05:51:57] *** Quits: fstd (~fstd@xdsl-81-173-174-103.nc.de) (Ping timeout: 272 seconds)
+[05:53:26] *** Joins: zlinux[] (~zlinux@142.247.1.92)
+[05:53:41] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[05:56:22] *** Quits: EvanCarroll (~ecarroll@172.58.103.163) (Ping timeout: 272 seconds)
+[05:56:38] *** Joins: EvanCarroll (~ecarroll@172.58.103.163)
+[05:57:38] *** Quits: tehenderz (~tehenderz@ti0018a400-8534.bb.online.no) (Ping timeout: 272 seconds)
+[05:57:57] *** Joins: tehenderz (~tehenderz@ti0018a400-8193.bb.online.no)
+[06:01:00] *** Quits: n0fun_ (~jack@i577BC0E4.versanet.de) (Ping timeout: 240 seconds)
+[06:02:30] *** Quits: Atque (~Atque@user/atque) (Quit: ...)
+[06:07:29] *** Joins: volga629 (~volga629@72.139.93.26)
+[06:08:55] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[06:10:03] *** Quits: fordfrog (~fordfrog@gentoo/developer/fordfrog) (Quit: Leaving)
+[06:12:58] *** Joins: quazimodo (~quazimodo@n110-21-88-214.bla2.nsw.optusnet.com.au)
+[06:16:16] *** Joins: Atque (~Atque@user/atque)
+[06:18:38] *** Quits: volga629 (~volga629@72.139.93.26) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[06:19:36] *** Joins: Guest3215 (~Thunderbi@p10605177-ipngn25001marunouchi.tokyo.ocn.ne.jp)
+[06:22:51] *** Quits: Xof (~Xof@157-131-136-66.dedicated.static.sonic.net) (Quit: Bye.)
+[06:23:54] *** Quits: Guest3215 (~Thunderbi@p10605177-ipngn25001marunouchi.tokyo.ocn.ne.jp) (Ping timeout: 256 seconds)
+[06:24:11] *** Quits: pg_docbot (~docbot_li@donatu.postgresql.org) (Ping timeout: 256 seconds)
+[06:25:03] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[06:25:56] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Remote host closed the connection)
+[06:26:49] *** Joins: jhammerman (~joe.hamme@98.246.188.6)
+[06:27:25] *** Joins: shiranaihito (~textual@2001-b011-4011-1b52-3ca4-3c57-3d91-03c0.dynamic-ip6.hinet.net)
+[06:27:41] <jhammerman> Hi #postgresql, does anyone know of a method to identify rarely queried columns or rows in a statistical manner?
+[06:28:29] <jhammerman> I’m interested in general methods or tools for identifying “cold” data
+[06:31:11] *** Quits: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net) (Ping timeout: 245 seconds)
+[06:37:46] *** Joins: pg_docbot (~docbot_li@donatu.postgresql.org)
+[06:39:02] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[06:41:45] *** Quits: zeden (~zeden@user/zeden) (Quit: WeeChat 3.4)
+[06:43:51] *** Joins: volga629 (~volga629@72.139.93.26)
+[06:44:16] *** Quits: indy (~indy@dsl-static-104.213-160-167.telecom.sk) (Quit: ZNC 1.8.2 - https://znc.in)
+[06:46:21] *** Quits: jhammerman (~joe.hamme@98.246.188.6) (Quit: jhammerman)
+[06:48:18] *** Quits: mrgz (~mrgz@201-42-0-191.dsl.telesp.net.br) (Ping timeout: 272 seconds)
+[06:49:26] *** Joins: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net)
+[06:53:11] *** Joins: ThorMojito (~Adium@modemcable212.77-202-24.mc.videotron.ca)
+[06:53:12] *** Quits: EvanCarroll (~ecarroll@172.58.103.163) (Read error: Connection reset by peer)
+[06:57:16] *** Quits: ThorMojito (~Adium@modemcable212.77-202-24.mc.videotron.ca) (Client Quit)
+[06:57:21] *** Joins: EvanCarroll (~ecarroll@68-78-105-35.lightspeed.hstntx.sbcglobal.net)
+[06:57:48] *** Quits: Vacuity (~Vacuity@user/vovo) (Ping timeout: 240 seconds)
+[06:59:37] *** Joins: Vacuity (~Vacuity@user/vovo)
+[07:01:12] *** Joins: Maxattax97 (~max@2603:900a:1501:a7ca::77a)
+[07:03:24] *** Quits: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp) (Quit: ncwbqcfe)
+[07:07:35] *** Joins: Emet-Selch (~haise01@user/haise01)
+[07:10:37] *** Quits: Azem (~haise01@user/haise01) (Ping timeout: 240 seconds)
+[07:13:24] *** Joins: carragom (~textual@201.204.94.76)
+[07:15:01] *** Quits: maciek_ (~maciek@2600:1700:a412:1c00:9a12:9521:252d:be58) (Ping timeout: 240 seconds)
+[07:18:18] * davidfetter stifles a terrible comment about a thermometer
+[07:19:21] *** Quits: ees-mobile (~ees-mobil@pool-108-18-30-46.washdc.fios.verizon.net) (Read error: Connection reset by peer)
+[07:20:20] <davidfetter> oops. they left.
+[07:28:02] <Darius> no need to stifle the comment then!
+[07:35:26] <davidfetter> It's actually an interesting question. even if you have access to all the issued queries, it's a long leap (or could be) from there to "this column in this row has not been read since it was written."
+[07:36:29] *** Joins: ees-mobile (~ees-mobil@pool-108-18-30-46.washdc.fios.verizon.net)
+[07:37:15] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[07:40:46] *** Quits: sreve (~quassel@p549d70eb.dip0.t-ipconnect.de) (Ping timeout: 245 seconds)
+[07:41:14] *** Joins: sreve (~quassel@p4ff44f33.dip0.t-ipconnect.de)
+[07:42:23] *** Quits: g2anj (~v@58.228.230.4) (Ping timeout: 256 seconds)
+[07:43:15] *** Joins: g2anj (~v@58.228.230.4)
+[07:48:57] *** Quits: tehenderz (~tehenderz@ti0018a400-8193.bb.online.no) (Ping timeout: 256 seconds)
+[07:49:07] *** Joins: tehenderz (~tehenderz@ti0018a400-8358.bb.online.no)
+[07:50:55] *** Joins: indy (~indy@dsl-static-104.213-160-167.telecom.sk)
+[07:54:57] *** Joins: maciek_ (~maciek@2600:1700:a412:1c00:20ac:87b9:9d89:79ca)
+[07:57:34] <peerce> davidfetter; indeed, analyzing that would probably require a larger database for the audit data than the database you're analyzing
+[07:58:13] *** Joins: ephemer0l (~ephemer0l@organizedmagnetism.com)
+[07:59:59] *** Quits: Maxattax97 (~max@2603:900a:1501:a7ca::77a) (Read error: Connection reset by peer)
+[08:07:17] *** Quits: maciek_ (~maciek@2600:1700:a412:1c00:20ac:87b9:9d89:79ca) (Ping timeout: 240 seconds)
+[08:08:19] *** Quits: BadAdviceCat (~BadAdvice@user/badadvicecat) (Remote host closed the connection)
+[08:08:44] *** Joins: BadAdviceCat (~BadAdvice@user/badadvicecat)
+[08:22:18] *** Joins: test1` (~user@p200300f3a70c0d66716e674eb594b861.dip0.t-ipconnect.de)
+[08:36:49] *** Joins: Haudegen (~quassel@178.115.237.87.static.drei.at)
+[08:37:44] *** Quits: sreve (~quassel@p4ff44f33.dip0.t-ipconnect.de) (Quit: No Ping reply in 180 seconds.)
+[08:38:53] *** Joins: sreve (~quassel@p4ff44f33.dip0.t-ipconnect.de)
+[08:42:12] *** Quits: Atque (~Atque@user/atque) (Remote host closed the connection)
+[08:42:32] *** Quits: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net) (Ping timeout: 240 seconds)
+[08:42:53] *** Joins: Atque (~Atque@user/atque)
+[08:43:30] *** Quits: Starfoxxes (~Starfoxxe@2a02:8070:5390:d00:12bf:48ff:feb8:38c8) (Ping timeout: 260 seconds)
+[08:44:02] *** Joins: Starfoxxes (~Starfoxxe@2a02:8070:5390:d00:12bf:48ff:feb8:38c8)
+[08:44:36] *** Quits: lechner (~lechner@debian/lechner) (Ping timeout: 240 seconds)
+[08:45:21] *** Quits: karabaja4 (~karabaja4@dh207-93-84.xnet.hr) (Remote host closed the connection)
+[08:45:41] *** Joins: stairmast0r (~stairmast@user/stairmast0r)
+[08:47:18] *** Joins: lechner (~lechner@debian/lechner)
+[08:48:40] <stairmast0r> hey guys, noob here -- how would you update a column only if it's currently unset/null/empty/whatever?
+[08:50:11] <stairmast0r> i'm toggling a bool but only want to set the timestamp column the first time it's toggled
+[09:01:01] *** Joins: Kohe (~Kohe@77.49.10.102.dsl.dyn.forthnet.gr)
+[09:02:32] *** Joins: shiranaihito_ (~textual@2001-b011-4011-1ed6-8cf5-6121-46cd-4b7b.dynamic-ip6.hinet.net)
+[09:03:01] <peerce> what do you want to update this column too?
+[09:03:14] <stairmast0r> current_timestamp
+[09:03:53] <peerce> UPDATE tablename SET col=value WHERE somecol IS NULL;   or WHERE somebool IS FALSE;   or whatever.
+[09:04:20] <stairmast0r> ahhh that makes sense, thank you
+[09:05:39] *** Quits: shiranaihito (~textual@2001-b011-4011-1b52-3ca4-3c57-3d91-03c0.dynamic-ip6.hinet.net) (Ping timeout: 250 seconds)
+[09:07:17] *** Joins: Guest6792 (~vit@chello085216193138.chello.sk)
+[09:07:43] *** Joins: ba|ch (~user@p200300f3a70c0d6680825c04a3622dd5.dip0.t-ipconnect.de)
+[09:08:47] *** Joins: mahlon (~mahlon@martini.nu)
+[09:11:21] *** Joins: mexen (uid495612@user/mexen)
+[09:13:40] <brekken> How can I "map" a jsonb[] column, changing the values with a function? It's currently array['{"k":"val"}'::jsonb, '{"k":"val2"}'::jsonb] and I'd like to update each element using my function myfunc(jsonb)
+[09:14:25] *** Joins: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de)
+[09:25:20] *** Quits: shiranaihito_ (~textual@2001-b011-4011-1ed6-8cf5-6121-46cd-4b7b.dynamic-ip6.hinet.net) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[09:26:43] <peerce> why is that a sql array of jsons instead of a json(b) array ?
+[09:26:52] <peerce> thats an odd mix of metaphors.
+[09:27:18] <peerce> does each array element always have a key "k" with various values, or is the key differing too ?
+[09:28:05] <peerce> your function would loop through the sql array, then do whatever you want with the json values in each array element, and build a new sql array with the updated json values.
+[09:31:22] <peerce> I suppose you could do something like,  select array_agg(myfunc(jj.j)) from unnest(arrayofjsonfield) as jj(j)
+[09:32:30] *** Quits: gambl0re (~gambl0re@2607:fea8:a59f:c360::78dd) (Ping timeout: 260 seconds)
+[09:37:39] *** Joins: gambl0re (~gambl0re@2607:fea8:a59f:c360::78dd)
+[09:39:08] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[09:39:10] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Remote host closed the connection)
+[09:39:15] *** Quits: jlc (~jlc@cpe-107-15-173-212.nc.res.rr.com) (Ping timeout: 250 seconds)
+[09:39:55] *** Joins: pvn1 (~Adium@85-195-230-32.fiber7.init7.net)
+[09:40:34] *** Joins: jlc (~jlc@cpe-107-15-173-212.nc.res.rr.com)
+[09:49:02] *** Quits: Reiner_Unsinn (~quassel@ip-092-050-086-254.um29.pools.vodafone-ip.de) (Ping timeout: 256 seconds)
+[09:49:02] *** Quits: stairmast0r (~stairmast@user/stairmast0r) (Ping timeout: 256 seconds)
+[09:51:11] *** Quits: james_lavin (~jameslavi@ool-457981b2.dyn.optonline.net) (Ping timeout: 245 seconds)
+[09:52:12] *** Joins: shiranaihito (~textual@61-64-208-160-adsl-tpe.dynamic.so-net.net.tw)
+[09:52:27] *** Quits: richard_h (~richard@2406:e001:8:a900:6e62:6dff:fe05:ae29) (Quit: Leaving.)
+[09:52:27] *** Quits: shiranaihito (~textual@61-64-208-160-adsl-tpe.dynamic.so-net.net.tw) (Read error: Connection reset by peer)
+[09:52:42] *** Quits: iliv (~iliv@user/iliv) (Quit: "<paniq> you know when i walk out the door, there is plenty of stupid people. i open irc, there is plenty of intelligent people. so the choice comes easy.")
+[09:52:50] *** Joins: shiranaihito (~textual@61-64-208-160-adsl-tpe.dynamic.so-net.net.tw)
+[09:53:29] *** Joins: richard_h (~richard@2406:e001:8:a900:6e62:6dff:fe05:ae29)
+[09:54:05] *** Joins: tozhu (~tozhu@101.84.180.251)
+[09:57:28] *** Joins: stairmast0r (~stairmast@user/stairmast0r)
+[10:01:00] *** Quits: lechner (~lechner@debian/lechner) (Ping timeout: 240 seconds)
+[10:01:15] *** Quits: GNUmoon (~GNUmoon@gateway/tor-sasl/gnumoon) (Ping timeout: 240 seconds)
+[10:03:46] *** Joins: lechner (~lechner@debian/lechner)
+[10:04:26] *** Joins: darutoko (~darutoko@37.21.223.235)
+[10:07:12] *** Quits: rvalue (~rvalue@user/rvalue) (Read error: Connection reset by peer)
+[10:07:25] *** Joins: rvalue (~rvalue@user/rvalue)
+[10:08:27] *** Quits: Mutsumi (~Mutsumi@99-93-141-12.lightspeed.mssnks.sbcglobal.net) (Ping timeout: 252 seconds)
+[10:08:35] *** Quits: BadAdviceCat (~BadAdvice@user/badadvicecat) (Ping timeout: 256 seconds)
+[10:16:30] *** Quits: tozhu (~tozhu@101.84.180.251) (Quit: tozhu)
+[10:17:41] *** Joins: zemis (~zemis@ip-89-176-21-138.net.upcbroadband.cz)
+[10:18:13] *** Quits: Komzpa (~kom@46.216.112.41) (Ping timeout: 256 seconds)
+[10:18:42] *** Joins: BadAdviceCat (~BadAdvice@user/badadvicecat)
+[10:19:19] *** BadAdviceCat is now known as Nekomander
+[10:19:34] *** Joins: Komzpa (~kom@46.216.154.188)
+[10:21:05] *** Joins: tozhu (~tozhu@101.84.180.251)
+[10:26:15] *** Quits: jazzy (~jaziz@user/jaziz) (Ping timeout: 250 seconds)
+[10:26:17] *** Joins: Mutsumi (~Mutsumi@99-93-141-12.lightspeed.mssnks.sbcglobal.net)
+[10:27:13] *** Joins: jazzy (~jaziz@user/jaziz)
+[10:27:37] *** Joins: manti7 (~manti7@176.10.104.94)
+[10:31:04] *** Quits: randir_ (~randir@85.249.36.97) (Remote host closed the connection)
+[10:31:37] *** Joins: randir (~randir@85.249.36.97)
+[10:31:41] *** Joins: the_lanetly_052_ (~the_lanet@185.30.89.14)
+[10:33:25] *** Quits: lechner (~lechner@debian/lechner) (Quit: WeeChat 3.0)
+[10:33:37] *** Quits: veesh (~veesh@89.237.97.208) (Ping timeout: 240 seconds)
+[10:33:59] *** Quits: marco44 (~marco44@82-64-126-208.subs.proxad.net) (Quit: ZNC 1.8.2+deb2+b1 - https://znc.in)
+[10:34:19] *** Quits: SDr (~SDr@li1189-192.members.linode.com) (Changing host)
+[10:34:19] *** Joins: SDr (~SDr@user/sdr)
+[10:34:34] *** Quits: gambl0re (~gambl0re@2607:fea8:a59f:c360::78dd) (Ping timeout: 260 seconds)
+[10:34:53] *** Joins: marco44 (~marco44@82-64-126-208.subs.proxad.net)
+[10:35:48] *** Quits: randir (~randir@85.249.36.97) (Ping timeout: 240 seconds)
+[10:44:30] *** Joins: randir (~randir@93.159.239.42)
+[10:44:53] *** Joins: veesh (~veesh@77.137.128.179)
+[10:48:19] *** Joins: maret (~maret@nat-88-212-37-89.antik.sk)
+[10:51:39] *** Joins: ejjfunky (~ejjfunky@125.164.22.188)
+[10:52:30] *** Joins: mrwick (~mrwick@user/mrwick)
+[10:52:58] <sobel> i also stopped at jsonb[] that should totally be jsonb
+[10:53:04] *** Joins: GNUmoon (~GNUmoon@gateway/tor-sasl/gnumoon)
+[10:53:09] *** Quits: ejjfunky (~ejjfunky@125.164.22.188) (Remote host closed the connection)
+[10:53:34] *** Joins: ejjfunky (~ejjfunky@125.164.21.7)
+[10:54:12] *** Quits: tehenderz (~tehenderz@ti0018a400-8358.bb.online.no) (Ping timeout: 240 seconds)
+[10:54:46] *** Joins: tehenderz (~tehenderz@ti0018a400-9829.bb.online.no)
+[10:55:11] *** Joins: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk)
+[10:55:53] *** Quits: tozhu (~tozhu@101.84.180.251) (Quit: tozhu)
+[10:56:23] *** Quits: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk) (Remote host closed the connection)
+[10:56:48] *** Joins: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk)
+[10:57:35] *** Quits: GNUmoon (~GNUmoon@gateway/tor-sasl/gnumoon) (Ping timeout: 240 seconds)
+[10:58:40] *** Joins: sehrope_ (~sehrope@23-24-81-162-static.hfc.comcastbusiness.net)
+[10:58:45] *** Joins: GNUmoon (~GNUmoon@gateway/tor-sasl/gnumoon)
+[10:58:48] *** Joins: chasmo77 (~chas77@c-71-193-246-4.hsd1.or.comcast.net)
+[10:59:15] *** Quits: shiranaihito (~textual@61-64-208-160-adsl-tpe.dynamic.so-net.net.tw) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[11:00:17] *** Quits: sehrope (~sehrope@23-24-81-162-static.hfc.comcastbusiness.net) (Ping timeout: 240 seconds)
+[11:02:40] *** Joins: gleu (~guillaume@2a01cb0c046d4500986de48660e05ed5.ipv6.abo.wanadoo.fr)
+[11:06:24] *** Quits: Kohe (~Kohe@77.49.10.102.dsl.dyn.forthnet.gr) (Read error: Connection reset by peer)
+[11:06:47] *** Joins: Kohe (~Kohe@77.49.10.102.dsl.dyn.forthnet.gr)
+[11:09:03] *** Joins: csm3105 (~csm3105@143.red-83-48-84.staticip.rima-tde.net)
+[11:09:08] *** Joins: zelest (jesper@81-233-184-27-no13.tbcn.telia.com)
+[11:15:16] *** Joins: omantere (~pi@85-156-109-34.elisa-laajakaista.fi)
+[11:15:55] *** Joins: shiranaihito (~textual@219.85.180.123)
+[11:28:38] *** Joins: ponsfrilus (~Thunderbi@adsl-178-39-226-100.adslplus.ch)
+[11:29:37] *** Quits: Kohe (~Kohe@77.49.10.102.dsl.dyn.forthnet.gr) (Ping timeout: 256 seconds)
+[11:30:41] *** Joins: palasso (~palasso@user/palasso)
+[11:35:17] *** Joins: martti (~martti@46-126-48-136.dynamic.hispeed.ch)
+[11:40:12] *** Quits: quazimodo (~quazimodo@n110-21-88-214.bla2.nsw.optusnet.com.au) (Ping timeout: 240 seconds)
+[11:42:44] *** Joins: EvanCarr1ll (~ecarroll@68-78-105-35.lightspeed.hstntx.sbcglobal.net)
+[11:43:07] *** Quits: EvanCarroll (~ecarroll@68-78-105-35.lightspeed.hstntx.sbcglobal.net) (Killed (NickServ (GHOST command used by EvanCarr1ll)))
+[11:43:19] *** EvanCarr1ll is now known as EvanCarroll
+[11:44:17] *** Joins: op2 (~op2@user/op2)
+[11:48:09] *** Quits: maxzor_ (~maxzor@2a01cb04054faa00f058c4a7597737fc.ipv6.abo.wanadoo.fr) (Ping timeout: 250 seconds)
+[11:55:52] *** Joins: peteyboy1 (~peteyboy1@95.169.226.66)
+[11:58:56] *** Joins: shka (~herr@109.231.3.55)
+[12:00:37] *** Quits: shiranaihito (~textual@219.85.180.123) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[12:02:43] *** Quits: zlinux[] (~zlinux@142.247.1.92) (Read error: Connection reset by peer)
+[12:04:34] *** Joins: psoo (~psoo@dslb-002-204-079-161.002.204.pools.vodafone-ip.de)
+[12:04:35] *** Joins: zlinux (~zlinux@149.109.18.129)
+[12:06:26] *** Joins: rendar (~rendar@user/rendar)
+[12:08:17] *** Joins: Junxter (~Junxter@222.95.164.193)
+[12:10:50] *** Joins: fordfrog (~fordfrog@gentoo/developer/fordfrog)
+[12:11:47] *** Joins: shiranaihito (~textual@219.85.180.123)
+[12:11:47] *** tc__ is now known as trycatch
+[12:11:50] *** Quits: Nekomander (~BadAdvice@user/badadvicecat) (Ping timeout: 256 seconds)
+[12:12:16] *** Quits: trycatch (~tc@103-140-203-11.vic.as139284.net.au) (Changing host)
+[12:12:16] *** Joins: trycatch (~tc@user/trycatch)
+[12:18:28] *** Joins: rodo (~rodo@2a01:e0a:2c6:d5f0:31a7:a017:a0:c9a1)
+[12:22:05] *** Quits: nyov (~nyov@user/nyov) (Ping timeout: 252 seconds)
+[12:25:03] *** Joins: Klinda (~superleag@user/klinda)
+[12:25:43] *** Quits: carragom (~textual@201.204.94.76) (Quit: Textual IRC Client: www.textualapp.com)
+[12:27:07] *** Joins: eroux (~eroux@102-65-85-242.ftth.web.africa)
+[12:27:15] *** Quits: todd (~todd@gateway/tor-sasl/toddf) (Ping timeout: 240 seconds)
+[12:29:12] *** Joins: Guest542 (~Thunderbi@p10605177-ipngn25001marunouchi.tokyo.ocn.ne.jp)
+[12:30:05] *** Quits: NoGare[m] (~nogaremat@2001:470:69fc:105::35f2) (Quit: You have been kicked for being idle)
+[12:30:10] *** Quits: Travis[m] (~travis-st@2001:470:69fc:105::1:3772) (Quit: You have been kicked for being idle)
+[12:32:07] *** Quits: Guest542 (~Thunderbi@p10605177-ipngn25001marunouchi.tokyo.ocn.ne.jp) (Client Quit)
+[12:33:19] *** Joins: ben_ (~ben@host86-151-198-203.range86-151.btcentralplus.com)
+[12:33:52] *** Joins: nyov (~nyov@user/nyov)
+[12:34:52] *** Quits: Junxter (~Junxter@222.95.164.193) (Quit: Leaving)
+[12:35:09] *** Joins: Junxter (~Junxter@222.95.164.193)
+[12:37:12] *** Joins: fef (~thedawn@user/thedawn)
+[12:37:33] *** Quits: ben_ (~ben@host86-151-198-203.range86-151.btcentralplus.com) (Ping timeout: 250 seconds)
+[12:41:23] *** Quits: psoo (~psoo@dslb-002-204-079-161.002.204.pools.vodafone-ip.de) (Quit: Connection closed)
+[12:41:40] *** Quits: Auron (Auron956@user/auron) (Remote host closed the connection)
+[12:45:49] *** Joins: lkw (~lkw@user/lkw)
+[12:51:33] *** Quits: ysch (~ysch@91.211.93.148) (Ping timeout: 256 seconds)
+[12:53:00] *** Joins: Vitto (~Vitto@37.166.73.89)
+[12:53:12] <brekken> @peerce thanks. yes, the type was poorly chosen some time ago and i'm stuck with it for a while
+[12:54:21] <brekken> I'm looking at an example of updating a lot of rows but can't seem to run it locally: https://github.com/sureshgadupu/postgres-batch-update/blob/main/batch-update-script.sql -- specifically, running commit; inside the function yields "invalid transaction termination" error. My code isn't identical, but quite close. Is the example invalid, or is there some difference in my code and the example?
+[12:55:04] <peerce> you can't call commit in a function.
+[12:55:24] *** Joins: AceSlash (~slash@cosium-fo-152-18.fib.nerim.net)
+[12:55:47] <peerce> note thats a PROCEDURE, those are relatively new to postgres, and are invoked with CALL rather than a function invocation within a SELECT
+[12:56:53] *** Quits: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk) (Quit: Leaving)
+[12:56:56] <brekken> Thanks. I assumed they were different words for the same. I'll read up on it
+[12:57:34] <peerce> and I would think the procedure would have to begin a transaction in order to be able to commit it, but I dunno.
+[12:58:46] *** Quits: dingdreher (~dingdrehe@2a02:aa08:401e:fff2:65dc:ab5d:8da2:d8b4) (Ping timeout: 260 seconds)
+[13:00:03] <brekken> I get the same error if using procedure and call on PostgreSQL v13
+[13:00:44] <peerce> how did you find this undocumented code fragment ?
+[13:02:49] <brekken> @peerce I was Googling around trying to find a solution to updating a large number of rows of a table, meaning not using a single update statement but doing it in parts
+[13:03:16] <brekken> @peerce From here https://fullstackcode.dev/2021/10/02/updating-millions-of-records-in-batches-in-postgresql/
+[13:03:51] *** Joins: jdavfsxd (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp)
+[13:04:52] <peerce> well, i don't see where it does a START TRANSACTION; or BEGIN;     that initial begin is part of the plpgsql declaration
+[13:05:01] <peerce> and is not a transaction begin
+[13:05:56] <peerce> it would have to do that inside the loop that the commit is at the end of
+[13:08:02] *** Quits: Junxter (~Junxter@222.95.164.193) (Remote host closed the connection)
+[13:08:19] *** Joins: Junxter (~Junxter@222.95.164.193)
+[13:08:25] <brekken> @peerce: I can't use "start transaction" either: "unsupported transaction command in PL/pgSQL"
+[13:08:56] <peerce> huh.
+[13:09:01] <peerce> the docs on CALL say...  If CALL is executed in a transaction block, then the called procedure cannot execute transaction control statements. Transaction control statements are only allowed if CALL is executed in its own transaction.
+[13:09:32] <peerce> are you using a language binding/wrapper that automatically creates transactions ?
+[13:09:36] <peerce> jdbc, etc does that
+[13:11:45] <peerce> in jdbc and others, you can set 'autocommit' or simialr to disable the automatic transactions it otherwise creates.
+[13:11:45] <brekken> I'm running with "psql -1 -f myfile.sql"
+[13:12:14] <peerce> are you doing the CALL from the top level (directly in the .sql file, not within another function) ?
+[13:13:07] <brekken> Yes
+[13:13:40] <peerce> oh.  -1 does the whole sql file as a transaction
+[13:13:51] <brekken> Oh, let me do --single-transaction instead then
+[13:14:06] <peerce> thats the same thing.
+[13:14:11] <peerce> you can't nest transactions
+[13:14:22] <brekken> I see
+[13:14:42] <peerce> either don't use that option, or youll need to rewrite this procedure to use savepoints
+[13:15:09] <peerce> ??savepoint
+[13:15:09] <pg_docbot> https://www.postgresql.org/docs/current/static/sql-savepoint.html
+[13:15:43] *** Joins: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk)
+[13:17:36] <brekken> Same error when running without those options, simply psql -f
+[13:17:48] *** Quits: AceSlash (~slash@cosium-fo-152-18.fib.nerim.net) (Ping timeout: 240 seconds)
+[13:19:10] *** Joins: n0fun_ (~jack@i577BC054.versanet.de)
+[13:19:31] <ne2k> https://dbfiddle.uk/?rdbms=postgres_14&fiddle=fa2affb53bddb7a4da60ff90080a4323 I find this pleasing and horrifying in equal measure
+[13:20:00] *** Quits: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk) (Read error: Connection reset by peer)
+[13:20:24] *** Quits: csm3105 (~csm3105@143.red-83-48-84.staticip.rima-tde.net) (Ping timeout: 256 seconds)
+[13:20:26] *** Joins: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk)
+[13:21:17] <Zr40> how so?
+[13:24:11] *** Quits: Disconsented (~quassel@107.170.227.20) (Quit: http://quassel-irc.org - Chat comfortably. Anywhere.)
+[13:24:45] *** Joins: Disconsented (~quassel@irc.disconsented.com)
+[13:26:06] *** Joins: psoo (~psoo@dslb-002-204-079-161.002.204.pools.vodafone-ip.de)
+[13:29:12] *** Quits: zachxz (~zachary@124.133.18.218) (Ping timeout: 272 seconds)
+[13:29:48] *** Quits: the_lanetly_052_ (~the_lanet@185.30.89.14) (Ping timeout: 240 seconds)
+[13:30:48] *** Joins: merzo (~Thunderbi@95.132.33.252)
+[13:31:14] *** Joins: joilerv (~joilerv@145.224.65.230)
+[13:39:38] *** Joins: ponsfrilus1 (~Thunderbi@vpn-254-038.epfl.ch)
+[13:39:43] *** Joins: csm3105 (~csm3105@143.red-83-48-84.staticip.rima-tde.net)
+[13:41:13] *** Joins: Ergo^ (~ergo@91.238.59.144)
+[13:41:25] *** Quits: ponsfrilus (~Thunderbi@adsl-178-39-226-100.adslplus.ch) (Ping timeout: 256 seconds)
+[13:41:25] *** ponsfrilus1 is now known as ponsfrilus
+[13:43:03] <ne2k> Zr40, the fact that you can do it at all and the fact that it gives you the definition that would have been used to create it: very pleasing; the lengths you have to go to to get the information: horriyfing
+[13:43:14] *** Joins: dingdreher (~dingdrehe@mob-194-230-147-113.cgn.sunrise.net)
+[13:43:45] <ne2k> dingdreher, das Drehen von Dingen ist hier verbooten
+[13:43:56] <dingdreher> ;)
+[13:44:02] <dingdreher> danke für den hinweis
+[13:47:36] *** Quits: joilerv (~joilerv@145.224.65.230) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[13:52:59] *** Quits: jazzy (~jaziz@user/jaziz) (Ping timeout: 256 seconds)
+[13:58:00] *** Joins: ben_ (~ben@host86-151-198-203.range86-151.btcentralplus.com)
+[14:00:32] *** Quits: ben_ (~ben@host86-151-198-203.range86-151.btcentralplus.com) (Remote host closed the connection)
+[14:01:04] *** Joins: ben_ (~ben@host86-151-198-203.range86-151.btcentralplus.com)
+[14:02:56] *** Quits: idontneedanick (~idontneed@h-85-24-184-105.A189.priv.bahnhof.se) (Read error: Connection reset by peer)
+[14:03:16] *** Joins: idontneedanick (~idontneed@h-85-24-184-105.A189.priv.bahnhof.se)
+[14:04:35] *** Quits: dingdreher (~dingdrehe@mob-194-230-147-113.cgn.sunrise.net) (Read error: Connection reset by peer)
+[14:08:18] <Tuju> looks like python has timestamp.utcnow()
+[14:08:35] <Tuju> wonder how do i achine the same in pysql, in default value
+[14:08:44] *** Quits: shiranaihito (~textual@219.85.180.123) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[14:08:44] <Tuju> i can put there now(), but it's localtime?
+[14:08:55] <ne2k> ??timestamp
+[14:08:56] <pg_docbot> http://it.toolbox.com/blogs/database-soup/zone-of-misunderstanding-48608 :: http://lluad.com/blog/2013/08/27/postgresql-and-iso-8601-timestamps/
+[14:08:56] <pg_docbot> https://wiki.postgresql.org/wiki/What's_new_in_PostgreSQL_9.5#Commit_timestamp_tracking :: https://www.postgresql.org/docs/current/static/functions-info.html#FUNCTIONS-COMMIT-TIMESTAMP
+[14:08:56] <pg_docbot> https://www.postgresql.org/docs/current/static/datatype-datetime.html :: https://www.postgresql.org/docs/current/static/functions-datetime.html#FUNCTIONS-DATETIME-EXTRACT
+[14:09:42] <ne2k> Tuju, https://dbfiddle.uk/?rdbms=postgres_14&fiddle=a3de8782734bf107fff57bcb388c8f86
+[14:09:55] <Tuju> whoo.....
+[14:09:59] <ne2k> Tuju, what are you actually trying to do?
+[14:10:08] <Tuju> store everything in utc.
+[14:10:17] <Zr40> timestamptz does that
+[14:10:17] <ne2k> Tuju, are you really, though
+[14:10:19] <Tuju> and leave the tz into user interface
+[14:10:24] <ne2k> Zr40, well, .... it doesn't
+[14:11:01] <Myon> set timezone = 'UTC';
+[14:11:03] <Zr40> it does. It just _displays_ it in your session timezone
+[14:11:13] <ne2k> Tuju, methinks you are falling victim to the usual (and, tbf, quite understandable) confusion about what timestamp and timestamptz are
+[14:11:15] <Zr40> which shouldn't matter for clients, by the way
+[14:11:15] <Tuju> isn't my approach the correct one? Today you can't tell on which tz the user actually is. Or at least presume.
+[14:11:48] <Berge> (I suppose we established yesterday that timestamptz _strictly_ speaking stores time in UT1. But it's a completely irrelevant implementation detail, it could just as well have stored number of microseconds since my birth.)
+[14:11:54] <Tuju> I don't get why HTML doesn't have this built in, a tag where you put UTC and it shows it in localtime
+[14:12:14] <ne2k> Tuju, if you want to store a point in time, use timestamptz. despite what it says about being "with time zone", it's not. there is no timezone stored.
+[14:12:36] <ne2k> Tuju, because that's not its job
+[14:12:39] <Tuju> Even Apllo moon rocket calculated everything in SI units and converted those into imperial units in cockpit panels.
+[14:13:11] <ne2k> Tuju, what are you doing with postgres and what are you trying to store, that is the real question
+[14:13:21] <Tuju> i just made 'created' col as timestamp without time zone;
+[14:13:38] <Myon> don't do that, use timestamptz
+[14:13:41] <ne2k> Tuju, is "created" a point in time?
+[14:13:49] <Myon> it will Just Work
+[14:13:50] <Berge> Tuju: Always use timestamptz, never use timestamp
+[14:13:51] <Tuju> point of time and date
+[14:14:00] <Myon> ??dont
+[14:14:00] <pg_docbot> https://wiki.postgresql.org/wiki/Don%27t_Do_This
+[14:14:02] <ne2k> Tuju, but it's an actual point in time
+[14:14:24] <ne2k> Tuju, you should be using timestamptz
+[14:14:26] <Berge> There are some very few edge cases where timestamp (without time zone) makes sense, but if you think you need it, you should write down a clear argument as to why.
+[14:14:28] <Myon> someone should write a wiki page explaining all this
+[14:14:40] <ne2k> Myon, it'll never take off
+[14:14:55] <ne2k> https://wiki.postgresql.org/wiki/Don%27t_Do_This#Don.27t_use_timestamp_.28without_time_zone.29
+[14:14:55] *** Quits: fef (~thedawn@user/thedawn) (Ping timeout: 240 seconds)
+[14:14:58] <Tuju> ne2k: i'm reading. Me asking a simple question and getting hit by falling bookshelf is a bit.... overkill.
+[14:15:03] <Myon> we could at least try pointing people to it instead of doing the same handwaiving each time
+[14:15:17] <ne2k> Tuju, ignore the results of ??timestamp
+[14:15:19] <Tuju> Myon: agree.
+[14:15:22] <ne2k> just read the latest link
+[14:16:04] <Berge> Tuju: A simple question, and you got a simple answer, but then you didn't accept it (-:
+[14:16:22] <Tuju> i haven't decided anything yet.
+[14:17:27] <Tuju> does that timestamptz come through the psycopg2 ?
+[14:17:30] <Myon> if you don't want to concern yourself with timezone, use timestamp *with* time zone, and set timezone = 'UTC' in the server config
+[14:17:43] <Tuju> Myon: that could be one solution
+[14:17:47] <Berge> Tuju: psycopg2 handles timestamptz correctly
+[14:17:57] <Berge> Tuju: There's nothing to decide, really. There's a correct way of doing it, and an incorrect way.
+[14:18:33] <sekun[m]> I don't understand the "a point in time" analogy. Can this be elaborated? Aren't all timestamps some point in time?
+[14:18:53] <Berge> sekun[m]: When is 2022-02-24 11:48?
+[14:19:16] <ne2k> Myon, worth creating a ??dont-timestamp that links to that specific section, given the frequency of this question?
+[14:19:56] <sekun[m]> Berge: 7 hours ago (in my timezone)
+[14:19:59] <koollman> sekun[m]: some are point in time at some location, but can in fact happen at different moments on earth. (because they aren't tied to a timezone)
+[14:20:03] <Berge> sekun[m]: But it's now in my time zone
+[14:20:12] <Berge> sekun[m]: Hence, it's not a universal point in time – it depends on the observer
+[14:20:14] <ne2k> sekun[m], it's one hour in the future in my time zone. so, as you see, it's not "a point in time"
+[14:20:38] <Berge> While 2022-02-24 11:48:00+00 _is_ a universal point in time
+[14:20:52] <Tuju> You guys can put this into perspective. I rarely bother myslf with 'academic' questions like this. My time goes like 99% to the actual REST/XML, class definitions, XSD mods, and into actual process logic.
+[14:21:16] <Tuju> But i consider that I'm in right side anyway since I do use pgsql, with python.
+[14:21:20] <ne2k> hence why we end up with the name "timestamp WITH TIME ZONE", because, now that we've specified a timezone, it /is/ a point in time. it just doesn't store that timezone it like people often think
+[14:21:30] <Berge> (The name is terrible.)
+[14:21:30] <koollman> Tuju: time handling isn't academic. it's really something that will break in many programs as soon as more than one timezone is involved. sometimes before that
+[14:21:33] *** Quits: acidsys (~LSD@2a03:4000:55:d20::3) (Excess Flood)
+[14:21:51] <Tuju> koollman: i know it, hence i finally bourght it up
+[14:21:56] <koollman> (and I wouldn't say there is a correct way, but there are 'more correct' ways which have some different, known, problems)
+[14:22:12] *** Joins: acidsys (~LSD@2a03:4000:55:d20::3)
+[14:22:16] <Tuju> and i got tons of them in db already, but nobody dies if i one day convert them into something else
+[14:22:58] <koollman> Tuju: depends what happen before you convert them. you might lose some of the data since it wasn't stored with enough information
+[14:22:59] <Tuju> most relevant is the time in reference to other entries, it doesn't matter is it +2 or not hours wrong
+[14:22:59] <ne2k> Tuju, well, you asked a question, you got some advice. if you don't like it, do whatever you want
+[14:23:09] <sekun[m]> Ah I see what you folks mean now. Thanks for the answers. :)
+[14:23:20] <Berge> sekun[m]: So, consider: SELECT '2022-02-24 18:48:00+08'::timestamptz = '2022-02-24 11:48:00+01'::timestamptz
+[14:23:27] <selckin> Tuju: till its based on the timezone set in the connection, based on the timezone of the system its running on, and then you upgrade the server
+[14:23:30] <Berge> sekun[m]: Those two timestamps are different representations of the very same point in time
+[14:23:34] <Myon> ?learn dont-timestamp https://wiki.postgresql.org/wiki/Don%27t_Do_This#Don.27t_use_timestamp_.28without_time_zone.29
+[14:23:35] <pg_docbot> Successfully added URL with 1 keyword
+[14:23:39] <selckin> Tuju: now all your dates are wrong
+[14:23:40] <Tuju> ne2k: I do like them. Liked them before and do now. I wouldn't ask them othervise.
+[14:24:07] <Tuju> or should i use now() ? :)
+[14:24:19] <Berge> NOW() is fine
+[14:24:22] <ne2k> Myon, cheers. I'll use that from now on rather than waiving my hands as you put it
+[14:24:35] <Berge> It's a postgresism, and it returns the time (in timestamptz) the current transaction started
+[14:24:38] <Myon> I hope I can remember it as well
+[14:26:00] <Tuju> "Despite what the name says it doesn't store a timestamp," - and someone might wonder why that was named so then?
+[14:26:12] <ne2k> Myon, my first reaction to reach for ??timestamp wasn't as helpful as I'd hoped ;-)
+[14:26:24] <Myon> Tuju: it doesn't store a timezone
+[14:27:01] <ne2k> Tuju, indeed; hence why we have this conversation every other day. see discussion with sekun[m], Berge from a few minutes ago
+[14:27:09] <Tuju> hence i would rip the trailing away.
+[14:27:21] <ne2k> Tuju, "rip the trailing away"?
+[14:27:26] <Tuju> the tz part
+[14:27:27] <ne2k> dafuq does that mean
+[14:27:35] <Myon> the type name is mandated by the SQL standard
+[14:27:47] <Tuju> in my understading all times are in some tz.
+[14:27:57] <Tuju> unless you're in space.
+[14:28:00] <Myon> though that has yet another idea of how that should work, and PostgreSQL deliberatly handles it more sanely
+[14:28:02] <ne2k> Tuju, many languages end up with odd vestiges that are baked in and cannot be change. you just gotta deal with it
+[14:28:10] <ne2k> Tuju, I fear you still don't get it
+[14:28:17] <koollman> Tuju: they aren't. sometimes the tz is implicit, and can lead to mistakes
+[14:28:43] <Tuju> and someone said that this is not academic topic :)
+[14:28:52] <koollman> Tuju: it is not
+[14:28:58] <Tuju> it sure does sound like one! :)
+[14:29:39] <ne2k> Tuju, the time "now" that everyone here is experincing, is not /in a timezone/, is it
+[14:29:56] <sekun[m]> I wonder what timezone the Mars rovers use
+[14:30:06] *** Joins: fef (~thedawn@user/thedawn)
+[14:30:23] <Tuju> ne2k: well, if you take a phone call from tz to another, both probably can agree that we have the same now.
+[14:30:51] <Myon> <enter general relativity>
+[14:30:52] <ne2k> Tuju, exactly. and the time of that call is "a point in time", and that concept is represented in the database using the type "timestamp with time zone", and yes, the name is crap, but get over it
+[14:31:06] <Tuju> but when we write in literal form, then it matters
+[14:31:13] *** Joins: ufk (~textual@bzq-84-108-89-219.cablep.bezeqint.net)
+[14:31:30] *** Quits: ufk (~textual@bzq-84-108-89-219.cablep.bezeqint.net) (Client Quit)
+[14:32:37] <Tuju> ne2k: my original issue was that my storage and user interface could be in different zones.
+[14:33:24] <Tuju> and storing morning 08:00   is different where user interface is if the person wants to know 'how long ago' .
+[14:33:54] <koollman> Tuju: if you store in the db something like 'meeting time: 2022-02-24 11:00' ... two users read that to find out when the meeting happens. They can have completely different idea, and miss the meeting
+[14:33:56] <ne2k> Tuju, "morning 08:00"?
+[14:34:53] <koollman> Tuju: and that can happen in any system dealing with time in such a way. no tz attached : no way to know which time is actually referenced
+[14:35:02] <ne2k> Tuju, you haven't said what you're actually storing this for
+[14:35:10] <Tuju> i try it, it wont break my world and wiki says 'it does the right thing' so let's try it.
+[14:35:47] <Tuju> koollman: unless it's agreed that everything is stored in UTC and user interface should handle it.
+[14:36:14] <Tuju> imo it's clean and simple solution.
+[14:36:40] <koollman> Tuju: but if it is agreed, then you are actually storing a timezone in some way. which is *not* how the timestamp type works
+[14:36:54] *** Quits: fcr (~fran@r167-60-68-118.dialup.adsl.anteldata.net.uy) (Ping timeout: 256 seconds)
+[14:37:21] <ne2k> Tuju, well, you can do that if you want, but you'll generally find that people here are, on the whole, more inclined to do stuff that the database can do and do well in the database, rather than treating it as a dumb store and doing everything externally. hence the kinds of advice you're getting
+[14:37:33] <Tuju> then it's code level policy, that's where it would be stored.
+[14:38:21] <ne2k> I mean, why use a timestamp type at all? why not just use text?
+[14:38:21] <Tuju> ne2k: sure, but making db do everything it can do makes it also harder to share load
+[14:38:27] *** Joins: pedja (~pedja@user/deus-ex/x-7934090)
+[14:38:57] <Tuju> we cand use BDR, but it's easier to share computing into multiple user interfaces.
+[14:39:23] <ne2k> Tuju, as I said, you're welcome to do whatever you like. you asked for advice and got it, based on people's experiences.
+[14:39:32] *** Joins: ufk (~textual@bzq-84-108-89-219.cablep.bezeqint.net)
+[14:39:40] *** Quits: jdavfsxd (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp) (Quit: jdavfsxd)
+[14:39:46] <koollman> Tuju: if you explicitely set the timezone for the session from the program you use, then yes, it works. But ... do you ? :)
+[14:39:52] <Tuju> as i said, i try it and decicde after experience.
+[14:40:01] <Tuju> koollman: nope, not yet.
+[14:40:20] *** Joins: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp)
+[14:40:22] <koollman> Tuju: so, you get timestamp in some undefined timezone which may or may not be what you want :)
+[14:40:33] <Tuju> luckily this thing has gone so far that i can start wondering less important things.
+[14:42:02] *** Joins: fcr (~fran@r167-56-77-246.dialup.adsl.anteldata.net.uy)
+[14:47:37] *** Joins: Shells (~michelle@203.206.128.220)
+[14:48:12] *** Quits: Michelle (~michelle@2407:8800:bc20:200a:997f:e5cc:1114:dd48) (Ping timeout: 240 seconds)
+[14:54:17] *** Quits: f3f3lix (~weechat@55d4a96a.access.ecotel.net) (Ping timeout: 240 seconds)
+[14:56:13] *** Quits: kitsunenokenja (~kitsunech@68.91.220.96) (Ping timeout: 256 seconds)
+[14:58:29] *** Quits: acidsys (~LSD@2a03:4000:55:d20::3) (Excess Flood)
+[14:58:57] *** Quits: ufk (~textual@bzq-84-108-89-219.cablep.bezeqint.net) (Quit: My Mac Pro has gone to sleep. ZZZzzz…)
+[14:59:09] *** Joins: acidsys (~LSD@2a03:4000:55:d20::3)
+[15:03:16] *** Quits: Vitto (~Vitto@37.166.73.89) (Read error: Connection reset by peer)
+[15:07:15] *** Joins: ufk (~textual@bzq-84-108-89-219.cablep.bezeqint.net)
+[15:08:12] *** Quits: tehenderz (~tehenderz@ti0018a400-9829.bb.online.no) (Ping timeout: 240 seconds)
+[15:08:55] *** Joins: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net)
+[15:08:57] *** Joins: tehenderz (~tehenderz@ti0018a400-10773.bb.online.no)
+[15:10:44] *** Joins: ysch (~ysch@91.211.93.148)
+[15:12:41] *** Quits: nyov (~nyov@user/nyov) (Ping timeout: 250 seconds)
+[15:14:43] *** Joins: nyov (~nyov@user/nyov)
+[15:16:04] *** Joins: zeden (~zeden@user/zeden)
+[15:19:15] *** Joins: chipilov (~Thunderbi@151.251.244.1)
+[15:21:20] <chipilov> Hello PG fellows, I am trying to understand in more detail how casts to custom types work. More specifically, it seems that when a function is defined, the OIDs of any custom type casts are cached and if said types are dropped and re-created, the function which uses those types start to fail because they can no longer find the type (because the OID has changed). Is this correct or am I missing something?
+[15:22:45] <Myon> dependencies will prevent you from dropping a type if anything uses it
+[15:22:55] *** Joins: merzo1 (~Thunderbi@95.133.10.76)
+[15:23:18] *** Joins: ThorMojito (~Adium@modemcable212.77-202-24.mc.videotron.ca)
+[15:23:26] *** Quits: ThorMojito (~Adium@modemcable212.77-202-24.mc.videotron.ca) (Client Quit)
+[15:24:06] <chipilov> I like to live on the edge and drop the type using CASCADE :)
+[15:24:36] *** Quits: merzo (~Thunderbi@95.132.33.252) (Ping timeout: 240 seconds)
+[15:24:36] *** merzo1 is now known as merzo
+[15:25:23] <chipilov> joking aside, once I drop the type with CASCADE and then recreated it, is the rest of my logic correct? And if so, I wonder - why doesn't the same thing happen to function calls? That is, if I drop and re-create a function, other functions that call the dropped/re-created function can still call it - why doesn't the same problem exist in that case?
+[15:27:52] <Myon> chipilov: cascade will nuke any users of that type, so the problem is still not real
+[15:28:20] *** Joins: mowcat (~mowcat@2a00:23c5:d190:1901:f22f:74ff:fe77:1e1c)
+[15:29:01] <Myon> the only thing that doesn't track things by OID are function bodies, these are just text
+[15:29:22] <Myon> if you drop and recreate something under the same name, the function body will still use the name
+[15:29:43] <chipilov> yep, that's exactly my use case
+[15:30:03] <Myon> nothing of this has anything to do with type casts
+[15:30:50] <chipilov> in my function I have something that looks like this: ('something', 1)::my_type
+[15:31:05] <chipilov> isn't this a type cast?
+[15:31:30] <chipilov> pardon the emoji, here it is again: ('something', 1\)::my_type
+[15:31:35] <Myon> yes but "how are things referenced" applies to everything, not just type casts
+[15:31:43] *** Joins: AceSlash (~slash@cosium-fo-152-18.fib.nerim.net)
+[15:31:55] <Myon> the original message was actually correct, now you have a bad \ in there :D
+[15:32:16] <chipilov> yeah, sorry, not sure how to escape here...anyway, you get what I am saying
+[15:32:21] <Myon> (tell your irc client not to replace ) : )
+[15:32:21] <ne2k> I see no emoji
+[15:32:35] <chipilov> (ok, thanks for the tip)
+[15:32:40] <ne2k> 😊
+[15:32:46] <ne2k> that's an emoji
+[15:33:38] <Myon> chipilov: also, custom types/functions/etc are generally handled just like in-core things, with little exceptions
+[15:34:09] <chipilov> now that you know the exact code I am talking about, my question is: why do I get an error during the invocation of the function which has the cast in the body AFTER I have dropped/re-created the type? Given that I do NOT refer to the OID number explicitly, doesn't that mean that OID of the type name "my_type" was cached and NOT looked up every time it is used?
+[15:34:43] <Myon> ah, that might be caching in that session's syscache
+[15:34:47] <chipilov> if you think I have too many core concepts wrong, feel free to point me to some resource (I've already looked at https://www.postgresql.org/docs/14/datatype-oid.html but that doesn't really help me to be honest)
+[15:34:48] <Myon> does it still happen if you reconnect?
+[15:34:56] <chipilov> good question, let me check
+[15:35:05] <Myon> (this shouldn't happen, but the cache invalidation is not always perfect)
+[15:35:34] <Myon> you are asking good questions, but I think the real problem is still a bit elsewhere
+[15:35:59] <daffy951> How to create a query which returns only the first occurance of each (rounded) value? https://dbfiddle.uk/?rdbms=postgres_14&fiddle=78baa7b98427156330b370198ba4f20c
+[15:36:23] <ne2k> daffy951, you can use distinct on
+[15:36:39] <daffy951> wouldn't that filter away later identival values?
+[15:36:53] <ne2k> daffy951, isn't that exactly what you want?
+[15:37:05] <chipilov> @Myon - indeed, reconnecting fixed the issue
+[15:37:06] <daffy951> no, as described in the fiddle
+[15:37:16] <daffy951> row 3 should still be returned
+[15:37:18] <Myon> distinct on() wants the order by to be that attribute, so I don't think that will work
+[15:37:46] <chipilov> so this is a session cache - any idea why this session cache only affects types and not functions (i.e. if I drop and replace a function, I don't have a problem calling it again without re-connecting)
+[15:38:06] <Myon> chipilov: it's borderline (?) bug territory, though dropping types is maybe quite invasive and the case of recreation in the same session might not be deemed supported
+[15:38:09] <ne2k> daffy951, you need a subquery which checks whether it's "new" by using val = lag(val) over window by w; then filter that for "new" ones only
+[15:38:17] <Myon> if you have a reproducer, try mailing pgsql-bugs
+[15:38:42] <daffy951> ne2k: aha, thanks.. I'll look it up!
+[15:39:07] <chipilov> ok, will do, thanks!
+[15:39:11] <chipilov> taking a step back, I would explain my use case and I would be happy to know what you think and if my general approach is ill-advised
+[15:39:23] <Myon> sure
+[15:39:38] *** Quits: econo (uid147250@user/econo) (Quit: Connection closed for inactivity)
+[15:40:07] <ksynwa> So I have been using explain analyze to analyze SELECT statements that take too long. Now I want to find out why an INSERT statement is taking long. Does explain analyze work for that too?
+[15:40:09] <ne2k> daffy951, https://dbfiddle.uk/?rdbms=postgres_14&fiddle=1b9e469714b31720b1f943e2dbc240e4
+[15:40:30] *** Joins: Kohe (~Kohe@77.49.10.102.dsl.dyn.forthnet.gr)
+[15:40:34] <Myon> ksynwa: yes, but mind that it still executes the query, if you don't want that, use begin; explain analyze...; rollback;
+[15:40:42] <Myon> (more important for "explain analyze delete")
+[15:40:52] <ksynwa> Thank you Myon
+[15:40:58] <chipilov> I am using Supabase as the platform for a marketplace app and since all of the code is fairly basic CRUD operations, I decided to use the DB itself as my app server and just write some PLpgSQL functions handling user requests (the HTTP requests are handled and routed by PostgREST)
+[15:41:28] <ne2k> daffy951, https://dbfiddle.uk/?rdbms=postgres_14&fiddle=3a4b25740b25ba5079f1620a86cfd273 formatted for easier reading
+[15:41:30] *** Quits: mage (~julien@orval.bbpf.belspo.be) (Ping timeout: 256 seconds)
+[15:41:37] <daffy951> ne2k: Thanks!
+[15:41:56] <ne2k> that dbfiddle.uk would be even more awesome if it had a formatter built in
+[15:42:01] <Myon> ksynwa: also, use EXPLAIN (ANALYZE, BUFFERS) for more details
+[15:42:21] <ksynwa> Thank you Myon. I will check what BUFFERS does.
+[15:42:39] <chipilov> In order to structure my responses to the client without having to manually generate JSON inside PLpgSQL (i.e. I take advantage of PostgREST conversion to JSON), I define some types which allows me to structure my response). Also, I use FlyWay's repeatable migrations to push my code to the db (that is, every time I change something in the files defining my functions and types, FlyWay knows to execute the migration again)
+[15:42:58] *** Joins: mage (~julien@orval.bbpf.belspo.be)
+[15:43:17] <chipilov> for funcitons, I can say CREATE OR REPLACE which does NOT create a new OID (as long as I don't change the signature, of course) but for types there is no CREATE OR REPLACE
+[15:43:55] <chipilov> hence, what I do is just DROP TYPE IF EXISTS my_type and then CREATE TYPE my_type AS (...)
+[15:44:05] <ne2k> create or replace doesn't work if you do change the signature, afaik
+[15:44:12] *** Joins: maroloccio (~marolocci@pousada3ja.mma.com.br)
+[15:44:30] <Myon> so these types are compound (composite) types?
+[15:44:34] <chipilov> @ne2k - yep, you are right, so in some cases I still DROP/CREATE functions, but as I mention this does NOT exhibit the same problem as for types
+[15:44:47] <chipilov> @Myon, yes these are composite types
+[15:45:07] <Myon> and these are needed why?
+[15:45:48] <Myon> can't you just return the correct type(s) from the functions?
+[15:45:49] *** Joins: mrgz (~mrgz@201-42-0-191.dsl.telesp.net.br)
+[15:46:15] <chipilov> because I want to construct custom responses that are NOT necessarily backed directly by tables. For example, a user request might request something that fetches data from 2 tables and then returns a type which has only 2 fields from 1 table and 2 fields from another table
+[15:46:46] <Myon> functions can "returns table(a int, b text, c bytea)"
+[15:46:47] <chipilov> I don't know how to just return them - if I say that the function just returns a record, I get an error that I need to specify exactly what type I am returning
+[15:47:11] <chipilov> what if b in the table is NOT a text, but another composite object?
+[15:47:15] <Myon> or return record, and then "select foo() as t(a int, b text, c whatever)"
+[15:47:31] <chipilov> I don't think I can say table(a, int, b table(c integer, d integer))
+[15:47:39] <chipilov> ...or am I wrong about this?
+[15:47:53] <Myon> creating a type dynamically for each response is the very wrong layer
+[15:48:40] <Myon> yeah that nested case is probably harder to support, but if you need that, you are doing something wrong on the relational side
+[15:49:10] <Myon> why not instead use jsonb_build_object() and friends in the database?
+[15:49:29] <Myon> for the nesting
+[15:49:57] *** Joins: Nekomander (~BadAdvice@user/badadvicecat)
+[15:50:15] <chipilov> well, I can definitely do that - I just decided against it because (a) I thought it would be less work since I would avoid all the json building code (I am not sure about this anymore) and (b) I get conversion to JSON for free by PostgREST, so I thought I would NOT load the DB with it
+[15:50:21] <Myon> wrapping it in compound types and having postgrest convert it might sound like a good idea, but it's not meant to be used like that I think
+[15:50:25] <Myon> types are static
+[15:50:49] <chipilov> can you clarify the distinction between static and dynamic types? From my point of view, my types are static
+[15:51:17] <chipilov> it's not like a create a type on each call at runtime or something like that - I've created the type and as long as I don't need to add any new fields to it, it just stays like this
+[15:51:17] <Myon> static in the sense you define them when you create the app+schema, and don't touch them at run time
+[15:51:27] <chipilov> that's exactly what I do
+[15:51:31] <chipilov> I do NOT touch them at runtime
+[15:51:40] <Myon> then why do you run into problems with dropping them?
+[15:52:04] <chipilov> 2 reasons
+[15:52:13] <chipilov> 1 is fixable, the other one - I don't think so
+[15:53:00] <chipilov> the first reason is that some of my type definitions are in the same place as some of the function definitions. so if I change only the implementation of a function (e.g. fix a bug), I would need to re-run the migration file
+[15:53:13] <chipilov> of course, I can work around this by defning the types in a separate migration file
+[15:53:29] <chipilov> so that if I only have changes in my function implementations, I don't drop/re-create the types
+[15:54:27] <chipilov> now that I think about it, that's the only reason - I was gonna say that even if I move the types in a separate migration file, I would still have the same problem if I change the type itself, but if I change the type itself I would most likely need to change any function bodies that use it anyway
+[15:54:56] <Myon> if you have a finite, static set of types you need that will probably work
+[15:55:05] <chipilov> so I guess I just need to move the type definitions to separate files (honestly, I would have preferred to keep them close to the functions that return them, but that's not e big issue)
+[15:55:26] <Myon> but if you need to define a new type at runtime the first time a user asks for a 11-column response, that would be bad
+[15:55:40] <chipilov> no, no - I don't need that
+[15:55:42] <Myon> ok
+[15:55:49] <chipilov> the number of types is well defined and static at runtime
+[15:55:53] *** Joins: zer0bitz (~zer0bitz@2001:2003:f74d:b800:b579:336d:9a22:79d7)
+[15:55:54] <chipilov> it only changes if I need to change my public API
+[15:56:15] <Myon> DDL at app upgrade time is of course ok
+[15:56:39] *** Joins: dsrt^ (~dsrt@50-202-219-146-static.hfc.comcastbusiness.net)
+[15:57:31] <chipilov> ok, so I guess what I am doing is not that crazy, is that correct?
+[15:57:58] <Myon> it sounds ok if the number of types isn't crazy
+[15:58:44] <Myon> what you would need and what PostgreSQL doesn't support is a syntax for anonymous composite types
+[15:59:15] <chipilov> yep, indeed!
+[15:59:38] <chipilov> thanks for confirming - I was searching for that for a long time and until you just said this, I was still not sure if I am just not missing something
+[15:59:44] <Myon> you are abusing SQL's idea of the type system a bit here, though
+[16:00:16] <chipilov> could be...what would you say is the core motivation of the type system? that is, why do you say I am abusing it?
+[16:00:31] <Myon> SQL wants things in tables (a, b, c), where b might be a compound type, but not really be independent things
+[16:00:58] <chipilov> (keep in mind that I do NOT use these custom types inside tables - I only use them to construct responses from functions)
+[16:00:59] <Myon> for example (a, b complex (re, im), c)
+[16:01:20] <Myon> but you are using it as (thing 1, (thing2, thing3), thing4)
+[16:01:33] <Myon> which isn't wrong technically, just not what it was intended for
+[16:02:29] <chipilov> ok. so I guess what you are saying is that you would go with the json building approach inside my PLpgSQL code instead of going through custom types and then having PostgREST convert to JSON?
+[16:02:32] <Myon> so compound types are not meant to be used as on-the-fly transfer-only format
+[16:02:46] <Myon> that would be the SQL approach
+[16:03:14] <Myon> your approach will work with the limitation that you should probably not dynamically create types at run time
+[16:03:27] <chipilov> yep, I don't have any plans for that
+[16:03:41] *** Quits: richard_h (~richard@2406:e001:8:a900:6e62:6dff:fe05:ae29) (Quit: Leaving.)
+[16:03:59] <chipilov> do you think JSON construction is trivial in terms of CPU load? To be honest, that was one of my concerns when I decided against it, but maybe it's a false concern
+[16:04:16] <johto> measure it?
+[16:04:18] <Myon> I don't know, but probably not a problem
+[16:04:31] <johto> there's a bunch of overhead with returning record types from functions as well
+[16:04:57] <chipilov> @johto, I could be wrong but I think measuring this myself would NOT be trivial
+[16:05:27] <chipilov> I figured there would be a cost for custom types, but I thought it should be smaller, if not for anything else because there is no string build
+[16:05:29] <chipilov> *building
+[16:05:40] <ne2k> this smells like premature optimization
+[16:06:11] <Myon> things are still always serialized as PostgreSQL "Datum"s internally between all function/operator calls
+[16:06:32] <johto> chipilov; really? if you have a working composite solution, spend 15 minutes writing a JSON version for one table and see what happens?
+[16:06:41] <chipilov> @ne2k definitely could be...I might try to json building approach and if it turns out that the code is actually cleaner (or at least not much worse) I can migrate
+[16:06:42] <johto> doesn't seem difficult to measure _something_ as a starting point
+[16:07:09] <Myon> I'd mostly worry about the cost of having to maintain either solution
+[16:07:11] *** Joins: furrymcgee (~devuan@cgn-89-1-209-226.nc.de)
+[16:07:23] <Myon> which is why I'd be afraid of suddenly having 1000 types in some DB
+[16:07:40] <ne2k> I generally work from the starting point that any amount of transformation of data from one form to another or calculation is negligible
+[16:07:59] <Myon> while a JSON builder is maybe messy, but not something that does self-modifying DDL
+[16:09:37] <Myon> (see the mess in the middle of http://www.df7cb.de/df7cb/map/geojson.py that I recently created. Should probably rewrite it as server-side plpgsql.)
+[16:11:46] <chipilov> ok, guys, thanks a lot for your input, it was quite helpful!
+[16:12:20] <chipilov> I will experiment a bit with the json building approach, see if I can avoid "the mess" and take it from there
+[16:12:36] *** Quits: jkavalik (~jkavalik@ip-78-102-141-139.net.upcbroadband.cz) (Ping timeout: 240 seconds)
+[16:12:59] *** Quits: Nekomander (~BadAdvice@user/badadvicecat) (Remote host closed the connection)
+[16:13:25] *** Joins: Nekomander (~BadAdvice@user/badadvicecat)
+[16:13:26] *** Quits: Nekomander (~BadAdvice@user/badadvicecat) (Remote host closed the connection)
+[16:13:52] *** Joins: Nekomander (~BadAdvice@user/badadvicecat)
+[16:15:52] *** Joins: Koje (~Kohe@46.12.8.182.dsl.dyn.forthnet.gr)
+[16:16:32] *** Quits: Kohe (~Kohe@77.49.10.102.dsl.dyn.forthnet.gr) (Ping timeout: 240 seconds)
+[16:20:52] *** Quits: lkw (~lkw@user/lkw) (Remote host closed the connection)
+[16:21:06] *** Joins: TomyWork (~TomyLobo@p200300e80f0067008d39a43f86b23c6c.dip0.t-ipconnect.de)
+[16:27:54] *** Joins: the_lanetly_052_ (~the_lanet@185.30.89.14)
+[16:36:15] *** Quits: GNUmoon (~GNUmoon@gateway/tor-sasl/gnumoon) (Ping timeout: 240 seconds)
+[16:38:29] <chipilov> btw, one thing I forgot to mention about using custom composite types instead of building json's is that I also take advantage of https://github.com/okbob/plpgsql_check and this way I reduce the risk of making errors when building the response (i.e. if I define my response to have certain fields and I don't pass those fields to the cast, plpgsql check will usually warn me, depending on the mistake)
+[16:38:29] *** Quits: Haudegen (~quassel@178.115.237.87.static.drei.at) (Quit: Bin weg.)
+[16:40:43] *** Joins: shiranaihito (~textual@123-192-192-149.dynamic.kbronet.com.tw)
+[16:44:39] *** Joins: DevAntoine (~DevAntoin@2a01:cb16:7f:6e32:697b:3119:acd3:7976)
+[16:49:13] *** Quits: veesh (~veesh@77.137.128.179) (Ping timeout: 256 seconds)
+[16:49:34] *** Joins: veesh (~veesh@5.28.146.135)
+[16:55:27] *** Quits: psoo (~psoo@dslb-002-204-079-161.002.204.pools.vodafone-ip.de) (Ping timeout: 256 seconds)
+[16:56:13] *** Quits: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk) (Quit: Leaving)
+[16:59:31] *** Quits: DevAntoine (~DevAntoin@2a01:cb16:7f:6e32:697b:3119:acd3:7976) (Remote host closed the connection)
+[16:59:38] *** Quits: ufk (~textual@bzq-84-108-89-219.cablep.bezeqint.net) (Quit: My Mac Pro has gone to sleep. ZZZzzz…)
+[17:01:24] *** Quits: dsrt^ (~dsrt@50-202-219-146-static.hfc.comcastbusiness.net) (Ping timeout: 240 seconds)
+[17:01:42] *** Joins: dsrt^ (~dsrt@50-202-219-146-static.hfc.comcastbusiness.net)
+[17:03:48] *** Quits: Koje (~Kohe@46.12.8.182.dsl.dyn.forthnet.gr) (Ping timeout: 240 seconds)
+[17:14:31] *** Quits: ben_ (~ben@host86-151-198-203.range86-151.btcentralplus.com) (Remote host closed the connection)
+[17:19:42] *** Joins: odnes (~odnes@5-203-232-35.pat.nym.cosmote.net)
+[17:22:22] *** Joins: rewrit3 (~rewrit3@user/rewrit3)
+[17:25:25] *** Quits: ammer (uid541621@id-541621.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[17:30:52] *** Joins: ben_ (~ben@host86-151-198-203.range86-151.btcentralplus.com)
+[17:34:20] *** Joins: kakashiAL (~kakashi@41.143.6.180)
+[17:35:13] *** Joins: mikeputnam (~mikeputna@wilug/mikeputnam)
+[17:35:34] *** Quits: ben_ (~ben@host86-151-198-203.range86-151.btcentralplus.com) (Ping timeout: 272 seconds)
+[17:37:06] *** Quits: AceSlash (~slash@cosium-fo-152-18.fib.nerim.net) (Ping timeout: 256 seconds)
+[17:43:03] *** Quits: ees-mobile (~ees-mobil@pool-108-18-30-46.washdc.fios.verizon.net) (Ping timeout: 256 seconds)
+[17:43:33] *** Joins: ben_ (~ben@host86-151-198-203.range86-151.btcentralplus.com)
+[17:45:34] *** Joins: Vitto (~Vitto@37.166.71.79)
+[17:46:25] *** Joins: CodeMouse92 (~CodeMouse@user/codemouse92)
+[17:46:26] *** Quits: Vitto (~Vitto@37.166.71.79) (Read error: Connection reset by peer)
+[17:47:04] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[17:55:06] *** Joins: Haudegen (~quassel@91.114.49.10)
+[17:56:49] *** Quits: maroloccio (~marolocci@pousada3ja.mma.com.br) (Quit: WeeChat 3.0)
+[17:59:34] *** Joins: bsliger (~bsliger@ip68-97-47-19.ok.ok.cox.net)
+[18:07:54] *** Quits: mowcat (~mowcat@2a00:23c5:d190:1901:f22f:74ff:fe77:1e1c) (Ping timeout: 268 seconds)
+[18:09:37] *** Quits: Komzpa (~kom@46.216.154.188) (Ping timeout: 240 seconds)
+[18:11:00] *** Quits: realies (~realies@user/realies) (Ping timeout: 240 seconds)
+[18:11:21] *** Quits: nillyhan (~67af8209@user/nillyhan) (Quit: Leaving)
+[18:11:40] *** Joins: nillyhan (~1b93e2fa@user/nillyhan)
+[18:12:35] *** Quits: odnes (~odnes@5-203-232-35.pat.nym.cosmote.net) (Remote host closed the connection)
+[18:13:08] *** Joins: odnes (~odnes@5-203-232-35.pat.nym.cosmote.net)
+[18:14:50] *** Quits: Nekomander (~BadAdvice@user/badadvicecat) (Ping timeout: 272 seconds)
+[18:16:28] *** Joins: realies (~realies@user/realies)
+[18:17:22] *** Quits: kakashiAL (~kakashi@41.143.6.180) (Ping timeout: 272 seconds)
+[18:26:33] *** Quits: ben_ (~ben@host86-151-198-203.range86-151.btcentralplus.com) (Remote host closed the connection)
+[18:27:47] *** Joins: zer0bitz_ (~zer0bitz@2001:2003:f74d:b800:b579:336d:9a22:79d7)
+[18:28:00] *** Quits: fstd_ (~fstd@xdsl-78-34-125-135.nc.de) (Remote host closed the connection)
+[18:28:06] *** Joins: fstd (~fstd@xdsl-78-34-125-135.nc.de)
+[18:28:26] *** Joins: f3f3lix (~weechat@55d4a96a.access.ecotel.net)
+[18:28:33] *** Quits: adept (~adept@cpc86002-ware7-2-0-cust162.9-1.cable.virginm.net) (Quit: Ping timeout (120 seconds))
+[18:28:52] *** Joins: adept (~adept@cpc86002-ware7-2-0-cust162.9-1.cable.virginm.net)
+[18:29:49] *** Joins: the_lanetly_052 (~the_lanet@194.135.168.16)
+[18:31:01] *** Quits: the_lanetly_052_ (~the_lanet@185.30.89.14) (Ping timeout: 240 seconds)
+[18:31:08] *** Quits: zer0bitz (~zer0bitz@2001:2003:f74d:b800:b579:336d:9a22:79d7) (Ping timeout: 252 seconds)
+[18:31:33] *** Quits: tehenderz (~tehenderz@ti0018a400-10773.bb.online.no) (Ping timeout: 256 seconds)
+[18:31:37] *** Joins: tehenderz_ (~tehenderz@ti0018a400-10291.bb.online.no)
+[18:35:07] *** Joins: AceSlash (~slash@cosium-fo-152-18.fib.nerim.net)
+[18:38:23] *** Joins: ben_ (~ben@host86-151-198-203.range86-151.btcentralplus.com)
+[18:39:57] *** Joins: james_lavin (~jameslavi@ool-457981b2.dyn.optonline.net)
+[18:40:11] *** Quits: randir (~randir@93.159.239.42) (Remote host closed the connection)
+[18:40:44] *** Joins: randir (~randir@93.159.239.42)
+[18:44:57] *** Quits: randir (~randir@93.159.239.42) (Ping timeout: 240 seconds)
+[18:50:51] *** Joins: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk)
+[18:51:55] *** Quits: ba|ch (~user@p200300f3a70c0d6680825c04a3622dd5.dip0.t-ipconnect.de) (Quit: byebye)
+[18:55:13] *** Joins: randir (~randir@85.249.36.97)
+[18:56:26] *** Quits: zemis (~zemis@ip-89-176-21-138.net.upcbroadband.cz) (Ping timeout: 256 seconds)
+[18:56:27] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[19:00:47] *** Quits: ejjfunky (~ejjfunky@125.164.21.7) (Read error: Connection reset by peer)
+[19:02:25] *** Joins: hoppity (~hoppity@66.222.130.38)
+[19:02:25] *** Quits: hoppity (~hoppity@66.222.130.38) (Changing host)
+[19:02:25] *** Joins: hoppity (~hoppity@user/hoppity)
+[19:02:32] *** Joins: Elodin (~elodin@user/elodin)
+[19:04:18] *** Joins: mizi (~mizi@user/mizi)
+[19:04:45] *** Quits: odnes (~odnes@5-203-232-35.pat.nym.cosmote.net) (Remote host closed the connection)
+[19:07:02] *** Joins: odnes (~odnes@5-203-232-35.pat.nym.cosmote.net)
+[19:08:41] *** Joins: psoo (~psoo@dslb-002-204-079-161.002.204.pools.vodafone-ip.de)
+[19:08:41] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[19:09:23] *** Parts: velix (~velix@user/velix) (Leaving)
+[19:09:24] *** Quits: tehenderz_ (~tehenderz@ti0018a400-10291.bb.online.no) (Ping timeout: 240 seconds)
+[19:10:17] *** Joins: tehenderz (~tehenderz@ti0018a400-10356.bb.online.no)
+[19:13:11] *** valdez_ is now known as segundo
+[19:13:20] *** Quits: esainane (esainane@antihype.space) (Quit: No Ping reply in 180 seconds.)
+[19:14:42] *** Joins: esainane (esainane@antihype.space)
+[19:14:47] *** Joins: Elodin (~elodin@user/elodin)
+[19:17:31] *** Joins: vanessa (~farawayas@103.160.128.7)
+[19:20:01] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[19:20:51] *** Joins: kakashiAL (~kakashi@41.143.6.180)
+[19:21:30] *** Quits: ben_ (~ben@host86-151-198-203.range86-151.btcentralplus.com) (Remote host closed the connection)
+[19:25:37] *** Quits: kakashiAL (~kakashi@41.143.6.180) (Ping timeout: 256 seconds)
+[19:26:00] *** Quits: vanessa (~farawayas@103.160.128.7) (Remote host closed the connection)
+[19:26:01] *** Joins: Elodin (~elodin@user/elodin)
+[19:30:13] *** Quits: CodeMouse92 (~CodeMouse@user/codemouse92) (Ping timeout: 240 seconds)
+[19:31:23] *** Quits: odnes (~odnes@5-203-232-35.pat.nym.cosmote.net) (Quit: Leaving)
+[19:32:30] *** Quits: test1` (~user@p200300f3a70c0d66716e674eb594b861.dip0.t-ipconnect.de) (Ping timeout: 250 seconds)
+[19:32:45] *** Joins: Koje (~Kohe@46.12.8.182.dsl.dyn.forthnet.gr)
+[19:32:49] <rovanion> Anybody know how to rewrite this delete so that it returns the number of rows deleted in the CTE? https://dpaste.org/aSsq
+[19:35:30] <ilmari> rovanion: with a as (delete … returning …), b as (delete …) select count(*) from a;
+[19:36:16] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[19:36:29] <rovanion> ilmari: Ah, yeah, thanks!
+[19:37:08] *** Joins: jhammerman (~joe.hamme@98.246.188.6)
+[19:37:42] <jhammerman> Hi #postgresql, does anyone know of a method to identify rarely queried columns or rows in a statistical manner?
+[19:37:52] <jhammerman> I’m interested in general methods or tools for identifying “cold” data
+[19:39:40] <ne2k> jhammerman, I'm not aware of anything built in that would do that automatically for the past. if you're interested in the future then I can imagine it might be possible to set something up
+[19:40:03] <jhammerman> @ne2k: Are youthinking something trigger based?
+[19:40:36] *** Quits: csm3105 (~csm3105@143.red-83-48-84.staticip.rima-tde.net) (Ping timeout: 240 seconds)
+[19:40:42] <ne2k> jhammerman, not for access, no. have you read this? https://www.postgresql.org/docs/14/monitoring-stats.html
+[19:40:56] <jhammerman> Oooking, thankyou
+[19:41:02] *** Quits: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net) (Ping timeout: 260 seconds)
+[19:41:05] <ne2k> I'm no expert so I'll let others chime in. gotta go now anyway
+[19:42:00] *** Joins: CodeMouse92 (~CodeMouse@user/codemouse92)
+[19:42:03] *** Quits: chipilov (~Thunderbi@151.251.244.1) (Ping timeout: 256 seconds)
+[19:42:15] *** Joins: Elodin (~elodin@user/elodin)
+[19:42:40] <furrymcgee> maybe better to analyze the queries not the data
+[19:43:45] <ne2k> yeah, that's kinda what I was thinking
+[19:44:17] *** Joins: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net)
+[19:44:17] <ne2k> "The parameter track_counts controls whether statistics are collected about table and index accesses."
+[19:45:27] *** Joins: lechner (~lechner@debian/lechner)
+[19:55:41] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[19:58:35] *** Joins: ben_ (~ben@bglloyd.plus.com)
+[20:01:35] *** Joins: Elodin (~elodin@user/elodin)
+[20:01:55] *** Quits: Atque (~Atque@user/atque) (Ping timeout: 240 seconds)
+[20:01:57] *** Quits: lifeless (~robertc@168.92-220-19.customer.lyse.net) (Remote host closed the connection)
+[20:02:40] *** Quits: gleu (~guillaume@2a01cb0c046d4500986de48660e05ed5.ipv6.abo.wanadoo.fr) (Quit: Leaving.)
+[20:05:47] *** Joins: ufk (~textual@bzq-84-108-89-219.cablep.bezeqint.net)
+[20:06:38] *** Joins: lifeless (~robertc@168.92-220-19.customer.lyse.net)
+[20:07:01] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[20:10:40] *** Joins: maciek_ (~maciek@2600:1700:a412:1c00:1e5f:f00f:8744:9b41)
+[20:12:50] *** Joins: Elodin (~elodin@user/elodin)
+[20:13:19] *** Quits: Koje (~Kohe@46.12.8.182.dsl.dyn.forthnet.gr) (Remote host closed the connection)
+[20:13:42] *** Joins: Koje (~Kohe@46.12.8.182.dsl.dyn.forthnet.gr)
+[20:15:05] *** Joins: mowcat (~mowcat@host86-129-162-211.range86-129.btcentralplus.com)
+[20:15:10] *** Joins: Atque (~Atque@user/atque)
+[20:18:19] *** Quits: mrwick (~mrwick@user/mrwick) (Ping timeout: 256 seconds)
+[20:18:19] *** Quits: Koje (~Kohe@46.12.8.182.dsl.dyn.forthnet.gr) (Remote host closed the connection)
+[20:18:36] *** Quits: zlinux (~zlinux@149.109.18.129) (Ping timeout: 256 seconds)
+[20:22:18] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[20:22:45] *** Joins: gp5st (~gp5st@pool-72-77-44-213.pitbpa.fios.verizon.net)
+[20:22:58] *** Joins: Kohe (~Kohe@79.103.22.84.dsl.dyn.forthnet.gr)
+[20:23:14] *** Quits: maret (~maret@nat-88-212-37-89.antik.sk) (Quit: maret)
+[20:23:57] *** Joins: kakashiAL (~kakashi@41.143.6.180)
+[20:25:00] *** Quits: dsrt^ (~dsrt@50-202-219-146-static.hfc.comcastbusiness.net) (Ping timeout: 240 seconds)
+[20:26:13] *** Joins: dsrt^ (~dsrt@50-202-219-146-static.hfc.comcastbusiness.net)
+[20:26:35] *** Quits: Su-Shee (~Susanne@p508945cf.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[20:28:01] *** Joins: Su-Shee (~Susanne@p4ff49ea8.dip0.t-ipconnect.de)
+[20:28:13] *** Joins: Elodin (~elodin@user/elodin)
+[20:32:14] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[20:33:51] *** Quits: Haudegen (~quassel@91.114.49.10) (Quit: Bin weg.)
+[20:36:50] *** Joins: gambl0re (~gambl0re@45.72.204.83)
+[20:36:59] *** Quits: gambl0re (~gambl0re@45.72.204.83) (Read error: Connection reset by peer)
+[20:39:52] *** Quits: mowcat (~mowcat@host86-129-162-211.range86-129.btcentralplus.com) (Ping timeout: 272 seconds)
+[20:39:53] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[20:40:30] *** Quits: veesh (~veesh@5.28.146.135) (Ping timeout: 272 seconds)
+[20:41:20] *** Joins: veesh (~veesh@89.237.101.253)
+[20:42:47] *** Joins: Xof (~Xof@50-76-33-78-ip-static.hfc.comcastbusiness.net)
+[20:45:03] *** Joins: gambl0re (~gambl0re@45.72.204.83)
+[20:45:03] *** Quits: gambl0re (~gambl0re@45.72.204.83) (Read error: Connection reset by peer)
+[20:45:29] *** Joins: Elodin (~elodin@user/elodin)
+[20:45:54] *** Quits: Xof (~Xof@50-76-33-78-ip-static.hfc.comcastbusiness.net) (Client Quit)
+[20:46:55] *** Quits: volga629 (~volga629@72.139.93.26) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[20:49:28] *** Quits: fef (~thedawn@user/thedawn) (Quit: Leaving)
+[20:51:28] *** Joins: gambl0re (~gambl0re@45.72.204.83)
+[20:51:43] *** Quits: gambl0re (~gambl0re@45.72.204.83) (Read error: Connection reset by peer)
+[20:52:18] *** Joins: Nekomander (~BadAdvice@user/badadvicecat)
+[20:53:19] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[20:56:03] *** Quits: martti (~martti@46-126-48-136.dynamic.hispeed.ch) (Ping timeout: 256 seconds)
+[20:57:27] *** Quits: midipix (~midipix@mail.culturestrings.org) (Quit: ZNC 1.7.5 - https://znc.in)
+[20:57:54] *** Joins: gambl0re (~gambl0re@45.72.204.83)
+[20:57:57] *** Quits: gambl0re (~gambl0re@45.72.204.83) (Read error: Connection reset by peer)
+[20:58:53] *** Joins: Elodin (~elodin@user/elodin)
+[21:02:55] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[21:03:41] *** Quits: kakashiAL (~kakashi@41.143.6.180) (Ping timeout: 245 seconds)
+[21:04:15] *** Joins: gambl0re (~gambl0re@45.72.204.83)
+[21:04:27] *** Joins: csm3105 (~csm3105@2a02:2e02:3e4:d00:4b21:8c8f:fc36:ee33)
+[21:06:18] *** Quits: gambl0re (~gambl0re@45.72.204.83) (Read error: Connection reset by peer)
+[21:06:42] *** Joins: martti (~martti@46-126-48-136.dynamic.hispeed.ch)
+[21:09:04] *** Quits: csm3105 (~csm3105@2a02:2e02:3e4:d00:4b21:8c8f:fc36:ee33) (Client Quit)
+[21:09:07] *** Joins: Elodin (~elodin@user/elodin)
+[21:12:20] *** Joins: Xof (~Xof@157-131-136-66.dedicated.static.sonic.net)
+[21:12:37] *** Joins: gambl0re (~gambl0re@45.72.204.83)
+[21:13:14] *** Quits: gambl0re (~gambl0re@45.72.204.83) (Read error: Connection reset by peer)
+[21:13:23] *** Quits: mncheck (~mncheck@193.224.205.254) (Remote host closed the connection)
+[21:13:41] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[21:13:59] *** Quits: ben_ (~ben@bglloyd.plus.com) (Remote host closed the connection)
+[21:15:11] *** Joins: rwtrecs (~rewrit3@user/rewrit3)
+[21:17:26] *** Quits: rewrit3 (~rewrit3@user/rewrit3) (Ping timeout: 245 seconds)
+[21:17:43] *** Quits: mikeputnam (~mikeputna@wilug/mikeputnam) (Quit: WeeChat 3.4)
+[21:18:58] *** Joins: gambl0re (~gambl0re@45.72.204.83)
+[21:19:05] *** Joins: midipix (~midipix@mail.culturestrings.org)
+[21:19:22] *** Joins: Elodin (~elodin@user/elodin)
+[21:20:13] *** Quits: gambl0re (~gambl0re@45.72.204.83) (Read error: Connection reset by peer)
+[21:23:56] *** Joins: tenten (~noname@65.201.88.74)
+[21:23:57] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[21:24:53] *** Joins: ben_ (~ben@bglloyd.plus.com)
+[21:25:01] *** Quits: CygniX (~CygniX@2a01:8740:1:727:4e:80:7f:2d) (Ping timeout: 240 seconds)
+[21:25:33] *** Joins: CygniX (~CygniX@2a01:8740:1:727:4e:80:7f:2d)
+[21:25:55] <tenten> hi, i'm conducting a query on one column of a giant table, and it's taking 17 minutes to complete.  i've already created a b-tree index on the column.  can anyone recommend further optimiziations? here is the query plan, and the query is sipmly select column2 from table where column1='string': https://explain.depesz.com/s/1AIK
+[21:26:19] *** Joins: gambl0re (~gambl0re@45.72.204.83)
+[21:27:13] *** Joins: segfaultfizzbuzz (~segfaultf@135-180-0-138.static.sonic.net)
+[21:28:21] <segfaultfizzbuzz> how large does a postgresql database need to be before you start to need expertise to operate and maintain it?
+[21:28:44] *** Quits: gambl0re (~gambl0re@45.72.204.83) (Read error: Connection reset by peer)
+[21:29:36] *** Joins: Elodin (~elodin@user/elodin)
+[21:31:19] *** Joins: maret (~maret@nat-88-212-37-89.antik.sk)
+[21:34:08] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[21:34:40] *** Joins: gambl0re (~gambl0re@45.72.204.83)
+[21:34:56] *** Quits: gambl0re (~gambl0re@45.72.204.83) (Read error: Connection reset by peer)
+[21:35:23] *** Quits: Guest6792 (~vit@chello085216193138.chello.sk) (Ping timeout: 256 seconds)
+[21:35:36] *** Quits: pvn1 (~Adium@85-195-230-32.fiber7.init7.net) (Quit: Leaving.)
+[21:36:51] *** Quits: mexen (uid495612@user/mexen) (Quit: Connection closed for inactivity)
+[21:37:09] *** Joins: _xxoxx (~Junxter@222.95.164.193)
+[21:37:58] <johto> segfaultfizzbuzz; it's not really about the size. there are a number of variables
+[21:38:19] <peerce> tenten; what percentage of the total number of rows has this value ?
+[21:39:49] *** Joins: Elodin (~elodin@user/elodin)
+[21:39:57] <peerce> tenten; if thats much over 25-30%, its usually considered faster to just scan the whole table.
+[21:40:29] *** Quits: Junxter (~Junxter@222.95.164.193) (Ping timeout: 256 seconds)
+[21:41:02] *** Joins: gambl0re (~gambl0re@45.72.204.83)
+[21:41:19] <peerce> tenten; you might do an EXPLAIN ANALYZE SELECT ....(your query)...;    and copy/paste the query and its explain output to https://explain.depesz.com  and paste the resulting URL here, and we can help you understand what its doing and the likely reasons
+[21:42:26] <tenten> peerce: ty!  does this link render for you? https://explain.depesz.com/s/1AIK - the percentage of total rows with that value is <1% but the table is gigantic and as a result, the number of returning rows is also large
+[21:42:44] *** Quits: szkl (uid110435@id-110435.uxbridge.irccloud.com) (Quit: Connection closed for inactivity)
+[21:44:02] <peerce> it does.
+[21:44:30] <peerce> it does look like the initial estimates were off.
+[21:44:41] <peerce> that flag field, does it only have a specific modest set of values ?
+[21:44:42] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[21:45:01] *** Quits: ben_ (~ben@bglloyd.plus.com) (Remote host closed the connection)
+[21:45:02] *** Joins: Elodin (~elodin@user/elodin)
+[21:45:24] <tenten> the flag field consists of a very large set of values (unfortunately)
+[21:45:32] <peerce> say there's 10 or 20 or whatever possible values, using an enum would be significantly faster..    ah, ok.
+[21:45:57] *** Joins: KaitoDaumoto (Frat@user/kaitodaumoto)
+[21:47:26] <peerce> not sure I understand why it says 'workers planned 2', but 'workers launched 0', as that plan does seem geared towawrds parallel worrkers
+[21:48:05] <peerce> i'm also unclear why step 2 is removing 100M rows when step 3 only returned 10M rows.
+[21:48:55] *** Joins: Guest6792 (~vit@chello085216193138.chello.sk)
+[21:49:08] <koollman> analyze, maybe, for better estimates ?
+[21:49:31] <tenten> yea, the second part was confusing me too..Does "Rows removed by index recheck: 100M" mean it's reindexing the table in real time?
+[21:49:46] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[21:49:55] <peerce> I know that took like 10 minutes or something to run, but could you run it again using EXPLAIN (ANALYZE,BUFFERS)
+[21:51:08] <peerce> no, that usually means the inner step was something loose, and the recheck verifies the values returned all match.
+[21:51:38] <peerce> like, an index scan JUST scans the index, then the recheck verifies the returned values in the actual tuples all match
+[21:51:57] <tenten> ok gotcha, rerunning now with EXPLAIN (ANALYZE,BUFFERS)
+[21:52:39] <peerce> k, this is a better explanation than mine :D  https://www.depesz.com/2013/04/27/explaining-the-unexplainable-part-2/#bitmap-index-scan
+[21:54:31] <tenten> here is the result of EXPLAIN (ANALYZE,BUFFERS): https://explain.depesz.com/s/O8jk
+[21:55:16] *** Joins: Elodin (~elodin@user/elodin)
+[21:55:18] <koollman> 1.6GB/s is not bad :)
+[21:55:24] <peerce> ok, so this query is hitting like 4X more blocks than fit in shared_buffers, so its doing a LOT of disk IO
+[21:56:18] <peerce> can you add ram to this system and increase shared buffers by like 4X ?
+[21:56:22] *** Quits: the_lanetly_052 (~the_lanet@194.135.168.16) (Ping timeout: 250 seconds)
+[21:56:24] *** Joins: Haudegen (~quassel@178.115.237.87.static.drei.at)
+[21:57:44] <tenten> yep, definitely possible.  i was actually planning on doing an upgrade tonight that would double memory cpaacity - would that make it a lot faster?
+[21:58:02] <peerce> it should, you're doing a LOT of disk IO here, like 35GB just for this query
+[21:58:14] <koollman> did you run 'analyze yourtable' ?
+[21:58:28] <tenten> another observation - if i change the query filter value to something rare, the query completes instantaneously.
+[21:58:31] <peerce> ideally, shared_buffers should be somewhat larger than all your actively used indexes
+[21:58:58] <peerce> tenten; probably uses a better plan based on statistics
+[21:59:29] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[22:00:01] *** Quits: psoo (~psoo@dslb-002-204-079-161.002.204.pools.vodafone-ip.de) (Ping timeout: 250 seconds)
+[22:01:10] <tenten> gotcha, is shared_buffers basically a percentage of RAM? so, if i increase total RAM, share_buffers will proportionally increase also?
+[22:01:24] <tenten> and my goal should be shared_buffers percentage * total RAM >= 35GB?
+[22:01:54] <tenten> koollman: running analyze on the table now
+[22:03:02] <peerce> um, shared_buffers is a setting in postgresql.conf ...    assuming the system is a dedicated database server, I've typically set it around 25% of the total ram, adjust other parameters like work_mem as suitalbe for your workload, with a goal of 50% of ram being left 'free' for use as OS level disk cache.
+[22:05:00] <tenten> i see.  i have it hosted on RDS right now with 244GB RAM and shared_buffer param at 25%.  i will double ram to 488GB tonight i guess - ty!
+[22:05:36] *** Joins: aremaref (~aremaref@107-198-1-161.lightspeed.irvnca.sbcglobal.net)
+[22:05:36] *** Joins: Elodin (~elodin@user/elodin)
+[22:09:40] *** Quits: maret (~maret@nat-88-212-37-89.antik.sk) (Quit: maret)
+[22:10:27] *** Joins: Rashad (~textual@149.200.188.246)
+[22:10:27] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[22:10:47] *** Quits: darutoko (~darutoko@37.21.223.235) (Quit: Leaving)
+[22:15:57] *** Joins: Elodin (~elodin@user/elodin)
+[22:17:29] <peerce> with that much ram, you could probably boost shared buffers somewhat higher than 25%, maybe 35%, unless you need large work_mem with high concurrent query counts
+[22:18:35] <peerce> 25% of 244GB is 61GB
+[22:19:35] *** Joins: carragom (~textual@201.204.94.76)
+[22:19:52] *** Quits: Nekomander (~BadAdvice@user/badadvicecat) (Ping timeout: 256 seconds)
+[22:20:44] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[22:21:11] *** Joins: Elodin (~elodin@user/elodin)
+[22:25:41] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[22:25:43] *** Joins: hojasuelta (~hojasuelt@c-76-104-207-0.hsd1.wa.comcast.net)
+[22:26:42] *** Joins: kakashiAL (~kakashi@41.143.6.180)
+[22:27:59] <segfaultfizzbuzz> johto: sure i understand that the table layout and the nature of the queries also impact what i am asking about
+[22:28:56] *** Quits: tehenderz (~tehenderz@ti0018a400-10356.bb.online.no) (Ping timeout: 256 seconds)
+[22:29:03] *** Joins: pvn1 (~Adium@85-195-230-32.fiber7.init7.net)
+[22:29:28] *** Joins: tehenderz (~tehenderz@ti0018a400-1546.bb.online.no)
+[22:31:26] *** Joins: Elodin (~elodin@user/elodin)
+[22:34:42] *** Quits: AceSlash (~slash@cosium-fo-152-18.fib.nerim.net) (Quit: Leaving)
+[22:35:12] *** Joins: econo (uid147250@user/econo)
+[22:35:46] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[22:41:42] *** Joins: Elodin (~elodin@user/elodin)
+[22:42:11] <StuckMojo> what's the :: to make a namespace oid report the name ?
+[22:43:09] *** Quits: hoppity (~hoppity@user/hoppity) ()
+[22:43:11] <peerce> what catalog table does that namespace oid reference ?
+[22:43:42] <StuckMojo> i mean like the cast that does the lookup in pg_class for an oid? i forget that one too
+[22:44:36] *** Joins: spacenautx (~spacenaut@user/spacenautx)
+[22:44:44] <StuckMojo> select oid::something from pg_class; and it will output the relname...
+[22:45:21] <segfaultfizzbuzz> but it would be good from a project planning perspective to have a very very rough idea of when i will start to run into issues
+[22:45:31] <StuckMojo> peerce: regclass!
+[22:46:13] <peerce> select (oid '16403')::relclass;
+[22:46:13] <peerce> ERROR:  type "relclass" does not exist
+[22:46:31] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[22:46:32] <peerce> oops, reg not rel, hah hah
+[22:46:37] <Snow-Man> yea
+[22:46:48] <peerce> yup, that works!
+[22:46:56] *** Joins: Elodin (~elodin@user/elodin)
+[22:47:29] <peerce> select (oid '16403')::regclass; ==> 'x_id_seq'
+[22:50:09] *** Joins: Simplar (~Simplar@188.163.93.241)
+[22:51:48] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[22:52:09] *** Joins: Elodin (~elodin@user/elodin)
+[22:52:18] *** Joins: kitsunenokenja (~kitsunech@68.91.220.96)
+[22:54:06] <StuckMojo> i was looking for regnamespace
+[22:54:46] <StuckMojo> i forget who added regnamespace, but i was chatting with them here while they were coding it. it was the one useful reg* that was missing
+[22:55:50] *** Quits: dsrt^ (~dsrt@50-202-219-146-static.hfc.comcastbusiness.net) (Remote host closed the connection)
+[22:56:30] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[22:59:23] *** Joins: hoppity (~hoppity@66.222.130.38)
+[22:59:23] *** Quits: hoppity (~hoppity@66.222.130.38) (Changing host)
+[22:59:23] *** Joins: hoppity (~hoppity@user/hoppity)
+[23:02:25] *** Joins: Elodin (~elodin@user/elodin)
+[23:05:47] *** Joins: xenoterracide (~xenoterra@2600:1700:71d4:81f:6e:2be2:8546:ba26)
+[23:06:45] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[23:07:02] *** Joins: the_lanetly_052 (~the_lanet@194.135.168.16)
+[23:07:15] *** Quits: rwtrecs (~rewrit3@user/rewrit3) (Remote host closed the connection)
+[23:07:27] *** Quits: pvn1 (~Adium@85-195-230-32.fiber7.init7.net) (Quit: Leaving.)
+[23:07:53] *** Joins: rwtrecs (~rewrit3@user/rewrit3)
+[23:09:10] *** Quits: furrymcgee (~devuan@cgn-89-1-209-226.nc.de) (Quit: leaving)
+[23:12:38] *** Joins: Elodin (~elodin@user/elodin)
+[23:13:23] *** Quits: hojasuelta (~hojasuelt@c-76-104-207-0.hsd1.wa.comcast.net) (Remote host closed the connection)
+[23:13:58] *** Joins: hojasuelta (~hojasuelt@c-76-104-207-0.hsd1.wa.comcast.net)
+[23:14:21] *** Quits: hojasuelta (~hojasuelt@c-76-104-207-0.hsd1.wa.comcast.net) (Read error: Connection reset by peer)
+[23:14:37] *** Joins: csd (~csd@c-73-22-175-211.hsd1.il.comcast.net)
+[23:15:12] *** Joins: volga629 (~volga629@72.139.93.26)
+[23:17:20] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[23:18:30] *** Joins: sakasama (~sakasama@user/sakasama)
+[23:21:01] *** Joins: chipilov (~Thunderbi@151.251.244.1)
+[23:22:53] *** Joins: Elodin (~elodin@user/elodin)
+[23:24:35] *** Quits: ufk (~textual@bzq-84-108-89-219.cablep.bezeqint.net) (Quit: My Mac Pro has gone to sleep. ZZZzzz…)
+[23:25:27] *** Quits: rwtrecs (~rewrit3@user/rewrit3) (Quit: rwtrecs)
+[23:27:34] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[23:29:26] *** Joins: hojasuelta (~hojasuelt@c-76-104-207-0.hsd1.wa.comcast.net)
+[23:29:36] *** Quits: libsys (~libsys@186.105.187.237) (Ping timeout: 272 seconds)
+[23:30:15] *** Joins: libsys (~libsys@186.105.189.237)
+[23:31:20] *** Joins: Auron (Auron956@user/auron)
+[23:33:06] *** Joins: Elodin (~elodin@user/elodin)
+[23:34:18] *** Quits: xenoterracide (~xenoterra@2600:1700:71d4:81f:6e:2be2:8546:ba26) (Remote host closed the connection)
+[23:34:23] <StuckMojo> hmmm...i think the text here is out of date: https://www.postgresql.org/docs/current/kernel-resources.html#LINUX-MEMORY-OVERCOMMIT
+[23:34:36] <StuckMojo> "This indicates that the postgres process has been terminated due to memory pressure. Although existing database connections will continue to function normally, no new connections will be accepted. To recover, PostgreSQL will need to be restarted."
+[23:34:42] *** Joins: xenoterracide (~xenoterra@2600:1700:71d4:81f:6e:2be2:8546:ba26)
+[23:35:18] * StuckMojo is interested because we just had an OOMkiller event that caused the primary to go into recovery for longer than one minute, which caused an automatic failover
+[23:36:47] *** Quits: Xof (~Xof@157-131-136-66.dedicated.static.sonic.net) (Quit: Bye.)
+[23:38:46] *** Quits: eroux (~eroux@102-65-85-242.ftth.web.africa) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[23:40:30] <johto> out of date in what way?
+[23:40:49] <johto> recovery can take theoretically an infinite amount of time, depending on your checkpoint plus whatever settings
+[23:40:54] <StuckMojo> if a client backend is killer, postmaster restarts on it's own
+[23:41:19] <StuckMojo> all existing connections are killed, they don't continue to function
+[23:41:24] * StuckMojo steps away for lunch
+[23:42:09] <johto> yeah, kill -9ing a backend leaves shared memory in undefined state so it has to
+[23:42:27] *** Joins: mowcat (~mowcat@host86-129-162-211.range86-129.btcentralplus.com)
+[23:43:02] *** Joins: enhwohrom^ (~enhwohrom@50-202-219-146-static.hfc.comcastbusiness.net)
+[23:43:07] *** Quits: Elodin (~elodin@user/elodin) (Read error: Connection reset by peer)
+[23:45:00] *** Quits: gambl0re (~gambl0re@45.72.204.83) (Ping timeout: 240 seconds)
+[23:48:29] *** Quits: kitsunenokenja (~kitsunech@68.91.220.96) (Ping timeout: 252 seconds)
+[23:49:22] *** Joins: Elodin (~elodin@user/elodin)
+[23:49:44] *** Quits: chipilov (~Thunderbi@151.251.244.1) (Quit: chipilov)
+[23:50:15] *** Quits: kakashiAL (~kakashi@41.143.6.180) (Ping timeout: 256 seconds)
+[23:54:47] *** Quits: Elodin (~elodin@user/elodin) (Ping timeout: 256 seconds)
+[23:54:57] *** Quits: xenoterracide (~xenoterra@2600:1700:71d4:81f:6e:2be2:8546:ba26) (Remote host closed the connection)
+[23:55:20] *** Joins: xenoterracide (~xenoterra@2600:1700:71d4:81f:6e:2be2:8546:ba26)
+[23:55:50] *** Quits: hojasuelta (~hojasuelt@c-76-104-207-0.hsd1.wa.comcast.net) (Remote host closed the connection)
+[23:56:08] *** Joins: hojasuelta (~hojasuelt@c-76-104-207-0.hsd1.wa.comcast.net)
+[23:57:00] *** Quits: segfaultfizzbuzz (~segfaultf@135-180-0-138.static.sonic.net) (Ping timeout: 240 seconds)
+[23:57:31] *** Joins: ufk (~textual@bzq-84-108-89-219.cablep.bezeqint.net)

@@ -1,0 +1,105 @@
+[00:31:09] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[00:53:25] *** Joins: subbu (~subbu@user/subbu)
+[01:20:15] *** Joins: subbu[m] (~subbu@user/subbu)
+[02:23:16] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[04:02:10] *** Joins: subbu (~subbu@user/subbu)
+[04:36:44] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[05:43:21] *** Joins: subbu (~subbu@user/subbu)
+[07:05:25] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[12:17:14] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Read error: Connection reset by peer)
+[15:56:01] <headius> Good morning!
+[16:11:58] <nilsding> good... afternoon! :)
+[16:27:12] <headius> hooray!
+[16:38:44] <headius> let
+[16:38:49] <headius> let's fix some bugs
+[16:38:51] <headius> and learn how to type
+[17:28:24] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[17:49:33] <headius> at_exit fix is merged... I also modified the rubyspec run to use MRI-style backtraces because these specs check process output
+[18:15:41] <headius> hmm I just realized we could eliminate some frame pushes by detecting a tail call and just reusing the current frame
+[18:15:54] <headius> dunno if that would improve perf very much, since we still need to populate it
+[18:54:29] *** Joins: subbu (~subbu@user/subbu)
+[19:46:25] <headius> enebo: hey you did some estimates of methods in a simple rails app at some point... did we ever do any measurements of how many JVM classes we generate?
+[19:47:13] <headius> I got an email from someone working on reducing the object header sizes in OpenJDK and that compression can vary depending on how many maximum classes the JVM can handle... lower would make the header smaller, potentially (so presumably this is down to a bit width for the class pointer)
+[19:51:57] *** Quits: fzakaria[m] (~fzakariam@2001:470:69fc:105::30f6) (Ping timeout: 260 seconds)
+[19:51:57] *** Quits: headius (~headius@2001:470:69fc:105::3027) (Ping timeout: 260 seconds)
+[19:51:57] *** Quits: jswenson[m] (~jswensonm@2001:470:69fc:105::fd45) (Ping timeout: 260 seconds)
+[19:52:30] *** Quits: BlaneDabneyGitte (~gitterrae@2001:470:69fc:105::3140) (Ping timeout: 260 seconds)
+[19:52:30] *** Quits: Bi[m] (~bimatrixo@2001:470:69fc:105::109a) (Ping timeout: 260 seconds)
+[19:52:30] *** Quits: kares[m] (~karesmatr@2001:470:69fc:105::30d1) (Ping timeout: 260 seconds)
+[20:07:54] *** Joins: fzakaria[m] (~fzakariam@2001:470:69fc:105::30f6)
+[20:10:27] *** Joins: headius (~headius@2001:470:69fc:105::3027)
+[20:16:39] <enebo[m]1> headius: I have no record of what I found out but I think for class count I just ran jvisualvm and connected after a while
+[20:17:13] <enebo[m]1> I do recall that in a simple rails app 84% of the loaded methods were not called
+[20:17:24] <enebo[m]1> which means 16% would eventually JIT
+[20:17:59] <enebo[m]1> but that was an older Rails and pretty informal since it was I think scaffolded app (I might have did it with redmine as well)
+[20:18:08] <headius> the other backtrace bug guy confirmed it's fixed with snapshot
+[20:18:16] <enebo[m]1> I have been thinking about doing some analysis on literal blocks
+[20:18:50] <headius> yeah so I gave this guy a gross estimate of 5000 methods getting jitted with 100 indy call chains in each, so like 505k classes generated of various sizes
+[20:18:55] <enebo[m]1> I think we have 2 issues now that are needed yet
+[20:18:57] <headius> I would hope that is a massively high estimate
+[20:19:09] <enebo[m]1> I did kill a bunch off with the parser change
+[20:19:11] <headius> and the fallback option here is that a user might have to turn off compressed class pointers or something
+[20:19:27] <enebo[m]1> that was like 1000 less classes :)
+[20:19:31] <headius> you killed off the .class files but they probably still generate classes for lambda internally
+[20:19:44] *** Joins: jswenson[m] (~jswensonm@2001:470:69fc:105::fd45)
+[20:19:47] <headius> clearly indy/lambda are going to be the real class-suckers
+[20:19:49] <enebo[m]1> oh well in that case we use lambda quite a bit in our code too
+[20:20:14] <enebo[m]1> not enough to not use them of course
+[20:20:15] <headius> yeah I didn't consider how many classes we have or lambdas we use but 100*5000 is already the lion's share
+[20:20:27] <headius> so like, 1M?
+[20:20:53] <headius> seems super high and the fallback is not terrible if you have a gigantic app
+[20:21:24] *** Joins: BlaneDabneyGitte (~gitterrae@2001:470:69fc:105::3140)
+[20:22:01] <enebo[m]1> well I don't know that sounds very high to me but I think most of our code would be from methods right?
+[20:22:39] <headius> every indy call site will have a chain of LambdaForm attached to it, which eventually get turned into anonymous classes
+[20:22:43] <headius> potentially one tiny anon class for every indy
+[20:22:56] <headius> and we use indy for basically everything
+[20:22:59] <enebo[m]1> so one class per site?
+[20:23:16] <enebo[m]1> I thought they shared lambda form classes
+[20:23:24] <headius> anon classes might have different requirements, like maybe they don't have the same object header or something
+[20:23:24] *** Joins: kares[m] (~karesmatr@2001:470:69fc:105::30d1)
+[20:23:33] <headius> they share the lambda form subtrees and might share classes, yes
+[20:23:35] *** Joins: Bi[m] (~bimatrixo@2001:470:69fc:105::109a)
+[20:23:36] <enebo[m]1> that would be a good question to ask
+[20:23:39] <headius> I'm not sure about that part and it keeps changing
+[20:23:48] <headius> yeah I mentioned that caching might change this
+[20:24:16] <headius> worst case is that every indy site (method calls, const lookups, literal caches, more) would be a potentially-tiny class
+[20:24:52] <enebo[m]1> It seems like you cannot answer something when it is per-site or not without some clarification
+[20:24:56] <headius> many methods will be small and have only a couple and others might have... I don't know, hundreds?
+[20:25:13] <headius> some of this is limited by how much bytecode we can even load in a single method, and then again by how much hotspot will JIT
+[20:25:43] <headius> no JIT, no indy specialization and possibly fewer generated classes
+[20:26:07] <enebo[m]1> I am making an empty rails app just to see what shows up
+[20:27:16] <headius> yeah cool, thanks... I am triaging other 9.3 issues
+[20:27:43] <enebo[m]1> empty rails app in console 12,570 in Java 8
+[20:28:01] <enebo[m]1> headius: did you fix the gem push issue?
+[20:28:44] <enebo[m]1> headius: Other than that I believe the other important one is us returning wrnog errno on I think symlink?  I triaged it and it is hairy
+[20:30:33] <headius> hah my bug about Hotspot on macOS not having a logical java.library path has been updated by three different people to be assigned to three different components
+[20:30:37] <headius> otherwise no progress
+[20:30:43] <enebo[m]1> https://github.com/jruby/jruby/issues/6847
+[20:30:59] <headius> I cannot reproduce the gem push issue on either 9.3 or 9.3.1 so I have asked for more info
+[20:31:00] <enebo[m]1> I plan on adding a bit for line vs column and will fix this today
+[20:31:13] <headius> I pushed some weakling-pre# gems and they were fine
+[20:32:55] <headius> basshelal: ^ about that JDK library path issue... at least people are looking at it
+[20:33:12] <headius> ok
+[20:33:25] <headius> we should still plan to do 9.3.1 next week even with these other issues in progress
+[20:33:36] <headius> and a 9.3.2 before RubyConf probably
+[20:33:47] <enebo[m]1> yeah
+[20:34:02] <enebo[m]1> I cannot find the other issue and I thought I targetted it already bah
+[20:34:08] <headius> hopefully I can fix the M1 issues for 9.3.2
+[20:34:24] <headius> and kares or we can fix up these ossl issues too
+[20:37:03] <enebo[m]1> 7760 classes with compile.invokedynamic enabled
+[20:37:34] <enebo[m]1> but perhaps those classes are not being shown in visualvm
+[20:37:38] <enebo[m]1> lunch
+[20:39:38] <headius> the openssl cert issue is not new either btw
+[20:39:48] <headius> at least as far back as 9.2.16
+[22:01:58] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[22:29:43] <headius> enebo: I do not see much more in issues that we could resolve before Monday. SSL thing predates 9.3, gem push does not reproduce for me (you should try on Linux), and JNR issues continue to need M1 work
+[22:30:20] <enebo[m]1> ok
+[22:30:44] <headius> oh I will look over the other things we punted to 9.3.1 because I think that was optimistic for a 2-week flip
+[22:31:06] <headius> if we had another month maybe
+[22:31:46] <headius> some of these should be punted to 9.4 given our timeline goals there
+[22:38:27] <headius> new IRB just worked properly for me on 9.3 so that is promising... I have punted the IRB STDIN.gets bug (kicked around from 2013) to 9.4 since we will switch to new IRB + reline in that release
+[23:29:15] *** Joins: subbu (~subbu@user/subbu)
+[23:57:33] <headius> I am punting bugs like mad
+[23:57:46] <headius> lots of these were nice to haves for 9.3 but don't apply anymore because they would require larger changes
+[23:58:04] <headius> if we are pushing 9.4 as a feature release and not a major overhaul then these can slide
+[23:58:15] <headius> JRuby X can rule the world some time in 2022

@@ -1,0 +1,210 @@
+[09:21:46] *** Quits: siasmj (sid6106@id-6106.lymington.irccloud.com) (*.net *.split)
+[09:21:46] *** Quits: satyanash (~satyanash@143.110.247.92) (*.net *.split)
+[09:22:23] *** Joins: siasmj (sid6106@2a03:5180:f:2::17da)
+[09:22:24] *** Joins: satyanash (~satyanash@143.110.247.92)
+[17:40:05] <enebo[m]> puritylake: cool.  Went dark all weekend.
+[18:47:57] <headius> Good morning!
+[20:40:17] <headius> enebo: been thinking through this callee thing a bit
+[20:40:36] <headius> I'm wondering if we could narrow the frame name to the name of the method at the time we actually compile it
+[20:41:24] <headius> I am trying to think of any cases where the name of the method to super changes and coming up with nothing... it seems to always be the original name of the method
+[20:41:50] <headius> that would mean we don't use the frame name for super, and only put the called name there so we can just get it for callee
+[20:44:22] <headius> `define_method(:bar, &method(:foo))` still supers up :foo too
+[20:44:56] <headius> the same block used for multiple define_methods would have to be rewritten but we do some rewriting now anyway
+[20:45:49] <headius> another possible way to store the alias callee without a stack would be to have the target method grab and clear it immediately
+[21:16:16] <headius> enebo: I think this could work and possibly eliminate frame requirement for super in most cases
+[21:16:23] <headius> at least for non-block cases
+[21:16:53] <headius> so I see that we already do push the frame with the original method name when adding call protocol
+[21:17:20] <headius> so there's no way for that frame name to be different than the original InterpreterContext name in full and JIT modes
+[21:17:29] <headius> it will always super the original name
+[21:17:50] <headius> unresolved super is the problematic one but when it occurs inside a module method I think it still should have a static super name
+[21:18:16] <headius> module def foo; super; end; end will always super up :foo even though the super scoping will vary by hierarchy
+[21:19:15] <headius> we should probably split unresolved super into two instructions, one for super within a block (which will need special attention or rewriting) and one for super in module method bodies (which can have a static name but needs to acquire the proper hierarchy for supering)
+[21:33:34] <enebo[m]> ACP is only for full and JIT
+[21:34:02] <enebo[m]> or is this that we always frame startup methods
+[21:34:59] <enebo[m]> anyways yeah it seems like original name would be what we would call.   Like if I alias foo bar and then super in foo it should execute bar and not some other method foo right?
+[21:35:20] <headius> you mean if you super in bar?
+[21:35:41] <headius> foo would be the alias in that
+[21:35:42] <enebo[m]> I will make a snippet and see 
+[21:35:51] <enebo[m]> but I think it always just calls bar 
+[21:35:56] <headius> it seems like it always supers the original name of the method
+[21:36:14] <headius> the only times we need to figure out name later are when it is a super in a block, either a normal block or a define_method block
+[21:36:42] <headius> which could both be rewritten because it is still determinable at the time the method is actually constructed
+[21:37:24] <headius> define_method(:foo) { super } will always super up :foo regardless of alias
+[21:37:38] <headius> def foo; 1.times {super}; end will too
+[21:37:54] <headius> modules need to query hierarchy to walk up
+[21:38:22] <headius> the reason I bring up ACP is because it already statically sets the frame instr to use the IR method name at jit time
+[21:38:23] <enebo[m]> https://gist.github.com/enebo/09b68423b763a2489a1139b02d319d9a
+[21:38:46] <enebo[m]> I thought we did in cases already write original name
+[21:38:56] <headius> that's what I'm saying
+[21:39:23] <headius> instanceSuper has a static name
+[21:39:31] <headius> but that only gets used for super in a method in a class
+[21:39:40] <headius> it can also be static for super in a method in a module
+[21:39:54] <enebo[m]> oh heh...we don't call the name because it has to still be known as super or it would call iself
+[21:39:54] <headius> which is the only spec that fails if I make AliasMethod pass the alias name through
+[21:40:05] <enebo[m]> ok yeah so instanceSuper is what I was thinking about
+[21:40:19] <enebo[m]> In my brain I was thinking we just did a callinstr but that would not work
+[21:41:50] <headius> yeah needs to call superclass not current class
+[21:41:57] <enebo[m]> heh zsuper does not pass name
+[21:42:18] <headius> yeah I am unsure about that one... zsuper oddity should only be args
+[21:42:31] <headius> there's nothing else that is different (name, hierarchy target)
+[21:42:36] <enebo[m]> yeah I would think it would mirror the other supers
+[21:43:08] <enebo[m]> It is also odd to me it is special
+[21:43:14] <enebo[m]> We also pass the args in explicitly
+[21:43:42] <headius> so the idea here, in total, would be that the frame name is static at compile time (and potentially this means most supers are static and don't need a frame) and the name we pass on the call stack would become the callee name
+[21:43:59] <headius> then callee just needs a special instruction that uses that or calls whatever goofy user-defined callee normally
+[21:45:16] <enebo[m]> hahaha
+[21:45:34] <enebo[m]> yeah that is an interesting idea until we forget and reframe it
+[21:45:40] <enebo[m]> but I suppose that is what tests are for
+[21:46:02] <enebo[m]> I see zsuper also has weird logic where it tries to grab block out of frame
+[21:46:09] <enebo[m]> Seems like that should not be needed
+[21:46:29] <headius> yeah I consider that part of args
+[21:46:50] <headius> but name should still be static for non-block super
+[21:47:16] <headius> and hierarchy search should be same as unresolved
+[21:47:28] <enebo[m]> I think so too
+[21:47:39] <enebo[m]> but now I am weirded out at us having ZSuperInstr
+[21:47:48] <headius> aha
+[21:47:59] <enebo[m]> It basically just does unresolvedsuper other than that block logic
+[21:47:59] <headius> if (scope instanceof IRMethod) {... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/ed5b1f535d56cf7398b9fb4941c5294f5da825c4)
+[21:48:03] <headius> it only gets used for closures anyway
+[21:48:18] <enebo[m]> ah
+[21:48:30] <enebo[m]> so it is possibly just a bad name
+[21:48:34] <headius> so if I add a ModuleSuper that has a static name but dynamic hierarchy this can work
+[21:48:43] <enebo[m]> BlockSuperInstr
+[21:48:56] <headius> halfway between instance super and unresolved super
+[21:48:59] <enebo[m]> the Z is meaningless
+[21:49:05] <enebo[m]> since it has an arg list passed into the isntr
+[21:49:13] <headius> it doesn't
+[21:49:17] <headius> need the Z
+[21:49:41] <headius> `def foo; 1.times { super() } end` is just an UnresolvedSuper, not a ZSuper
+[21:50:01] <headius> ZSuper seems to only be used for zsuper in a block, so BlockZSuperInstr
+[21:50:08] <enebo[m]> yeah but super() is just a super with no args which is not a zsuper
+[21:50:36] <headius> right
+[21:50:44] <enebo[m]> but the instr gets an arg list when we make it
+[21:50:44] <headius> I'm saying the only place we use ZSuperInstr now is for a zsuper in a block
+[21:50:53] <enebo[m]> I am only just talking about the name having z does not feel relevant
+[21:50:58] <headius> it could be BlockSuper but that unresolved super above is also a block super, just not a zsuper
+[21:51:30] <headius> so BlockZSuper is the fully-weird case that has dynamic name, args, block, and hierarchy target
+[21:51:48] <headius> WeirdSuper
+[21:52:01] <enebo[m]> Actually I don't even think out block zsuper logic is valid Ruby
+[21:52:05] <enebo[m]> It should be
+[21:52:23] <enebo[m]> but we calculate proper scope for args and I think MRI says nope
+[21:52:50] <headius> I think they kick it out for define_method but not for normal block in a method body
+[21:53:49] <headius> I have a POC of ModuleSuperInstr almost done
+[21:53:54] <headius> it's just UnresolvedSuper with a static name
+[21:54:16] <headius> this could be a big deal
+[21:54:49] <headius> if we can get module super to also use the passed in class rather than going to frame, super in method body will no longer need frame at all in any situation
+[21:55:03] <enebo[m]> ok yeah we calculate zsuper for define_method and they will not.  We should probably eliminate this since they seem unlikely to ever adopt it
+[21:55:16] <enebo[m]> I pointed out this can be solved to ko1 and he seemed to not believe me
+[21:55:40] <enebo[m]> yeah well if true that will be great
+[21:56:13] <enebo[m]> HAHAHA
+[21:56:42] <enebo[m]> I removed that special logic almost 1 year ago to the day (360 days ago)
+[21:57:08] <enebo[m]> So next time I bring up special logic remind me it has been removed
+[22:00:18] <headius> hah
+[22:02:13] <headius> so the other half of this is that I think even unresolved super can eliminate dynamic super name
+[22:02:36] <headius> for a block in a method, the method has a static super name so the block does too
+[22:02:48] <headius> for a block that is define_method it should be rewritten to the right name at define time
+[22:03:33] <headius> super in eval might be the only sort of case that requires something special but we can work around that
+[22:12:30] <headius> enebo: first commit is here: https://github.com/jruby/jruby/pull/7098
+[22:12:40] <headius> this just adds ModuleSuperInstr with static name
+[22:13:46] <headius> we might need to get dynamic name out of UnresolvedSuper to proceed to the next step, which is changing the frame name to be callee name
+[22:13:53] <headius> then we can support callee in all contexts
+[22:14:27] <enebo[m]> ok.
+[22:15:24] <headius> should make it much easier to optimize super calls and they will inline now
+[22:30:41] <headius> ok I have an additional change that almost works
+[22:31:02] <headius> a super within a normal block within a normal method can use the method's name statically for super
+[22:31:26] <headius> but I can't detect cases like def foo; Class.new { define_method { super } }; end
+[22:31:43] <headius> that looks to this patch like a normal super in a normal method (foo)
+[22:32:26] <enebo[m]> headius: should that work?
+[22:32:31] <headius> is there a way I could detect this at IR build time?
+[22:33:01] <headius> well let me clarify something... define_method bodies can do normal super?
+[22:33:16] <headius> non-zsuper
+[22:33:42] <headius> right now the main reason we always use a fully unresolved super for a super-in-a-block is because of cases like this, I think
+[22:34:35] <headius> ok yeah so only zsuper-in-define_method is disallowed in CRuby
+[22:34:39] <enebo[m]> yeah so ordinary super I guess works
+[22:34:53] <headius> pretend that snippit about is ordinary super then
+[22:34:53] <enebo[m]> and zsuper throws when you try and call it
+[22:35:03] <enebo[m]> so that likely is just replaced by an explicit throw
+[22:35:35] <enebo[m]> yeah it definitely is looking for the method name in define_method
+[22:35:56] <enebo[m]> so yeah we could try but not neccesarily be able to detect it
+[22:36:01] <headius> more specifically is there a way I can detect that it is a super in a define_method earlier
+[22:36:04] <enebo[m]> define_method(some_method) {
+[22:36:13] <headius> because most cases with super in a block will not be define_method
+[22:36:23] <headius> and they can use a static name
+[22:37:27] <enebo[m]> so we can look at the closure and likely figured out there is a wrappedirclosure to a call which has a name define_method
+[22:37:35] <enebo[m]> but we may not be able to figure out the actual name 
+[22:38:12] <enebo[m]> in cases where it is a simple operand we could
+[22:38:25] <headius> I think some rewriting will be necessary
+[22:38:55] <headius> It needs to compile as a block super that is static but if the block is ever used in define_method It gets rewritten to a different name based on whatever method name was defined
+[22:39:12] <enebo[m]> I think if we assume we can detect this at build we could probably then make something to save the name somewhere in this case right before the closure is invoked
+[22:39:41] <headius> Do we rewrite define method bodies in all cases right now?
+[22:39:48] <headius> Or only when they can be turned into a normal method body?
+[22:40:04] <enebo[m]> only some times
+[22:40:18] <enebo[m]> define_method impl has the restrictions and I don't recall
+[22:40:23] <headius> If we rewrote them all the time we could make these super instructions use a static name in every case
+[22:41:08] <enebo[m]> Look at IRClosure.convertToMethod
+[22:41:14] <headius> Rewrote in this case just meaning look for nested super instructions and set them to the new name
+[22:41:20] <enebo[m]> we will not do it for zsuper :)
+[22:41:28] <enebo[m]> which is funny since we do not allow them
+[22:41:45] <headius> If we can do this then there's no super anywhere in the system that will have a dynamic name
+[22:41:46] <enebo[m]> I guess I did not rip out all special logic after all
+[22:42:21] <headius> That's the only prerequisite for us to pass the callee name in stack
+[22:42:27] <enebo[m]> yeah I think the only tricky aspect is just making sure we do not have a concurrency issue
+[22:42:42] <enebo[m]> but I guess I would hope that is already the case
+[22:42:48] <headius> We must be cloning the block, no?
+[22:42:56] <headius> I mean cloning the actual scope for it
+[22:43:06] <headius> IR scope
+[22:43:16] <enebo[m]> yeah I don't mean the instrs or something like that just having two inflight redefiniitiosn
+[22:43:36] <enebo[m]>         if (block.getBody() instanceof IRBlockBody &&
+[22:43:36] <enebo[m]>                 runtime.getInstanceConfig().getCompileMode().shouldJIT()) { // FIXME: Once Interp and Mixed Methods are one class we can fix this to work in interp mode too.
+[22:43:46] <enebo[m]> So that is another restriction
+[22:43:50] <headius> That would basically be two calls to define method and the last would win
+[22:43:54] <enebo[m]> with a another random Tom FIXME
+[22:45:08] <enebo[m]> I can only guess we have no provision for swapping out the new method with the old one on interp
+[22:45:08] <headius> So I think what I should do is add another pass that clones the block IR scope and rewrite super instructions to the new name, and we do that for all blocks passed to define method
+[22:45:23] <headius> Then if we can go further and make it a normal method we use your existing logic
+[22:45:28] <headius> By then it will already have the correct name
+[22:45:42] <enebo[m]> yeah I think ignoring the method part of this and just making the closure make a new closure would be the 100% solution
+[22:46:04] <headius> And for blocks that are never used in defined method they will just grab the static name at compile time
+[22:46:28] <enebo[m]> We definitely need to get a new scope like it does here where it gets a new method
+[22:46:38] <enebo[m]> since any closure could be used for more than one thing
+[22:46:40] <enebo[m]> as weird as that may be
+[22:46:48] <headius> For sure
+[22:47:15] <headius> That is the case that means we have to clone and swap super names
+[22:47:43] <headius> define_method(:foo, &some_proc)
+[22:48:23] <headius> If that proc ess has a super we just need to make it use foo
+[22:48:27] <enebo[m]> usesSuper/usesZSuper are methods on these scopes so we do not even need to try to do this if they are not present
+[22:48:32] <enebo[m]> (and only super in this case)
+[22:48:33] <headius> s/ess//
+[22:48:55] <enebo[m]> that flag essentially also tracks lexical children closures too
+[22:49:07] <headius> Yeah I guess what I'm saying is we need to eliminate any super that gets the name from the frame
+[22:49:30] <enebo[m]> yeah I am just looking at what is needed or what we have to help
+[22:49:46] <enebo[m]> we only have to bother rewriting if hasSuper
+[22:49:47] <headius> Ok
+[22:50:39] <enebo[m]> we technically could just have a pass-like method for this since we just walk scope instrs after cloning and all children (which I guess would also get cloned)
+[22:50:57] <headius> I think the eval case is fine as well since we would compile it as if it were a closure inside the current method, which has already a static super target
+[22:51:30] <enebo[m]> We probably clone even children with no changes so that if we inline (which arguably is pretty broken atm) we can naturally use those closures however we want
+[22:51:33] <headius> I don't think I need a new instruction for this
+[22:51:45] <headius> Just scan the block body for any super instructions and set them to the new name
+[22:52:02] <enebo[m]> yeah and any children closures
+[22:52:13] <headius> After cloning of course
+[22:52:16] <headius> Right
+[22:52:16] <enebo[m]> and clone all of them
+[22:52:19] <enebo[m]> yeah
+[22:52:32] <enebo[m]> this is just a pass/method with an input of the name
+[22:52:44] <enebo[m]> output will just be cloned with those supers converted
+[22:52:57] <headius> RetargetSuperPass
+[22:53:19] <enebo[m]> sure
+[22:53:27] <headius> Well this is exciting
+[22:53:54] <headius> Assuming this all comes together then callee can just look at the given name passed on the JVM stack
+[22:54:04] <enebo[m]> This is about the time I would like to know how often we super
+[22:54:08] <headius> Or in the frame if necessary
+[22:54:27] <headius> There would be a separate callee instruction when it is used inside of a block or eval
+[22:55:06] <headius> Hell I'm just excited that we might be able to get inline caching back in place for super calls
+[22:55:29] <headius> callee is a bonus
+[22:57:13] <enebo[m]> 583 super in activerecord liib  for Rails 6.1
+[23:04:50] <headius> How many of those in module methods? 😀
+[23:05:21] <headius> I think we might be able to make super completely frameless for normal methods
+[23:05:37] <headius> The name will now be static and the target class hierarchy should be getting passed in already
+[23:46:28] <enebo[m]> grep is not that powerful :)
+[23:46:41] <enebo[m]> but I suspect most of them are in modules since Rails is pretty module heavy
+[23:50:09] <headius> That's what I was thinking too

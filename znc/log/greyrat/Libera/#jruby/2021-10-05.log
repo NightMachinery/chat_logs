@@ -1,0 +1,210 @@
+[00:16:14] * headius sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/185504fcc2a908b591a51ad17f0ee1cd2063ea19
+[00:17:01] <headius> the block is actually running in a different runtime but zero work here to migrate it or the strings safely
+[00:21:33] <headius> there seems to be no test specifically for Ractor API in the main test suite
+[00:32:54] <headius> $ jruby -rjruby -e 'p JRuby.ref(self).runtime; r = Ractor.new { str = "hello"; p JRuby.ref(str).runtime }; r.take'
+[00:32:54] <headius> #<Java::OrgJruby::Ruby:0x67e2d983>
+[00:32:54] <headius> #<Java::OrgJruby::Ruby:0xc8d1426>
+[00:33:04] <headius> works to isolate if that block of code has not run before
+[00:33:38] <headius> this does not ensure closure state doesn't get captured but the literal strings are not constructed until the first run of the block 
+[01:51:58] *** Quits: drbobbeaty_ (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[01:53:07] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[03:37:23] *** Quits: sagax (~sagax_nb@user/sagax) (Remote host closed the connection)
+[11:38:44] *** Joins: sagax (~sagax_nb@user/sagax)
+[17:50:24] <basshelal[m]> headius 
+[17:50:25] <basshelal[m]> Check out this issue at JNR-FFI: https://github.com/jnr/jnr-ffi/issues/274
+[17:50:25] <basshelal[m]> Hopefully I didn't say anything too stupid or incorrect, I haven't seen the codebase for some time and don't have access to it now so I had to do it from memory
+[17:50:25] <basshelal[m]> When I can prove that I'm right about this I'll open an issue and see what I can do about it
+[17:52:59] <basshelal[m]> Also any update on the macOS `java.library.path` crap? https://github.com/jnr/jnr-ffi/pull/264
+[19:51:29] <headius> basshelal: I'll have a look
+[19:51:57] <headius> Doesn't look like the other openjdk folks have done anything with the issue I filed
+[20:35:17] <headius> enebo: so let's have a quick status update when you are back from lunch
+[20:38:06] <basshelal[m]> headius: That's a shame, well do let me know if you hear back from them. Otherwise we'll have to make our own fixes around it, I have some ideas in mind using options/flags that keep "pure" behavior and also allow for forcing the expected paths. I know this isn't _critical_ but I like to remove as many issues as possible, I get a different kind of high when I get issues fixed on JNR vs my own crap 😄
+[20:39:41] <headius> yeah I think just keeping the default fallback on macOS would be fine, since we aren't going to have a situation like Nix where there's a bunch of custom lib paths
+[20:40:03] <headius> the linux setups are much wilder and more varied and linux JDK seems to do the right thing with that path var
+[21:30:44] <basshelal[m]> As expected GNU/Linux is superior 😏
+[21:36:15] <enebo[m]1> looking at https://github.com/jruby/jruby/issues/6870
+[21:36:50] <enebo[m]1> This was from my removal of Arity
+[21:37:52] *** Joins: subbu_ (~subbu@65-128-145-175.mpls.qwest.net)
+[21:40:19] *** Quits: subbu_ (~subbu@65-128-145-175.mpls.qwest.net) (Client Quit)
+[21:42:12] <headius> enebo: ok
+[21:42:19] <headius> I am looking at issue list and will work on the extra backtrace frames
+[21:42:32] <enebo[m]1> cool
+[21:51:13] <headius> a bit of musing on Ractor I want to dump here...
+[21:51:54] <headius> I think it could probably be implemented as an actor with restrictions on what objects can be copied in and out, and some IR work to take the block given and isolate it from the captured state
+[21:53:05] <headius> the purpose of this is to allow CRuby to run a parallel execution machine safely, which we already can do, and to ensure objects within that machine are either entirely local (copied) or immutable and shared
+[21:53:42] <headius> there may be little difference between a Ractor and a parallel-executing Thread in practice, other than the working set of objects the Ractor can access
+[21:54:24] <headius> I don't think it would be appropriate or necessary to fully isolate the class hierarch and namespaces. That would be multi-VM and although it would be useful for CRuby and easy for us to implement, Ractor is not that
+[21:55:04] <headius> other than safety checks, we could almost `class Ractor < Thread` and add some actor input/output logic and it work
+[21:55:54] <enebo[m]1> I think the isolation of how sharable and non-sharable work is the only value of a ractor
+[21:56:15] <enebo[m]1> This does not appear to actually even help perf for MRI
+[21:56:39] <headius> from what I have gathered they do not even get isolated heaps so the objects are still just out there floating in the same sea
+[21:56:40] <enebo[m]1> but it does make it difficult to access quite a bit of stuff
+[21:57:11] <headius> there are series of commits of them trying to make libraries Ractor-friendly, mostly using more immutable state
+[21:57:14] <enebo[m]1> yeah it is literally only enforcement that you did not explicitly make something sharable when you accidentally try to access it in a sharable way
+[21:57:21] <headius> right
+[21:57:38] <headius> so if we implement the right safeguards at the Ractor boundary it is mostly just a thread
+[21:57:58] <headius> there might need to be some trickery to hide Ractor threads from the main threads but that is speculation on my part
+[21:58:20] <enebo[m]1> sure so long as anything within a ractor has these extra access checks and things outside do not it seems like it could just be a thread
+[22:00:04] <enebo[m]1> I don't think we need to be worried about ractor being aliased so we can probably make a limitation and detect it at parse time and then for things obbviously enforcable we emit that stuff directly and for more indirect (like a call to a callwhich mutates state) a flag for the thread to know it should be checking
+[22:00:22] <enebo[m]1> That is probably the ickiest part of this
+[22:00:46] <headius> we keep the IR around even in JIT mode so it should be possible to tweak the block at any time
+[22:00:56] <enebo[m]1> we could make an entire bifurcated set of calls but it would not be worth it to me :)
+[22:01:04] <headius> it needs to fast fail when surrounding scope is accessed but that is easy to detect
+[22:01:29] <headius> personally I don't know why ko1 made it use a block when it is clearly not doing any of the things blocks enable
+[22:01:33] <enebo[m]1> but if I do a.foo() and foo does self.class.set_instancevar("foo", 1)
+[22:01:42] <enebo[m]1> We have to see below IR
+[22:01:54] <enebo[m]1> we can detect some of it at the IR level
+[22:02:22] <headius> yeah there will need to be checks added to know if we are in the "main ractor" or a child ractor and fail anything you are not supposed to do
+[22:02:36] <headius> so thread/context will gain a ractor reference similar to fiber
+[22:02:47] <enebo[m]1> yeah.  so ractor threads need state but we then may have that state check for all code paths
+[22:02:56] <enebo[m]1> unless we decide to have two parallel code paths
+[22:03:09] <headius> perhaps later if it becomes a problem
+[22:03:19] <headius> there are not a ton of things that need to be guarded
+[22:03:41] <enebo[m]1> well if we call anything which mutates state all of those would need this logic
+[22:03:42] <headius> instance var example would not work because either it has to be immutable or only live in the ractor's world
+[22:04:00] <headius> class vars will require and extra check but boo class vars anywa
+[22:04:33] <headius> I mean it would not work because either you are creating a new A in the ractor or the A passed in has to have been prepped for sharing
+[22:04:42] <enebo[m]1> It should not work but I don't see how us calling a method of a shared class definition abort without knowing if it is ractor or not-ractor thread
+[22:04:58] <headius> it can't be shared unless immutable
+[22:05:11] <enebo[m]1> or marked sharable
+[22:05:18] <headius> which I believe requires immutability?
+[22:05:28] <enebo[m]1> no I don't think so
+[22:05:44] <enebo[m]1> Maybe I misunderstood that
+[22:06:23] <enebo[m]1> Perhaps make_sharable is only read-only sharing but not frozen?
+[22:06:44] <headius> To make shareable objects, Ractor.make_shareable(obj) method is provided. In this case, try to make sharaeble by freezing obj and recursively travasible objects. This method accepts copy: keyword (default value is false).Ractor.make_shareable(obj, copy: true) tries to make a deep copy of obj and make the copied object shareable.
+[22:06:58] <headius> deep freeze or deep copy
+[22:07:31] <enebo[m]1> yeah perhaps make_sharable is just a way of reading the values (although master ractor can probably change the values)
+[22:07:48] <headius> yeah unsure
+[22:08:13] <headius> "Only the main Ractor can access instance variables of shareable objects."
+[22:08:13] <enebo[m]1> So if we share class definitions I cannot then A.new on a shared A?
+[22:08:17] <headius> so that is weird too
+[22:08:26] <enebo[m]1> I guess it would be an instance in the child Ractor
+[22:08:26] <headius> how do you use a custom class if you can't access ivars
+[22:08:33] <enebo[m]1> so it would not matter how it was modified
+[22:08:33] <headius> the example actually shows it erroring on a read
+[22:08:54] <enebo[m]1> I think it is modifying something from parent ractor in child right?
+[22:09:34] <headius> ugh the example says "Instance variables of shareable objects" but then shows class instance vars
+[22:10:24] <headius> it is definitely a mess of checks going into and out of the ractor
+[22:10:29] <enebo[m]1> yeah I even think A.my_fun then needs to make sure my_fun cannot change @a 
+[22:10:48] <enebo[m]1> A.my_fun is fine to call so long as it does not violate the rules
+[22:10:58] <headius> I don't see how this is supposed to work if the class is still mutable
+[22:10:59] <enebo[m]1> Or at least this is why I am talking about thread state
+[22:11:22] <headius> perhaps the assumption is that guarding access to still-mutable state on those classes keeps them safe
+[22:11:31] <headius> but most classes will need to access that state to work right
+[22:11:42] <enebo[m]1> At this point without reading more than this document it seems parent ractor can do anything but shared things by default are all frozen
+[22:11:56] <headius> I hate that this landed in 3.0 because regardless of how experimental it is, it will become standard now
+[22:12:16] <headius> yeah that is my impression too
+[22:12:16] <enebo[m]1> the class/module is the weird bit since those (T_CLASS etc) definitely seem like they can get modified
+[22:12:30] <enebo[m]1> unless they just raise if they are being used in a ractor...which is then another state check
+[22:12:35] <headius> yeah
+[22:12:55] <headius> I could see these checks being the reason this is not actually faster than a thread or forked process
+[22:13:02] <enebo[m]1> so I feel there is at least one piece of state we need to track in whether the thread is ractor or notmal
+[22:13:09] <headius> constantly checking that we are allowed to access something or mutate something in this ractor
+[22:13:26] <headius> right, so that is the ractor field on thread or thread context
+[22:13:44] <headius> or some bit we check to know that extra checks are in force for this thread's accesses
+[22:13:59] <enebo[m]1> and if we duplicated all call/consts code paths we could eliminate the cost
+[22:14:15] <headius> could be possible to emit parallel code paths for ractor vs normal within IR/JIT but hand-written code will have to do the checks or be manually split
+[22:14:27] <enebo[m]1> direct ivar/cvar within a ractor can be protected in IR
+[22:14:31] <headius> call/const/var accesses would mostly be splittable in IR
+[22:14:39] <headius> heh yes
+[22:14:45] <headius> which might cover most accesses we care about
+[22:15:00] <enebo[m]1> yeah seems like a lot of work to not pay a small penalty for ractors
+[22:15:07] <headius> something safepointing elsewhere that can be optimized away when ractors are not in use
+[22:15:30] <headius> hell, could be a CLI flag initially that just turns ractors on
+[22:15:36] <headius> --enable:ractor
+[22:15:36] <enebo[m]1> yeah switchpoint it and no one will use it so we won't pay
+[22:15:57] <enebo[m]1> yeah that is actually a possibility I guess
+[22:16:04] <enebo[m]1> as I said I don't think this is worth our time now
+[22:16:26] <enebo[m]1> I don't think it is bad for us to figure out what it needed but I just doubt very many people are using this
+[22:17:21] <headius> my hope is that this will push users to do more immutable stuff and that will help us in general
+[22:17:37] <headius> it makes immutable objects and persistent data structures the easy way
+[22:18:00] <enebo[m]1> yeah true immutability would be really helpful
+[22:19:02] <headius> might be worth trying to push for some immutability-friendly data structures in core, like quick ways to create a frozen hash or array
+[22:20:02] <enebo[m]1> true constants would be a great start
+[22:30:52] <headius> indeed
+[23:03:08] <headius> enebo: fixed: https://github.com/jruby/jruby/pull/6877
+[23:03:13] <headius> I found only two... the one filed the other day when someone was in here asking questions, and a dupe
+[23:04:25] <headius> it is a little surprising this did not get caught by any specs or tests
+[23:04:41] <enebo[m]1> yeah I saw more than 2 people comment on it but I think someone else commented in an existing issue
+[23:06:17] <headius> if you see a similar issue probably mark it as dupe
+[23:07:51] <headius> did not figure this would be hard to fix, but I also fixed "raw" mode that was broken by some backtrace cleanup in 2019
+[23:08:30] <enebo[m]1> I fixed the proc kw regression
+[23:10:43] <headius> noice
+[23:30:32] <headius> woot: https://github.com/jruby/jruby/issues/6878
+[23:32:09] <headius> we will want to check what is done and fill in checkboxes there and here: https://github.com/jruby/jruby/issues/6464
+[23:32:32] <headius> backtrace fix merged
+[23:34:46] <headius> I am encouraged that we have only seen a handful of issues
+[23:38:50] <enebo[m]1> https://github.com/jruby/jruby/issues/6871
+[23:38:57] <enebo[m]1> This looks up your alley :)
+[23:39:13] <enebo[m]1> I am going to look a bit at the prepend + refinement issue
+[23:40:20] <enebo[m]1> whot..I don't see it now
+[23:44:36] <enebo[m]1> HAHAH because I already fixed it
+[23:46:16] <headius> enebo: I closed that java_kind_of? thing as wontfix
+[23:46:34] <headius> also apologized for removing the method on the related rabbitmq PR
+[23:46:50] <enebo[m]1> great
+[23:46:52] <headius> but we won't restore it 😀
+[23:47:07] <enebo[m]1> I had only left it open to consider fixing for java classes
+[23:47:28] <enebo[m]1> but I am happy for someone to request that and I am unsure it even worked with the old method
+[23:47:37] <headius> I don't see any value to having java.util.ArrayList.kind_of? java.lang.Class... it's not really the right model
+[23:47:57] <headius> our Ruby classes are not equivalent to java.lang.Class instances since you can instantiate directly and call static methods
+[23:47:59] <enebo[m]1> I don't really see the value but not from the model aspect
+[23:48:03] <headius> they have no equivalent in Java
+[23:48:36] <enebo[m]1> but this is asking if one java class represented in Ruby is a kind of another java class in Ruby
+[23:48:36] <headius> nice that you already fixed the prepend thing... just had it stuck in your head as a todo?
+[23:48:56] <enebo[m]1> I don't see any issue with that but I also do not think anyone cares
+[23:48:57] <headius> yeah and that works fine with kind_of?
+[23:49:18] <headius> It think it has worked for over a decade, since we started mirroring the Java class hierarchy
+[23:49:35] <headius> java_kind_of? was a remnant of the before times
+[23:49:39] <enebo[m]1> I am talking about the snippet above
+[23:49:51] <enebo[m]1> not instances being a kind_of but classes
+[23:50:11] <headius> oh as in java.util.ArrayList somethign something java.util.List?
+[23:50:14] <enebo[m]1> I realize they are proxies so I think you could pedantically say they are not kind_of?
+[23:50:15] <headius> in that case < would work
+[23:50:27] <headius> which is the right Ruby idiom
+[23:50:44] <enebo[m]1> I guess.  I forgot that even existed as a method
+[23:51:02] <headius> $ jruby -e 'p java.util.ArrayList < java.util.List'
+[23:51:02] <headius> true
+[23:51:05] <enebo[m]1> I would say I don't think I have ever seen it used outside of a test suite but I am sure someone does
+[23:51:10] <headius> yeah is there another way?
+[23:51:38] <enebo[m]1> I would have thought kind_of? would work generically as well
+[23:51:38] <headius> cls.extends(other_cls) does not exist... the comparison operators might be the only direct way
+[23:51:46] <headius> it does not because the type is then Class
+[23:51:55] <headius> and Class is not a List
+[23:52:19] <enebo[m]1> heh well that makes sense
+[23:52:19] <headius> so I don't think there's anything to do here
+[23:52:43] <enebo[m]1> funny how I overloaded is_a?/kind_of? like this.  I guess english is tricky
+[23:52:57] <headius> enebo: maybe you were thinking of this, but this is marked for 9.4: https://github.com/jruby/jruby/issues/6867
+[23:53:07] <enebo[m]1> no I said I already fixed it
+[23:53:08] <headius> this prevents the refinement test from loading because they fixed something in 3.0 and added a test
+[23:53:17] <headius> ok but this is open
+[23:53:25] <enebo[m]1> https://github.com/jruby/jruby/issues/6859
+[23:53:30] <headius> was there another refinement+prepend issue you fixed?
+[23:53:40] <headius> oh six days ago
+[23:53:43] <headius> so this needs to merge to 3.0 work
+[23:53:49] <enebo[m]1> well it was respond_to? but I think I read that second one and misremembered what it was
+[23:54:10] <headius> yeah just two symptoms of the same problem probably
+[23:54:40] <headius> hmm maybe
+[23:54:41] <enebo[m]1> in the case of respond_to? we need staticscope to [properly look for refinements
+[23:54:59] <headius> my bug prevents using a prepended module as a refinement
+[23:55:08] <headius> fixed in CRuby by looking in the right place for refinement
+[23:55:22] <headius> so this is probably different
+[23:55:27] <enebo[m]1> I tried to magic this by just asking context when we see it is refined but it messes up super with refinements since it wants one static scope up
+[23:55:42] <headius> right so this is just more extending refinements to reflective methods
+[23:55:47] <enebo[m]1> well probably related since you need the proper static scope
+[23:55:48] <headius> there are other cases we don't handle right
+[23:55:58] <headius> nah mine is not related to scoping
+[23:56:04] <enebo[m]1> super needs one down.  most things need current
+[23:56:12] <enebo[m]1> ok
+[23:56:17] <headius> if you refine a module and then prepend something into it it doesn't know that it is a refinement anymore
+[23:56:30] <headius> because all the guts moving around
+[23:56:43] <headius> something like that
+[23:56:46] <enebo[m]1> yeah I am not surprised
+[23:56:47] <headius> but that is a 3.0 item anyway
+[23:57:07] <enebo[m]1> 3.0 big change for prepend will be tracking where they happened so we can update them
+[23:57:49] <enebo[m]1> yay we get to add another field :)
+[23:57:58] <headius> wonderful
+[23:58:30] <headius> and people wonder why DCI was so expensive
+[23:59:13] <enebo[m]1> hah...funny.  I wonder how DCI will live in 3.0 world
+[23:59:27] <enebo[m]1> I guess not with prepend
+[23:59:46] <headius> I still know how to implement DCI cheaply (cache similar transient class structures with modules) but it never picked up
+[23:59:50] <enebo[m]1> or you just need to make sure you do not have the same module prepended and living past a new prepend ofthat mofule

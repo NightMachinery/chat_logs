@@ -1,0 +1,81 @@
+[01:07:56] *** Joins: subbu (~subbu@user/subbu)
+[04:32:14] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[18:48:21] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Ping timeout: 256 seconds)
+[19:00:36] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[19:11:20] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Ping timeout: 250 seconds)
+[19:16:16] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[19:30:11] *** Quits: MattPattersonGit (~gitterfid@2001:470:69fc:105::3105) (Quit: You have been kicked for being idle)
+[19:48:17] <headius> ok more good news, FFI specs are green except for the two that pass a Ruby Function object to C as a callback
+[19:48:35] <headius> I need to see if that passes on CRuby FFI because it could be tricky with M1 security requirements
+[19:48:49] <headius> (can't generated an executable endpoint at runtime without jumping through some hoops)
+[20:05:01] <headius> enebo: in between running M1 tests and cleaning out the hamster cage I am looking at https://github.com/jruby/jruby/issues/6992
+[20:05:52] <headius> the cuplrit is the RECache in BuildDynRegExpInstr... it is caching even when it isn't a "once" dregex
+[20:06:25] <headius> this code goes back to 2015 so this bug has been out there for a long time
+[20:06:29] <enebo[m]> ah I marked for 9.3 but I guess it will be fixed on both
+[20:06:43] <headius> I don't think it can cache anything if it is not /o
+[20:07:16] <enebo[m]> I think this also changes for 3.0
+[20:07:29] <enebo[m]> but this is obviously broken for 2.5/2.6
+[20:08:08] <enebo[m]> The cache could see if it is the same source string and keep caching it perhaps?
+[20:13:29] *** Joins: subbu (~subbu@user/subbu)
+[20:37:36] <headius> enebo: I don't see much value in that
+[20:38:43] <headius> typically a dregexp should not be the same string repeatedly so it wouldn't help many cases, and we'd need to cache the strings and do a comparison every time
+[20:39:01] <headius> the simple fix is to align with jit and just skip cache for non-once regexps
+[20:59:10] <headius> ok I guess we are way ahead of the curve now... the FFI gem does not build properly for darwin-arm64 and I'm not sure how to fix it
+[20:59:29] <headius> I don't grok extconf
+[20:59:36] <headius> so they may or may not pass this spec but as near as I can tell it has never been tested on M1 properly
+[21:04:18] <headius> enebo: I'm inclined to skip these two specs on M1 since it will take some research to figure out how to support C function callbacks from Java/Ruby
+[21:04:40] <headius> I don't believe any Ruby functionality we ship depends on the feature
+[21:21:00] <enebo[m]> sure it is several steps forwards in any case
+[21:22:19] <headius> https://github.com/jruby/jruby/issues/6995
+[21:25:36] <headius> chrissseaton linked this: https://developer.apple.com/documentation/apple-silicon/porting-just-in-time-compilers-to-apple-silicon
+[21:26:53] <headius> looks like some finesse required to disable write protections to executable memory when generating the stubs, and god knows how that will work across threads
+[21:27:27] <headius> so yeah, I think this is ok to punt for now and maybe add some logic to FFI::Function failing fast if you try to use it on darwin-aarch64
+[21:27:44] <enebo[m]> MRI does it for their FFI and JIT right?
+[21:27:54] <headius> I doubt it
+[21:28:12] <enebo[m]> not for mjit and yjit does not run on M1 so not the jits
+[21:28:16] <headius> I don't think fiddle supports callbacks and they probably aren't testing the jits on M1 yet
+[21:28:20] <enebo[m]> mjit loads a dll
+[21:28:24] <enebo[m]> oh ok
+[21:28:25] <headius> and the FFI gem doesn't even build right for M1
+[21:28:39] <headius> we're on our own
+[21:28:40] <enebo[m]> well if they don't have it yet then maybe it is not a big issue
+[21:28:54] <headius> GraalVM doesn't support this platform yet either
+[21:29:04] <headius> JRuby blazing the trail again
+[21:29:39] <enebo[m]> Adding that rocket felt funny inside
+[21:31:42] <headius> hahah
+[21:50:36] <headius> enebo: when you get a change try to run spec:ffi for me
+[21:50:41] <headius> I'm getting weird errors locally
+[22:31:11] <enebo[m]> jruby-9.3 ran it fine
+[22:31:56] <headius> ok something must be messed up in my local copy, rubygems complains about some file being "owned by" my OS and not by rubygems
+[22:32:21] <headius> the fs mode and owner looks fine
+[22:32:28] <headius> it's working fine on M1 so 🤷‍♂️
+[22:34:00] <headius> mvn -Ptest is green on M1 CI
+[22:35:47] <headius> spec:ffi is green as well, minus those two skipped specs
+[22:40:42] <headius> weird noise out of the spec:ruby:fast job but it hasn't failed yet
+[22:41:03] <headius> if that passes we will have three key runs green on M1 and I will merge the branch into 9.3
+[22:41:26] <headius> this should be green but the closest it got had some really weird failure in a Hash#hash spec
+[23:00:51] <headius> something is weird about the spec:ruby:fast run via CI... it shows way more failures than running in a terminal and doesn't complete
+[23:01:43] <headius> there's definitely some networking oddities on MacOS instances because now a UDP spec is hanging there
+[23:01:56] <headius> could be some multicast that isn't supported or just isn't working with this cloud network
+[23:08:15] <enebo[m]> yeah I could see a network limit multicast
+[23:08:47] <headius> I'm going to tag it off like the hanging unix socket specs but we'll want to revisit these
+[23:09:08] <headius> I did get a green spec run on my personal M1 machine so this seems specific to the macstadium env
+[23:11:10] <headius> enebo: same question as last week... what's our plan for 9.2 vs 9.3 branches?
+[23:11:20] <headius> this dregexp thing affects both
+[23:11:33] <headius> normally I'd do a PR to 9.2 and merge down but 9.2 has no CI currently
+[23:11:35] <enebo[m]> 9.2 can just be cp'd back from 9.3
+[23:11:44] <enebo[m]> we decided to not merge forward on 9.2 any more right?
+[23:11:49] <enebo[m]> but we will to master from 9.3
+[23:11:51] <headius> that's fine with me, I wasn't sure we'd decide
+[23:11:54] <headius> decided
+[23:12:14] <headius> fixes to 9.2 have reduced to a trickle at this point
+[23:12:28] <enebo[m]> I think we did.  I think the conclusion is 9.2 is low risk and its own thing now
+[23:21:36] <headius> ok I got a completed spec run on this M1 CI instance with four other network fails (looks like port permissions etc)
+[23:21:51] <headius> so it does appear to be greenish when run directly, modulo env weirdness
+[23:24:38] <headius> oh this local issue running specs is due to my regexp patch, I guess it's not right
+[23:43:30] <headius> enebo: PRs pushed for both branches for https://github.com/jruby/jruby/issues/6992
+[23:44:03] <headius> so it wasn't actually caching the dregexp for non-"once" but it was using the same shared field as a holder
+[23:44:16] <headius> when the dregexp is not "once" it could then be changed across threads, which caused the bug
+[23:44:26] <headius> I am very surprised nobody reported this before
+[23:44:35] <headius> or maybe they did and could not come up with a small repro
+[23:45:55] <headius> brb, lunch-ish

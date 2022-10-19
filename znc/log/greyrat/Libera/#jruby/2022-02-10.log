@@ -1,0 +1,112 @@
+[00:03:43] *** Joins: subbu (~subbu@user/subbu)
+[00:57:16] <headius> well, that took longer than expected
+[00:57:49] <headius> pure-Ruby timeout based on the Java timeout passes all but one test that uses a quirk of exception raising to `throw` instead of `raise` so the error cannot be caught by the target thread. I'm not sure if we can support it, or if we even want to
+[00:57:51] <headius> https://github.com/jruby/jruby/pull/7083
+[00:57:57] <headius> enebo: check that out
+[00:58:38] <headius> the throw behavior is pretty wack... you can see it in the Timeout::Error definition... basically, it overrides Timeout::Error#exception so that when `raise` tries to call it, it throws 😳
+[00:59:03] <headius> since throw can't be rescued, the exception bubbles out until caught by the timeout code, and then it is propagated as a normal raise
+[00:59:10] <headius> I never understood this logic before but I do now
+[00:59:32] <headius> it is some old bug that you should be able to force the timeout block to raise the error even if it rescues it
+[00:59:43] <headius> we have never had this reported
+[01:00:32] <enebo[m]> main motivation here was to make it simpler to merge?
+[01:04:38] <enebo[m]> Here is half my mega PR: https://github.com/jruby/jruby/pull/7082
+[01:05:27] <enebo[m]> I am hopeful I will be faster in marshal#dump.  MRI tests depend on dump working to test load...so there are a small number of failures still in dump but we pass so many more things now
+[01:05:32] <headius> Yeah that is the motivation, but it also passes more tests because it was easier to figure out the behavior differences from the CRuby version
+[01:05:43] <enebo[m]> err small number still in load
+[01:05:53] <headius> I'm dubious on the value of this weird throw hack they use so I'm not sure if I'm going to keep pushing on that or not
+[01:06:16] <enebo[m]> The only 3 in ruby/spec is not having T_OBJECT, T_DATA, and one test which uses the same bytes in a symbol with two or more encodings
+[01:06:17] <headius> I have not done any performance testing either and it will certainly be slower due to Ruby blocks
+[01:06:46] <headius> But at least it shows it's possible
+[01:06:56] <enebo[m]> If I had nothing else to do I would masquerade T_DATA where they do it for core types then we could pass those both
+[01:07:17] <headius> What's our total failures on dump and load now?
+[01:07:29] <enebo[m]> I am curious now that I just said that...Dir being dumped will mark it as T_DATA in MRI
+[01:07:33] <enebo[m]> hmm
+[01:07:51] <enebo[m]> I only did load/restore so far but those are 3 and 3 
+[01:08:01] <enebo[m]> we have 11 in dump
+[01:08:10] <enebo[m]> 1 in something called float
+[01:08:30] <enebo[m]> dump should be about same number assuming I do not tackle T_DATA
+[01:09:12] <enebo[m]> MRI is 12 F/E at the moment but those are almost all just stuff we never passed
+[01:10:12] <enebo[m]> I do have 3 FIXMEs but I think 2 of those are failures in test/mri so that is good
+[01:13:20] <headius> Very nice
+[01:14:29] <headius> Did you make any changes that you think directly improve performance?
+[01:14:53] <headius> With compatibility in better shape We could probably do some benchmarking and get clever about optimizing it
+[01:15:05] <enebo[m]> I suspect things will be a little slower but maybe not measurable
+[01:15:14] <headius> I was always really reluctant to make performance changes in there because it started to take the code too far away from CRuby's structure
+[01:15:23] <enebo[m]> we have to mark partial objects into a set
+[01:15:42] <enebo[m]> tracking that is needed for compat but is an extra data structure
+[01:15:56] <headius> Ah sure
+[01:16:23] <headius> Yeah that was a sticky area I could never quite get right, dealing with partial objects and the various ways you can dump and load
+[01:16:38] <enebo[m]> links between symbols and data are done directly so we are not constantly looking to see if type is ';' vs '@' but that is probably not visible
+[01:16:55] <headius> We could possibly make that a thread local structure and not have to recreate it since dumping load are mostly leaf operations
+[01:16:56] <enebo[m]> Struct building is not doing toString and equals on two symbols instances
+[01:17:09] <enebo[m]> So struct unmarshalling may be faster
+[01:17:16] <headius> Dump and load
+[01:17:33] <enebo[m]> By and large I would expect not much difference though
+[01:17:53] <headius> Generic serialization is tough to optimize on any runtime but I would be interested in trying once you land everything
+[01:17:54] <enebo[m]> There is also extra state to know if we should freeze
+[01:18:12] <enebo[m]> Oh and it may end up being faster if you pass proc since we were calling it for everthing
+[01:18:44] <enebo[m]> Like you load a nested array and it would call it on sub-elements even though it is only part of the object being loaded
+[01:18:55] <enebo[m]> which is why we have a partial list
+[01:19:30] <enebo[m]> we already also had partial as a boolean (and MRI does also have both)
+[01:19:50] <enebo[m]> Less indirection happens for somethings like class names where it would go to the big switch before
+[01:20:09] <enebo[m]> None of this is major stuff though
+[01:21:40] <enebo[m]> It is weird to me that when 1.9 and m17n came into being someone said "I know I will add special ivars to symbols/strings to say what the encoding should be"
+[01:22:51] <headius> I don't know how frequently that proc feature is used but that sounds way better
+[01:23:09] <enebo[m]> I do wonder if anyone uses it
+[01:23:25] <headius> I wonder if there's any good Marshal benchmarks out there
+[01:23:32] <enebo[m]> load this data but let me potentially change it on the way out with whatever
+[01:23:41] <headius> Yeah
+[01:24:01] <enebo[m]> I could see someone wrapping some type with something else or something but it just feels odd
+[01:24:12] <enebo[m]> I cannot really think of a concrete example of that
+[01:24:27] <headius> The encoding variable thing is pretty weird but I suppose it was easier than changing the format in some drastic way
+[01:24:57] <enebo[m]> I think one issue is I do not see a version number in the data stream
+[01:25:49] <headius> Should be the first two bytes but I don't know if it's changed in years and years
+[01:26:05] <enebo[m]> Someone will thank me later but all bodies in main object method outline to nicely named methods so if you are looking at an arbitrary backtrace you can tell what is happening
+[01:26:12] <headius> I'm not sure they even changed it when they added encoding
+[01:27:06] <enebo[m]> ah yeah it happens in the header
+[01:27:15] <enebo[m]> err constructor
+[01:27:34] <enebo[m]> ok part of me thought it should be in here but I did not look at this at all
+[01:28:11] <enebo[m]> ok so that is pretty weird.  They should fix this encoding stuff
+[01:28:22] <enebo[m]> especially in 3.1 where utf is just the default
+[01:28:44] <enebo[m]> symbols are us-ascii or utf-8 with nothing in the data stream at all
+[01:29:13] <headius> The other new thing I saw in timeout is that there's a scheduler hook so you can define how to time out an operation in your own way
+[01:29:20] <enebo[m]> and then special encoding is just direclty a type or something
+[01:29:29] <headius> I'm not sure if CRuby is falling back on that by default or if they still usually run the Ruby code
+[01:29:34] <enebo[m]> heh
+[01:29:40] <enebo[m]> well that is interesting
+[01:29:57] <headius> The Ruby code is still as inefficient as ever, creating a thread for every call to timeout
+[01:30:00] <enebo[m]> I suppose it is for some other out of band condition so you can just abort without a timeout
+[01:30:30] <enebo[m]> no point waiting as a worker if the rest of the app went down
+[01:30:41] <headius> TruffleRuby is using Evan's implementation pretty much unmodified which uses a single timeout thread and request objects similar to our executor approach
+[01:30:46] <headius> Very unlikely it passes as many tests as hours does
+[01:31:46] <headius> Yeah I'm guessing it is so folks like ioquatix can define a native timeout of their own that just nukes the thread or fiber from orbit
+[01:32:23] <headius> I would also be very surprised if anyone has a scheduler timeout that can pass all of these tests because some of them are pretty weird
+[01:32:35] <headius> But maybe that's the point
+[02:55:56] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[03:08:46] <headius> oh so close... io-wait 0.2.2.pre1 works but net-protocol doc parsing fails in ripper
+[03:21:16] <headius> kares: the next big priority will be net-http and our hacks to avoid SSL Context stuff
+[03:21:46] <headius> we can now install the gem but because it restores a bunch of code we comment out it breaks http stuff:
+[03:21:51] * headius sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/da3da1f2c98072d8bd5ea7eb0eb90662c2a33410
+[04:46:13] *** Quits: kroth_lookout[m] (~krothmatr@2001:470:69fc:105::1:8372) (Ping timeout: 240 seconds)
+[04:48:25] *** Joins: kroth_lookout[m] (~krothmatr@2001:470:69fc:105::1:8372)
+[07:47:56] <kares[m]> hmm I can take a look at this later please open an issue with details including the io-wait context.
+[07:49:26] <kares[m]> not sure there's much we can do easily - we can have the callback exist but won't trigger as there's likely no session hook to listen on in the Java SSL engine
+[07:50:34] <kares[m]> but understand Ing what io-wait needs we could maybe get smt going ...
+[07:51:05] <headius> Yeah I know we are a bit limited here but if we can get something that works without looking like it is insecure we can probably get a patch in
+[07:52:01] <headius> I will go ahead and push a branch tonight with the key gems installed during the build
+[07:52:23] <headius> Once they install, gem install starts to fail with the relevant errors
+[07:52:56] <headius> There are not many diffs in our copy but they are mostly related to SSL context
+[07:53:38] <headius> If I had a month and a couple interns we could consider using the SSL wrapper that Netty uses but there's a lot of work to rewrap a new library
+[10:14:49] <headius> kares: https://github.com/jruby/jruby/pull/7088
+[10:14:56] <headius> the needs are all in net/http where it fiddles with the SSL context
+[10:15:08] <headius> the only remaining net gem not being used is net-imap, which has a dependency on strscan
+[10:15:18] <headius> strscan is "done" but awaiting review, cleanup, and some licensing
+[10:15:46] <headius> you can diff the net-http http.rb versus our modified version to see the diffs
+[10:16:05] <headius> I'll be back at this tomorrow, hopefully getting strscan merged and released
+[11:49:06] <kares[m]> <headius> "If I had a month and a couple..." <- If I had one or two I would look into just building the whole things using BC APIs if possible ... 😀
+[11:49:06] <kares[m]> (BC has a working stable Java SSL engine provider these days I am not sure how much custom APIs they expose)
+[11:53:33] <kares[m]> opened: https://github.com/jruby/jruby-openssl/issues/249 on jossl so that I do not forget to look into this the next time I manage to find some time around JOSSL
+[14:11:03] *** Quits: satyanash (~satyanash@143.110.247.92) (*.net *.split)
+[14:16:11] *** Joins: satyanash (~satyanash@143.110.247.92)
+[17:20:28] <headius> I will help
+[22:17:30] *** Joins: subbu (~subbu@user/subbu)

@@ -1,0 +1,132 @@
+[09:13:54] <nirvdrum[m]> Congrats on the 9.3.4.0 release. FYI, the channel topic still refers to 9.3.3.0.
+[09:21:45] <headius> Ah yes
+[09:22:13] <headius> Thanks
+[17:48:49] <JasonLunn[m]> Good morning, all. FYI, I was moving faster than I was thinking yesterday, and didn't notice until this morning that I'd filed https://github.com/protocolbuffers/protobuf/issues/9668 on protobuf rather than JRuby. I closed the that issue and added the content there into a comment on https://github.com/jruby/jruby/issues/7154 instead.
+[17:48:58] <JasonLunn[m]> Apologies for the deck chair shuffling.
+[19:48:45] <headius> Yeah I was wondering about that but no worries. I'll be at my desk shortly and we'll figure out a good work around
+[20:25:48] <headius> Jason Lunn: I see the setBuiltin workaround got you past that point
+[20:26:29] <headius> I will push a fix today for review that reduces isBuiltin to only methods defined during JRuby core boot
+[20:35:27] <JasonLunn[m]> Yep - thanks for the think of that. I'm effectively unblocked.
+[20:35:53] <JasonLunn[m]> headius: did you see my follow up emails re: grpc? 
+[20:35:59] <headius> it will continue to work with this change, and we'll see about deprecating isBuiltin and replacing with something more descriptive in JRuby X
+[20:36:10] <headius> oh shoot I did not... I will look today
+[20:36:17] <JasonLunn[m]> Still looking for good proxies for |JRuby| as a percentage of |Ruby|
+[20:39:01] <headius> $ jruby -X-C -r ./respond_to_java.jar -w -e 'Foo::Bar.new.respond_to? :foo'
+[20:39:01] <headius> Custom repond_to? got called!
+[20:39:18] <headius> 👍
+[20:48:02] <headius> Jason Lunn enebo: https://github.com/jruby/jruby/pull/7156
+[20:50:43] <JasonLunn[m]> Does it still matter whether or not definition of the respond_to? is a static method or not?
+[20:51:20] <headius> it does... I am still not clear how it was called as an instance method, since you'd have to have an instance of a RespondTo in hand, but if you want to define it this way it should be static
+[20:51:43] <headius> it could just be on the service as well, but perhaps in the real code there are other classes being set up there
+[20:51:53] <headius> ... on the service as a static method also
+[20:52:17] <headius> it can only be an instance method if you are setting up a Ruby class that is specifically bound to a Java class that extends RubyObject or RubyBasicObject etc
+[20:53:31] <headius> enebo: I will get those wip run fixes pushed shortly, just looking into a couple TCPSocket things that fail only in the full run
+[20:53:39] <headius> addbin
+[20:53:43] <headius> oops
+[20:53:57] <enebo[m]> addbin
+[20:54:00] <enebo[m]> ok
+[20:54:29] <JasonLunn[m]> RespondTo does extend RubyObject...
+[20:54:40] <headius> yes but you are not binding it as any Ruby class
+[20:55:08] <headius> so you were setting up instance methods from RespondTo as methods on Bar, which is not a RespondTo
+[21:01:28] <JasonLunn[m]> Maybe my example is just different enough from how protobuf does it that I'm tripping on this.
+[21:02:17] <JasonLunn[m]> Our RubyMessage class has always defined its method_missing using a non-static method 
+[21:02:31] <JasonLunn[m]> so I thought I'd be able to define the respond_to? the same way
+[21:02:38] <headius> probably because you have a RubyMessage class in JAva
+[21:02:48] <headius> can you show me?
+[21:02:54] <JasonLunn[m]> But perhaps the Foo::Bar example is not close enough to the lib to replicate that
+[21:03:24] <headius> if you wanted to define "Bar" that way, you'd rename RespondTo to Bar and use its constructor as the allocator for the "Bar" Ruby class
+[21:03:31] <headius> then you could use instance methods
+[21:04:00] <headius> otherwise you are trying to use instance methods from the RespondTo class, and Bar is just being allocated as a RubyObject so it does not have those methods
+[21:04:03] <JasonLunn[m]> https://github.com/protocolbuffers/protobuf/blob/master/ruby/src/main/java/com/google/protobuf/jruby/RubyMessage.java#L290
+[21:04:25] <headius> public class RubyMessage extends RubyObject
+[21:08:01] <headius> I don't see where this class is being set up though
+[21:08:03] <headius> the others all have initialization code to set up the Ruby side
+[21:09:33] <JasonLunn[m]> Probably part of my problem in constructing a simple example. I'm probably missing an easier, simpler example where the BasicLibraryService of my example just loads an annotated class without defining an allocator
+[21:09:52] <JasonLunn[m]> but I couldn't figure out how to do that so I stole the allocator example I had on hand
+[21:10:03] <headius> MessageExts
+[21:10:05] <headius> oops
+[21:10:09] <headius> https://github.com/protocolbuffers/protobuf/blob/3f5fc4df1de8e12b2235c3006593e22d6993c3f5/ruby/src/main/java/com/google/protobuf/jruby/RubyDescriptor.java#L193-L213
+[21:10:42] <headius> the RubyMessage class is being set up there with an allocator to construct RubyMessage instances
+[21:11:02] <headius> so whenever you have a RubyMessage instance in Ruby it is a RubyMessage in Java and so the instance methods are appropriate
+[21:11:26] <headius> your example did not allocate RespondTo instances for Bar, so the instance methods could not be present on Bar
+[21:12:08] <headius> not sure why this one piece of initialization is not homed with the class it defines, but that's it
+[21:12:29] <headius> perhaps just to mimic the C code
+[21:13:28] <JasonLunn[m]> Cool, I think I grok it better now. 
+[21:13:35] <headius> you can bind methods even if you don't set up a special class and allocator, but since they will not live on RubyObject they need to be static
+[21:14:04] <headius> it's just binding function pointers into a method table, but when it eventually dispatches against the object they need to be there, or they need to be static and pass the object in
+[21:38:35] <headius> enebo: https://github.com/jruby/jruby/pull/7157
+[22:06:06] <enebo[m]> cool
+[22:06:09] <enebo[m]> ship it
+[22:11:35] <headius> looks like it completed, merging
+[23:05:55] <byteit101[m]> enebo: had a chance to test jrubyfx master with 9.3.4?
+[23:06:14] <enebo[m]> byteit101: I have not no
+[23:06:46] <byteit101[m]> hoping to release 2.0 this evening. Works on my computer, but I'd like to ensure it works on others too :-)
+[23:07:13] <enebo[m]> Let me see if my laptop has an fx jdk.
+[23:09:45] <enebo[m]> byteit101: is there a section of where to get fx-enabled JVM for the project
+[23:09:59] <enebo[m]> I remember you get get it with zulu?
+[23:10:40] <byteit101[m]> I though I wrote something about that...
+[23:10:44] <byteit101[m]> oh I put it in the blog post
+[23:10:50] <byteit101[m]> yes, I'll copy that note to the readme
+[23:11:26] <byteit101[m]> good call
+[23:11:27] <enebo[m]> cool.  I am getting a jdk with it now
+[23:25:55] <enebo[m]> byteit101: https://gist.github.com/enebo/91448bfd8fe71ee1d0db4936c308e500
+[23:25:57] <enebo[m]> any ideas?
+[23:26:54] <byteit101[m]> you set java home?
+[23:27:14] <enebo[m]> echo $JAVA_HOME
+[23:27:14] <enebo[m]> /home/enebo/Applications/jdks/zulu18.28.13-ca-fx-jdk18.0.0-linux_x64
+[23:27:48] <byteit101[m]> did you set JFX_DIR to the mods folder?
+[23:27:53] <enebo[m]> nope
+[23:28:14] <enebo[m]> I can try that
+[23:28:17] <byteit101[m]> shouldn't be necessary, but this sounds like that one issue again
+[23:29:23] <enebo[m]> Is there something with jmods at play here?
+[23:29:29] <byteit101[m]> https://github.com/jruby/jrubyfx/issues/128
+[23:29:56] <byteit101[m]> could be
+[23:31:08] <enebo[m]> ok java -list-modules shows the javafx jmods
+[23:32:59] <enebo[m]> no such file to load -- jfxrt.jar
+[23:33:13] <enebo[m]> I printed out the exception cause
+[23:33:36] <byteit101[m]> hmm, works with 17
+[23:33:44] <byteit101[m]> for me
+[23:34:08] <enebo[m]> you had me add JFX_DIR so that might be part of this particular error
+[23:34:45] <byteit101[m]> unsure
+[23:35:11] <byteit101[m]> 17 doesn't have jfxrt.jar either
+[23:35:16] <enebo[m]> heheh
+[23:35:45] <enebo[m]> hahah
+[23:35:45] <enebo[m]> #    require 'jfxrt.jar'
+[23:35:46] <enebo[m]> #    require 'jfxrt.jar'
+[23:35:53] <enebo[m]> ```#    require 'jfxrt.jar'```
+[23:36:00] <enebo[m]> I commented it out and it built
+[23:37:11] <enebo[m]> oh I still have JFX_DIR set somehow
+[23:37:25] <byteit101[m]> If you unset PATH_TO_FX and JFX_DIR does it work with it not commented out?
+[23:38:12] <enebo[m]> I just removed that env and I get an error now
+[23:38:25] <enebo[m]> and if I remove the require I get the same error
+[23:38:35] <byteit101[m]> same or different?
+[23:39:28] <enebo[m]> ok I am back to original error
+[23:39:51] <enebo[m]> I for undefined method '[]' for nil if I tried to print $!
+[23:40:11] <byteit101[m]> ?
+[23:40:51] <enebo[m]> yeah I have no idea what that is ```puts $!``` where error message is caught will cause that
+[23:41:32] <byteit101[m]> some java classes have weird errors when printed
+[23:42:02] <byteit101[m]> it's what makes javafx unique™
+[23:42:36] <enebo[m]> ok I think the issue is since it worked once part_imports get replaced by imports which picked up my changes
+[23:44:53] <byteit101[m]> could be, though that's the other way around (part_imports is the template for imports)
+[23:48:45] <enebo[m]> no such file to load -- org/bouncycastle/bcutil-jdk15to18/1.68/bcutil-jdk15to18-1.68.jar (LoadError)
+[23:49:29] <byteit101[m]> that... is... what???!?!?!
+[23:49:51] <byteit101[m]> i don't think jrubyfx references bouncycastle
+[23:50:19] <enebo[m]> This might have something to do with jruby itself but I am pretty confused by this
+[23:50:36] <enebo[m]> Doing a full rebuild using a newer JVM of JRuby to see if that changes it
+[23:55:14] <enebo[m]> So I am thinking that extra failed load is unrelated
+[23:55:29] <enebo[m]> That is something with jruby-openssl loading I believe
+[23:55:44] <enebo[m]> I was just printing out all errors
+[23:56:11] <enebo[m]> If I comment out all the jar loading code I can run a sample localling (e.g. jruby -Ilib samples/jrubyfx/analog_clock)
+[23:57:08] <byteit101[m]>  if ENV['JFX_DIR'] or
+[23:57:08] <byteit101[m]>     jre[:version].to_f < 1.8 or
+[23:57:09] <byteit101[m]>     (jre[:version].to_f == 1.8 and jre[:release] == 'ea' and jre[:build].to_i < 75)
+[23:57:09] <byteit101[m]> ^ you are getting past that conditional?
+[23:57:32] <byteit101[m]> but commenting out the body works?
+[23:57:54] <enebo[m]> Well I also commented that out but I am looking at it now
+[23:58:51] <byteit101[m]> jruby 9.3 doesn't support 1.7, right? if so I could remove lines 24-33 as that is for java 7
+[23:59:03] <enebo[m]> JRUBY_OPTS="-d -Xbacktrace.style=raw" ~/work/jruby-9.3/bin/jruby  -e 'p ENV_JAVA["java.runtime.version"]; jre = ENV_JAVA["java.runtime.version"].match %r{^(?<version>(?<major>\d+)\.(?<minor>\d+))\.(?<patch>\d+)(_\d+)?-?(?<release>ea|u\d)?(-?b(?<build>\d+))?}; p jre'
+[23:59:03] <enebo[m]> "18+37"
+[23:59:03] <enebo[m]> nil
+[23:59:16] <byteit101[m]> Ah!
+[23:59:18] <enebo[m]> So jre is nil
+[23:59:58] <enebo[m]> jre[:version] boom

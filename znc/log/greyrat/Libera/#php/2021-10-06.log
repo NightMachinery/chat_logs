@@ -1,0 +1,774 @@
+[00:07:45] *** Quits: JohnDoe2 (~johndoe2@2001:470:1f07:89::dead:bead) (Quit: bye)
+[00:09:58] *** Joins: JohnDoe2 (~johndoe2@2001:470:1f07:89::dead:bead)
+[00:11:04] *** justache is now known as justHaunt
+[00:12:08] *** Joins: ms49434 (~ms49434@user/ms49434)
+[00:13:13] <deksar> I got a script having memory leak, long story, how to prevent memory leaks as much as possible under PHP 8.0.11? I'm sick and tired of restarting php-fpm itself. What would you suggest? Is "pm = ondemand" a -temporary- solution or not at all? Any other parameters I should work with? Thanks in advance.
+[00:25:17] *** Quits: LucaTM (~LucaTM@user/lucatm) (Quit: Textual IRC Client: www.textualapp.com)
+[00:33:48] <__adrian> deksar: find the leak in your code and fix it  :)
+[00:35:56] <znf> and until you do that, fpm literally has a parameter that is meant to kill children after X request to prevent memory leaks
+[00:40:00] <deksar> znf: Got pm.process_idle_timeout = 7s; and pm.max_requests = 150
+[00:40:29] <deksar> __adrian: Great idea :), but that's not my code but a 3rd party weirdo (yet still needed) WordPress plugin.
+[00:40:30] <znf> And you have to restart?
+[00:40:43] <deksar> znf: Yes
+[00:40:46] <znf> I'd suggest you remove the wp plugin then
+[00:40:49] <znf> That's not sane
+[00:41:02] <znf> And if it does that... I wouldn't trust the code at all
+[00:41:06] <deksar> Well, that means removing entire theme, as it's the "base" plugin of the theme itself.
+[00:41:09] <__adrian> one way or the other, it's the code you're working with
+[00:41:21] <__adrian> if you paid for it, demand your money's worth
+[00:41:31] <znf> Are you sure it's an actual memory leak?
+[00:41:38] <__adrian> if not, decide whether it's worth forking+fixing vs. ditching
+[00:41:52] <__adrian> what do you think "actual" means, here?
+[00:42:09] <__adrian> but to answer, you haven't given any details, so who knows. butit's rather unlikely.
+[00:42:19] <znf> As in: is it a memory leak and the process balloons to using shit loads of memory or just freezing?
+[00:42:31] <__adrian> unlikely *it's anything beyond poorly written code
+[00:43:30] <deksar> znf: Well, in error.log file of nginx/php, I randomly get; "PHP message: PHP Fatal error:  Allowed memory size of 2147483648 bytes exhausted (tried to allocate 2621440 bytes) in /u" 1414#100832: *15 FastCGI sent in stderr: "/wp-includes/meta.php on line 1078"
+[00:44:04] <znf> that's not a memory leak
+[00:44:22] <znf> and why do you have PHP's memory limit at 2GB, dear god?
+[00:44:22] <__adrian> that's just using-too-much-memory-at-once
+[00:44:42] <deksar> __adrian: interesting point..
+[00:44:59] <__adrian> could indicate stupidly large records/data that the author just never considered, or could be a loop
+[00:45:09] <deksar> znf: To "let" some RAM space to that weirdo theme&plugin...at least to try to give what it *needs*
+[00:45:12] <__adrian> or even both  ;)
+[00:45:18] <znf> yeah, no, never
+[00:45:27] <__adrian> deksar: high-level: what's the plugin do
+[00:45:55] <znf> around that code in meta.php, there's:
+[00:45:56] <znf> $meta_list = $wpdb->get_results( "SELECT $column, meta_key, meta_value FROM $table WHERE $column IN ($id_list) ORDER BY $id_column ASC", ARRAY_A );
+[00:46:06] <__adrian> shit.
+[00:46:06] <znf> and the offending lines are
+[00:46:09] <__adrian> stop using that code
+[00:46:20] <znf> if ( ! isset( $cache[ $mpid ] ) || ! is_array( $cache[ $mpid ] ) ) { $cache[ $mpid ] = array(); [...]
+[00:46:22] <__adrian> it doesn't even use WP's _fake_ prepared statements
+[00:46:32] <znf> __adrian, no, that's meta.php rom WP
+[00:46:45] <__adrian> heh
+[00:47:33] <deksar> znf, here comes even much common one; PHP message: PHP Fatal error: Allowed memory size of 2147483648 bytes exhausted (tried to allocate 1310720 bytes) in /usr/local/www/wp-includes/class-wp-object-cache.php on line 446
+[00:47:38] <deksar> that's much frequent.
+[00:47:43] <znf> few things:
+[00:47:49] <__adrian> that's basically the same error
+[00:47:51] <znf> 1. never really allow wordpress+php to use that much memory
+[00:48:31] <znf> I have blogs with >25k posts, >1mil comments with a huge traffic that never need more than 128MiB
+[00:48:51] <__adrian> so, that sql has no limit clause
+[00:48:57] <deksar> znf: Well, almost 30k posts in that blog. A local newspaper.
+[00:49:07] <deksar> of mine.
+[00:49:22] <znf> probably because that table is never supposed to reach that many records
+[00:49:46] <__adrian> so, things for you to look at: what table is this? how many records does it have? how big is that column you're selecting?
+[00:50:12] <deksar> and while talking about the "table", got somewhere in the log files; require(‘/themes/newsprk/template-parts/footer/footer-default.php’), get_template_part, locate_template, load_template, require(‘/themes/newsprk/template-parts/navigations/nav-footer.php’), wp_nav_menu, wp_get_nav_menu_object, get_term_by, get_terms, WP_Term_Query->query, WP_Term_Query->get_terms created by SELECT t., tt. FROM gkwp_terms AS t INNER JOIN gkwp_term_taxonomy AS tt ON
+[00:50:12] <deksar> t.term_id = tt.term_id WHERE tt.taxonomy IN (‘nav_menu’) AND t.name IN (‘footer_menu’) LIMIT 1 query for WordPress database error Table ‘gazetedb.gkwp_terms’ doesn’t exist.
+[00:50:38] <znf> the function is https://developer.wordpress.org/reference/functions/update_meta_cache/
+[00:51:10] <__adrian> if you want to dig into the WP aspects, you'd need to ask on #wordpress (or some other wp-specific channel/forum)
+[00:51:25] <znf> but basically, your theme is trash :)
+[00:51:50] <__adrian> but the error is just telling you it's using too much memory.
+[00:52:21] <znf> " Included:Quality checked by Envato"
+[00:52:24] <znf> quality checked, my ass
+[00:52:26] <__adrian> heh
+[00:53:23] <deksar> Here comes the most dramatic part;
+[00:53:29] <deksar> in the entire Drama;
+[00:53:42] <znf> as a guy working in the webhosting department, I have rarely (if ever?) met a Wordpress theme from Themeforest that was designed with any logic in mind
+[00:53:56] <znf> they all stuff hundreds of features in there with no regards of server performance
+[00:53:56] <deksar> PHP message: PHP Fatal error: Uncaught Error: Call to undefined function NewsprkEssential\Modules\Header_Footer\Base\newsprk_option() in /wp-content/plugins/newsprk-essential/app/Modules/Header_Footer/Base/Template.php:43
+[00:53:56] <deksar> Stack trace: #0 /wp-includes/class-wp-hook.php(303): NewsprkEssential\Modules\Header_Footer\Base\Template->header_page_override() #1 /wp-includes/plugin.php(189): WP_Hook->apply_filters() #2 /wp-content/plugins/newsprk-essential/app/Modules/Header_Footer/Base/Template.php(259): apply_filters() #3 /wp-content/plugins/newsprk-essential/app/Modules/Header_Footer/Base/Template.php(211): NewsprkEssential\Modules\Header_Footer\Base\Template->display_template()
+[00:53:56] <deksar> #4 /wp-content/plugins/newsprk-essential/app/Modules/Header_Footer/Base/Template.php(168): NewsprkEssential\Modules\Header_Footer\Base\Tem”
+[00:54:07] <znf> please don't paste such long lines
+[00:54:09] <__adrian> deksar: do not post large amounts of code/logs here
+[00:54:17] <__adrian> use a paste site and post the link
+[00:54:18] <deksar> I'm sorry, wrongly did that,
+[00:54:25] <deksar> was trying to trim.
+[00:54:35] <znf> never "trim" error messages :)
+[00:54:42] *** Quits: rainmanj_ (~rainmanja@216.161.85.62) (Quit: Leaving...)
+[00:54:43] <deksar> znf: :) good one
+[00:54:54] <znf> that's a capital sin and I see it with a lot of clients
+[00:54:57] <znf> "here's the error message"
+[00:55:08] <znf> proceeds to crop out the important part
+[00:55:13] <deksar> hahaha:)
+[00:55:26] <deksar> indeed
+[00:55:35] <__adrian> "znf> "here's the error message""  "PHP message: PHP Fatal error"
+[00:55:45] <deksar> __adrian: :) *blushes
+[00:55:48] <znf> ah yes, totally
+[00:56:21] <deksar> So, the theme is trash? Do you guys think the DB (sql) is ok at least? So that I could move the posts to some other theme...
+[00:56:42] <znf> well, the theme is trash because most likely the theme generated that much data and stuffed it into the DB
+[00:56:53] <__adrian> the sql was horrible
+[00:57:08] <__adrian> do you know what "prepared statements" are? because wp doesn't
+[00:57:42] <znf> have a look at your _meta tables in the db
+[00:58:07] <znf> if one table is abnormaly large... that's the issue
+[00:59:21] <znf> it's either the _usermeta table (which in theory should be small, if you don't have that many registered users)
+[00:59:38] <znf> or the _postmeta
+[00:59:51] <znf> oh, forgot about _commentmeta
+[00:59:57] <znf> but my bet is that it's _postmeta
+[01:00:40] <deksar> got 6 registered users, no comments at all under posts/pages, and almost 30k posts (news/articles).
+[01:00:50] <deksar> *6 editors
+[01:00:58] <znf> SELECT COUNT(1) from `wp_postmeta`;
+[01:01:57] <deksar> znf: | 935942 | +----------+ 1 row in set (0.111 sec)
+[01:02:15] <znf> that doesn't seem anormally large for ~30k posts
+[01:02:45] <znf> what's the table size?
+[01:03:08] <deksar> what command should I run for that?
+[01:03:22] <deksar> to get the size
+[01:04:02] <znf> simplest is `show table status;` I guess, and look at data_length
+[01:06:09] <deksar> znf: data_length for wp_postmeta is: 84541440
+[01:06:34] <deksar> and wp_posts: 173686784
+[01:06:36] <znf> so that's >800MiB, yeah, that's a lot
+[01:07:48] <znf> the _postmeta is where different plugins/themes etc. store data related to their own functionality in regards to your posts/articles
+[01:08:13] <deksar> hmm..I see..
+[01:08:26] <znf> it's most likely that something is creating lots of large meta keys for each post, with... some data, couldn't know without actually looking
+[01:10:52] <znf> and... on the other hand, the plugin/theme is trying to update all those rows in one go
+[01:11:01] <znf> which is the error you are seeing with ~/wp-meta.php
+[01:11:15] <znf> I suggest you open up a ticket with the theme creator
+[01:13:36] <znf> And, also, I suggest you reduce the memory limit of PHP to sane values; 2GB is not it.
+[01:13:54] <__adrian> but then all the other plugins will break too!
+[01:14:10] <__adrian> :p
+[01:14:21] <znf> good
+[01:14:25] <znf> then you know which ones to weed out
+[01:14:56] <znf> like, I'm legit looking at the blog I mentioned, my front page and articles never go past ~16MiB used
+[01:22:55] *** Quits: NeoCron (~NeoCron@p200300c4cf1c96002e5e9f24316d1b2a.dip0.t-ipconnect.de) (Quit: Leaving)
+[01:31:28] <deksar> thank you both, znf and __adrian for great tips and suggestions. I'm going to open up a ticket, and then start cleansing -hopefully- the sql db. Somehow.
+[01:32:03] <znf> I think there's a plugin called wp optimize that can clear out metadata from non-existent posts (if any)
+[01:32:04] <znf> worth a try
+[01:44:15] *** Quits: d3sync (~d3sync@62.1.158.148) (Read error: Connection reset by peer)
+[01:48:24] <Sammitch> [types a `find -exec rm` command to delete all files name wp-*, but realizes someone's actually going to run it, so does this instead]
+[01:48:30] *** Quits: Byteflux (~byte@byteflux.net) (Quit: ZNC - https://znc.in)
+[01:56:44] *** Joins: Byteflux (~byte@byteflux.net)
+[02:01:05] *** Quits: tex (~super@user/dix) (Ping timeout: 246 seconds)
+[02:03:20] *** Quits: ms49434 (~ms49434@user/ms49434) (Quit: Leaving)
+[02:17:50] *** Parts: ash_worksi (~ash_m@user/ash-m/x-3292451) ()
+[02:26:58] *** Quits: bytestream (~bytestrea@user/bytestream) (Remote host closed the connection)
+[02:29:57] *** Joins: Alex8532 (~Alex8532@user/alex8532)
+[02:54:43] *** Joins: oordyorp (~Guest68@32.141.46.158)
+[02:55:54] <oordyorp> hello can someone help me with padding a string
+[03:01:11] <Sammitch> !+str_pad
+[03:01:11] <php-bot> string str_pad(string input, int pad_length [, string pad_string [, int pad_type]])  - Returns input string padded on the left or right to specified length with pad_string - http://php.net/str_pad
+[03:02:30] <oordyorp> yes, but if I may. there must be a specific circumstance that I can't figure out the logic for
+[03:02:48] <oordyorp> is there an online IDE we share here I can show you what I mean?
+[03:03:12] <Sammitch> https://3v4l.org/
+[03:04:02] <oordyorp> https://3v4l.org/i63Lu#v8.0.11
+[03:04:55] <oordyorp> each line needs to be formatted as XXXXXXXX XXXXXXXX    .     so if input is less for example XXXXXX  then it must be filled with 00 00000000
+[03:05:55] <oordyorp> dang, thought it would render the html
+[03:06:11] <Sammitch> then you don't want chunk_split(), you want str_split(), operate on the resulting array of strings, and then implode()
+[03:08:01] <oordyorp> so that would make every 16 a new line. and each line its own array?
+[03:08:57] <Sammitch> str_split($input, 16) will result in an array of strings of length <= 16
+[03:09:52] <Sammitch> there's no such thing as "lines" until you format output for human eyeballs
+[03:12:23] <oordyorp> i did str_split($codeString, 16); and all echo message shows is  "Array"
+[03:13:25] <oordyorp> ah, print_r is better
+[03:14:39] <Sammitch> var_dump() > print_r()
+[03:15:01] <Sammitch> !+print_r lies
+[03:15:01] <php-bot> use var_dump() instead!  print_r() is not helpful (for most purposes; but especially for debugging) as it hides useful information from you.  observe: https://gist.github.com/adrian-enspired/4b165cd0a1debe39aec6  (or)  https://3v4l.org/ThSLb
+[03:15:05] <oordyorp> how to use implode in this case?  or.. how to know what is the last possible [ ] array number
+[03:15:16] <oordyorp> i see!  :O
+[03:15:49] <Sammitch> $last = count($array) -1;
+[03:17:41] <oordyorp> okay. and now the str_pad if $last != 16 ?
+[03:19:05] <Sammitch> cmon man
+[03:19:09] <oordyorp> wait a sec
+[03:19:18] <oordyorp> :'(
+[03:19:39] <Blondie101010> something is unclear
+[03:19:48] <Blondie101010> show actual input
+[03:20:19] <Sammitch> they're basically just building their own hexdump
+[03:20:26] <Blondie101010> reading a chunk and padding kind of clashes
+[03:20:47] <Blondie101010> if you read a fixed lenght chunk, it will forcibly be aligned
+[03:20:57] <Blondie101010> so what do you padÉ
+[03:20:59] <Blondie101010> ?
+[03:21:14] *** Joins: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[03:22:10] <oordyorp> just appending 0's so that the last line has exactly the format: ABCDABCD ABCDABCD
+[03:22:37] <Blondie101010> do you realize that would invalidate your data?
+[03:23:05] <Blondie101010> if I tell you I have 12345 units, will you pad it to 12345000?
+[03:23:34] <oordyorp> for my use case it's valid. as it has to be in that format
+[03:23:47] <Blondie101010> no, a hex dump does not do that
+[03:23:58] <Sammitch> mmm yes. padding with a value that's part of the encoding makes it unclear at best if those zeroes are part of the data or not
+[03:23:58] <Blondie101010> it falsifies the data
+[03:24:25] <oordyorp> i'm adding 0s after the dump if the last line does not have 16 hex chars
+[03:24:30] <Sammitch> if you pad with a non-hexadecimal value [or not at all] your data remains clear
+[03:24:34] <Blondie101010> so that's bad
+[03:24:42] <Blondie101010> that's why base64 uses #
+[03:24:48] <oordyorp> there is a counter above the conversion i do
+[03:25:10] <oordyorp> that counts the amount of bytes to read. after that it must be 0 to fill the format
+[03:25:20] <__adrian> oordyorp: just for reference, this is basically the design flaw that mcrypt had.
+[03:25:24] <__adrian> and now, it's dead.
+[03:26:08] <Sammitch> ZERO_PAD_MAYBE_ITS_HARD_TO_TELL
+[03:26:24] <Blondie101010> if the value is numeric, padding goes to the left
+[03:26:26] <Sammitch> #HonestFlagNames
+[03:26:41] <oordyorp> so if i have counter 10: and i do 12341234 12341234<br>12    the last line must be 12000000 00000000
+[03:26:45] <oordyorp> all the 0's get ignored
+[03:26:57] <Blondie101010> that's just stupid
+[03:27:20] <Blondie101010> left pad
+[03:27:40] <Sammitch> Blondie101010: my boss once said "if a client wants to shoot themselves in the foot, we first explain why that's bad, but if they still want to do it just hand them the gun."
+[03:27:56] * Blondie101010 hands the gun to oordyorp
+[03:27:58] <oordyorp> no context bullying
+[03:28:02] <oordyorp> :D
+[03:28:33] <Sammitch> !+str_pad
+[03:28:33] <php-bot> string str_pad(string input, int pad_length [, string pad_string [, int pad_type]])  - Returns input string padded on the left or right to specified length with pad_string - http://php.net/str_pad
+[03:28:45] <Sammitch> fill yer boots [with holes]
+[03:29:06] <oordyorp> it's the actual logic i'm stuck on
+[03:29:54] <oordyorp> 19:49:05
+[03:29:54] <oordyorp>  Sammitch: cmon man
+[03:30:49] <oordyorp> how can i do the math part from here?
+[03:30:58] <Blondie101010> learn 5 grade Math
+[03:31:00] <oordyorp> input hellohello:  echo array(2) { [0]=> string(16) "68656c6c6f68656c" [1]=> string(4) "6c6f" }
+[03:31:45] <Blondie101010> not sure I get the problem
+[03:31:49] <Blondie101010> please show code
+[03:32:00] <oordyorp> sorry not echo but var_dump
+[03:32:30] <oordyorp> current code is https://3v4l.org/Rlk6M#v8.0.11
+[03:32:54] <oordyorp> the last seems wrong though
+[03:33:08] <Blondie101010> that's not how you demonstrate something, or troubleshoot
+[03:33:22] <Blondie101010> the HTML doesn't belong there at all
+[03:33:40] <Blondie101010> what you need is to put sample input, and show the output your desired function does
+[03:35:34] <oordyorp> https://3v4l.org/Weqc1
+[03:35:51] <oordyorp> like that?
+[03:36:34] *** Quits: ArchNoob (~maotora@user/archnoob) (Ping timeout: 252 seconds)
+[03:37:19] <Blondie101010> more like: https://3v4l.org/A1mBq
+[03:37:41] <Blondie101010> but you were close
+[03:37:49] <oordyorp> so i want to do something like if $last (in this case [1]) != 16 , get len. 16 - len is what is to pad. str_pad 16-len 0
+[03:38:36] <oordyorp> so that [1] should be 6c6f000000000000
+[03:38:49] <Blondie101010> what is complicated with str_pad?
+[03:38:55] <__adrian> oordyorp: think of hex like numbers (because they are)
+[03:39:08] <__adrian> if you want to pad the number 12, do you do 0012 or 1200 ?
+[03:39:11] <oordyorp> i'm not worried about the hex part at all :P
+[03:39:22] <__adrian> in one case you have the same number. in the other, you don't.
+[03:39:27] <Blondie101010> it will likely make the data invalid
+[03:39:31] <oordyorp> it's the actual format. it needs to be right padded
+[03:39:41] <__adrian> what format?
+[03:39:46] <Blondie101010> can you use a different padding char?
+[03:39:56] <oordyorp> must be 0
+[03:40:09] <Blondie101010> what format spec is that?
+[03:40:14] <__adrian> you sure it's not "must be nul"?
+[03:40:19] <__adrian> what format?
+[03:40:29] <oordyorp> game cheat code
+[03:40:43] <Blondie101010> null would make much more sense
+[03:40:55] <__adrian> where's the spec for this format
+[03:41:06] <Blondie101010> is this really supposed to be hex?
+[03:41:25] *** Quits: Alex8532 (~Alex8532@user/alex8532) (Quit: Going offline, see ya! (www.adiirc.com))
+[03:41:27] <oordyorp> yep
+[03:41:32] <Blondie101010> what format?
+[03:41:55] <oordyorp> i don't see how you needing to know why i'm right is important. when all i need to know is how to format a code. but one sec
+[03:42:02] <oordyorp> https://web.archive.org/web/20171117134238/http://geckocodes.org/index.php?arsenal=1
+[03:42:22] <__adrian> because the format you're describing doesn't make sense.
+[03:42:32] <oordyorp> why does it need to when i already describe what i need
+[03:42:40] <Blondie101010> oordyorp:  you were given your solution 40 minutes ago
+[03:42:49] <oordyorp> hints
+[03:42:55] <Blondie101010> no very clearly
+[03:43:05] <Blondie101010> https://www.php.net/str_pad
+[03:43:07] <__adrian> what was the question? "how to pad?"
+[03:43:09] <Blondie101010> look at that page
+[03:43:11] <__adrian> use str_pad()
+[03:43:44] <Blondie101010> try it on 3v4l
+[03:43:50] <Sammitch> spoonfeeding code line-by-line is not many peoples' definition of fun
+[03:44:20] <oordyorp> bullying is though it seems lol
+[03:44:40] <__adrian> no
+[03:45:07] <Sammitch> you don't have to engage with us. if you're hell-bent on doing something we don't like it's not like we can stop you. in fact we've already told you how to do it several times
+[03:45:38] <oordyorp> i know how to str_pad . it's the condition that i'm needing help on
+[03:46:06] <Sammitch> in fact I got bored and wrote your entire thing in a single line
+[03:46:39] <__adrian> what condition? you've already got your hex split into chunks.
+[03:47:45] <oordyorp> to check the value of the last array. len should be 16 else do the padding depending on length
+[03:47:57] <__adrian> there's nothing to check there
+[03:48:04] <__adrian> pad it to 16
+[03:48:08] <Blondie101010> oordyorp:  test something with str_pad()
+[03:48:14] <oordyorp> okay i will
+[03:49:19] <Blondie101010> like: echo str_pad("hellohello", 32);
+[03:51:09] <Blondie101010> actually not very visible, so lets do: echo str_pad("hellohello", 32, '!');
+[03:51:27] <oordyorp> yeah, it adds the !!!!!!!!!!!!! after
+[03:51:38] <Blondie101010> does it add the right amount?
+[03:52:18] <oordyorp> interesting
+[03:52:22] <oordyorp> lemme try on my code
+[03:52:23] <Blondie101010> :)
+[03:53:02] <__adrian> oordyorp: you were given the link to the manual so you could read how the function works. it has examples too.
+[03:53:58] *** Quits: nebx_co (~nebx_co@AVP.fm.ColoState.EDU) (Ping timeout: 256 seconds)
+[03:55:47] <oordyorp> but how to apply it only to $last of array? it already does?
+[03:55:57] <Blondie101010> you don't have to
+[03:56:04] <Blondie101010> apply it to all
+[03:56:26] <__adrian> but your last paste already found the last segment, so...
+[03:56:35] <Blondie101010> echo str_pad('1234', 4, '5');
+[04:04:25] *** Joins: entropy_ (~ent@2601:1c0:c802:5920:d8ec:d854:9915:40bc)
+[04:05:11] <entropy_> ok so i have a sql table
+[04:05:38] <entropy_> hits	date	ip 	
+[04:05:38] <entropy_> 11 	9/21 	93.158.90.34
+[04:05:38] <entropy_> 1 	9/21 	106.53.97.224
+[04:06:00] <entropy_> i want to get the most per date
+[04:06:11] <entropy_> like 9/21 would be 2
+[04:06:37] <Blondie101010> that's a SQL question, not PHP
+[04:06:42] <__adrian> this is a question for #mysql
+[04:06:54] <entropy_> ok thanks
+[04:06:57] <__adrian> np
+[04:09:14] *** Quits: onizu (uid373383@id-373383.uxbridge.irccloud.com) (Quit: Connection closed for inactivity)
+[04:10:46] *** Joins: Hiccup (cHoy@user/hiccup)
+[04:19:00] *** Joins: ferdna (~ferdna@user/ferdna)
+[04:19:11] *** Joins: WishBoy (~WishBoy@user/wishboy)
+[04:30:24] *** Quits: vlm (~vlm@user/vlm) (Quit: "")
+[04:34:53] *** Joins: vlm (~vlm@user/vlm)
+[04:53:04] <CoJaBo_> Apparently, I'm a magnet for weird/impossible PHP issues
+[04:55:13] <Blondie101010> that sounds like a pre-troubleshooting statement
+[04:55:45] *** Joins: delboy1978uk (~delboy197@109.132.42.202)
+[04:57:23] <CoJaBo_> Yeh, I got another one
+[04:57:44] <CoJaBo_> This happens, but intermittently: <br /><b>Fatal error</b>:  strict_types declaration must be the very first statement in the script in <b>[filename].php</b> on line <b>2</b><br />
+[04:58:13] <CoJaBo_> It's also not logged to the logfile, tho that might just be because logging is broken, so dunno if related
+[04:59:02] <CoJaBo_> I don't think I have enough info to even guess at a next step in this one. Fun times.
+[05:02:11] *** Quits: delboy1978uk (~delboy197@109.132.42.202) (Quit: delboy1978uk)
+[05:04:54] *** Quits: pmercado (~pmercado@186.107.35.198) (Ping timeout: 245 seconds)
+[05:08:55] <Blondie101010> for this error to be intermittent, it means that includes are conditional, so that's how you'd discern which case has the bug
+[05:10:09] <Blondie101010> (something else got included before the one causing this error)
+[05:11:08] <Blondie101010> mmmm my logic seems flawed
+[05:11:27] <Blondie101010> that can not happen intermittently on the same file
+[05:11:48] <Blondie101010> with the only exception being that the script changes
+[05:13:24] <Blondie101010> so pay close attention to the URL and filename
+[05:23:47] *** Quits: oordyorp (~Guest68@32.141.46.158) (Quit: Connection closed)
+[05:29:56] *** Joins: stkrdknmibalz (~test@rrcs-75-87-43-228.sw.biz.rr.com)
+[05:42:41] *** Quits: mishehu (~mishehu@mira001.eyepeeveesicks.shavedgoats.net) (Ping timeout: 264 seconds)
+[05:46:39] *** Quits: noarb (~noarb@user/noarb) (Quit: ZNC 1.8.2 - https://znc.in)
+[05:48:00] *** Joins: mishehu (~mishehu@mira001.eyepeeveesicks.shavedgoats.net)
+[05:49:14] <znf> I'm slightly confused here - shouldn't I be able to: composer init, composer required library, then just include the autoloader and be able to use the library?
+[05:49:52] <znf> 'cose I'm doing that, but somehow it tells me that the class wasn't found :-/
+[05:50:40] <znf> "php": "^5.3||^7.0"
+[05:50:46] <znf> does this mean it works only up to php 7.0?
+[05:51:57] <CoJaBo_> Blondie101010: It's worse than that; it's the main file that's being called
+[05:52:10] *** Joins: noarb (~noarb@user/noarb)
+[05:52:30] <Blondie101010> does it change?
+[05:52:36] <CoJaBo_> I'm just going to declare the server haunted at this point. Anyone know any PHP8 exorists?
+[05:52:50] <puff> Evening, anyone use Zend\Db\Sql? It looks interesting.  Does it check for sql injection?
+[05:53:08] <Blondie101010> I'd inotifywait
+[05:53:46] <Blondie101010> puff:  SQL injection is prevented by using prepared statements
+[05:54:06] <Blondie101010> no matter what library you do it with
+[05:54:32] <Blondie101010> separating data from the query
+[05:55:26] <puff> Ah, I see, it generates the query string, then you feed that to a prepared statement. Cool, that's sane.
+[05:56:03] <puff> Shoulda just googled on Zend\Db\Sql and prepared statement to begin with, sorry.
+[05:58:03] <Blondie101010> that's ok
+[05:59:36] <CoJaBo_> Blondie101010: it shouldn't be :/
+[05:59:49] <CoJaBo_> I don't have full access to this thing tho
+[06:00:57] <Blondie101010> that's why I'd confirm by asking them for `ls -li $filename` now and after the next issue
+[06:01:17] <Blondie101010> see if the inode and size changes
+[06:01:27] <Blondie101010> and ts
+[06:02:49] *** Quits: junktext (~junktext@77.247.181.217) (Ping timeout: 252 seconds)
+[06:02:58] <CoJaBo_> Blondie101010: ctime is months ago :/
+[06:03:15] <CoJaBo_> and mtime*
+[06:03:19] <Blondie101010> ok
+[06:03:23] *** Joins: evilbug (~evilbug@191.101.132.101)
+[06:03:49] <Blondie101010> but the size must be changing if the script changes sufficiently for php to give an unjustified error
+[06:04:12] <Blondie101010> can hardly imagine it possible, but it might be a media problem
+[06:04:22] <Blondie101010> (the storage)
+[06:05:06] <Blondie101010> that'd be a very weird malfunction
+[06:05:35] <CoJaBo_> I'd certainly hope not
+[06:06:02] <Blondie101010> in any case, you need to monitor that file very closely
+[06:06:14] <CoJaBo_> ha, 1 disk is failed tho I don't think that's related
+[06:07:14] <Blondie101010> I'd probably run a small check.sh every 10 minutes (or what suits you) that would compare the file with a copy and watch the file attributes
+[06:07:30] <Blondie101010> something has to be changing
+[06:07:42] <Blondie101010> unless it's not always calling *that* file
+[06:07:55] <Blondie101010> that's why earlier I said to pay close attention to the name and URL
+[06:12:06] <CoJaBo_> There has to be multiple backends somehow; that's the only thing I can make this make sense
+[06:14:55] *** Quits: keypusher (keypusher@user/keypusher) (Ping timeout: 252 seconds)
+[06:41:48] *** Joins: Alex8532 (~Alex8532@user/alex8532)
+[06:45:52] *** Quits: MrTrick (uid181961@id-181961.uxbridge.irccloud.com) (Read error: Connection reset by peer)
+[06:46:01] *** Joins: MrTrick (uid181961@id-181961.uxbridge.irccloud.com)
+[06:46:11] *** Quits: bibble (~uid@2001:bc8:2117:100::) (Remote host closed the connection)
+[06:46:19] *** Quits: nrr (sid20938@id-20938.lymington.irccloud.com) (Read error: Connection reset by peer)
+[06:46:32] *** Joins: nrr (sid20938@id-20938.lymington.irccloud.com)
+[06:48:38] *** Quits: wutzelputz (~wutzelput@2001:470:69fc:105::3117) (Ping timeout: 265 seconds)
+[06:54:11] *** Joins: semeion (~semeion@user/semeion)
+[06:54:52] *** Joins: Rockwood (~Rocky@user/rocky)
+[06:54:59] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[06:59:02] *** Quits: evilbug (~evilbug@191.101.132.101) (Quit: Connection closed)
+[07:05:44] *** Joins: wutzelputz (~wutzelput@2001:470:69fc:105::3117)
+[07:29:13] *** Quits: The_Blode_ (~Blode@user/the-blode/x-7164444) (Ping timeout: 252 seconds)
+[07:33:58] *** Joins: The_Blode (~Blode@user/the-blode/x-7164444)
+[07:37:05] *** Quits: stkrdknmibalz (~test@rrcs-75-87-43-228.sw.biz.rr.com) (Ping timeout: 246 seconds)
+[07:44:19] *** Joins: guido (~guido@host-80-116-29-103.pool80116.interbusiness.it)
+[07:48:29] *** Quits: joachimo (~joachimo@cloud02.joachimopdenakker.be) (Quit: The Lounge - https://thelounge.chat)
+[07:49:12] *** Joins: joachimo (~joachimo@cloud02.joachimopdenakker.be)
+[07:55:06] *** Quits: Rockwood (~Rocky@user/rocky) (Quit: The Time is Over)
+[07:58:37] *** Joins: stkrdknmibalz (~test@rrcs-75-87-43-228.sw.biz.rr.com)
+[08:04:27] *** Quits: stkrdknmibalz (~test@rrcs-75-87-43-228.sw.biz.rr.com) (Excess Flood)
+[08:08:23] *** Quits: WishBoy (~WishBoy@user/wishboy) ()
+[08:17:53] *** Joins: d3sync (~d3sync@130.43.59.21.dsl.dyn.forthnet.gr)
+[08:39:48] *** Joins: Naktibalda (~Naktibald@88.135.22.17)
+[08:41:49] *** Quits: Alex8532 (~Alex8532@user/alex8532) (Quit: Going offline, see ya! (www.adiirc.com))
+[08:58:52] *** Quits: mr_gant_ (~mr_gant@144.48.37.133) (Ping timeout: 252 seconds)
+[09:04:14] *** Quits: jetchisel (jetchisel@user/jetchisel) (Ping timeout: 246 seconds)
+[09:06:47] *** Joins: jetchisel (jetchisel@user/jetchisel)
+[09:13:51] *** Joins: mr_gant_ (~mr_gant@144.48.37.134)
+[09:23:01] *** Quits: mr_gant_ (~mr_gant@144.48.37.134) (Ping timeout: 245 seconds)
+[09:35:34] *** Quits: guido (~guido@host-80-116-29-103.pool80116.interbusiness.it) (Quit: WeeChat 3.3)
+[09:37:24] *** Joins: mr_gant_ (~mr_gant@144.48.37.134)
+[09:38:07] *** Joins: tex (~super@user/dix)
+[09:47:36] *** Quits: The_Blode (~Blode@user/the-blode/x-7164444) (Ping timeout: 245 seconds)
+[09:48:55] *** Joins: The_Blode (~Blode@user/the-blode/x-7164444)
+[09:49:30] *** Joins: Alex8532 (~Alex8532@user/alex8532)
+[10:01:22] *** Joins: guido (~guido@2001:b07:6455:ac4f:3641:5dff:fe55:2a8f)
+[10:04:17] *** Joins: undefined_bob (~undefined@user/undefined-bob/x-5411918)
+[11:03:57] *** Quits: jetchisel (jetchisel@user/jetchisel) (Quit: Unfortunately time is always against us -- [Morpheus])
+[11:19:53] *** Joins: jetchisel (~jetchisel@user/jetchisel)
+[11:28:28] *** Joins: DevAntoine (~DevAntoin@185.31.151.122)
+[11:31:19] *** Joins: delboy1978uk (~delboy197@202.42-132-109.adsl-dyn.isp.belgacom.be)
+[11:35:56] *** Quits: jetchisel (~jetchisel@user/jetchisel) (Ping timeout: 245 seconds)
+[11:46:42] *** Joins: wowas (~wowas@proxy01.imos.net)
+[11:46:44] <wowas> Hello!
+[11:51:11] <wowas> https://pastebin.com/raw/hWG1MwTZ => i get "HTTP/1.1 405 Method Not Allowed" and i dunno why
+[11:51:30] <wowas> who can i print the POST Content so that i can check was it actually sends?
+[11:53:54] <Naktibalda> you could use one of request bin services to see what you are actually sending, e.g. https://requestbin.net
+[11:55:56] *** Joins: LucaTM (~LucaTM@user/lucatm)
+[11:56:01] <Naktibalda> though Method not allowed is much more likely to happen because you are making POST request to URI which doesn't expect to receive POST
+[11:57:27] *** Quits: DevAntoine (~DevAntoin@185.31.151.122) (Remote host closed the connection)
+[11:58:47] <Naktibalda> Maybe you should be using CURLOPT_CUSTOMREQUEST  'PATCH' instead of POST
+[12:00:15] *** Quits: CapitalistPunk (~Capitalis@liledevil.xs4all.nl) (Remote host closed the connection)
+[12:04:38] *** Joins: CapitalistPunk (~Capitalis@liledevil.xs4all.nl)
+[12:05:35] <wowas> Naktibalda, yeah, i tried that already: 'Content-type: application/json-patch+json';
+[12:05:44] *** Quits: seand (~seand@69.54.142.196) (Ping timeout: 245 seconds)
+[12:06:13] *** Joins: fahrradToken (~fahrradTo@212.7.190.34)
+[12:06:15] <Naktibalda> that's content-type header, not request method
+[12:08:33] <wowas> Naktibalda, right ^^
+[12:08:34] <wowas> thanks!
+[12:12:48] <wowas> Naktibalda, that took me 2h, thanks :)
+[12:16:00] *** Quits: tex (~super@user/dix) (Quit: tex)
+[12:18:09] *** Joins: DevAntoine (~DevAntoin@185.31.151.122)
+[12:22:24] *** Quits: DevAntoine (~DevAntoin@185.31.151.122) (Ping timeout: 245 seconds)
+[12:28:56] *** Quits: phlixi (~phlixi@aftr-82-135-86-19.dynamic.mnet-online.de) (Remote host closed the connection)
+[12:29:20] *** Joins: phlixi (~phlixi@aftr-82-135-86-19.dynamic.mnet-online.de)
+[12:30:20] *** Joins: seand (~seand@69.54.142.196)
+[12:31:04] *** Joins: jetchisel (jetchisel@user/jetchisel)
+[12:35:06] *** Joins: DevAntoine (~DevAntoin@185.31.151.122)
+[12:39:31] *** Quits: qwedfg_ (~qwedfg@user/qwedfg) (Remote host closed the connection)
+[12:40:54] *** Joins: qwedfg (~qwedfg@user/qwedfg)
+[12:44:12] *** Joins: ArchNoob (~maotora@user/archnoob)
+[13:00:04] <fakuve> Hi guys, what is your `php` bin of choice to share php code with syntax highlight ?
+[13:00:11] <fakuve> ah ok
+[13:00:15] <fakuve> is on the description
+[13:05:56] *** Quits: seand (~seand@69.54.142.196) (Ping timeout: 245 seconds)
+[13:12:13] *** Quits: DevAntoine (~DevAntoin@185.31.151.122) (Remote host closed the connection)
+[13:17:29] *** Joins: DevAntoine (~DevAntoin@185.31.151.122)
+[13:19:48] *** Quits: DevAntoine (~DevAntoin@185.31.151.122) (Remote host closed the connection)
+[13:20:03] *** Joins: DevAntoine (~DevAntoin@185.31.151.122)
+[13:31:21] *** Joins: seand (~seand@69.54.142.196)
+[13:34:02] <wowas> https://pastebin.com/raw/VH7Va7sQ => how can i get the id here? Its decoded json i guess :)
+[13:37:01] <AllenJB> That doesn't look like var_dump output to me, unless it's an undecoded JSON string
+[13:37:42] <wowas> yes, i think its not decoded
+[13:39:15] *** Quits: Alex8532 (~Alex8532@user/alex8532) (Quit: Going offline, see ya! (www.adiirc.com))
+[13:40:17] <AllenJB> So then you decode it with json_decode(), then you can access it as a series of objects and arrays depending on the options you pass to json_decode. With the default options I'd expect the id value there to probably be $decodedObj->models["1548"]->id
+[13:42:58] *** Quits: joachimo (~joachimo@cloud02.joachimopdenakker.be) (Quit: The Lounge - https://thelounge.chat)
+[13:44:19] *** Quits: delboy1978uk (~delboy197@202.42-132-109.adsl-dyn.isp.belgacom.be) (Quit: delboy1978uk)
+[13:46:03] *** Joins: joachimo (~joachimo@cloud02.joachimopdenakker.be)
+[13:54:01] *** Joins: delboy1978uk (~delboy197@202.42-132-109.adsl-dyn.isp.belgacom.be)
+[14:02:19] *** Quits: joachimo (~joachimo@cloud02.joachimopdenakker.be) (Quit: The Lounge - https://thelounge.chat)
+[14:02:22] *** Quits: delboy1978uk (~delboy197@202.42-132-109.adsl-dyn.isp.belgacom.be) (Quit: delboy1978uk)
+[14:02:50] *** Joins: delboy1978uk (~delboy197@109.132.42.202)
+[14:08:43] *** Joins: ms49434 (~ms49434@user/ms49434)
+[14:10:26] *** Quits: fahrradToken (~fahrradTo@212.7.190.34) (Remote host closed the connection)
+[14:23:47] *** Joins: keypusher (keypusher@user/keypusher)
+[14:23:51] *** Joins: kenoba7 (~kenoba@user/kenoba)
+[14:25:19] *** Quits: darkstardevx (~darkstard@c-24-21-53-33.hsd1.or.comcast.net) (Ping timeout: 245 seconds)
+[14:25:34] *** Quits: kenoba (~kenoba@user/kenoba) (Ping timeout: 252 seconds)
+[14:25:34] *** kenoba7 is now known as kenoba
+[14:25:49] *** Joins: darkstardevx (~darkstard@c-24-21-53-33.hsd1.or.comcast.net)
+[14:43:24] <fakuve> Ok guys so I'm back to the project of yesterday , now that I've found a tool to pipe my projects to to easily paste them in here. Basically the autoload is not working for some reason . `Fatal error: Uncaught Error: Class "MyApp\Classes\Calc" not found in (...) src/includes/Calc.php on line 9` https://hastebin.com/yawozaboru
+[14:44:13] <fakuve> Basically on line 93 of that paste there is the issue
+[14:45:31] *** Quits: Hiccup (cHoy@user/hiccup) (Remote host closed the connection)
+[14:46:57] *** Joins: mIk3_08 (~Thunderbi@user/mik3-08/x-2852566)
+[14:47:22] <AllenJB> includes/Calc,oho does not include the autoloader
+[14:48:11] <AllenJB> Correction: includes/Calc.php does not include the autoloader
+[14:49:42] <fakuve> ok Thanks AllenJB !
+[14:50:38] *** Joins: Akimb (~Akimb@82-135-197-171.static.zebra.lt)
+[14:51:31] *** Joins: mIk3_09 (~Thunderbi@user/mik3-08/x-2852566)
+[14:52:29] <AllenJB> Aside: Your file placement is atypical. As a general rule, "public" (or equivalent) should contain all files that are directly visited by the web browser. Normally you would set "public" as the document root / site root, so that nothing outside it can be visited by a web browser.
+[14:54:14] *** Quits: mIk3_08 (~Thunderbi@user/mik3-08/x-2852566) (Ping timeout: 265 seconds)
+[14:54:33] <AllenJB> This prevents potential exploits due to files not expected to be used by web browsers. These files may reside in libraries in the vendor directory. For one example where this has happened see https://thephp.cc/articles/phpunit-a-security-risk
+[14:55:00] *** Quits: guido (~guido@2001:b07:6455:ac4f:3641:5dff:fe55:2a8f) (Quit: WeeChat 3.3)
+[14:55:01] *** Joins: mIk3_08 (~Thunderbi@user/mik3-08/x-2852566)
+[14:55:40] <AllenJB> (PHPUnit is a popular testing framework used by many PHP projects, so especially if you install composer developer dependencies, it's frequently found in vendor/)
+[14:55:52] <fakuve> AllenJB: ok thanks a lot
+[14:56:14] <fakuve> Im gonna ammend my **dummy-project** soon
+[14:57:36] *** Quits: mIk3_09 (~Thunderbi@user/mik3-08/x-2852566) (Ping timeout: 245 seconds)
+[14:58:53] <fakuve> So I have just commented out some lines , at is still gives me a warning on those lines . Shouldn't commented lines not be parsed , but at the same time count as lines ?
+[14:59:54] <AllenJB> How did you comment them out?
+[15:00:02] <fakuve> by appending //
+[15:00:17] <biberu> did you mean prepending?
+[15:00:25] <fakuve> yeah :D
+[15:00:36] <fakuve> (damm latin prefixes)
+[15:01:40] *** Quits: mIk3_08 (~Thunderbi@user/mik3-08/x-2852566) (Read error: Connection reset by peer)
+[15:02:02] *** Joins: mIk3_08 (~Thunderbi@user/mik3-08/x-2852566)
+[15:03:53] *** Joins: Alex8532 (~Alex8532@user/alex8532)
+[15:04:00] *** Quits: mIk3_08 (~Thunderbi@user/mik3-08/x-2852566) (Read error: Connection reset by peer)
+[15:04:11] <AllenJB> That sounds like it should work. Can you show us the code and the full error message?
+[15:04:20] *** Joins: mIk3_08 (~Thunderbi@user/mik3-08/x-2852566)
+[15:04:26] <fakuve> Yep just a sec
+[15:06:14] <fakuve> https://hastebin.com/haligerugu
+[15:06:31] *** Joins: mIk3_09 (~Thunderbi@user/mik3-08/x-2852566)
+[15:06:59] *** Quits: mIk3_08 (~Thunderbi@user/mik3-08/x-2852566) (Client Quit)
+[15:06:59] *** mIk3_09 is now known as mIk3_08
+[15:07:12] <fakuve> the error message is https://termbin.com/nktu
+[15:07:48] *** Quits: mIk3_08 (~Thunderbi@user/mik3-08/x-2852566) (Client Quit)
+[15:08:46] <AllenJB> Are you sure the code you're executing is what you think it is (have you correctly uploaded any changes to your server, if you're editing on a different machine)?
+[15:09:00] <fakuve> let me check
+[15:09:15] <AllenJB> The lines in hastebin don't even reference the operator variable mentioned in the error message
+[15:10:27] <AllenJB> As to the cause of the error: There is no operator variable defined in that function. To reference the property in the class you need to use $this->operator
+[15:11:01] <fakuve> oh yeah
+[15:11:14] <fakuve> In the Condition of the Switch
+[15:11:23] <fakuve> line 42 of the hastebin
+[15:12:27] <fakuve> noww
+[15:12:35] <fakuve> AllenJB: thanks a lot really
+[15:12:52] *** Joins: mIk3_08 (~Thunderbi@user/mik3-08/x-2852566)
+[15:13:03] <fakuve> Now that the project has diverted into different files is difficult for me to see the unified code
+[15:13:46] <fakuve> How would you unify the `require_once 'path..'` statement in this project?
+[15:14:33] <fakuve> as I'm using relative paths (which is not suggested) , I need to be checking the subdirectory of each file
+[15:14:57] <AllenJB> If you're not already, you might want to use an IDE that supports PHP such as PHPStorm or VSCode that will hilight errors for you
+[15:16:14] <AllenJB> I would have a "bootstrap" file which every script includes that defines something like PROJECT_ROOT - then all includes/requires are made using that
+[15:16:51] <fakuve> AllenJB: ok
+[15:19:06] <fakuve> but we got the same problem , we need to include that bootstrap file in each of the files of the project
+[15:19:37] <fakuve> and if that file is in the root folder , how do you refer to it using the same statement in all of the files?
+[15:20:25] <fakuve> Any example of a bootstrap file ?
+[15:23:23] <AllenJB> The other method, which is commonly used by frameworks, is the front controller pattern - you route all requests through a single "index.php" file, then that loads common code and uses a router such as FastRoute to decide how to execute the request. Look at Slim as an example of a fairly minimal framework that includes routing.
+[15:24:48] *** Quits: mIk3_08 (~Thunderbi@user/mik3-08/x-2852566) (Quit: mIk3_08)
+[15:25:54] <fakuve> AllenJB: that sounds a bit advanced for me at the moment , but I will take a look . Thanks
+[15:26:04] *** Quits: Miles8of9 (~obrien@93-34-145-79.ip50.fastwebnet.it) (Ping timeout: 252 seconds)
+[15:31:48] *** Joins: Miles8of9 (~obrien@93-34-145-79.ip50.fastwebnet.it)
+[15:32:36] *** Quits: wowas (~wowas@proxy01.imos.net) (Ping timeout: 245 seconds)
+[15:32:42] <Naktibalda> the name of includes directory doesn't match contents, I would expect these files to be included, not accessed directly.
+[15:34:41] <Naktibalda> also your DOCUMENT_ROOT should be set to public/ directory (that's the point of it) and other directories should be inaccessible.
+[15:35:36] *** Joins: stkrdknmibalz (~test@rrcs-75-87-43-228.sw.biz.rr.com)
+[15:35:40] *** Joins: guido (~guido@host-95-234-249-150.retail.telecomitalia.it)
+[15:37:46] *** Quits: delboy1978uk (~delboy197@109.132.42.202) (Quit: delboy1978uk)
+[15:38:23] *** Joins: pmercado (~pmercado@186.107.35.198)
+[15:43:41] <fakuve> Naktibalda: I see , DOCUMENT_ROOT must be setted through `apache2` I guess
+[15:45:19] *** Quits: semeion (~semeion@user/semeion) (Ping timeout: 245 seconds)
+[15:47:18] *** Joins: Simplar (~quassel@188.163.92.105)
+[15:47:50] <Simplar> What may be the reason PHP receives a *.bin extension file instead of *.mp3 when I am sending it through FormData in the frontend?
+[15:49:01] <AllenJB> Simplar: My best guess is the client is doing something to the file prior to transmitting it. I don't know of anything in PHP which would do that.
+[15:50:07] <AllenJB> Note that you should never trust file extensions, or the mime type in $_FILES (which comes from the client) - you should always verify the filetype using a method such as mime_content_type that returns the mime type based on actual file content
+[15:50:21] <Simplar> I am using Laravel's validator
+[15:50:39] <Simplar> And while sending the mp3 file by formdata (verified to be real mp3), I get *.bin and validation error in laravel
+[15:58:31] *** Joins: semeion (~semeion@user/semeion)
+[15:58:32] <AllenJB> Some Googling reveals that it's Laravel's validator changing file extensions and recognizing certain mp3s is a known issue: https://stackoverflow.com/questions/21564029/file-upload-mime-type-validation-with-laravel-4
+[16:04:56] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Ping timeout: 246 seconds)
+[16:10:30] <Simplar> How do I read the props of file /tmp/phpyXoYih by php ?
+[16:10:37] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[16:11:25] <Naktibalda> Simplar: what do you want to know about it?
+[16:12:08] <Simplar> I want to know its mime type
+[16:13:08] <Simplar> mime_content_type?
+[16:13:13] <Naktibalda> yes
+[16:23:38] <fakuve> Is there any way to get the fully qualified path of the parent of the parent directory , without having to use `chdir()` ?
+[16:24:57] <fakuve> I thought `realpath()` would parse relative paths into absolute ones
+[16:26:04] <AllenJB> It should (note that realpath will also resolve symlinks)
+[16:26:40] <fakuve> for instance I want to get `/home/fakuve/myrepos/fakuve/` I'm doing ` echo realpath('./../home/fakuve/myrepos/fakuve/live');`
+[16:26:55] <fakuve> It shows blank at the moment
+[16:27:23] <AllenJB> You've missed a '.' on the first item in that path
+[16:27:36] <AllenJB> ('.' is the current directory, '..' is the parent)
+[16:27:43] *** Joins: junktext (~junktext@77.247.181.216)
+[16:28:57] <fakuve> AllenJB: is not printing anything this statement ` echo realpath('../../home/fakuve/myrepos/fakuve/live');`
+[16:29:25] <fakuve> may it be cause it is outside the DOCUMENT_ROOT ?
+[16:29:53] <AllenJB> If you know what you want is under home, I'm not sure why you're using relative paths - you can use an absolute path ("/home/fakuve/myrepos/fakuve/live")
+[16:30:20] <fakuve> But I want to define an absolute path , out of a relative one
+[16:30:40] <fakuve> So I can standarise the whole project require_once statements
+[16:32:08] <AllenJB> Also note that the relative path will be relative to the current working directory, not the directory of the current file. You might want to try: __DIR__ . '/../../home/<and-the-rest>'
+[16:33:29] <fakuve> as in ` echo realpath(__DIR__ . '../../home/fakuve/myrepos/fakuve/live');` ?
+[16:33:57] <fakuve> So mainly , the purpose of this is
+[16:34:27] <fakuve> Providing the file structure that I showed you on that first troubleshooting project that we had
+[16:34:29] <Naktibalda> why do you have a project full of require_once statements?
+[16:34:54] <fakuve> Naktibalda: to include the autoload.php
+[16:35:24] <Naktibalda> use __DIR__ and no realpath
+[16:35:38] <Naktibalda> realpath is useful when you want to make it look nicer.
+[16:36:24] <Naktibalda> !+front controller
+[16:36:24] <php-bot> We are not an HTTPD support channel, but for Apache 2.4, check out FallbackResource: https://httpd.apache.org/docs/trunk/mod/mod_dir.html#fallbackresource
+[16:36:41] <fakuve> Naktibalda: but __DIR__ is just a constant
+[16:36:47] <fakuve> how can I traverse it ?
+[16:36:48] *** Joins: NeoCron (~NeoCron@p200300c4cf16e40089f16fffa0577f49.dip0.t-ipconnect.de)
+[16:36:53] <fakuve> (the filesystem)
+[16:36:58] <fakuve> the point is
+[16:37:42] <Naktibalda> require __DIR__ . '/../../../vendor/autoload.php';
+[16:37:44] <fakuve> I have DOCUMENT_ROOT setted to `public/` but the autoload is on `../vendor/autoload.php`
+[16:38:21] <fakuve> I want to set up a Variable that is $autoloadPath
+[16:38:56] <fakuve> So I can just do , require_once $autoloadPath . 'autoload.php';
+[16:39:08] <fakuve> In all the files that need to load classes
+[16:39:27] <Naktibalda> but you have to set it in every file or include that file that sets it
+[16:39:40] <fakuve> for that autoload path is just `../vendor/` from `DOCUMENT_ROOT` thats it
+[16:40:18] <fakuve> Well the DOCUMENT_ROOT doesnt change among files
+[16:40:38] <fakuve> plus I will set that before the statement require_once
+[16:40:52] *** Quits: deksar (~deksar@user/deksar) (Read error: Connection reset by peer)
+[16:40:59] <Naktibalda> having many php files in public/ is not a good practice, spend 5 minutes reading about front controller pattern.
+[16:41:07] *** Joins: deksar (~deksar@user/deksar)
+[16:41:17] <AllenJB> You could use: require_once $_SERVER['DOCUMENT_ROOT'] .'/../vendor/autoload.php';
+[16:41:19] <fakuve> Naktibalda: but I dont have
+[16:41:21] <fakuve> :D
+[16:41:51] <fakuve> AllenJB: let me see if that works , cause it was not working before
+[16:41:56] *** Quits: Akimb (~Akimb@82-135-197-171.static.zebra.lt) (Read error: Connection reset by peer)
+[16:42:14] <Naktibalda> so you will spend 3 days trying to get it work instead
+[16:42:59] <Naktibalda> 1 minute article: https://webdevetc.com/blog/the-front-controller-design-pattern-in-php/
+[16:43:53] <fakuve> AllenJB: thatone worked thanks
+[16:44:17] <fakuve> Naktibalda: let me read that
+[16:57:46] <Simplar> Wow, I've actually found the problem out
+[16:58:08] *** Quits: stenno (~stenno@user/stenno) (Ping timeout: 246 seconds)
+[16:59:38] *** Quits: fukawi2 (~quassel@archlinux/support/fukawi2) (Quit: Going offline.)
+[16:59:50] *** Joins: fukawi2 (~quassel@archlinux/support/fukawi2)
+[17:08:40] *** Joins: The_Blode_ (~Blode@user/the-blode/x-7164444)
+[17:09:34] *** Quits: The_Blode (~Blode@user/the-blode/x-7164444) (Ping timeout: 265 seconds)
+[17:16:36] *** Joins: PC_ (~deksar@user/deksar)
+[17:17:18] *** Quits: deksar (~deksar@user/deksar) (Ping timeout: 265 seconds)
+[17:17:26] *** PC_ is now known as deksar
+[17:19:24] *** Joins: stenno (~stenno@user/stenno)
+[17:23:41] <fakuve> I just can't understand why this `$binPath = realpath('./../' . $_SERVER['DOCUMENT_ROOT']);` is not working
+[17:24:10] <fakuve> I see in the manual `echo realpath('./../../etc/passwd');`
+[17:24:45] <Naktibalda> why do you append absolute path to relative?
+[17:25:17] <fakuve> well I want to get the absolute path of that relative one
+[17:25:21] <Naktibalda> manual gave you an example of tree traversal attack
+[17:25:53] <Naktibalda> DOCUMENT_ROOT is absolute
+[17:26:19] <Naktibalda> if you want to find file relative to DOCUMENT ROOT, add that path to the right of DOCUMENT_ROOT
+[17:27:15] <fakuve> okkk
+[17:27:18] <fakuve> that works now
+[17:27:40] <fakuve> `$binPath = realpath($_SERVER['DOCUMENT_ROOT'] . './../');`
+[17:27:58] <fakuve> then the example is a bit missleading , or I'm missled already
+[17:28:53] <stenno> lol
+[17:30:11] *** Joins: Slartibart (~user@c-d6ddd854.217486-0-69706f6e6c79.bbcust.telenor.se)
+[17:31:27] <Slartibart> Is there any way I can test if composer can read from a (bitbucket) repository? Like, list packages available from that repo?
+[17:33:56] <Naktibalda> have you tried anything?
+[17:34:25] <Slartibart> Yes :-p
+[17:35:17] <Naktibalda> like adding repository to your composer.json and running composer update?
+[17:35:41] <Slartibart> composer show shows nothing from that repo, composer show --all shows too much
+[17:35:52] <Slartibart> The repo is there in the composer.json, yes
+[17:35:53] *** Quits: mr_gant_ (~mr_gant@144.48.37.134) (Read error: Connection reset by peer)
+[17:36:31] <Naktibalda> I don't think that show is the right command
+[17:37:31] <Slartibart> If I run composer show --all | grep mystr I get some hits, but not from that repo :-[. Can composer list the repos it used? To begin with?
+[17:37:44] <Slartibart> What should I use then? search?
+[17:37:56] <Naktibalda> have you tried composer update?
+[17:37:58] <Slartibart> No output from search
+[17:38:13] <Slartibart> composer update <that package>?
+[17:38:39] <Slartibart> ..or just update?
+[17:38:55] <Naktibalda> composer will check it either way
+[17:40:03] <fakuve> So I want to execute a shell command such as `shell_exec('doSomething.sh');` , I'm trying to use it but it is not working. may it be because I have `disabled_functions = pcntl_exec` ?
+[17:40:23] <Slartibart> With 'composer update' I get a Problem listing, with lines like this (all about packages from that repo, only package name differs): Root composer.json requires <repo/mypack>, it could not be found in any version, there may be a typo in the package name
+[17:40:29] <Naktibalda> fakuve: no
+[17:41:05] <Slartibart> I just don't understand why composer doesn't see the repo..
+[17:41:56] <Naktibalda> composer update -vvv would show what it downloads
+[17:42:11] <fakuve> Naktibalda: is not allowed to run shell functions within php nowadays?
+[17:42:12] <Naktibalda> can you show your repositories section?
+[17:42:27] <Naktibalda> fakuve: !+doesnt work
+[17:42:33] <Naktibalda> fakuve: !+doesn't work
+[17:42:33] <php-bot> fakuve, "doesn't work" or "not working" is not a useful metric to debug or solve your problem. More information is needed to address the issue you are experiencing. For example, start by: providing the code in question; describing what you expect the code to do; what it's doing that you didn't expect; and include all error information relevant to your issue (see error reporting) in a pastebin.
+[17:42:48] <fakuve> Ok
+[17:44:02] <fakuve> https://hastebin.com/rocadaluda
+[17:46:13] <fakuve> Permissions of `printPepe.sh` are 655 , and owner is fakuve (not www-data which is the `apache2` user)
+[17:46:18] *** Quits: semeion (~semeion@user/semeion) (Ping timeout: 265 seconds)
+[17:46:27] <fakuve> there is no compilation error at all
+[17:46:33] <Naktibalda> why do you overwrite DOCUMENT_ROOT in line 25?
+[17:46:52] <Naktibalda> you problem is still a . after '
+[17:47:04] <Naktibalda> remove that dot
+[17:47:51] <fakuve> I change DOCUMENT_ROOT cause I don't have it setted with `apache2` I'm running it in /home/fakuve/myrepos/live/fakuve
+[17:48:02] <fakuve> I'm running a bunch of folders there any time I'm trying something new
+[17:48:14] <Naktibalda> and everything wrong :)
+[17:48:30] <fakuve> I don't want to have to be changing apache2.conf of some sort to change the DOCUMENT_ROOT
+[17:48:42] <Naktibalda> if apache doesn't set DOCUMENT_ROOT just use __DIR__
+[17:49:27] <fakuve> but __DIR__ is the same as DOCUMENT_ROOT isnt it?
+[17:49:32] <fakuve> and where is that dot ?
+[17:49:34] <fakuve> haha
+[17:49:52] <Naktibalda> no, it is directory of the file where __DIR__ is used so there is no confusion of where it is
+[17:50:03] <biberu> (unless you use symlinks iirc)
+[17:50:24] <Naktibalda> fakuve: the first dot in './../
+[17:50:30] *** Joins: mr_gant_ (~mr_gant@103.192.80.185)
+[17:50:40] <Naktibalda> you get public./../bin
+[17:51:07] <fakuve> In here `$binPath = realpath($_SERVER['DOCUMENT_ROOT'] . './../bin/');` ?
+[17:51:25] <fakuve> $binPath is correct it points to the right Path
+[17:51:32] <fakuve> I echoed it
+[17:51:36] <Naktibalda> AllenJB pointed it 1.5 hours ago
+[17:52:39] <Naktibalda> fakuve: don't use realpath it hides your mistakes
+[17:52:58] <fakuve> but it is doing the paths absolute
+[17:53:08] <fakuve> that is how you said it isnt it?
+[17:53:24] <fakuve> and __DIR__ changes among files , I dont want to be using that
+[17:53:48] *** Parts: Naktibalda (~Naktibald@88.135.22.17) ()
+[17:53:59] <fakuve> If I have a file in '/src/mariano/patchi/myClass.php' then __DIR__ would be nested on there
+[17:58:31] <fakuve> `$binPath = realpath($_SERVER['DOCUMENT_ROOT'] . '/../bin/');` not working` I guess there is something more on there , maybe a permissions issue
+[17:58:45] <fakuve> but the `apache2` log is not showing anything
+[17:59:03] *** Joins: semeion (~semeion@user/semeion)
+[17:59:14] *** Quits: tccki (~tccki@box.webslate.co.nz) (Quit: tccki)
+[17:59:28] *** Joins: tccki (~tccki@2406:e001:2:5a60:250:56ff:fe9e:8795)
+[18:01:32] <fakuve> Well I'm heading out , I leave this connected , thans a lot again guys
+[18:03:18] <Slartibart> Hmm.. composer update -vvv does print some info(well..). It first tries HTTP basic authentication and gets a 401. Then it switches to Bitbucket OAuth token authentication and gets a 200 fetching info about that bitbucket repo. However, the lines below that concerning that package looks more weird.. F.ex, "Reading composer.json of repo/wprocket (mypack)", is it supposed to look like that? Why is wprocket
+[18:03:24] <Slartibart> mentioned?? But still, no error line after that one..
+[18:04:28] <Slartibart> Maybe that's impossible to answer without looking at the actual repo :-[..
+[18:08:26] *** Quits: junktext (~junktext@77.247.181.216) (Ping timeout: 245 seconds)
+[18:13:15] *** Joins: Blondie101010_ (~Blondie10@user/blondie101010)
+[18:13:29] <Slartibart> In composer.json the packages that aren't found are listed under require in the "repo/mypack" : "dev-branch#<long commit id>". I read somewhere that this format is discouraged. Can that cause composer to not find those packages? But still, looking at the "Reading <cache file path> from cache" lines indicates that composer is able to parse the lines in composer.json, I think..
+[18:14:36] <__adrian> fakuve: no one suggested you have to use absolute paths. we said _fully qualified_ paths. i.e., not bare relative paths like "a/b.php". rather, make sure there's only one possible way for it to be interpreted, like  __DIR__."/../a/b.php"  or like  YOUR_PROJECT_ROOT_DIR."/a/b.php"
+[18:14:54] *** Quits: Blondie101010 (~Blondie10@user/blondie101010) (Ping timeout: 245 seconds)
+[18:15:01] *** Blondie101010_ is now known as Blondie101010
+[18:15:04] <__adrian> recommend against relying on DOCUMENT_ROOT; it doesn't necessarily exist
+[18:16:40] <__adrian> likewise, as Naktibalda recommend, do use realpath() - it provides no benefit in this case and can make troubleshooting harder.
+[18:16:46] <__adrian> do *not use
+[18:17:13] *** Quits: deksar (~deksar@user/deksar) (Read error: Connection reset by peer)
+[18:17:28] *** Joins: deksar (~deksar@user/deksar)
+[18:20:32] *** Joins: tuskkk____ (uid18470@id-18470.tinside.irccloud.com)
+[18:35:29] *** Quits: konrados (~konrados@user-5-173-19-57.play-internet.pl) (Ping timeout: 264 seconds)
+[18:35:59] *** Joins: konrados (~konrados@user-5-173-136-173.play-internet.pl)
+[18:38:25] *** Joins: porygon (~Guest93@32.141.46.158)
+[18:41:28] <porygon> Hi, how can I "force" json_encode on alphanumeric chars a-z A-Z 0-9?
+[18:42:10] <stenno> that question doesn't make sense
+[18:42:11] <porygon> or should I use bin2hex better?
+[18:42:36] *** Quits: ArchNoob (~maotora@user/archnoob) (Ping timeout: 245 seconds)
+[18:43:34] <AllenJB> porygon: What are you trying to achieve (why do you want to do that)?
+[18:50:44] *** Joins: PC_ (~deksar@user/deksar)
+[18:52:08] *** Quits: Simplar (~quassel@188.163.92.105) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[18:52:31] *** Quits: deksar (~deksar@user/deksar) (Ping timeout: 265 seconds)
+[18:52:41] *** PC_ is now known as deksar
+[18:52:47] <porygon> Nvm, just used a hacky method instead. Seems to be working.  Converting input to utf-16 hex.  Instead just added 0's
+[18:53:12] *** Quits: porygon (~Guest93@32.141.46.158) (Quit: Connection closed)
+[18:56:33] <AllenJB> If you need to convert between encodings, use iconv or mb_convert_encoding
+[18:57:00] <stenno> how does that relate to json_encode though?
+[18:59:45] *** Quits: DevAntoine (~DevAntoin@185.31.151.122) (Remote host closed the connection)
+[19:00:14] *** Joins: DevAntoine (~DevAntoin@185.31.151.122)
+[19:01:38] *** Quits: DevAntoine (~DevAntoin@185.31.151.122) (Remote host closed the connection)
+[19:01:52] *** Joins: DevAntoine (~DevAntoin@185.31.151.122)
+[19:10:04] *** Joins: genom (~g@37.214.31.255)
+[19:12:49] *** Quits: Alex8532 (~Alex8532@user/alex8532) (Ping timeout: 265 seconds)
+[19:14:12] *** Joins: Alex8532 (~Alex8532@user/alex8532)
+[19:16:52] *** Joins: ArchNoob (~maotora@user/archnoob)
+[19:20:22] *** Joins: Beekir (~Beekir@firebox.ncscredit.com)
+[19:31:09] *** Joins: NakedKing (~NakedKing@user/nakedking)
+[19:34:40] *** Joins: Naktibalda (~Naktibald@88.135.22.17)
+[19:39:43] *** Quits: Beekir (~Beekir@firebox.ncscredit.com) (Quit: Client closed)
+[19:42:31] *** Joins: Rockwood (~Rocky@user/rocky)
+[19:43:18] <Rockwood> o/
+[19:49:02] *** Quits: DevAntoine (~DevAntoin@185.31.151.122) (Remote host closed the connection)
+[19:53:25] *** Joins: DevAntoine (~DevAntoin@185.31.151.122)
+[19:56:17] <Rockwood> no one is active :D
+[19:58:52] *** Quits: Naktibalda (~Naktibald@88.135.22.17) (Ping timeout: 265 seconds)
+[20:02:35] <winlundn> Where can I get xdebug for PHP on macOS? Is PECL the only way besides installing from source?
+[20:02:57] *** Quits: Rockwood (~Rocky@user/rocky) (Read error: Connection reset by peer)
+[20:03:08] <stenno> homebrew?
+[20:03:35] <winlundn> stenno: no brew doesn't have it. I may have to install PECL but I don't want to haha
+[20:03:45] <stenno> understandable
+[20:03:53] <stenno> in that case i'd use docker i think
+[20:04:34] <stenno> hmm
+[20:04:42] <stenno> pecl on macos just uses homebrew it seems
+[20:04:49] <stenno> https://xdebug.org/docs/install#pecl
+[20:05:05] <winlundn> I tried brew install xdebug, nothing came up. Maybe a different name?
+[20:05:25] <stenno> oh wait
+[20:05:38] <winlundn> Or I can install pecl using homebrew then install xdebug
+[20:05:38] <stenno> if you installed php with homebrew, pecl is already included
+[20:05:42] <stenno> yes
+[20:05:45] <winlundn> ok
+[20:06:29] <stenno> how did you get php on your macos?
+[20:06:52] <winlundn> there was a version already installed. I'm also using XAMPP
+[20:07:11] <stenno> oh..
+[20:07:43] <stenno> i like homebrew for php because you can also do version management with link/unlink
+[20:08:08] <stenno> apache runs in a docker if neccessary
+[20:08:16] <winlundn> Kk
+[20:12:00] *** Quits: DevAntoine (~DevAntoin@185.31.151.122) (Remote host closed the connection)
+[20:27:20] *** Joins: magla (~gelignite@55d4ca83.access.ecotel.net)
+[20:32:33] *** Joins: DevAntoine (~DevAntoin@185.31.151.122)
+[20:36:50] *** Quits: Alex8532 (~Alex8532@user/alex8532) (Quit: Going offline, see ya! (www.adiirc.com))
+[20:37:24] *** Quits: DevAntoine (~DevAntoin@185.31.151.122) (Ping timeout: 265 seconds)
+[21:00:45] <__adrian> winlundn: recommend against local development on macos - use a vm (or docker if you can get it working smoothly). very strongly recommend against xampp.
+[21:01:43] <da_wunder> I would recommend to use docker for all development
+[21:06:43] *** Joins: Simplar (~quassel@188.163.92.105)
+[21:15:22] <Sammitch> recommend against local dev on any OS without a VM or docker
+[21:15:49] <Sammitch> Pumpkin Spice Crytpo Ape Scam
+[21:15:55] <Sammitch> lol wrong channel
+[21:19:21] <da_wunder> :D
+[21:20:40] <__adrian> s/macos/any os/  ++
+[21:20:51] <__adrian> well, any desktop os.
+[21:22:06] <da_wunder> yep
+[21:24:11] <da_wunder> one major minus of using docker in mac and windows is that docker io speed with those is just terrible - so you might get really sloooooow responses
+[21:25:11] <da_wunder> in linux environment that doesn't happen, and that is why eg. I'm using virtualbox linux on my windows host machine and inside that virtualbox machine I run my docker stuff
+[21:27:55] *** Joins: WishBoy (~WishBoy@user/wishboy)
+[21:29:43] *** Quits: Donitz (~Donitz@85-156-203-108.elisa-laajakaista.fi) (Read error: Connection reset by peer)
+[21:31:08] <da_wunder> windows + wsl2 + mounting files on that wsl2 box instead of windows native drive is also quite fast - but last I tested that it was not as fast versus vb + docker setup
+[21:31:34] <da_wunder> and wsl2 without mounting those files to that wsl2 box io speed is just terrible
+[21:32:09] *** Joins: Donitz (~Donitz@85-156-203-108.elisa-laajakaista.fi)
+[22:10:20] *** Quits: tuskkk____ (uid18470@id-18470.tinside.irccloud.com) (Quit: Connection closed for inactivity)
+[22:18:39] *** Joins: mmohammadi9812 (~Mohammad@188.210.104.46)
+[22:36:51] *** Joins: junktext (~junktext@109.201.152.178)
+[22:38:49] *** Quits: genom (~g@37.214.31.255) (Remote host closed the connection)
+[23:06:45] *** Quits: entropy_ (~ent@2601:1c0:c802:5920:d8ec:d854:9915:40bc) (Changing host)
+[23:06:45] *** Joins: entropy_ (~ent@user/entropy/x-9891564)
+[23:07:20] *** Quits: Simplar (~quassel@188.163.92.105) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[23:07:50] *** Joins: BigE (~biggie@user/bige)
+[23:10:01] *** Quits: guido (~guido@host-95-234-249-150.retail.telecomitalia.it) (Quit: WeeChat 3.3)
+[23:30:47] *** Quits: mmohammadi9812 (~Mohammad@188.210.104.46) (Remote host closed the connection)
+[23:49:17] *** Joins: onizu (uid373383@id-373383.uxbridge.irccloud.com)

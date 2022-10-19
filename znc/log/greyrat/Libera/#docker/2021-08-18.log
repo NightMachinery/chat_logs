@@ -1,0 +1,652 @@
+[00:03:02] <ada_> foo: there are a few strategies you could use, one of them is to put your modules folder into a volume at runtime so its persisted to disk
+[00:03:16] <ada_> foo: another strategy is to use a separate image, but if your modules change you'd need to rebuild the image
+[00:03:38] <ada_> foo: the "mount a dir for the modules folder" is probably the cheapest in terms of bandwidth used & storage
+[00:04:48] *** Quits: mjbatty_ (~mjbatty@82.2.17.205) (Quit: Leaving)
+[00:13:01] <gooble_gobble> tabakhase, is there a true dind dockerfile you can reccomend? ill try to retrofit it for centos
+[00:13:37] <tabakhase> gooble_gobble just straight up docker:dind from the hub? :P
+[00:14:45] <foo> ada_ / tabakhase - I'm in this loop of getting several errors of python packages missing. Is there any shorthand way to drop into the container that results from docker build and simply do "pip install ____" ? I sometimes have done this but I can't get into it if it's trying to start a python process that requires the package.
+[00:15:07] <foo> I'm looking for a shorthand quick-and-dirty fix right now, I've got a time sensitive / bandwidth limitation I'm working with, haha.
+[00:15:07] <ada_> you have to run the container, but once it's running you can 'docker exec' into a shell
+[00:15:43] <tabakhase> foo the build prints the id of the prev layer, those can be used directly ((unless your using buildX i guess))
+[00:16:09] <foo> tabakhase: ohhhh. so I can do your hack right now.
+[00:16:12] <foo> Of course...
+[00:16:13] * foo tries
+[00:16:55] <tabakhase> and i guess, "dont build until youre there" is another thing ada tried to explain above -  think using docker as runtime for "python" opposed to "building a myapp image"
+[00:18:43] <ada_> yeah and if you were so inclined you could even more your build process up to something like github actions or dockerhub autobuilds if you didn't want to have to build locally - I think you could even do some limited testing with github actions to make sure your image is correct before you pull it down locally
+[00:18:45] <tabakhase> (so some `docker run -v myappmodulecache:/usr/local/lib/python??/dist-packages -v $PWD:/app my/baseimage sh` and work from there)
+[00:18:56] <ada_> I might also explore doing deploys to a remote VPS instead of locally if you're on a metered connection
+[00:19:12] <ada_> EC2 free tier or GCP's $300 intro 
+[00:20:32] <foo> ada_ / tabakhase - super appreciate this, thank you.
+[00:21:47] <foo> meh, it looks like simply adding 1 line still caused the build to reinstall all requirements. I wonder, is there a way to see how much bandwidth docker is using during a build?
+[00:21:50] * foo investigates
+[00:22:06] <foo> It's possible it's not as much as I think and not an issue
+[00:22:29] <foo> docker stats looks to be only for running containers
+[00:24:10] * foo tries to set a docker-compose command to "bash" so he can get in and do something on a specific container
+[00:24:17] <tabakhase> bandwith used isnt tracked anywhere yea... closest you could hack together are likely some iptable-counter rules you whack in the docker chians
+[00:24:22] <tabakhase> "bash" ends instantly
+[00:24:29] <foo> tabakhase: so I learned. :) Trying a sleep 2h 
+[00:24:40] <tabakhase> thats one way yes ;D
+[00:25:15] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 258 seconds)
+[00:25:41] *** Quits: plantroon (~plantroon@91.236.69.232) (Quit: WeeChat 3.2)
+[00:25:43] *** Joins: Enitin (~Enitin@82.102.22.84)
+[00:26:01] <foo> tried docker-compose up web where it sleeps for 2h, then pip install ___; then change my docker-compose file to have it start the web app... looks like my pip install command isn't "sticking"
+[00:26:44] *** Quits: CombatVet (~c4@user/combatvet) (Remote host closed the connection)
+[00:26:54] <tabakhase> compose just sees "container definition has changed" and does whatever is needed to match -- in your case, killing the old and making a new yes ;D
+[00:27:01] *** Joins: CombatVet (~c4@user/combatvet)
+[00:27:08] *** Quits: bouncy (~ben@user/benoit) (Ping timeout: 268 seconds)
+[00:28:44] <foo> Haha, this is so hackery. command: /bin/bash -c "/sky/tools/wait-for-it.sh postgres:5432 -- sleep 15 && python3 -m app.web"
+[00:28:55] <foo> ... that gives me enough time to get in and keep installing stuff until my requirements.txt allows me web app to work
+[00:28:59] <foo> This allows me to iterate a bit faster. 
+[00:29:11] * foo slapping himself for not keeping this in sync previously
+[00:31:19] <foo> ah, there we go, I was just missing 1-2 packages... I was going to say, I don't think I was that out of sync with this.
+[00:31:35] <foo> tabakhase / ada_ - thank you again, once I finish original intent I clearly have some clean up to do with my docker file!
+[00:37:51] *** Joins: plantroon (~plantroon@91.236.69.232)
+[00:39:15] *** Quits: Ryu945 (~Ryu945@107.150.22.75.adsl.inet-telecom.org) (Quit: Leaving)
+[00:45:08] *** Quits: Haxxa (~Haxxa@122.199.46.17) (Quit: Haxxa flies away.)
+[00:46:07] *** Joins: Haxxa (~Haxxa@122.199.46.17)
+[00:47:37] *** Quits: mei (~mei@user/mei) (Ping timeout: 248 seconds)
+[01:01:50] *** Quits: plantroon (~plantroon@91.236.69.232) (Quit: WeeChat 3.2)
+[01:03:17] *** Joins: plantroon (~plantroon@91.236.69.232)
+[01:06:33] *** Quits: shokohsc (~shokohsc@161.88.195.77.rev.sfr.net) (Remote host closed the connection)
+[01:06:36] <Duality> what is the equivelant of -v in a docker file? is that VOLUME?
+[01:07:44] *** Joins: shokohsc (~shokohsc@161.88.195.77.rev.sfr.net)
+[01:07:55] <programmerq> kind of. VOLUME is the image author's way of specifying where that container is intended to store data that shouldn't go into the copy-on-write filesystem at runtime. You'll still want to specify a -v at runtime for persistent data so you can control where it actually lands-- a named volume or bind mount, for example.
+[01:08:44] <programmerq> if there's a VOLUME directive and no -v at runtime, it'll populate an anonymous volume which is perfectly fine for caches or other usecases.
+[01:19:41] *** Quits: thiras (~thiras@user/thiras) (Ping timeout: 258 seconds)
+[01:20:10] *** Quits: ada_ (~ada_@user/ada/x-9065485) (Ping timeout: 268 seconds)
+[01:25:58] *** Quits: Atum_ (~IRC@user/atum/x-2392232) (Ping timeout: 244 seconds)
+[01:26:09] *** Joins: Atum_ (~IRC@user/atum/x-2392232)
+[01:28:48] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 268 seconds)
+[01:29:09] <Duality> programmerq: thanks I wanted to specify presistent data but doing that through the dockerfile is not what is should do :)
+[01:29:52] *** Joins: Enitin (~Enitin@82.102.22.84)
+[01:32:10] *** Quits: iomari891 (~iomari891@105.112.138.38) (Quit: WeeChat 3.0.1)
+[01:33:59] *** Joins: theseb (~cs@47-220-214-54.cnrocmta03.res.dyn.suddenlink.net)
+[01:38:01] *** Joins: bouncy (~ben@user/benoit)
+[01:39:58] <theseb> What is easiest way to allow 2 containers to see each other?
+[01:40:04] *** Joins: HighAdConsultan (~HighAdCon@31.4.243.132)
+[01:40:09] <theseb> Apparently by default they are locked down.
+[01:40:10] *** Joins: mr4braham (~mr_4braha@2600:8804:5809:c800:5054:ff:fe73:9dd1)
+[01:44:10] *** Quits: mr4braham (~mr_4braha@2600:8804:5809:c800:5054:ff:fe73:9dd1) (Ping timeout: 240 seconds)
+[01:46:05] *** Joins: ada_ (~ada_@user/ada/x-9065485)
+[01:46:05] *** ChanServ sets mode: +o ada_
+[01:47:27] *** Joins: thiras (~thiras@user/thiras)
+[01:50:01] <gooble_gobble> tabakhase, trying to find the dockerfile for the official dind. Is this it: https://github.com/docker-library/docker/blob/master/Dockerfile-dind.template
+[01:50:05] *** Quits: Atum_ (~IRC@user/atum/x-2392232) (Quit: Atum_)
+[01:51:05] <tabakhase> theseb user-defined-networks and attach both to it, then they can resolve another by "Name" (compose brings a named-network with it automagically)
+[01:51:38] <tabakhase> gooble_gobble id guess, but Q is a bit "why?" - shouldnt have to touch that like 'ever'
+[01:52:29] <gooble_gobble> tabakhase, well I dont want to be able to run any distro/config i want
+[01:52:50] <gooble_gobble> right now im using centos with a systemd running
+[01:52:59] <gooble_gobble> alpine doesnt do it for me
+[01:53:10] *** Joins: Atum_ (IRC@user/atum/x-2392232)
+[01:53:34] <tabakhase> "distros" dont matter in dockerland anyhow - they only exists so one can abuse tooling like apt/yum/apk&co.
+[01:54:03] <tabakhase> alpine may be a little special (cause the glibc vs musl thing) but that also shouldnt be noticable in like 99% of the cases
+[01:55:46] <gooble_gobble> im the odd 0.01% case i suppose
+[01:55:53] <tabakhase> (x) doubt :P
+[01:56:30] *** Quits: Atum_ (IRC@user/atum/x-2392232) (Client Quit)
+[01:56:53] *** Joins: Atum_ (~IRC@user/atum/x-2392232)
+[01:58:31] *** Joins: mr4braham (~mr_4braha@156.146.39.138)
+[01:58:42] <gooble_gobble> haha
+[01:59:02] <gooble_gobble> tabakhase, im looking at the dind dockerfile and it seems like there are still dragons
+[01:59:03] <gooble_gobble> https://github.com/moby/moby/blob/master/hack/dind
+[01:59:34] <gooble_gobble> i think i understand the part about nested cgroups
+[01:59:52] <gooble_gobble> but i dont understand the bit about mounting /sys/kernel/security -> no idea what that is for yet
+[02:00:52] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 268 seconds)
+[02:00:52] <gooble_gobble> although i dont see where the hack is called
+[02:01:10] <tabakhase> selinux/apparmor stuff lands in /sys/kernel/security
+[02:01:13] *** Joins: Enitin (~Enitin@82.102.22.84)
+[02:01:47] <tabakhase> as said, there should be literally "nothing" stopping you from "docker run docker:dind" and running with that....
+[02:02:11] <gooble_gobble> yum and systemd are stopping me :/
+[02:02:17] <tabakhase> "your build" wouldnt run in this anyhow - and kernel still comes from the parent/hosts, so none of that container kinda matters
+[02:02:51] <tabakhase> on this, remember that "your docker cli" and "docker-daemon" have nothing todo with another in some sense
+[02:03:40] <tabakhase> so "your build" may use docker:git - or even smth entirely else, with just the "docker-cli" binary pulled in and pointing it to the dind instance
+[02:05:56] <devslash> after I build an image, i push it to github as username/myapp with 2 tags. 1 for the version and 1 for latest. after pushing the builds if i do docker pull username/myapp:latest its not pulling the latest image
+[02:08:30] *** Joins: Lyn (~Lyn@user/law)
+[02:08:42] <tabakhase> github? - dockerhub ya mean? :D devslash 
+[02:08:54] <devslash> yes
+[02:08:56] <Lyn> is there a docker desktop gui for linux?
+[02:09:01] <devslash> sorry
+[02:09:07] <devslash> i meant docker hub
+[02:09:12] <devslash> too manu hub sites....
+[02:09:15] <devslash> many
+[02:09:34] <tabakhase> and define "push with two tags" - push can only push one, and "tags are independend from another" kinda
+[02:09:45] <tabakhase> so if you tag as two things, you need two docker push XY´s
+[02:09:51] <devslash> no you can push more than 1 tag
+[02:10:00] <devslash> i push my image to docker with the tag 1.6
+[02:10:06] <devslash> which is the latest version
+[02:10:09] <devslash> number
+[02:10:27] <devslash> and then again with the latest tag so latest always points to the newest build
+[02:11:11] <tabakhase> "latest" is just a string, no magic function on this at all - so "docker push my/name:1.6 && docker push my/name:latest" to actually push both
+[02:11:26] <tabakhase> pretty sure that "docker push my/name:1.6 my/name:latest" is not a thing
+[02:11:27] <devslash> ok
+[02:11:37] <devslash> so youre saying that you cannot pull with the latest tag ? 
+[02:11:57] <gooble_gobble> tabakhase, i worked through my issue. And besides the help, youve given me some best practices / reading to look into. Thank you very much!
+[02:12:11] <tabakhase> gooble_gobble youre welcome =)
+[02:13:07] <devslash> is it possible to pull an image from docker hub and force it to redownload the image
+[02:14:06] <devslash> otherwise i have to delete my 2 contains that use the image, delete the image and then pull the image again which is a pain in the ass
+[02:14:40] <tabakhase> devslash docker pull does just that - the only "more force" to put on that is if you delete your local tag, then run garbage collect to get rid of layers, then repull ((what you shouldnt need like "ever" unless you messed around deep in /var/lib/docker by hand and corrupted smth :P
+[02:14:51] <devslash> no
+[02:14:56] <devslash> pull doesnt pull the latest
+[02:15:08] <devslash> docker pull myname/myapps:latest
+[02:15:26] <tabakhase> it will pull exactly what you pushed as "myname/myapps:latest" 
+[02:15:49] <devslash> when i do docker image ls it shows that the image was updated 2 weeks ago
+[02:15:50] <devslash> which is wrong
+[02:15:59] <tabakhase> "docker build -t my/image:1.6 -t my/image:latest && docker push my/image:1.6" will NOT update "latest"
+[02:16:02] <devslash> thats the previous not the latest verison
+[02:16:16] <devslash> i did docker push myname/myapp:latyest
+[02:16:28] <devslash> that does update the latest and I can see that omn the docker hub site
+[02:16:46] <devslash> the hash for t he latest tag matches the tag for the latest version number which is 1.6
+[02:16:53] *** Quits: vidbina (~vid@dynamic-089-012-032-041.89.12.pool.telefonica.de) (Ping timeout: 268 seconds)
+[02:17:10] <tabakhase> there is no such thing as a "latest version" for docker
+[02:17:52] <tabakhase> so unless - idk, CDN is bugging out or such - you should get the right thing or your error is somewhere before that
+[02:18:05] <devslash> i dunno
+[02:18:11] <devslash> this always worked until now
+[02:19:48] <tabakhase> i mean, wouldnt be the first time the hub goes kinda broky ;-) so certainly a possibility :D --- but kinda more likely that youre mixing/messing up smth elsewhere... could make a nopaste or such with all commands ya ran & its returns
+[02:25:10] *** Quits: gooble_gobble (~gooble_go@216.71.111.115) (Ping timeout: 240 seconds)
+[02:29:56] <devslash> I figured it out ..
+[02:30:57] <devslash> it was so much nicer when Docker Hub had free automated builds
+[02:31:03] *** Quits: agowa (~agowa338@p4fc228c6.dip0.t-ipconnect.de) (Quit: Leaving)
+[02:31:05] *** Quits: thiras (~thiras@user/thiras) (Ping timeout: 268 seconds)
+[02:32:18] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 268 seconds)
+[02:32:54] <tabakhase> hubs pretty dead yea... (espc for "personal use"...)
+[02:33:39] <tabakhase> but there are quite a few registry projects outside of that, randoms as well as gitlab,gpc,aws and all those come with one
+[02:34:30] <tabakhase> those "verified to match the git-repo" builds were indeed nice af 
+[02:42:26] *** Quits: jjakob (~quassel@2a01:260:8028:10f0::62) (Quit: Either rebooting or something broke.)
+[02:43:46] *** Joins: vidbina (~vid@dynamic-089-012-032-041.89.12.pool.telefonica.de)
+[02:48:48] *** Quits: plantroon (~plantroon@91.236.69.232) (Quit: WeeChat 3.2)
+[02:49:56] *** Quits: dalan6 (~dalan@14-203-203-26.tpgi.com.au) (Quit: dalan6)
+[02:50:22] *** Joins: dalan62 (~dalan@14-203-203-26.tpgi.com.au)
+[02:52:28] *** Joins: aead (~aead@pool-96-232-187-142.nycmny.fios.verizon.net)
+[02:53:10] *** Quits: aeadio (~aead@ec2-52-2-178-231.compute-1.amazonaws.com) (Ping timeout: 240 seconds)
+[02:54:12] *** Joins: plantroon (~plantroon@91.236.69.232)
+[02:54:39] *** Joins: aeadio (~aead@ec2-52-2-178-231.compute-1.amazonaws.com)
+[02:56:24] *** Joins: pmercado (~pmercado@190.22.89.183)
+[02:57:10] *** Quits: aead (~aead@pool-96-232-187-142.nycmny.fios.verizon.net) (Ping timeout: 240 seconds)
+[02:59:40] <pmercado> Hi, how to change date inside a container? Currently I'm using mysql 5.7 image and inside it I can run /# date -s '2021-08-28 00:00:00' command, but it return with a "operation not permitted" . What I want is to set a date in the future to test some querys in database.
+[03:01:10] *** Joins: toinen (~kvirc@user/yksi)
+[03:02:42] *** Quits: yksi (~kvirc@user/yksi) (Ping timeout: 272 seconds)
+[03:03:55] *** Quits: fedenix (~fedenix@gateway/tor-sasl/fedenix) (Remote host closed the connection)
+[03:05:42] *** Joins: martums (~martums@user/martums)
+[03:05:43] <theseb> tabakhase: thanks!
+[03:08:02] <tabakhase> pmercado faketime, fakedate, datefudge.. quite a bit of tooling exist for "such things"
+[03:09:22] *** Quits: Atum_ (~IRC@user/atum/x-2392232) (Quit: Atum_)
+[03:12:40] *** Quits: plantroon (~plantroon@91.236.69.232) (Ping timeout: 240 seconds)
+[03:13:00] *** Joins: scaleww (~scaleww@77-41-20-31.ftth.glasoperator.nl)
+[03:15:39] *** Joins: plantroon (~plantroon@91.236.69.232)
+[03:15:41] *** Quits: plantroon (~plantroon@91.236.69.232) (Client Quit)
+[03:17:08] *** Quits: HighAdConsultan (~HighAdCon@31.4.243.132) (Quit: Client closed)
+[03:19:56] <pmercado> thanks tabakhase
+[03:22:19] *** Joins: HighAdConsultan (~HighAdCon@31.4.243.132)
+[03:22:25] *** Quits: HighAdConsultan (~HighAdCon@31.4.243.132) (Client Quit)
+[03:22:54] *** Quits: TomTom (uid45892@id-45892.charlton.irccloud.com) (Quit: Connection closed for inactivity)
+[03:25:27] *** Quits: flynn (~mcbloch@user/flynn) (Read error: Connection reset by peer)
+[03:25:49] *** Joins: flynn (~mcbloch@user/flynn)
+[03:26:15] *** Joins: plantroon (~plantroon@91.236.69.232)
+[03:34:40] *** Quits: vidbina (~vid@dynamic-089-012-032-041.89.12.pool.telefonica.de) (Ping timeout: 240 seconds)
+[03:37:49] *** Quits: codebam (~codebam@user/codebam) (Remote host closed the connection)
+[03:42:37] *** Quits: realies (~realies@user/realies) (Ping timeout: 268 seconds)
+[03:44:37] *** Quits: BSaboia (~bsaboia@188-178-217-166-cable.dk.customer.tdc.net) (Ping timeout: 245 seconds)
+[03:53:32] *** Joins: sed (~sed@pool-100-7-38-116.rcmdva.fios.verizon.net)
+[03:56:10] *** Quits: Ballerburg9005 (~ICH@dslb-002-204-002-034.002.204.pools.vodafone-ip.de) (Ping timeout: 268 seconds)
+[03:57:14] *** Joins: codebam (~codebam@user/codebam)
+[03:57:19] *** Joins: BSaboia (~bsaboia@188-178-217-166-cable.dk.customer.tdc.net)
+[04:01:35] *** Quits: scaleww (~scaleww@77-41-20-31.ftth.glasoperator.nl) (Quit: Leaving)
+[04:07:15] *** Quits: aeadio (~aead@ec2-52-2-178-231.compute-1.amazonaws.com) (Quit: aeadio)
+[04:26:00] *** Joins: GeorgeK (~GeorgeK@cpe-70-92-5-228.wi.res.rr.com)
+[04:38:53] *** Joins: dmalteseknight (~dmaltesek@user/dmalteseknight)
+[04:39:21] *** Quits: metah4ck3r (~meta@user/metah4ck3r) (Ping timeout: 268 seconds)
+[04:39:39] *** Quits: xep (~xep@76-210-4-7.lightspeed.sntcca.sbcglobal.net) (Remote host closed the connection)
+[04:41:13] *** Joins: metah4ck3r (~meta@user/metah4ck3r)
+[04:42:26] *** Quits: luvalon1 (~luva@178.239.167.170) (Ping timeout: 268 seconds)
+[04:43:22] *** Quits: dmalteseknight (~dmaltesek@user/dmalteseknight) (Ping timeout: 245 seconds)
+[04:47:49] *** Joins: luvalon1 (~luva@178.239.167.170)
+[04:51:36] <Lutin> docker and bash are such a great combination
+[04:52:31] <wez> docker and any terminal really :)
+[04:52:37] <wez> Good mornin' Lutin!
+[04:52:46] <wez> terminal / shell
+[04:53:57] *** Joins: xep (~xep@76-210-4-7.lightspeed.sntcca.sbcglobal.net)
+[04:56:02] <Lutin> wez damn late here, but indeede morning
+[04:58:48] *** Joins: thiras (~thiras@user/thiras)
+[05:02:30] *** Quits: pycurious (~Adium@user/pycurious) (Quit: Leaving.)
+[05:05:13] *** Quits: thiras (~thiras@user/thiras) (Ping timeout: 248 seconds)
+[05:14:24] *** Quits: luvalon1 (~luva@178.239.167.170) (Quit: Byebye)
+[05:14:53] *** Joins: luvalon1 (~luva@178.239.167.170)
+[05:16:16] *** Joins: djapo (~archangel@user/djapo)
+[05:17:07] *** Quits: notsponsible (~notsponsi@45.144.113.92) (Ping timeout: 245 seconds)
+[05:26:49] *** Joins: notsponsible (~notsponsi@45.144.113.89)
+[05:26:58] *** Quits: Lutin (~Lutin@user/lutin) (Quit: Lutin)
+[05:27:32] *** Joins: mutandis (~mut@c-73-129-211-144.hsd1.md.comcast.net)
+[05:27:38] *** Quits: plantroon (~plantroon@91.236.69.232) (Quit: WeeChat 3.2)
+[05:30:33] *** Quits: vlm (~vlm@user/vlm) (Quit: "")
+[05:31:03] *** Joins: Jimmy_H (~Jimmy_H@119.136.154.245)
+[05:31:21] *** Quits: incognito (~relativit@user/incognito) (Ping timeout: 248 seconds)
+[05:32:30] *** Joins: aead (~aead@pool-96-232-187-142.nycmny.fios.verizon.net)
+[05:34:45] *** Joins: vlm (~vlm@user/vlm)
+[05:36:00] *** Joins: aeadio (~aead@pool-96-232-187-142.nycmny.fios.verizon.net)
+[05:36:09] *** Quits: aead (~aead@pool-96-232-187-142.nycmny.fios.verizon.net) (Client Quit)
+[05:36:12] *** aeadio is now known as aead
+[05:44:33] *** Joins: plantroon (~plantroon@91.236.69.232)
+[05:47:00] *** Quits: plantroon (~plantroon@91.236.69.232) (Client Quit)
+[05:48:17] *** Joins: plantroon (~plantroon@91.236.69.232)
+[05:49:10] *** Quits: djapo (~archangel@user/djapo) (Ping timeout: 240 seconds)
+[05:50:56] *** Joins: thiras (~thiras@user/thiras)
+[05:56:40] *** Quits: plantroon (~plantroon@91.236.69.232) (Ping timeout: 240 seconds)
+[05:57:08] *** Joins: useful_idiot (~useful_id@154.3.40.202)
+[05:57:59] *** Quits: aead (~aead@pool-96-232-187-142.nycmny.fios.verizon.net) (Quit: aead)
+[05:58:47] *** Joins: aead (~aead@pool-96-232-187-142.nycmny.fios.verizon.net)
+[06:07:52] *** Joins: DefiantX (~DefiantN@user/defiantn)
+[06:09:23] *** Quits: DefiantN (~DefiantN@user/defiantn) (Ping timeout: 268 seconds)
+[06:12:26] *** Joins: plantroon (~plantroon@91.236.69.232)
+[06:20:18] *** Quits: gschanuel (~gschanuel@user/gschanuel) (Read error: Connection reset by peer)
+[06:20:26] *** Joins: gschanuel7 (~gschanuel@user/gschanuel)
+[06:22:08] *** Quits: jochum (~jochum@user/jochum) (Ping timeout: 258 seconds)
+[06:24:09] *** Quits: travisghansen (~travisgha@192.74.130.86) (Ping timeout: 248 seconds)
+[06:27:34] *** Joins: travisghansen (~travisgha@192.74.130.86)
+[06:33:45] *** Quits: nrg (~NRG@user/nrg) (Ping timeout: 248 seconds)
+[06:34:22] *** Joins: nrg (~NRG@user/nrg)
+[06:40:13] *** Quits: ada_ (~ada_@user/ada/x-9065485) (Ping timeout: 268 seconds)
+[06:43:53] *** Quits: codebam (~codebam@user/codebam) (Remote host closed the connection)
+[06:48:41] *** Quits: travisghansen (~travisgha@192.74.130.86) (Ping timeout: 248 seconds)
+[06:55:01] *** Joins: ada_ (~ada_@user/ada/x-9065485)
+[06:55:01] *** ChanServ sets mode: +o ada_
+[07:01:42] *** Quits: theseb (~cs@47-220-214-54.cnrocmta03.res.dyn.suddenlink.net) (Ping timeout: 245 seconds)
+[07:09:26] *** Quits: blaklistd (~blaklistd@user/blaklistd) (Quit: bye)
+[07:14:54] *** Joins: blaklistd (~blaklistd@user/blaklistd)
+[07:19:07] *** Joins: kulernil (~kulernil@gateway/tor-sasl/kuler)
+[07:31:23] *** Quits: pmercado (~pmercado@190.22.89.183) (Ping timeout: 268 seconds)
+[07:41:08] *** Joins: travisghansen (~travisgha@192.74.130.86)
+[07:50:21] *** Quits: c10l (~c10l@89.34.167.207) (Read error: Connection reset by peer)
+[07:51:25] *** Joins: guy_frm_yogaland (~gourab@2409:4062:2312:877b:f218:e3fb:8a43:9192)
+[07:52:32] *** Joins: c10l (~c10l@89.34.167.207)
+[07:53:34] *** Quits: c10l (~c10l@89.34.167.207) (Client Quit)
+[07:59:16] *** Parts: mr4braham (~mr_4braha@156.146.39.138) ()
+[08:00:10] *** Quits: justyb11 (~justyb@2601:483:500:3ea:9102:4f5d:313b:3a42) (Quit: Leaving)
+[08:02:31] *** Quits: lilgopher (~textual@c-73-51-174-246.hsd1.il.comcast.net) (Read error: Connection reset by peer)
+[08:21:21] *** Joins: jochum (~jochum@user/jochum)
+[08:32:48] *** Joins: mei (~mei@user/mei)
+[08:52:21] *** Quits: winstonsmith (~winstonsm@77.247.181.214) (Quit: .)
+[08:52:47] *** Quits: Jimmy_H (~Jimmy_H@119.136.154.245) (Ping timeout: 258 seconds)
+[08:53:01] *** Joins: winstonsmith (~winstonsm@109.201.152.176)
+[09:07:07] *** Quits: cmc (~methos@gateway/tor-sasl/cmc) (Remote host closed the connection)
+[09:07:35] *** Joins: cmc (~methos@gateway/tor-sasl/cmc)
+[09:09:54] *** Quits: guy_frm_yogaland (~gourab@2409:4062:2312:877b:f218:e3fb:8a43:9192) (Remote host closed the connection)
+[09:10:18] *** Joins: guy_frm_yogaland (~gourab@2409:4062:2312:877b:ef11:58c6:e631:d5d)
+[09:17:20] *** Quits: guy_frm_yogaland (~gourab@2409:4062:2312:877b:ef11:58c6:e631:d5d) (Remote host closed the connection)
+[09:17:44] *** Joins: guy_frm_yogaland (~gourab@2409:4062:2084:b2bf:86eb:11c8:b4f9:5e96)
+[09:18:05] *** Quits: winstonsmith (~winstonsm@109.201.152.176) (Ping timeout: 268 seconds)
+[09:20:03] *** Joins: winstonsmith (~winstonsm@77.247.181.217)
+[09:26:25] *** Joins: oxum (~oxum@122.172.205.112)
+[09:28:47] *** Quits: travisghansen (~travisgha@192.74.130.86) (Ping timeout: 245 seconds)
+[09:32:36] *** Quits: tkazi (~tkazi@user/tkazi) (Quit: Disconnected)
+[09:33:56] *** Joins: tkazi (~tkazi@user/tkazi)
+[09:34:40] *** Quits: ada_ (~ada_@user/ada/x-9065485) (Ping timeout: 240 seconds)
+[09:35:10] *** Quits: oxum (~oxum@122.172.205.112) (Ping timeout: 240 seconds)
+[09:37:13] *** Quits: thiras (~thiras@user/thiras) (Ping timeout: 248 seconds)
+[09:39:12] <Batzy> hey all im using docker-compose with postgres and django and im noticing that NO files are persisting over to the host. When i write tables via django it is meant to produce migration files, however these files only appear locally on the docker container and never in my host system
+[09:49:54] *** Quits: cmc (~methos@gateway/tor-sasl/cmc) (Remote host closed the connection)
+[09:50:05] <Batzy> nvm got it
+[09:50:19] *** Joins: cmc (~methos@gateway/tor-sasl/cmc)
+[10:02:59] *** Quits: svm_invictvs (~svm_invic@user/svm-invictvs/x-6696469) (Remote host closed the connection)
+[10:04:22] *** Joins: manin (~X@185.242.190.95)
+[10:04:29] *** Joins: realies (~realies@user/realies)
+[10:08:14] *** Joins: MillerBOSS (~fire@su.per.ca.li.fra.gil.is.tic.ex.pi.a.li.do.cious.millerboss.com)
+[10:08:49] *** Joins: AlwaysLivid (~panos@tenacity/contributor/AlwaysLivid)
+[10:09:48] <AlwaysLivid> Hey, I kept having this problem where applications would not be able to connect to Alpine image of Redits (4.0) (because the connection refused). I opened up a /bin/bash to the Redis container, ran "redis-server" and the server started normally, which goes on to show that the container does not start Redis by itself.
+[10:10:01] <AlwaysLivid> Does anyone have an idea as to how I could possibly fix that weird issue?
+[10:21:34] *** Quits: ablutor (~quassel@wasscher.com) (Quit: going for vitamine d)
+[10:21:51] *** Joins: ablutor (~quassel@wasscher.com)
+[10:27:06] *** Joins: paulman (~kulernil@gateway/tor-sasl/kuler)
+[10:28:28] *** Quits: kulernil (~kulernil@gateway/tor-sasl/kuler) (Ping timeout: 244 seconds)
+[10:34:52] *** Quits: yjftsjthsd (~yjftsjths@162.127.123.34.bc.googleusercontent.com) (Remote host closed the connection)
+[10:35:38] *** Joins: yjftsjthsd (~yjftsjths@162.127.123.34.bc.googleusercontent.com)
+[10:47:07] *** Quits: manin (~X@185.242.190.95) (Remote host closed the connection)
+[10:48:01] *** Joins: mjbatty_ (~mjbatty@82.2.17.205)
+[10:50:32] *** Joins: Enitin (~Enitin@82.102.22.84)
+[10:50:36] *** Joins: manin (~X@185.242.190.95)
+[10:54:16] *** Quits: sed (~sed@pool-100-7-38-116.rcmdva.fios.verizon.net) (Ping timeout: 268 seconds)
+[11:02:55] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 268 seconds)
+[11:04:12] *** Quits: winstonsmith (~winstonsm@77.247.181.217) (Ping timeout: 245 seconds)
+[11:05:03] *** Joins: winstonsmith (~winstonsm@109.201.152.164)
+[11:12:10] *** Quits: winstonsmith (~winstonsm@109.201.152.164) (Ping timeout: 240 seconds)
+[11:14:26] *** Joins: winstonsmith (~winstonsm@77.247.181.211)
+[11:16:02] *** Quits: cmc (~methos@gateway/tor-sasl/cmc) (Remote host closed the connection)
+[11:16:28] *** Joins: cmc (~methos@gateway/tor-sasl/cmc)
+[11:18:47] *** Quits: mjbatty_ (~mjbatty@82.2.17.205) (Ping timeout: 245 seconds)
+[11:22:12] *** Quits: pi0 (~default@neee.ga) (Remote host closed the connection)
+[11:25:32] *** Joins: Enitin (~Enitin@82.102.22.84)
+[11:33:28] *** Joins: mjbatty_ (~mjbatty@213.205.194.250)
+[11:43:00] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 268 seconds)
+[11:43:10] *** Joins: Enitin (~Enitin@82.102.22.84)
+[11:46:56] *** Joins: incognito (~relativit@user/incognito)
+[11:50:34] *** Quits: Duality (~pi@82-197-207-54.dsl.cambrium.nl) (Ping timeout: 240 seconds)
+[11:55:38] *** Quits: guy_frm_yogaland (~gourab@2409:4062:2084:b2bf:86eb:11c8:b4f9:5e96) (Quit: Konversation terminated!)
+[11:58:55] *** Quits: Enitin (~Enitin@82.102.22.84) (Quit: .de/discord)
+[11:59:10] *** Joins: Enitin (~Enitin@82.102.22.84)
+[12:03:53] *** Quits: Lyn (~Lyn@user/law) (Ping timeout: 248 seconds)
+[12:08:40] *** Joins: guy_frm_yogaland (~gourab@2409:4062:2084:b2bf:86eb:11c8:b4f9:5e96)
+[12:10:59] *** Quits: justache (~justache@user/justache) (Ping timeout: 252 seconds)
+[12:18:10] *** Quits: mjbatty_ (~mjbatty@213.205.194.250) (Read error: Connection reset by peer)
+[12:22:02] *** Joins: gbellinoz (~gbell2@220-235-1-90.dyn.iinet.net.au)
+[12:22:43] *** Joins: justache (~justache@user/justache)
+[12:23:27] <gbellinoz> docker-compose 1.29.2, I get no output from exec
+[12:23:41] <gbellinoz> even with --verbose and --log-level DEBUG
+[12:25:07] *** Quits: [diablo] (~diablo]@user/diablo/x-9068044) (Quit: Ping timeout (120 seconds))
+[12:27:05] <jochum> AlwaysLivid: did you run ps on the container to check if theres realy no redis running (on other port maybe) ?
+[12:27:42] *** Joins: [diablo] (~diablo]@user/diablo/x-9068044)
+[12:28:27] *** Quits: justache (~justache@user/justache) (Read error: Connection reset by peer)
+[12:28:36] <AlwaysLivid> jochum, well, running `nc` results in the connection timing out, the port is - "127.0.0.1:6379:6379"
+[12:28:55] <AlwaysLivid> the container is "up"
+[12:29:10] <jochum> gbellinoz: docker-compose exec pgadmin /bin/sh -c "echo test"  works for me but having 1.27.3
+[12:29:38] <gbellinoz> jochum: that one gives me zero output
+[12:29:39] <gbellinoz> weird.
+[12:29:39] <AlwaysLivid> running docker-compose run redis /bin/sh gives me a shell, but redis is not running i think
+[12:29:42] <jochum> AlwaysLivid: please execute a shell and see its processes
+[12:29:44] *** Joins: justache (~justache@user/justache)
+[12:30:16] <AlwaysLivid> Only thing that's running according to `ps` is /bin/sh and the command I ran.
+[12:30:24] <AlwaysLivid> as in, ps
+[12:31:42] <jochum> AlwaysLivid: is there a chance that you or someone else overwrote "command" ?
+[12:31:49] *** Quits: guy_frm_yogaland (~gourab@2409:4062:2084:b2bf:86eb:11c8:b4f9:5e96) (Remote host closed the connection)
+[12:31:53] <jochum> AlwaysLivid: i check my redis container, give me a bit
+[12:32:13] *** Joins: guy_frm_yogaland (~gourab@2409:4062:2084:b2bf:c8f2:cabd:dff:9d77)
+[12:32:29] *** Joins: memoryleak (~memorylea@77-58-142-250.dclient.hispeed.ch)
+[12:32:45] <jochum> AlwaysLivid: my redis container is very simple just image and ports
+[12:33:45] <jochum> AlwaysLivid: my redis has no ps?
+[12:33:56] <AlwaysLivid> I'm basically using this docker-compose file, if it's of any help, but this basically happens with whichever application requiring Redis on my system: https://github.com/misskey-dev/misskey/blob/6a3a8ba4d08f6b6ba5690de3553eddfec93476da/docker-compose.yml#L19
+[12:35:02] <jochum> AlwaysLivid: downloading the alpine version
+[12:37:30] *** Joins: rsx (~dummy@ppp-188-174-137-163.dynamic.mnet-online.de)
+[12:38:30] *** Quits: cluelessperson (~cluelessp@user/cluelessperson) (Ping timeout: 268 seconds)
+[12:40:56] <jochum> AlwaysLivid: time for some commands?
+[12:41:08] <AlwaysLivid> yup, i'm ready
+[12:41:23] <jochum> AlwaysLivid: open sh to broken redis
+[12:41:34] <jochum> apk add --no-cache procps
+[12:41:38] *** Joins: mjbatty_ (~mjbatty@82.2.17.205)
+[12:41:52] <jochum> ps auxwwwee
+[12:42:01] <jochum> im interested in pid 1 
+[12:43:08] *** Joins: cluelessperson (~cluelessp@user/cluelessperson)
+[12:45:56] <AlwaysLivid> Give me a bit
+[12:46:12] * jochum sleeps on the Desk soon ;P
+[12:46:26] <AlwaysLivid> https://paste.centos.org/view/92d4e4af
+[12:46:33] <AlwaysLivid> Okay okay okay
+[12:48:14] *** Joins: Lutin (~Lutin@user/lutin)
+[12:48:42] <AlwaysLivid> I'm really not sure what I could do better here
+[12:49:28] <jochum> AlwaysLivid: apk update
+[12:49:29] <jochum> ?
+[12:49:38] <jochum> your CDN endpoint is broken :/
+[12:49:42] <jochum> seems
+[12:50:37] <AlwaysLivid> Yeah, I get that.
+[12:50:47] <AlwaysLivid> It runs normally when I manually invoke it, however.
+[12:51:03] <AlwaysLivid> Failed: https://paste.centos.org/view/370ef550
+[12:51:23] <AlwaysLivid> Wait, Docker uses LXC for networking, right?
+[12:53:44] <jochum> AlwaysLivid: not these days,n o
+[12:54:00] <jochum> AlwaysLivid: but it uses the host yes
+[12:54:33] <AlwaysLivid> Am I supposed to expose the Redis image to the external network?
+[12:54:37] <AlwaysLivid> I don't think it's a good idea.
+[12:54:49] <AlwaysLivid> But does that affect its capacity to fetch updates from a remote server?
+[12:55:47] <jochum> AlwaysLivid: no
+[12:56:28] <jochum> AlwaysLivid: do you have access to the host? I assume so, please run "ps fauxwwee" and locate the redis container job
+[12:58:58] <AlwaysLivid> But does that affect its capacity to fetch updates from a remote server?
+[12:59:01] <AlwaysLivid> wait, sorry
+[12:59:09] <AlwaysLivid> any way to narrow it down using grep?
+[12:59:28] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 268 seconds)
+[12:59:42] *** Joins: Enitin (~Enitin@82.102.22.84)
+[13:00:08] <jochum> AlwaysLivid: yeah: ps fauxwwee | fgrep -A 10 "redis"
+[13:01:22] <AlwaysLivid> sharing the result per PM because I am not sure if I'm sharing anything I should not be sharing in a public IRC room
+[13:02:27] <jochum> fine
+[13:03:58] <AlwaysLivid> sorry ;_;
+[13:04:32] *** Joins: TomTom (uid45892@id-45892.charlton.irccloud.com)
+[13:12:52] *** Quits: AlwaysLivid (~panos@tenacity/contributor/AlwaysLivid) (Quit: “I was also caught by absence in all its forms.”, -- Paul Éluard)
+[13:13:38] *** Joins: AlwaysLivid (~panos@tenacity/contributor/AlwaysLivid)
+[13:20:20] *** Joins: vidbina (~vid@dynamic-077-011-171-206.77.11.pool.telefonica.de)
+[13:36:05] *** Quits: guy_frm_yogaland (~gourab@2409:4062:2084:b2bf:c8f2:cabd:dff:9d77) (Remote host closed the connection)
+[13:40:25] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 248 seconds)
+[13:40:46] *** Quits: flynn (~mcbloch@user/flynn) (Read error: Connection reset by peer)
+[13:41:08] *** Joins: flynn (~mcbloch@user/flynn)
+[13:41:38] *** Joins: Enitin (~Enitin@82.102.22.84)
+[14:04:29] *** Joins: Bruners (lasseb@178.16.67.227)
+[14:04:49] <faceface> tabakhase: thanks for your comments above, I'm afraid I was AFK... I'm guessing you meant, "just don't use defreitas/dns-proxy-server"?
+[14:08:02] <faceface> The issue I'm having (the reason I turned to defreitas/dns-proxy-server) is that one of my docker services is running a webserver frontend, and that frontend contains JS that reaches out to a named backend (service) to fetch a resource. When I only publish the ports of the frontend, I can see the webpage fine (obvs), but when it tries to fetch the backend resource it cant (the URL is broken).
+[14:08:22] *** Joins: jazzy (~jaziz@172.58.43.173)
+[14:08:43] <faceface> I can fix this by assigning IP addresses rather than hostnames, but I'm too noob to know if that's the right way to do it.
+[14:09:24] <tabakhase> faceface pretty much yea.. its tempting, but bad form ((and "most issues why one would want todo that" are fixable in another way or stem from something broken way before in the chain...
+[14:10:06] *** Joins: Ballerburg9005 (~ICH@dslb-002-204-002-034.002.204.pools.vodafone-ip.de)
+[14:11:27] <tabakhase> like common example is "more names for port 80" - but one can/should just strap a loadbalancer thingy infront that does the routing -- and even for "fully independend projects" you can always just publish one to 127.0.0.1 and the other to 127.0.0.2, that whole 127./8-network is useable :D
+[14:11:53] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 248 seconds)
+[14:12:03] *** Joins: Enitin (~Enitin@82.102.22.84)
+[14:12:56] <faceface> tabakhase: OK, thank you.
+[14:13:00] <tabakhase> and if youre supposed to reach the backend "directly" - you should just publish that too - and the "name where to search for this" should be a config item
+[14:13:29] <faceface> yes, each of the 3 services is configured how to 'see' each other
+[14:13:51] <faceface> I'm migrating from a version where we literally had 3 boxes with 3 domain names to a dockerized version
+[14:15:18] <faceface> I had the feeling that IP addresses in this context would be more fragile, e.g. how do I know the IP address of a given named network up front to add that to the config. I guess I can do that using docker-compose to set the IPs
+[14:23:42] *** Quits: NeoCron (~NeoCron@p200300c4cf4a8400dde9c021b1b0ad3f.dip0.t-ipconnect.de) (Quit: Leaving)
+[14:25:02] *** Quits: mjbatty_ (~mjbatty@82.2.17.205) (Ping timeout: 245 seconds)
+[14:25:12] *** Joins: NeoCron (~NeoCron@p200300c4cf4a8400dde9c021b1b0ad3f.dip0.t-ipconnect.de)
+[14:26:07] *** Joins: mjbatty_ (~mjbatty@82.2.17.205)
+[14:27:23] <faceface> tabakhase: "just publish one to 127.0.0.1 and the other to 127.0.0.2" ... I think I'm beginning to get it... Publish all ports with -p, and set all configuration to 127.0.0.1:999999, each services runs on 127.0.0.x and it should all 'just work'
+[14:32:15] *** Joins: Lyn (~Lyn@user/law)
+[14:33:15] <Lyn> what happens if, on a server, you start a docker container, which listens to port 22, and then try to ssh to that same server?
+[14:33:42] <faceface> Lyn: if you publish 22 to 22, it should fail to start
+[14:33:44] <tabakhase> faceface well the 127.0.0.1 is "your host", and all fragilnes behind docker takes care to plumb in --- and if your config/tooling allows ports, even better indeed
+[14:34:37] <faceface> Lyn: assuming 22 is already running ssh on the host
+[14:35:31] <faceface> tabakhase: config allows ports yes... what do you mean by 'plumb in'?
+[14:35:34] <tabakhase> (there just is a lot of stuff that doesnt take ports, and then people loose there minds when they cant use ".80" or ".443" for two things as if they never used "http://xyz:8080" in the browser :D
+[14:35:48] <faceface> use a user-defined bridge network?
+[14:36:12] <Lyn> how should that situation be remedied? Gitlab container uses port 22 i.e. ssh for git things, but I'd also like to be able to ssh access the server itself remotely
+[14:36:25] <tabakhase> plumbing as in published-ports
+[14:36:37] <tabakhase> Lyn gitlab has a extra note on that how to make it work
+[14:36:42] <faceface> Lyn: you need to map port 22 on the container to some other port on the host
+[14:37:17] <faceface> tabakhase: thanks
+[14:37:44] <Lyn> oh I see, I'll try to find it
+[14:40:31] <tabakhase> i cant find the dam doc right now... but there is a way that basically "uses the host as jump-host to ssh into the actual container"...
+[14:41:23] <tabakhase> but using an alternative port (and what setting to change to have the copy-pasteable clone url reflect that port) is in the docker-gitlab install notes
+[14:41:28] <Lyn> https://docs.gitlab.com/ee/install/docker.html ctrl f _ssh_
+[14:44:40] <faceface> "uses the host as jump-host to ssh into the actual container" <- That's usually something like "ssh host -L 2222:container:22"
+[14:45:01] <faceface> then you ssh localhost:2222 and magically end up on the container
+[14:45:42] <faceface> and you can hide all that in .ssh/config
+[14:50:47] *** Quits: memoryleak (~memorylea@77-58-142-250.dclient.hispeed.ch) ()
+[14:50:49] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 258 seconds)
+[14:51:07] *** Joins: memoryleak (~memorylea@77-58-142-250.dclient.hispeed.ch)
+[14:56:17] *** Joins: Enitin (~Enitin@82.102.22.84)
+[15:15:00] *** Quits: AlwaysLivid (~panos@tenacity/contributor/AlwaysLivid) (Quit: “I was also caught by absence in all its forms.”, -- Paul Éluard)
+[15:17:29] *** Quits: AsenMx (~AsenMx@78.90.248.234) (Ping timeout: 248 seconds)
+[15:23:16] *** Quits: paulman (~kulernil@gateway/tor-sasl/kuler) (Remote host closed the connection)
+[15:23:44] *** Joins: paulman (~kulernil@gateway/tor-sasl/kuler)
+[15:28:38] *** Quits: vxrx (~vxrx@proxy01.autarkic.org) (Quit: WeeChat 3.2)
+[15:29:46] *** Joins: vxrx (~vxrx@proxy01.autarkic.org)
+[15:41:56] *** Quits: repo (~repo@user/repo) (Quit: WeeChat 3.1)
+[15:44:26] *** Parts: gbellinoz (~gbell2@220-235-1-90.dyn.iinet.net.au) ()
+[15:44:44] *** Quits: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com) (Ping timeout: 268 seconds)
+[15:46:34] *** Quits: jazzy (~jaziz@172.58.43.173) (Ping timeout: 268 seconds)
+[15:48:53] *** Joins: jazzy (~jaziz@172.58.43.167)
+[15:48:57] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 248 seconds)
+[15:49:07] *** Joins: Zart (~zart@90.150.52.182)
+[15:49:22] *** Joins: Enitin (~Enitin@82.102.22.84)
+[15:53:49] *** Quits: momomo (~momomo@user/momomo) (Quit: Textual IRC Client: www.textualapp.com)
+[15:55:40] *** Quits: vidbina (~vid@dynamic-077-011-171-206.77.11.pool.telefonica.de) (Ping timeout: 240 seconds)
+[16:02:12] *** Quits: rewrit3 (~rewrit3@user/rewrit3) (Remote host closed the connection)
+[16:05:03] *** Quits: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Read error: Connection reset by peer)
+[16:05:42] *** Joins: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[16:16:29] *** Joins: moldorcoder7_ (~moldorcod@37.120.143.28)
+[16:17:04] *** Quits: Ballerburg9005 (~ICH@dslb-002-204-002-034.002.204.pools.vodafone-ip.de) (Ping timeout: 258 seconds)
+[16:18:02] *** Quits: moldorcoder7 (~moldorcod@37.120.143.28) (Ping timeout: 268 seconds)
+[16:20:17] *** Joins: vidbina (~vid@dynamic-077-011-171-206.77.11.pool.telefonica.de)
+[16:21:07] *** Quits: bouncy (~ben@user/benoit) (Ping timeout: 268 seconds)
+[16:34:11] *** Joins: luc4 (~manjaro-u@host-95-233-7-147.retail.telecomitalia.it)
+[16:35:03] <luc4> Hello! When building with buildkit for other architectures, it seems that in some cases uname -a returns an arch that is not coherent with the one being emulated. Is it possible to somehow change that?
+[16:35:04] *** Joins: rewrit3 (~rewrit3@user/rewrit3)
+[16:36:33] <faceface> tabakhase: I'm just updating my docker-compose.yml now with networks: and ipv4_address: and ports: and so on... One other consideration comes to mind... I don't think I can generate a letsencrypt cert for an IP address can I ?
+[16:36:49] *** Joins: no_gravity (~no_gravit@user/no-gravity/x-5639427)
+[16:37:03] <faceface> I think there is a weird issue where C# can't communicate using https using a self signed cert...
+[16:37:07] <faceface> I may be wrong...
+[16:37:12] <faceface> anyway, lets see
+[16:37:19] <no_gravity> Is there a way to force docker build to use a different base image than in the docker file?
+[16:37:31] <tabakhase> faceface woot? - shouldnt hardcode those things like... ever...
+[16:37:59] <tabakhase> no_gravity no (obvs ou can edit the file/rewrite it to become a "build.-arg"
+[16:38:51] <no_gravity> tabakhase: How so?
+[16:39:20] <tabakhase> faceface on ssl, you may have to import the cert into the ca-space of the other container if there is no direct verify-true/false switch
+[16:40:14] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 268 seconds)
+[16:40:15] <tabakhase> no_gravity https://docs.docker.com/engine/reference/builder/#understand-how-arg-and-from-interact
+[16:40:52] <tabakhase> (and then `docker build --build-arg CODE_VERSION=1.2.3 .`)
+[16:42:24] <no_gravity> I see.
+[16:42:34] <no_gravity> Strangely, doing this:
+[16:42:35] <no_gravity> ARG from=debian:10-slim
+[16:42:36] <no_gravity> FROM $from
+[16:42:44] <no_gravity> And then calling it like this:
+[16:43:02] <no_gravity> docker build --build-arg='debian:11-slim' ...
+[16:43:20] <no_gravity> Downloaded debian:10-slim again
+[16:43:26] <tabakhase> thats missing a `from=`
+[16:43:51] <no_gravity> Ha!
+[16:43:53] <no_gravity> Nice
+[16:44:03] *** Joins: Enitin (~Enitin@82.102.22.84)
+[16:44:27] <no_gravity> Thats cool! 
+[16:44:31] <no_gravity> tabakhase: Thanks!
+[16:53:02] *** Joins: blusky (~weechat@51.15.179.13)
+[16:54:36] <blusky> Hi there ! I am using docker for almost all my self hosted tools, with docker-compose. I use verion tag of my image (and not latest). Is there any tool that cat analyze my docker-compose file to tell me if there are some update available and that I should update the tag of my images ?
+[16:54:53] <blusky> s/verion/version
+[16:58:18] *** cheets is now known as IronBruh
+[17:01:18] *** THEGODSQUIRREL is now known as thegodsquirrel
+[17:02:09] <programmerq> blusky▸ I somewhat recently wrote up an SO answer for this topic. let me see if I can find it.
+[17:02:33] <blusky> <3
+[17:02:34] <programmerq> https://stackoverflow.com/questions/68284582/how-to-find-availability-of-newer-versions-of-docker-images-in-docker-compose/68488168#68488168 <-- blusky
+[17:02:46] <programmerq> tldr; not really an existing tool, but you could write one.
+[17:03:56] <programmerq> I did show how to use 'reg' to list tags. If you're using semver, there are semver parsers/comparison tools. You could then feed the specific version into your compose file with an env var
+[17:04:04] <blusky> ok, I understand :-) I already started writing one
+[17:04:15] <blusky> but I was wondering if I was reinventing the wheel
+[17:05:04] <blusky> didn't know reg, it would have saved me a lot of time ^^
+[17:05:13] <blusky> (was using requests in python)
+[17:05:55] <blusky> It's kind of sad that there aren't any standard for tags / version in docker image
+[17:05:58] <programmerq> all the various bits exist, but you just need to glue them together. Since image tag names are up to the image publisher there's no really good generic solution that would work across the board. There is a tool called watchtower that some folks like. It will try to see if there's a newer version of the same tag and recreate your container with the same options.
+[17:06:38] <blusky> Watchtower is very dangerous as it will pull the image to know if an update is needed
+[17:06:45] <programmerq> I'm a fan of pushing a newly built image as both :x.y.z and :production or :staging -- depending on whether I'm promoting x.y.z to one of those environments.
+[17:06:53] <programmerq> yeah, I'm def not a fan of watchtower.
+[17:07:03] <blusky> so watchtower will force an update on docker-compose down / up
+[17:07:04] <programmerq> just tossing it out there in case you hadn't come across it.
+[17:07:09] <blusky> thanks :-)
+[17:07:21] <programmerq> it's fine for some things I've done
+[17:08:18] <blusky> We switched from "latest" tag to version fixed tag, because of potencial migration problem on major version updating for some project
+[17:08:38] <blusky> I think watchtower will only seek of update on the same tag
+[17:08:50] <blusky> (and we don't want to go back to latest everywhere)
+[17:13:45] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 248 seconds)
+[17:16:29] <tabakhase> thats more an issue of "latest"(&similars) than watchtower id say tho... - using it for "named tags" is always a little meh sure - but even a "nginx:1.12.1" may be watchtower-ed so you get generic baseimage updates and such
+[17:17:41] <tabakhase> or when using 1.12 or such
+[17:18:13] <tabakhase> latest is literally asking for trouble :D
+[17:21:11] *** Parts: jsmooth (~quassel@user/rapid16) ()
+[17:26:15] *** Joins: Enitin (~Enitin@82.102.22.84)
+[17:28:04] *** Quits: mutandis (~mut@c-73-129-211-144.hsd1.md.comcast.net) (Quit: zzzz)
+[17:31:17] *** Joins: minimal (~minimal@user/minimal)
+[17:31:50] *** Joins: bouncy (~ben@user/benoit)
+[17:32:57] *** Joins: theseb (~cs@47-220-214-54.cnrocmta03.res.dyn.suddenlink.net)
+[17:38:45] *** Joins: pmercado (~pmercado@190.22.89.183)
+[17:41:52] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 252 seconds)
+[17:42:46] *** Quits: theseb (~cs@47-220-214-54.cnrocmta03.res.dyn.suddenlink.net) (Quit: Leaving)
+[17:43:05] *** Joins: withered_wolf (~withered_@1437135-v103.1561-static.stchilaa.metronetinc.net)
+[17:45:22] *** Joins: Ballerburg9005 (~ICH@dslb-002-204-002-034.002.204.pools.vodafone-ip.de)
+[17:49:02] *** Joins: Enitin (~Enitin@82.102.22.84)
+[18:00:34] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 252 seconds)
+[18:05:23] *** Joins: iomari891 (~iomari891@105.112.138.38)
+[18:15:34] *** Joins: Enitin (~Enitin@82.102.22.84)
+[18:16:36] *** Quits: no_gravity (~no_gravit@user/no-gravity/x-5639427) (Quit: leaving)
+[18:26:25] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 252 seconds)
+[18:27:18] *** Joins: Enitin (~Enitin@82.102.22.84)
+[18:38:03] *** Quits: factor (~factor@c-66-30-67-217.hsd1.ma.comcast.net) (Read error: Connection reset by peer)
+[18:39:11] *** Joins: ses (uid38151@id-38151.stonehaven.irccloud.com)
+[18:44:11] <faceface> errr.... this question dumb... Can I run firefox from inside a docker?
+[18:45:59] <akik> faceface: yes
+[18:46:57] <faceface> hi akik 
+[18:47:12] *** Joins: factor (~factor@c-66-30-67-217.hsd1.ma.comcast.net)
+[18:48:05] <akik> faceface: you can either share the x11 socket from the host to the container, or run a remote x11 protocol like xpra in the container
+[18:48:09] <akik> https://blog.jessfraz.com/post/docker-containers-on-the-desktop/
+[18:50:16] <faceface> jess/chrome
+[18:53:11] *** Quits: jazzy (~jaziz@172.58.43.167) (Quit: Beddie bye-bye)
+[18:53:46] <faceface> Can't seem to find a firefox image on dockerhub... sorry if I'm being extra dumb
+[18:54:26] <faceface> Mozilla Firefox for Kasm Workspaces ... whats Kasm?
+[18:55:00] <faceface> erk... browser in browser
+[18:58:43] <akik> faceface: you'll probably need to create your own image from some docker hub base image
+[18:58:52] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 252 seconds)
+[18:58:55] <faceface> cool
+[18:59:25] <faceface> I'm just trying to work out how to start xlogo inside alpine
+[18:59:31] <faceface> https://www.edureka.co/community/66870/how-to-run-firefox-inside-docker-container
+[18:59:44] <faceface> ^^ WOrks for centos I guess
+[19:01:53] <faceface> xauth add <cookies> # Fails in ash on alpine:latest
+[19:01:56] <faceface> not sure how to do it
+[19:03:07] <faceface> actually fails on centos too... those instructions must be borken
+[19:06:17] *** Church is now known as HankHill
+[19:08:20] <faceface> hey! Got it working :-)
+[19:10:29] <faceface> will it only work with --net=host?
+[19:13:44] *** Quits: SmokenatorZ (~Smokenato@177.45.201.143) (Read error: Connection reset by peer)
+[19:15:53] *** Joins: SmokenatorZ (~Smokenato@187.10.52.109)
+[19:16:20] <akik> faceface: the xauth cookie if you need it, comes from "xauth list | grep $DISPLAY" but i'm not sure why you need it
+[19:19:38] <akik> i don't see jess using it
+[19:22:12] *** Quits: manin (~X@185.242.190.95) (Read error: Connection reset by peer)
+[19:22:31] *** Joins: manin (~X@185.242.190.95)
+[19:27:31] *** Joins: Enitin (~Enitin@82.102.22.84)
+[19:36:32] *** Quits: memoryleak (~memorylea@77-58-142-250.dclient.hispeed.ch) ()
+[19:38:39] *** Joins: fdan (~fdan@192.146.154.3)
+[19:40:23] <luc4> Anyone who knows if it is possible to force docker buildx to not fallback to native execution?
+[19:45:17] <programmerq> by native execution, do you mean that buildx will sometimes do a non-buildkit build?
+[19:49:37] *** Quits: vidbina (~vid@dynamic-077-011-171-206.77.11.pool.telefonica.de) (Ping timeout: 245 seconds)
+[19:50:05] *** Quits: Zelec267 (~Zelec@135-23-82-85.cpe.pppoe.ca) (Quit: The Lounge - https://thelounge.chat)
+[19:50:29] *** Joins: Zelec267 (~Zelec@135-23-82-85.cpe.pppoe.ca)
+[19:51:32] <faceface> akik: I really am dumb
+[19:51:42] <faceface> jess has a firefox imaeg
+[19:51:47] <faceface> Dockerfile
+[19:58:28] *** Quits: fdan (~fdan@192.146.154.3) (Ping timeout: 246 seconds)
+[20:01:12] <faceface> Can't make it work unfortunately
+[20:05:00] <akik> faceface: what's the error?
+[20:05:40] *** Quits: Gustavo6046 (~Gustavo60@user/gustavo6046) (Ping timeout: 240 seconds)
+[20:05:41] *** Joins: Gustavo6046_ (~Gustavo60@user/gustavo6046)
+[20:07:44] *** Gustavo6046_ is now known as Gustavo6046
+[20:08:48] *** Quits: mickey (~user@user/mickey) (Quit: Ping timeout (120 seconds))
+[20:09:09] *** Joins: mickey (~user@user/mickey)
+[20:12:58] *** Joins: thiras (~thiras@user/thiras)
+[20:13:07] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 252 seconds)
+[20:13:53] *** Joins: svm_invictvs (~svm_invic@user/svm-invictvs/x-6696469)
+[20:18:58] *** Joins: Enitin (~Enitin@82.102.22.84)
+[20:21:22] *** Quits: manin (~X@185.242.190.95) (Ping timeout: 252 seconds)
+[20:23:18] *** Joins: momomo (~momomo@user/momomo)
+[20:36:50] *** Joins: DoofusCanadensis (~DoofusCan@208.38.34.74)
+[20:37:31] *** Quits: iomari891 (~iomari891@105.112.138.38) (Quit: WeeChat 3.0.1)
+[20:40:59] *** Joins: vidbina (~vid@dynamic-077-011-171-206.77.11.pool.telefonica.de)
+[20:46:38] *** Quits: TomTom (uid45892@id-45892.charlton.irccloud.com) (Quit: Connection closed for inactivity)
+[20:52:58] *** Joins: Atum_ (~IRC@user/atum/x-2392232)
+[21:01:04] *** Quits: aead (~aead@pool-96-232-187-142.nycmny.fios.verizon.net) (Ping timeout: 268 seconds)
+[21:02:26] *** Joins: aead (~aead@ec2-52-2-178-231.compute-1.amazonaws.com)
+[21:03:19] *** Joins: Czernobog (~Czernobog@user/czernobog)
+[21:04:29] *** Joins: iomari891 (~iomari891@105.112.138.38)
+[21:09:22] *** Quits: pmercado (~pmercado@190.22.89.183) (Quit: Konversation terminated!)
+[21:20:17] *** Joins: codebam (~codebam@user/codebam)
+[21:30:31] *** Joins: fedenix (~fedenix@gateway/tor-sasl/fedenix)
+[21:30:42] *** Joins: jjakob (~quassel@2a01:260:8028:10f0::62)
+[21:30:54] *** Joins: c10l (~c10l@89.34.167.207)
+[21:33:46] *** Quits: thiras (~thiras@user/thiras) (Remote host closed the connection)
+[21:33:58] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 252 seconds)
+[21:36:59] *** IronBruh is now known as cheets
+[21:39:45] *** Joins: thiras (~thiras@user/thiras)
+[21:39:56] *** Quits: fedenix (~fedenix@gateway/tor-sasl/fedenix) (Remote host closed the connection)
+[21:40:09] *** Joins: fedenix (~fedenix@gateway/tor-sasl/fedenix)
+[21:41:39] *** Quits: mickey (~user@user/mickey) (Quit: Ping timeout (120 seconds))
+[21:41:57] *** Joins: mickey (~user@user/mickey)
+[21:47:48] *** Quits: DoofusCanadensis (~DoofusCan@208.38.34.74) (Quit: So as you can see from this flowchSQUIRREL!!)
+[21:50:50] *** Quits: mjbatty_ (~mjbatty@82.2.17.205) (Quit: Leaving)
+[21:57:14] *** Quits: rsx (~dummy@ppp-188-174-137-163.dynamic.mnet-online.de) (Quit: rsx)
+[21:57:47] *** Quits: jjakob (~quassel@2a01:260:8028:10f0::62) (Quit: Either rebooting or something broke.)
+[21:58:04] *** Joins: jjakob (~quassel@2a01:260:8028:10f0::62)
+[22:01:25] *** Joins: catbehemoth (~vasyl@bras-base-lnglpq6100w-grc-17-174-89-2-49.dsl.bell.ca)
+[22:04:59] <catbehemoth> hi I am trying to figure out docker behind firewalld. Docker created a docker zone as per docs and added docker0 and br-blahblah interfaces (br-blahblah are custom networks I set up) to it. but what about the interfaces for individual containers (all the interfaces beginning with vethXXXXXXXXX) should they be in docker zone as well or public?
+[22:09:28] *** Joins: Enitin (~Enitin@82.102.22.84)
+[22:11:14] *** Joins: molt (~molt@79.140.150.21)
+[22:16:40] *** Quits: aead (~aead@ec2-52-2-178-231.compute-1.amazonaws.com) (Ping timeout: 240 seconds)
+[22:18:46] *** Joins: aead (~aead@pool-96-232-187-142.nycmny.fios.verizon.net)
+[22:44:04] *** Quits: catbehemoth (~vasyl@bras-base-lnglpq6100w-grc-17-174-89-2-49.dsl.bell.ca) (Ping timeout: 268 seconds)
+[22:44:59] *** Quits: Lyn (~Lyn@user/law) (Read error: Connection reset by peer)
+[22:46:05] *** Joins: catbehemoth (~vasyl@174.89.2.49)
+[22:47:05] *** Quits: aead (~aead@pool-96-232-187-142.nycmny.fios.verizon.net) (Ping timeout: 248 seconds)
+[22:49:06] *** Joins: aead (~aead@ec2-52-2-178-231.compute-1.amazonaws.com)
+[22:58:47] *** Quits: thc202 (~thc202@user/thc202) (Ping timeout: 245 seconds)
+[23:02:09] *** Joins: pycurious (~Adium@user/pycurious)
+[23:02:20] <pycurious> How do i solve this -> docker: Error response from daemon: could not select device driver "" with capabilities: [[gpu]
+[23:13:17] *** Joins: AlwaysLivid (~panos@tenacity/contributor/AlwaysLivid)
+[23:16:57] *** Quits: fmy (~fmy@210.186.95.142) (Ping timeout: 248 seconds)
+[23:18:48] *** Joins: fmy (~fmy@42.191.209.70)
+[23:43:52] *** cheets is now known as feygit
+[23:48:36] *** Quits: thiras (~thiras@user/thiras) (Read error: Connection reset by peer)
+[23:56:50] *** Quits: vidbina (~vid@dynamic-077-011-171-206.77.11.pool.telefonica.de) (Ping timeout: 268 seconds)
+[23:57:37] *** Quits: tkob (tkob@user/thekingofbandit) (Ping timeout: 245 seconds)

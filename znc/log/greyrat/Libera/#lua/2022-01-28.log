@@ -1,0 +1,333 @@
+[00:06:43] <kakolainen[m]> to calculate size of table you first run collectgarbage a few times then remove the reference to your table which you want to measure and then run collectgarbage and see how much memory usage vanished
+[00:07:29] <Tricycle> Ok
+[00:07:35] <Tricycle> that's kinda destructive though!
+[00:08:36] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 250 seconds)
+[00:10:13] <Tricycle> Say, if I do some local content=assert(io.open(filename,"rb")):read("*a")
+[00:10:28] <Tricycle> but never close the file
+[00:10:48] <Tricycle> does it gets garbage collected once concent get out of scope, or does it leak ?
+[00:18:07] <nmz> 5.4 has to be closed variables, which does do that
+[00:18:20] <nmz> everything else I think just keeps it in until its garbage collected
+[00:18:22] <nmz> eventually
+[00:18:32] <kakolainen[m]> Lua doesn't call garbage collector at scope end like c++ calls descustroctors when scope ends
+[00:18:42] <Tricycle> I'm using 5.3
+[00:19:14] <furq> Tricycle: file handles are automatically closed when collected
+[00:19:27] <furq> you should still close them yourself though
+[00:19:40] <nmz> and closing a file may fail, so you should while f do f = f:close() end
+[00:19:50] <nmz> lol
+[00:19:50] <Tricycle> I suppose I could force a few garbage collection and see if that helps, but I'm doubtful it's that simple.
+[00:20:11] <furq> if you're getting oom killed and the box doesn't have a comically low amount of memory then manually calling the gc isn't going to help
+[00:20:27] <furq> unless you've changed the default collection settings 
+[00:20:40] <Tricycle> I didn't
+[00:20:56] <nmz> put everything in disk via sqlite
+[00:20:58] <Tricycle> I trust it.
+[00:21:03] <furq> there are memory profiling tools out there but i've never had cause to use them
+[00:21:05] <furq> https://github.com/pmusa/lmprof
+[00:21:07] <furq> here's one
+[00:21:25] <Tricycle> nice
+[00:22:15] <furq> failing that you could just log the output of collectgarbage("count") at strategic locations
+[00:22:17] <Tricycle> If file handles are autoclosed eventualy, while is it still import to manually close them?
+[00:22:35] <furq> because they won't be closed until the gc next runs
+[00:22:41] <Tricycle> Yeah, I'm currently logging 	print(("Memory usage: %3.f kB"):format(collectgarbage("count")))
+[00:22:55] <Tricycle> takes me a couple days to run out of memory though
+[00:22:57] <furq> it's good practice to close file handles as soon as you're done with them
+[00:23:00] <furq> you only have a finite amount
+[00:23:58] <Tricycle> I wonder what are the consequence of reading 200 MB files whole into string and not closing them ... could be that!
+[00:24:11] <furq> well having a bunch of 200MB strings on the gc isn't going to help
+[00:24:27] <furq> the file handle itself isn't going to matter much
+[00:24:42] <J_Darnley> not closing the file doesn't waste much memory compared to that.  (And the object only hangs around until gc)
+[00:25:14] <J_Darnley> But your problem is memory not file descriptors.
+[00:25:53] <Tricycle> Probably yeah. It always gets killed crash when serving the same big file. Not on smaller ones.
+[00:26:15] <furq> is it serving it for the first time
+[00:26:24] <J_Darnley> If you want to read a big file to analyze in some fashion you might have to try to force gc to clean up when you're done with data
+[00:26:43] <J_Darnley> oh serving like that?
+[00:26:51] <furq> reading a giant file into memory just to serve it to a client seems like terrible design
+[00:26:53] * J_Darnley shuts up
+[00:26:59] <Tricycle> yeah!
+[00:28:34] <Tricycle> also I use lots of string operation like .. and # and :sub and that's probably not a terribly appropriate way to handle 200 MB data
+[00:29:30] <Tricycle> But it worked until now.
+[00:29:30] <furq> yeah .. in particular
+[00:29:41] <Tricycle> Maybe upgrading my OS made it more eager to kill?
+[00:34:18] <kakolainen[m]> Tricycle: string gsub, sub and .. contenation will produce huge amount of garbage, processing 200MB file could produce 5GB of garbage
+[00:35:48] <Tricycle> Woah!
+[00:35:58] *** Quits: Erutuon (~Erutuon@user/erutuon) (Ping timeout: 260 seconds)
+[00:36:01] <Tricycle> Are there leaner better ways?
+[00:36:24] <furq> do it in C
+[00:36:34] <Tricycle> I once read that putting bits into a list and then table.concat at the end is better than successive ..
+[00:36:46] <furq> yeah it is but it sounds like you have bigger problems than that
+[00:36:55] <Tricycle> Ah, but it was nice to write it all in Lua.
+[00:37:56] <Tricycle> Also I don't trust myself to not have mad pointers and other safety issues when writing C
+[00:38:09] <furq> yeah i would try to redesign before doing that
+[00:38:18] <kakolainen[m]> there is not many opportunities for cleaner ways but functional programming with Lua produces about zero garbage
+[00:38:58] <furq> if you really must manipulate a 200MB string in memory then doing that in lua is very likely to end in tears
+[00:39:03] <furq> so do it in something else
+[00:39:08] <furq> but i imagine you don't really need to do that
+[00:39:20] <pony> furq would you recommend C or Rust
+[00:39:22] <nmz> woah, string.gsub sub and .. consumes 15x the amount of memory when used?
+[00:39:31] <furq> depends what you're doing
+[00:39:34] <furq> to both questions
+[00:39:57] <pony> I want to write a virtual machine / emulator for a fantasy computer
+[00:40:05] <nmz> awk can handle 200mb just fine
+[00:40:08] <nmz> weird
+[00:40:28] <nmz> and its a 40 year old unix tool
+[00:40:35] <furq> is that 200mb being read line by line
+[00:40:36] <Tricycle> Well, my server used to handle 200MB fine... until it didn't!
+[00:40:44] <furq> because this one isn't
+[00:41:10] <furq> also you're probably not using a 40 year old awk
+[00:41:12] <nmz> furq: yep
+[00:41:22] <furq> gawk is still being actively developed
+[00:42:47] <kakolainen[m]> table.concat vs .. with 1000 element table might result in .. using about 1000*500 times more garbage
+[00:43:01] <nmz> furq: https://livefreeordichotomize.com/2019/06/04/using_awk_and_r_to_parse_25tb/
+[00:43:27] <nmz> and you can parse 200mb, just RS="" and it throws everything into a single variable
+[00:43:34] <nmz> value*
+[00:44:25] <Tricycle> I wonder if for lua socket doing two client:send is close enough to one client:send with concatenated data
+[00:44:50] <furq> it's the same
+[00:45:17] <furq> as far as the client is concerned anyway
+[00:45:24] <Tricycle> Good!
+[00:45:47] <furq> i would suggest maybe more than two
+[00:45:47] <Tricycle> I can rewrite that bit to avoid all the .. on the large data then
+[00:45:58] <Tricycle> Yes, ofc
+[00:46:12] <kakolainen[m]> Lua can handle Terabytes of continuos string input pipe without running out of memory actually using only 190K for the whole time but when you do some mistake to leak or eject too much garbage then it might be problem
+[00:46:22] <Tricycle> Also I see :send already has optional start end args, so I can avoid the :sub
+[00:46:52] <nmz> be aware that string.match is faster than everything, even faster than string.find
+[00:47:00] <nmz> which honestly makes no sense to me
+[00:47:24] <Tricycle> Thanksfully I'm not (yet?) running pattern matching on the 200MB string.
+[00:47:49] <nmz> I would like to see the source of this program
+[00:47:51] <nmz> honestly
+[00:48:04] <Tricycle> Mine?
+[00:48:08] <nmz> yes
+[00:48:23] <nmz> we are all guessing on how to optimize it.
+[00:48:32] <Tricycle> Ok but promise me you won't use it to hack me!
+[00:48:37] <nmz> lua can be 200mb just fine as a string
+[00:50:26] <kakolainen[m]> I wonder how gsub handles garbage with 200MB string and expanding few chars at some random positions
+[00:50:54] <furq> it just creates one new string regardless
+[00:51:56] <nmz> https://termbin.com/0icwh I can read 500mb movie file just fine
+[00:52:10] <nmz> (don't tell the movie studios I have that movie)
+[00:52:24] <kakolainen[m]> so 400MB and all the arguments to gsub function
+[00:52:51] <nmz> alas I don't have a 200mb string file though
+[00:52:54] <Tricycle> Well, it used to have uptimes in monthes, so maybe the issue is somewhere else.
+[00:53:26] <nmz> oh my
+[00:55:06] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[00:59:34] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 256 seconds)
+[01:11:56] *** Quits: rgrinberg (~textual@2806:101e:7:6bed:6598:2294:f787:fa6c) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[01:31:12] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[01:35:32] *** Joins: Erutuon (~Erutuon@user/erutuon)
+[01:40:37] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 240 seconds)
+[01:41:14] <ubq323> if revealing your source code would make it easier to hack you then that's a problem 
+[01:43:50] <Tricycle> Yes, I know that in principle security by obscurity isn't right.
+[01:44:53] <Tricycle> But I am small! Hopefully small enough that nobody tries to hack me unless I point them to me.
+[01:45:34] <Tricycle> Well, not counting the constant internet background noise of bots trying every known PHP exploits every couple hours.
+[01:56:42] *** Quits: chomwitt (~chomwitt@2a02:587:dc16:6e00:12c3:7bff:fe6d:d374) (Remote host closed the connection)
+[01:58:58] *** Quits: magla (~gelignite@55d4248d.access.ecotel.net) (Quit: Stay safe!)
+[01:59:51] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[02:03:57] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 240 seconds)
+[02:06:26] *** Joins: w0lff (~quassel@x8d1e1e30.agdsn.tu-dresden.de)
+[02:15:41] *** Joins: walterwhip (~www@user/walterwhip)
+[02:15:53] *** Quits: walterwhip (~www@user/walterwhip) (Client Quit)
+[02:23:03] *** Joins: roadt_ (~roadt@36.7.92.131)
+[02:26:07] *** Joins: Psyraven (~Psyraven@p79032f3f.tokynt01.ap.so-net.ne.jp)
+[02:26:16] *** Quits: roadt (~roadt@36.5.93.137) (Ping timeout: 256 seconds)
+[02:31:40] *** Joins: graywolf (~wolf@user/graywolf)
+[02:32:30] *** Quits: pizdets (~pizdets@183.182.114.221) (Ping timeout: 250 seconds)
+[02:32:33] *** Joins: emanuele6 (~emanuele6@user/emanuele6)
+[02:33:46] *** Joins: pizdets (~pizdets@183.182.110.173)
+[02:52:22] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[02:56:44] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 250 seconds)
+[03:15:38] *** Joins: Wally (~Wally@121-200-22-21.79c816.mel.nbn.aussiebb.net)
+[03:26:09] *** Quits: skapate (~Skapata@user/skapata) (Remote host closed the connection)
+[03:36:38] *** Quits: graywolf (~wolf@user/graywolf) (Quit: WeeChat 3.4)
+[03:44:01] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[03:48:26] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 256 seconds)
+[04:04:47] *** Quits: Vornicus (~Vornicus@cpe-23-243-151-111.socal.res.rr.com) (Read error: Connection reset by peer)
+[04:25:13] *** Joins: ratchetfreak (~ratchetfr@d8d8779d9.access.telenet.be)
+[04:28:36] *** Quits: ratchet_freak (~ratchetfr@ptr-82rtos32vmsq0gce3q3.18120a2.ip6.access.telenet.be) (Ping timeout: 250 seconds)
+[04:34:44] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[04:35:32] *** Quits: Erutuon (~Erutuon@user/erutuon) (Ping timeout: 250 seconds)
+[04:38:44] *** Joins: Erutuon (~Erutuon@user/erutuon)
+[04:38:57] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 240 seconds)
+[04:40:11] *** Joins: rgrinberg (~textual@2806:101e:7:6bed:6598:2294:f787:fa6c)
+[05:21:38] *** Quits: Tricycle (~CGI273@lfbn-idf1-1-1376-196.w90-79.abo.wanadoo.fr) (Quit: bye)
+[05:27:36] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[05:31:52] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 250 seconds)
+[05:34:58] *** Quits: gr33n7007h (~gr33n7007@user/gr33n7007h) (Ping timeout: 256 seconds)
+[05:35:37] *** Quits: Erutuon (~Erutuon@user/erutuon) (Ping timeout: 240 seconds)
+[05:36:06] *** Joins: skapata (~Skapata@2804:14c:87b0:9d2e:e502:a244:bdcc:aece)
+[05:36:06] *** Quits: skapata (~Skapata@2804:14c:87b0:9d2e:e502:a244:bdcc:aece) (Changing host)
+[05:36:06] *** Joins: skapata (~Skapata@user/skapata)
+[05:37:05] *** Joins: gr33n7007h (~gr33n7007@user/gr33n7007h)
+[05:54:32] *** Quits: ratchetfreak (~ratchetfr@d8d8779d9.access.telenet.be) (Read error: Connection reset by peer)
+[06:10:06] *** Quits: ubq323 (~ubq323@user/ubq323) (Ping timeout: 256 seconds)
+[06:16:32] *** Quits: epony (epony@user/epony) (Ping timeout: 240 seconds)
+[06:18:28] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[06:19:17] *** Quits: gr33n7007h (~gr33n7007@user/gr33n7007h) (Ping timeout: 240 seconds)
+[06:21:32] *** Joins: gr33n7007h (~gr33n7007@user/gr33n7007h)
+[06:23:27] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 268 seconds)
+[06:46:56] *** Quits: gr33n7007h (~gr33n7007@user/gr33n7007h) (Ping timeout: 256 seconds)
+[06:49:05] *** Joins: gr33n7007h (~gr33n7007@user/gr33n7007h)
+[06:52:47] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[06:57:08] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 256 seconds)
+[07:11:52] *** Quits: gr33n7007h (~gr33n7007@user/gr33n7007h) (Ping timeout: 256 seconds)
+[07:13:50] *** Joins: gr33n7007h (~gr33n7007@user/gr33n7007h)
+[07:18:11] *** Joins: vnogueir- (~vnogueira@user/vnogueira)
+[07:19:51] *** Quits: vnogueira (~vnogueira@user/vnogueira) (Ping timeout: 276 seconds)
+[07:43:51] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[07:47:57] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 240 seconds)
+[07:53:31] *** Joins: Erutuon (~Erutuon@user/erutuon)
+[08:01:02] *** Joins: walterwhip (~www@user/walterwhip)
+[08:13:38] *** Quits: fcr (~fran@r167-60-35-19.dialup.adsl.anteldata.net.uy) (Ping timeout: 256 seconds)
+[08:20:57] *** Joins: fcr (~fran@r167-60-29-223.dialup.adsl.anteldata.net.uy)
+[08:29:43] *** Joins: epony (epony@user/epony)
+[08:35:57] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[08:39:57] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 240 seconds)
+[08:56:42] *** Quits: Erutuon (~Erutuon@user/erutuon) (Ping timeout: 256 seconds)
+[09:01:28] *** Quits: skapata (~Skapata@user/skapata) (Remote host closed the connection)
+[09:11:24] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[09:14:54] *** Quits: vnogueir- (~vnogueira@user/vnogueira) (Ping timeout: 276 seconds)
+[09:15:54] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 250 seconds)
+[09:27:51] *** Joins: crm (~crm@70.120.0.94)
+[09:29:33] *** Joins: vnogueira (~vnogueira@user/vnogueira)
+[09:31:03] *** Joins: walterwhip_ (~www@103.251.64.254)
+[09:31:05] *** Quits: walterwhip_ (~www@103.251.64.254) (Client Quit)
+[09:34:24] *** Quits: vnogueira (~vnogueira@user/vnogueira) (Ping timeout: 276 seconds)
+[09:34:34] *** Joins: Psyraven_ (~Psyraven@p79032f3f.tokynt01.ap.so-net.ne.jp)
+[09:37:08] *** Quits: walterwhip (~www@user/walterwhip) (*.net *.split)
+[09:37:09] *** Quits: Psyraven (~Psyraven@p79032f3f.tokynt01.ap.so-net.ne.jp) (*.net *.split)
+[09:37:09] *** Quits: roadt_ (~roadt@36.7.92.131) (*.net *.split)
+[09:37:09] *** Quits: rjek (~rjek@godforsaken.horse) (*.net *.split)
+[09:37:09] *** Quits: barpthewire (~barpthewi@aftr-62-216-209-179.dynamic.mnet-online.de) (*.net *.split)
+[09:37:09] *** Quits: marlyn_ (~marlyn@104.194.9.190) (*.net *.split)
+[09:37:09] *** Quits: splud (~noneya.bi@user/splud) (*.net *.split)
+[09:37:09] *** Quits: dstein64 (~dstein64@dannyadam.com) (*.net *.split)
+[09:37:09] *** Quits: sagax (~sagax_nb@user/sagax) (*.net *.split)
+[09:37:09] *** Quits: orthoplex64 (~crm@70.120.0.94) (*.net *.split)
+[09:37:10] *** Quits: asdflkj_sh (asdflkj@user/asdflkj-sh/x-6013523) (*.net *.split)
+[09:37:10] *** Quits: cratuki (~Craig@buster.default.cturner.bv.iomart.io) (*.net *.split)
+[09:37:10] *** Quits: tinystoat (~squeek@user/tinystoat) (*.net *.split)
+[09:42:50] *** Joins: roadt_ (~roadt@36.7.92.131)
+[09:42:50] *** Joins: rjek (~rjek@godforsaken.horse)
+[09:42:50] *** Joins: marlyn_ (~marlyn@104.194.9.190)
+[09:42:50] *** Joins: splud (~noneya.bi@user/splud)
+[09:42:50] *** Joins: dstein64 (~dstein64@dannyadam.com)
+[09:42:50] *** Joins: asdflkj_sh (asdflkj@user/asdflkj-sh/x-6013523)
+[09:42:50] *** Joins: cratuki (~Craig@buster.default.cturner.bv.iomart.io)
+[09:42:50] *** Joins: tinystoat (~squeek@user/tinystoat)
+[09:44:20] *** Joins: barpthewire (~barpthewi@aftr-62-216-209-179.dynamic.mnet-online.de)
+[09:45:34] *** Joins: Sauvin (~sauvin@about/linux/staff/sauvin)
+[10:05:45] *** Joins: vnogueira (~vnogueira@user/vnogueira)
+[10:17:53] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[10:21:49] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 240 seconds)
+[10:32:57] *** Quits: gr33n7007h (~gr33n7007@user/gr33n7007h) (Ping timeout: 240 seconds)
+[10:34:45] *** Joins: walterwhip (~www@user/walterwhip)
+[10:40:44] *** Joins: netlynx (~jan@94-226-69-15.access.telenet.be)
+[10:52:36] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[10:54:50] *** Joins: dvx (~dvx@5.181.92.64)
+[10:56:37] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 240 seconds)
+[11:02:16] *** pony is now known as no-n
+[11:40:48] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[11:43:19] *** Quits: rgrinberg (~textual@2806:101e:7:6bed:6598:2294:f787:fa6c) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[11:45:00] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 256 seconds)
+[11:51:47] *** Joins: ratchetfreak (~ratchetfr@d8D8779D9.access.telenet.be)
+[11:53:32] *** Quits: walterwhip (~www@user/walterwhip) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[11:58:39] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[12:20:57] *** Quits: svm_invictvs (~svm_invic@user/svm-invictvs/x-6696469) (Ping timeout: 240 seconds)
+[12:33:22] *** Joins: svm_invictvs (~svm_invic@user/svm-invictvs/x-6696469)
+[12:35:06] *** Quits: sudoforge (~sudoforge@wireguard/tunneler/sudoforge) (Ping timeout: 260 seconds)
+[12:37:13] *** Joins: walterwhip (~www@user/walterwhip)
+[12:38:28] *** Quits: walterwhip (~www@user/walterwhip) (Client Quit)
+[12:47:01] *** Quits: synthmeat (~synthmeat@user/synthmeat) (Quit: WeeChat 3.0)
+[12:56:01] *** Joins: ubq323 (~ubq323@130.88.226.27)
+[12:56:01] *** Quits: ubq323 (~ubq323@130.88.226.27) (Changing host)
+[12:56:01] *** Joins: ubq323 (~ubq323@user/ubq323)
+[12:59:59] *** Joins: synthmeat (~synthmeat@user/synthmeat)
+[13:06:35] *** Quits: ubq323 (~ubq323@user/ubq323) (Ping timeout: 252 seconds)
+[13:07:33] *** Quits: vnogueira (~vnogueira@user/vnogueira) (Remote host closed the connection)
+[13:07:50] *** Joins: vnogueira (~vnogueira@user/vnogueira)
+[13:25:00] *** Joins: barpthewire_ (~barpthewi@aftr-62-216-206-217.dynamic.mnet-online.de)
+[13:28:02] *** Quits: barpthewire (~barpthewi@aftr-62-216-209-179.dynamic.mnet-online.de) (Ping timeout: 252 seconds)
+[14:09:47] *** Quits: svm_invictvs (~svm_invic@user/svm-invictvs/x-6696469) (Remote host closed the connection)
+[14:26:40] *** Joins: stefanos82 (~stefanos8@62-42-212.netrun.cytanet.com.cy)
+[14:28:45] *** Joins: lompik (~lompik@user/lompik)
+[14:29:54] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 256 seconds)
+[14:36:53] *** Parts: stefanos82 (~stefanos8@62-42-212.netrun.cytanet.com.cy) (Leaving)
+[15:19:16] *** Joins: walterwhip (~www@user/walterwhip)
+[15:24:21] *** Joins: rgrinberg (~textual@2806:101e:7:6bed:7c68:228:b173:b6f7)
+[15:39:38] *** Joins: ubq323 (~ubq323@m-a07dtjhflz4j.it.manchester.ac.uk)
+[15:39:38] *** Quits: ubq323 (~ubq323@m-a07dtjhflz4j.it.manchester.ac.uk) (Changing host)
+[15:39:38] *** Joins: ubq323 (~ubq323@user/ubq323)
+[15:39:44] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[15:45:50] *** Quits: roadt_ (~roadt@36.7.92.131) (Remote host closed the connection)
+[16:07:39] *** Joins: ratchet_freak (~ratchetfr@d8d8779d9.access.telenet.be)
+[16:10:12] *** Quits: ratchetfreak (~ratchetfr@d8D8779D9.access.telenet.be) (Ping timeout: 256 seconds)
+[16:26:13] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 240 seconds)
+[16:28:58] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[16:30:06] *** Quits: walterwhip (~www@user/walterwhip) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[16:55:46] *** Quits: rgrinberg (~textual@2806:101e:7:6bed:7c68:228:b173:b6f7) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[17:47:48] *** Joins: gr33n7007h (~gr33n7007@user/gr33n7007h)
+[18:04:06] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 256 seconds)
+[18:36:00] *** Joins: Vornicus (~Vornicus@2603-8000-5d07-7ef0-90c0-942b-858d-62ce.res6.spectrum.com)
+[19:56:01] *** Joins: Darkcoal (~user@167.86.148.150)
+[19:57:18] *** Joins: Rue_ (~rue@61-231-137-75.dynamic-ip.hinet.net)
+[20:10:02] <glguy> Do table.pack(...) and {...} behave the same?
+[20:13:54] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[20:17:11] *** Quits: fcr (~fran@r167-60-29-223.dialup.adsl.anteldata.net.uy) (Ping timeout: 268 seconds)
+[20:17:57] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 240 seconds)
+[20:18:04] *** Joins: taupiqueur_ (~taupiqueu@202.144.204.77.rev.sfr.net)
+[20:21:57] *** Joins: rgrinberg (~textual@2806:101e:7:6bed:7c68:228:b173:b6f7)
+[20:22:16] *** Joins: fcr (~fran@r186-48-17-9.dialup.adsl.anteldata.net.uy)
+[20:24:06] *** Joins: Elw3 (~Elw3@dynamic-002-247-241-021.2.247.pool.telefonica.de)
+[20:27:01] *** Quits: taupiqueur_ (~taupiqueu@202.144.204.77.rev.sfr.net) (Ping timeout: 240 seconds)
+[20:31:51] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[20:34:11] *** Joins: sudoforge (~sudoforge@wireguard/tunneler/sudoforge)
+[20:36:50] <technomancy> glguy: table.pack will set the n field on the table whereas the second one won't
+[20:37:55] <nmz> the n field?
+[20:38:14] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 256 seconds)
+[20:38:21] <glguy> technomancy: oh, neat. thanks
+[20:38:27] <glguy> nmz: table.pack('a','b','c').n
+[20:38:27] <glguy> 3
+[20:38:55] <nmz> is that a length key?
+[20:39:20] <technomancy> not exactly; it's select("#", ...) which could be different from the length operator
+[20:39:44] <technomancy> I mean if it's a table with gaps, it could be different; otherwise it's the same
+[20:43:02] *** Joins: magla (~gelignite@55d49292.access.ecotel.net)
+[20:45:20] *** Joins: skapata (~Skapata@2804:14c:87b0:9d2e:b45b:c4a9:477:d786)
+[20:45:20] *** Quits: skapata (~Skapata@2804:14c:87b0:9d2e:b45b:c4a9:477:d786) (Changing host)
+[20:45:20] *** Joins: skapata (~Skapata@user/skapata)
+[20:49:41] *** Quits: Darkcoal (~user@167.86.148.150) (Ping timeout: 252 seconds)
+[20:58:11] *** Joins: svm_invictvs (~svm_invic@user/svm-invictvs/x-6696469)
+[20:58:33] *** Joins: svm_invictvs_ (~svm_invic@user/svm-invictvs/x-6696469)
+[21:10:35] *** Quits: Sauvin (~sauvin@about/linux/staff/sauvin) (Remote host closed the connection)
+[21:12:08] *** Joins: Tricycle (~CGI273@lfbn-idf1-1-1376-196.w90-79.abo.wanadoo.fr)
+[21:25:08] *** Joins: ratchetfreak_ (~ratchetfr@ptr-82rtos32vmsq0gce3q3.18120a2.ip6.access.telenet.be)
+[21:36:32] *** Quits: Psyraven_ (~Psyraven@p79032f3f.tokynt01.ap.so-net.ne.jp) (Ping timeout: 240 seconds)
+[21:46:26] *** Joins: Erutuon (~Erutuon@user/erutuon)
+[22:09:07] *** Quits: svm_invictvs_ (~svm_invic@user/svm-invictvs/x-6696469) (Quit: Leaving)
+[22:11:50] *** Quits: Rue_ (~rue@61-231-137-75.dynamic-ip.hinet.net) (Quit: WeeChat 3.4)
+[22:18:24] *** Quits: tertu (~tertu@user/tertu) (Read error: Connection reset by peer)
+[22:19:32] *** Quits: gr33n7007h (~gr33n7007@user/gr33n7007h) (Quit: WeeChat 3.4)
+[22:22:57] *** Joins: tertu (~tertu@user/tertu)
+[22:23:40] *** Joins: furq_ (~furq@b23.be)
+[22:24:07] *** Joins: phryk_ (~totallyno@user/phryk)
+[22:25:08] *** Joins: cryocaustik73 (~cryocaust@user/cryocaustik)
+[22:25:14] *** Quits: phryk (~totallyno@user/phryk) (Read error: Connection reset by peer)
+[22:25:14] *** Quits: furq (~furq@b23.be) (Read error: Connection reset by peer)
+[22:25:14] *** Quits: Chipster (~Chipster@97.104.121.78.rev.sfr.net) (Ping timeout: 256 seconds)
+[22:25:14] *** Quits: fingercomp (fingercomp@fomalhaut.me) (Ping timeout: 256 seconds)
+[22:25:14] *** Quits: cryocaustik7 (~cryocaust@user/cryocaustik) (Read error: Connection reset by peer)
+[22:25:14] *** cryocaustik73 is now known as cryocaustik7
+[22:25:41] *** Quits: Ekho (~Ekho@user/ekho) (Ping timeout: 256 seconds)
+[22:25:41] *** Quits: andreypopp (~andreypop@94.188.42.16) (Ping timeout: 256 seconds)
+[22:25:41] *** Quits: feoh (~feoh@idlerpg/player/feoh) (Ping timeout: 256 seconds)
+[22:25:54] *** Joins: andreypopp (~andreypop@94.188.42.16)
+[22:26:12] *** Joins: feoh (~feoh@idlerpg/player/feoh)
+[22:26:46] *** Joins: Chipster (~Chipster@97.104.121.78.rev.sfr.net)
+[22:29:29] *** Joins: fingercomp (fingercomp@fomalhaut.me)
+[22:30:47] *** Quits: Inoperable (~PLAYER_1@fancydata.science) (Ping timeout: 256 seconds)
+[22:32:08] *** Joins: Ekho (~Ekho@user/ekho)
+[22:32:18] *** Joins: Inoperable (~PLAYER_1@fancydata.science)
+[22:35:19] *** Quits: ZeroKnight (zeroknight@dimensionzero.net) (Ping timeout: 256 seconds)
+[22:35:34] *** Joins: ZeroKnight (zeroknight@dimensionzero.net)
+[22:43:32] *** Quits: Erutuon (~Erutuon@user/erutuon) (Ping timeout: 240 seconds)
+[22:51:32] *** Quits: lompik (~lompik@user/lompik) (Quit: WeeChat 3.4)
+[23:11:15] *** Joins: Erutuon (~Erutuon@user/erutuon)
+[23:33:15] *** Quits: rgrinberg (~textual@2806:101e:7:6bed:7c68:228:b173:b6f7) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[23:39:58] *** Joins: Moosadee (~Moosadee@136.32.155.193)
+[23:54:18] *** Quits: ubq323 (~ubq323@user/ubq323) (Ping timeout: 256 seconds)
+[23:57:42] *** Quits: Moosadee (~Moosadee@136.32.155.193) (Ping timeout: 256 seconds)

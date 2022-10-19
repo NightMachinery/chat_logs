@@ -1,0 +1,67 @@
+[09:53:04] *** Quits: azimut (~azimut@gateway/tor-sasl/azimut) (Remote host closed the connection)
+[09:53:30] *** Joins: azimut (~azimut@gateway/tor-sasl/azimut)
+[11:43:03] *** Joins: kuribas (~user@ptr-25vy0iagvdrvz4nz7gs.18120a2.ip6.access.telenet.be)
+[14:32:08] *** Quits: azimut (~azimut@gateway/tor-sasl/azimut) (Remote host closed the connection)
+[14:32:36] *** Joins: azimut (~azimut@gateway/tor-sasl/azimut)
+[19:57:23] <MatthiasVance> biberu: So when working with collections I'm assuming I have to use Seq until I want a result probably?
+[19:57:33] <MatthiasVance> So something |> Seq.a |> Seq.b |> List.ofSeq
+[19:57:49] <MatthiasVance> Well of course the List.ofSeq might not be needed
+[20:01:27] <biberu> MatthiasVance: since it's an enumerable the same traps apply, you might need to materialize it at intermediate steps if you need to enumerate it multiple times or use a more efficient structure, before leaving the scope of a use/using etc
+[20:02:25] <MatthiasVance> Sure
+[20:02:35] <MatthiasVance> But in general until you need the result you'd have to use Seq
+[20:02:38] <MatthiasVance> I need to be more careful with that
+[20:04:09] <biberu> sure, there's no point in extracting the value before you need to (the evaluation itself shouldn't have side effects ofc)
+[20:04:25] <MatthiasVance> No but usually I would use List.something when working with a List
+[20:04:29] <MatthiasVance> Even though that wasn't needed
+[20:04:32] <MatthiasVance> Rookie mistake :D
+[20:04:42] <MatthiasVance> So it is materializing it after every step
+[20:05:59] <ggb> Is there any functionality or library that implements something like Clojure's transducers?
+[20:08:40] <ggb> In short, transducers introduce a decoupling of collection transformation and collection traversal/building.
+[20:14:49] <biberu> ggb: not familiar with those, do you have a small example?
+[20:30:36] <ggb> https://www.youtube.com/watch?v=6mTbuzafcII This is a pretty good overview.
+[20:35:59] <ggb> Instead of `map f coll` iterating over collection (and materializing a new intermediate collection), it returns a thing that knows how to apply f to each element of collection.
+[20:36:53] <ggb> You can compose many transducers together and then apply to arbitrary collections and other things that can be treated as collections, e.g., queues and channels.
+[20:44:05] <biberu> ggb: f#'s seq is lazily evaluated, and you could write a function that takes a seq as input, does what you want to it, and returns a new seq out
+[20:44:21] <biberu> e.g. let f(vs: int seq): int seq = vs |> Seq.map (add 2) |> Seq.filter isOdd
+[20:44:59] <biberu> ggb: then e.g. some_stream |> f |> f2 |> ... |> Seq.toList
+[20:46:29] <ggb> Ah yeah, I guess currying on a pipeline of seqs does a lot of the same.
+[20:46:42] <ggb> Although each sequence requires a separate allocation per step, no?
+[20:47:29] <ggb> Because each one needs to know its state, i.e., what to evaluate to get the tail of the sequence.
+[20:48:49] <ggb> A closer analogue would be to compose all the various functions and then use a single Seq.<something> that can apply that single big step function.
+[21:02:58] <biberu> ggb: let big = f >> f2 // some_stream |> big |> Seq.toList
+[21:03:14] <biberu> https://docs.microsoft.com/en-us/dotnet/fsharp/language-reference/functions/#function-composition
+[21:04:16] <ggb> Right, that's what I'm thinking. Can a single sequence iterating function take a `big` that combines mapping, filtering, and mapcatting?
+[21:08:01] <biberu> in this case big would be a function seq -> seq, it could do whatever, you'd just call it with your sequence as input
+[21:13:29] <ggb> `big` should be 'a -> 'b in this instance. And then there's a question on how to iterate a seq with such a `big` as the step function.
+[21:14:54] <ggb> And then the question is, can we combine the three big categories of iteration into a single `big`. Those three categories are essentially map, filter, and collect.
+[21:16:14] <ggb> Map is 1:1. Seq length is unchanged. Filter is conditional - sometimes keep the thing and sometimes not. Collect is 1:n a single 'a becomes a collection of 'bs.
+[21:18:47] <biberu> yes we can
+[21:19:49] <biberu> ggb: https://gist.github.com/biberu/73cf9988dd7fd0b02aab8235eb55332e
+[21:20:01] <biberu> ggb: paste it here and hit run: https://fable.io/repl/
+[21:21:10] <biberu> sorry if my replies are short, running around a bit here :)
+[21:21:23] <ggb> No worries. That's slightly different than what I'm asking, though.
+[21:21:57] <ggb> f and g are each consuming and producing a sequence.
+[21:24:34] <ggb> I'd want to do something like `let f = newMap add1; let g = newCollect (fun x -> if (isOdd x) then x else [x; x]); Seq.newIter (f >> g) someSeq`
+[21:25:11] <ggb> Specifically where newMap and newCollect do not create an intermediate sequence, but instead compose together such that we touch each element of someSeq once, without any intermediate sequence.
+[21:26:21] <ggb> So, Seq.newIter would need to be able to handle a function that can do any of map, filter, and collect.
+[21:27:16] <biberu> ggb: hm, "creating an intermediate sequence" in these examples won't evaluate the input though
+[21:28:07] <biberu> ggb: if you run the example you'll see what happens when in the log output
+[21:30:33] <ggb> Right, I get that sequences are lazy. But a sequence is still a thing that has a head and a tail. And each step through a sequence needs to do some bookkeeping for the tail. At the very least, tail is a recipe for creating the rest of the sequence.
+[21:31:06] <biberu> it doesn't need a tail, sequences can be infinite
+[21:32:10] <ggb> https://paste.sr.ht/~greggyb/1d0f49567eaeb3cba868176bb2ce76a9cd969126
+[21:32:32] <ggb> An infinite sequence's tail is the function that creates the next item and the recipe for the remainder.
+[21:32:54] <ggb> There are multiple sequences in the paste you shared. I've modified the printing in the above.
+[21:34:14] <ggb> We have two functions: f: int seq -> (int -> int -> int) -> int seq AND g: int seq -> (int -> int -> int) -> int seq
+[21:34:37] <ggb> f consumes and produces a seq. g consumes and produces a seq.
+[21:35:42] <ggb> Each sequence is lazy, but laziness is not free. There are allocations at each step through a lazy sequence.
+[21:36:25] <ggb> If I have a whole lot of mapping things, I can handle those in a single `Seq.map (f1 >> f2 >> f3) coll`.
+[21:36:59] <ggb> If I have a whole lot of filtering things, I can do similarly. Collecting is a bit funkier, because, by definition, there are multiple new elements per input element.
+[21:37:41] <ggb> But there doesn't seem to be any way to combine e.g., mapping and filtering without a sequence sitting between them.
+[21:50:48] <biberu> ggb: i'm probably missing your actual point here, still busy, but you can both map and filter in the same step with Seq.choose
+[22:01:54] <ggb> I mean, sure. We can coerce booleans into options and use choose for mapping and filtering. That's a single very specific function, choose, that implements part of the question I'm asking.
+[22:03:05] <ggb> What I'm asking about is composing many steps together and then bringing those steps (which have no intermediate collections (and sequences *are* collections)) to a collection.
+[22:03:54] <ggb> I can't do a better job at explaining the idea than the Rich Hickey talk I linked above.
+[22:07:28] <biberu> i guess I'll have to try to watch that :)
+[22:08:39] <ggb> I think this is the briefest way to phrase it: Can we compose mapping, filtering, and collecting *operations* that operate stepwise without the idea of a collection in those operations.
+[22:09:47] <ggb> Map says "do f to every thing". Map as Seq.map says "do f to every thing in a seq *and also dump it into a sequence*"
+[22:10:45] <ggb> Transducers take the step function apart from the collection building/processing.

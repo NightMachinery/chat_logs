@@ -1,0 +1,532 @@
+[00:04:53] *** Joins: ovnicraft (~ovnicraft@191.100.144.41)
+[00:09:10] *** easter_egg is now known as ayr-ton
+[00:20:07] <LordKalma> LuxuryMode, it probably needs soem stuff to handle you have a FK to it
+[00:20:13] <LordKalma> namely add the cascade the operation
+[00:20:38] <LordKalma> on_delete=SET_NULL or someething, makes so that the target of the FK actually needs to do something extra when it's deleted
+[00:20:45] <LordKalma> so yes, I'd say it's normal and required
+[00:20:55] <LordKalma> now, my turn
+[00:21:07] *** Quits: ovnicraft (~ovnicraft@191.100.144.41) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[00:21:18] <LordKalma> do you know if it's possible to give custom filters to wagtail's API?
+[00:22:04] *** Joins: ovnicraft (~ovnicraft@191.100.144.41)
+[00:29:50] *** Quits: Haudegen (~quassel@178.115.237.87.static.drei.at) (Quit: Bin weg.)
+[00:32:13] *** Quits: ovnicraft (~ovnicraft@191.100.144.41) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[00:46:08] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 268 seconds)
+[00:47:57] *** Joins: fikran (~fikran@user/fikran)
+[01:28:01] <LordKalma> I found a situation where django-admin is more ergonomic than wagtail: https://i.gyazo.com/6456e5561186fa89d6e7812b99754e13.png
+[01:37:43] *** Joins: dre (~dre@2001:8003:c932:c301:48f3:b0e:431e:dad8)
+[01:38:38] <dre> hey guys
+[01:39:41] <dre> if I have an existing model that has a lot of data in the database, and I want to add some fields, I've got to make it nullable, so that the database doesn't just populate all of the fields at migration time, right?
+[01:40:15] <FunkyBob> not sure that's  the reason, but yes
+[01:40:27] *** Joins: schinckel (uid38120@id-38120.ilkley.irccloud.com)
+[01:40:31] <FunkyBob> usually you have to make it nullable because django doesn't support DB-side field defaults
+[01:40:42] <FunkyBob> [because _certain_ engines don't support INSERT ... RETURNING ]
+[01:40:59] <nbjoerg> it depends on the database
+[01:41:03] <dre> my issue is, if i want to replicate the "auto_now" functions; would this be the right way about it? ( primarily "does line 10 make sense") https://dpaste.org/EYWZ
+[01:41:13] <nbjoerg> e.g. newer versions of postgres allow you to add a fixed default value without rewriting the table
+[01:41:28] <dre> oh yes, I did hear about that actually
+[01:41:35] <FunkyBob> nbjoerg: yes, but django still doesn't support schema level field defaults.
+[01:41:44] <FunkyBob> (though, yes, that is a nice feature of PG)
+[01:42:03] <FunkyBob> dre: the usual process for adding a non-nullable field is what I call the 3-step
+[01:42:06] <FunkyBob> 1. add new field, nullable
+[01:42:16] <FunkyBob> 2. add a data migration to set the field in all existing records
+[01:42:21] <dre> so if i set any `default=xyz` in the field, it will populate the entire table, right?
+[01:42:21] <FunkyBob> 3. make field not nullable
+[01:42:21] *** Quits: Kalov (~Thunderbi@181.226.96.240) (Quit: Kalov)
+[01:42:28] <dre> FunkyBob, ye, but i don't want step 2.
+[01:43:01] <dre> I basically just want to add the created/updated timestamps on all new models, but I can't use the `auto_now` params, because I believe they will update the entire table at migration
+[01:43:04] <FunkyBob> the paste you've given shows the field is nullable... so no problem.
+[01:43:08] <dre> sorry, on all new instances.
+[01:43:21] <FunkyBob> I don't believe that will change the existing data
+[01:43:26] <FunkyBob> what happened when you tried on a test DB?
+[01:43:42] <FunkyBob> auto_now only updates on save...
+[01:43:47] <dre> ye ok, cheers. mypy is complaining that "line 11 is never accessable' but that's just because it doesn't know of the .id
+[01:43:55] <FunkyBob> and logically has no reason to update existing records
+[01:45:26] <dre> what about auto_now_add ?
+[01:45:42] <FunkyBob> what has happened that makes you think it will alter existing records on a migration?
+[01:46:03] <FunkyBob> again I ask: what happened when you TRIED IT?
+[01:46:26] <dre> there's a custom lint warning that someone wrote to flag out this issue
+[01:46:40] <dre> I'm sorry lol; not my code; not my rules
+[01:46:46] <FunkyBob> what lint warning?
+[01:47:06] <dre> I'll try and find it
+[01:48:21] <dre> "It's dangerous to add datetime fields with auto_now=True (even if they are nullable) as Django will write a default value of the current time to every row. On large tables, this will take a long time."
+[01:49:17] <FunkyBob> looking at the code
+[01:49:36] <dre> link?
+[01:49:42] <FunkyBob> the migrations machinery has a prompt for auto_add_now
+[01:50:25] <FunkyBob> however, it doesn't appear to apply if the field is nullable
+[01:51:19] <FunkyBob> https://github.com/django/django/blob/main/django/db/migrations/autodetector.py#L890-L900
+[01:51:32] <dre> is there a problem with my 5-line save function tho? I mean it keeps everything happy in that regard, without having to dig into the internals of django to figure it out
+[01:52:41] <FunkyBob> https://github.com/django/django/blob/main/django/db/models/fields/__init__.py#L1275
+[01:52:58] <FunkyBob> you're basically doing what they do
+[01:53:14] <FunkyBob> https://github.com/django/django/blob/main/django/db/models/fields/__init__.py#L1396
+[01:53:47] <duoi> dre the only thing to keep in mind is that save is never called on bulk saves or updates
+[01:53:59] <duoi> and neither of them emit pre or post save signals
+[01:54:07] <dre> yeah I know that
+[01:54:09] <FunkyBob> IMHO the linting rule is mistaken, or at least naive
+[01:54:22] <FunkyBob> I don't believe a NULLable field will do what they think
+[01:54:38] <dre> I don't think that's going to be an issue though
+[01:54:56] <duoi> just add a flag to ignore the line imo
+[01:54:59] <dre> FunkyBob, yeah the nullable bit to me seemed a bit odd
+[01:55:02] <duoi> some linting setups are insane
+[02:04:29] *** Joins: djapo (~archangel@user/djapo)
+[02:12:20] *** Quits: LuxuryMode (uid91005@id-91005.ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[02:17:46] *** Joins: explore (uid233125@id-233125.hampstead.irccloud.com)
+[02:33:31] *** Joins: PantelicGR (~PantelicG@user/pantelicgr)
+[02:55:23] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 252 seconds)
+[02:57:19] *** Joins: fikran (~fikran@user/fikran)
+[03:08:59] *** Joins: dkliban_ (~dkliban@99-3-68-61.lightspeed.rlghnc.sbcglobal.net)
+[03:11:40] *** Quits: dkliban (~dkliban@99-3-68-61.lightspeed.rlghnc.sbcglobal.net) (Ping timeout: 268 seconds)
+[03:13:37] *** Quits: djapo (~archangel@user/djapo) (Ping timeout: 240 seconds)
+[03:23:50] *** Quits: dkliban_ (~dkliban@99-3-68-61.lightspeed.rlghnc.sbcglobal.net) (Remote host closed the connection)
+[03:23:54] *** Joins: ovnicraft (~ovnicraft@ftth-179-49-44-28.cue.celerity.ec)
+[03:24:08] *** Joins: dkliban_ (~dkliban@99-3-68-61.lightspeed.rlghnc.sbcglobal.net)
+[03:33:56] *** Quits: zuQe8 (~zuQe8@cpc105060-sgyl40-2-0-cust136.18-2.cable.virginm.net) (Quit: Bye)
+[03:34:46] *** Joins: zuQe8 (~zuQe8@cpc105060-sgyl40-2-0-cust136.18-2.cable.virginm.net)
+[03:36:44] *** Quits: dkliban_ (~dkliban@99-3-68-61.lightspeed.rlghnc.sbcglobal.net) (Ping timeout: 256 seconds)
+[03:46:50] *** Joins: bambanxx (~bambanx@181-163-42-70.baf.movistar.cl)
+[03:48:02] *** Quits: slav0nic (slav0nic@python.su) (Ping timeout: 240 seconds)
+[04:02:35] *** Quits: vladoski (~foo@2001:b07:add:d406:a504:5602:dd1:c761) (Quit: Textual IRC Client: www.textualapp.com)
+[04:11:47] *** Quits: DanDare (~DanDare@user/dandare) (Quit: Quit)
+[04:14:19] *** Quits: ovnicraft (~ovnicraft@ftth-179-49-44-28.cue.celerity.ec) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[04:19:48] *** Joins: pembo13 (~pembo13@47.196.95.206)
+[04:28:40] *** Quits: Throgkt (~Throgkt@user/throgkt) (Quit:  )
+[04:48:09] *** Joins: ovnicraft (~ovnicraft@ftth-179-49-44-28.cue.celerity.ec)
+[04:52:09] *** Joins: DanDare (~DanDare@user/dandare)
+[04:54:30] *** Quits: ovnicraft (~ovnicraft@ftth-179-49-44-28.cue.celerity.ec) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[04:56:33] *** Quits: Xof (~Xof@157-131-136-66.dedicated.static.sonic.net) (Quit: Bye.)
+[05:04:37] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 240 seconds)
+[05:06:39] *** Joins: fikran (~fikran@user/fikran)
+[05:07:49] *** Quits: dre (~dre@2001:8003:c932:c301:48f3:b0e:431e:dad8) (Ping timeout: 240 seconds)
+[05:09:19] *** Quits: henbruas (~henbruas@ti0003a400-4203.bb.online.no) (Quit: ZNC 1.8.2 - https://znc.in)
+[05:09:38] *** Joins: henbruas (~henbruas@ti0003a400-4203.bb.online.no)
+[05:54:47] *** Joins: dre (~dre@2001:8004:44f0:c7c7:adf0:5cb6:eb4d:dd60)
+[06:01:06] *** Quits: masta`` (~oyster@user/masta/x-2645138) (Quit: Going offline, see ya! (www.adiirc.com))
+[06:05:22] *** Quits: dre (~dre@2001:8004:44f0:c7c7:adf0:5cb6:eb4d:dd60) (Quit: Leaving)
+[06:12:40] *** Joins: hackedhead_ (~hackedhea@li69-210.members.linode.com)
+[06:13:48] <hackedhead_> what would be the downsides to just using "get_random_secret_key" as default setting (not the fallback) for SECRET_KEY in the settings module?
+[06:13:54] *** hackedhead_ is now known as hackedhead
+[06:14:31] <pembo13> hackedhead, anything that relies on that would not survive application restarts
+[06:15:15] <hackedhead> right. that seems fairly minimal? many things already don't survive restarts for a whole host of reasons...
+[06:15:39] <GinFuyou> wouldn't it be even worse - if you use workers won't they have different keys?
+[06:15:57] <pembo13> GinFuyou, good point
+[06:16:05] <hackedhead> does that matter?
+[06:16:52] <GinFuyou> does it matter if you randomly logged out between requests, because your session is no more valid for random worker?
+[06:16:54] <pembo13> hackedhead, most likely... you'd need to do your research to see what uses it
+[06:17:00] <hackedhead> hmm... because if two requests from a single session get routed to different workers... one of them will effectively rejcet the user as logged in
+[06:17:09] <FunkyBob> hackedhead: sessions wouldn't work between service instances
+[06:17:14] <hackedhead> right. okay.
+[06:17:23] <FunkyBob> that is, if you run multiple server workers concurently ... splat
+[06:17:31] <hackedhead> maybe splat.
+[06:17:35] <hackedhead> but point taken
+[06:17:47] <GinFuyou> restarting workers in process is also a common thing
+[06:17:57] <hackedhead> right, worker pool things.
+[06:18:11] <hackedhead> okay, I'm convinced, fallback not default. tanks.
+[06:18:14] <GinFuyou> for one constant process wouldn't be a big problem probably
+[06:18:50] <pembo13> hackedhead, why were you even considering this?
+[06:19:07] <hackedhead> pembo13: heroku.  -.-
+[06:19:39] <pembo13> hackedhead, don't they support ENV variables?
+[06:19:52] <hackedhead> specifically, because collectstatic needs the settings module to be extant, but ENV vars are not provided to build dynos
+[06:20:04] *** Quits: bambanxx (~bambanx@181-163-42-70.baf.movistar.cl) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[06:20:15] <hackedhead> for doing release-phase things (like collectstatic or migrations)
+[06:20:28] <pembo13> hackedhead, ok
+[06:20:36] <hackedhead> so, the upshot is that if the ENV var is not present, we'll generate a key on demand
+[06:20:49] <hackedhead> and that'll be enough, because it's just the release-pjase worker
+[06:21:25] <hackedhead> but, as I learned here: the real prod workers should share a real key from the ENV for session reasons
+[06:25:57] <GinFuyou> Sounds right
+[06:26:18] <FunkyBob> as is so often the case -- it doesn't matter, until it does :P
+[06:47:07] *** Quits: dez (uid92154@user/dez) (Quit: Connection closed for inactivity)
+[07:12:33] *** Quits: henbruas (~henbruas@ti0003a400-4203.bb.online.no) (Quit: ZNC 1.8.2 - https://znc.in)
+[07:12:53] *** Joins: henbruas (~henbruas@ti0003a400-4203.bb.online.no)
+[07:14:20] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 256 seconds)
+[07:14:21] *** Joins: LuxuryMode (uid91005@id-91005.ilkley.irccloud.com)
+[07:14:29] <LuxuryMode> Where within the project directory structure/layout would it make sense to store something like a pem file? And what is the correct way to then access the file from within my project code?
+[07:15:59] *** Joins: fikran (~fikran@user/fikran)
+[07:18:59] *** Joins: rpkilby_ (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[07:19:16] <pembo13> LuxuryMode, what are you using the PEM file for?
+[07:20:52] <LuxuryMode> pembo13: ultimately, something like `client = APNsClient(PATH_TO_APPLE_PEM_CERT_HERE,...))`
+[07:21:11] <pembo13> LuxuryMode, well that answers your second question
+[07:21:35] <pembo13> LuxuryMode, with regards to the first part, depends on if you're okay with having it within your project directory
+[07:21:37] *** Quits: rpkilby (~rpkilby@ec2-34-252-84-235.eu-west-1.compute.amazonaws.com) (Ping timeout: 240 seconds)
+[07:21:46] <LuxuryMode> haha not fully because I'm not sure the correct way to construct the path to the file within the project
+[07:21:57] <LuxuryMode> pembo13: I am ok with it, at least for now
+[07:22:16] <pembo13> LuxuryMode, assuming you pure it in a sub-directory called "data"
+[07:22:33] <pembo13> `os.path.join(settings.BASE_DIR, 'data', pem_file_name)
+[07:22:36] <pembo13> `os.path.join(settings.BASE_DIR, 'data', pem_file_name)`
+[07:23:17] <GinFuyou> in recent django versions BASE_DIR is pathlib path
+[07:23:22] <LuxuryMode> ah right, thanks a lot
+[07:23:31] <LuxuryMode> I do have `BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))` in my settings
+[07:23:32] <pembo13> GinFuyou, true... so
+[07:23:37] <GinFuyou> So BASE_DIR / 'data' / filename
+[07:23:42] <pembo13> `settings.BASE_DIR / 'data' / pem_file_name`
+[07:24:01] <pembo13> GinFuyou, sorry, I phrased that so incorrectly
+[07:24:02] <LuxuryMode> oh that's awesome
+[07:24:50] <LuxuryMode> So `settings.BASE_DIR / 'data' / pem_file_name` is my best bet?
+[07:25:20] <pembo13> LuxuryMode, assuming you're on a recent version on Django, and you place file in a sub directory called "data"
+[07:26:08] <LuxuryMode> is 3.1.7 recent enough?
+[07:26:19] <LuxuryMode> (don't ask why we're on that ugh)
+[07:26:30] <pembo13> maybe GinFuyou remembers when that was introduced
+[07:26:38] <pembo13> but looking at your settings.py should make it obvious
+[07:26:59] <GinFuyou> not really, but probably around that
+[07:28:12] <LuxuryMode> Looks like it was introduced in 3.1 https://github.com/django/django/commit/26554cf5d1e96db10d0d5f4b69683a22fb82fdf8
+[07:28:31] <LuxuryMode> If I'm reading that correctly.
+[07:28:32] <GinFuyou> Yes, 3.1 it was.
+[07:28:32] <pembo13> LuxuryMode, you really want to check your settings.py
+[07:28:52] <pembo13> since your version of settings.py may not have been updated to use all the latest features
+[07:28:58] <LuxuryMode> Not sure settings would be dispositive because this project may have been bootstrapped with a prior version
+[07:29:43] <LuxuryMode> What would I be looking for?
+[07:29:53] <LuxuryMode> I can tell you that I see no use of that syntax in my settings file
+[07:30:08] <LuxuryMode> It has, for example: `BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))`
+[07:30:14] <LuxuryMode> followed by `MEDIA_ROOT = os.path.join(BASE_DIR, "media")`
+[07:30:26] <pembo13> LuxuryMode, so that's the old(er) format
+[07:30:42] <LuxuryMode> Right, but does that necessarily mean the new format is unsupported?
+[07:30:54] <pembo13> you'd need to use os.path.join or convert to Path
+[07:31:17] <pembo13> LuxuryMode, well Django supports it, but it's not magic, it needs to be a `Path` in your settings.py explictly
+[07:31:27] <pembo13> explicitly*
+[07:31:28] <LuxuryMode> I see, so in my code convert the BASE_DIR to Path and then use the new syntax to get to the `data` dir?
+[07:31:40] <pembo13> LuxuryMode, that part's your call
+[07:31:43] <LuxuryMode> I could leave as in in settings and just use that syntax where I need it
+[07:31:44] <LuxuryMode> Right
+[07:31:57] <LuxuryMode> Thanks so much guys, really appreciate the help.
+[07:32:23] <LuxuryMode> Oh, I should ask. Is converting to Path trivial? Something like just wrapping in `Path(..)`?
+[07:34:29] <pembo13> LuxuryMode, might be a good idea to read the docs
+[07:36:18] <LuxuryMode> Will do, thanks
+[07:45:05] *** Joins: audiobirb (~audio@user/audio)
+[07:51:17] *** Quits: audiobirb (~audio@user/audio) (Ping timeout: 240 seconds)
+[08:07:28] *** Joins: x88x88x (~x88x88x@2001:19f0:5:39a8:5400:3ff:feb6:73cb)
+[08:13:32] *** Quits: sreve (~quassel@p4ff44d92.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[08:14:10] *** Joins: sreve (~quassel@p4ff44b9b.dip0.t-ipconnect.de)
+[08:35:16] *** Quits: pembo13 (~pembo13@47.196.95.206) (Quit: Leaving)
+[08:37:10] *** Quits: rpkilby_ (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Remote host closed the connection)
+[08:37:57] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[08:42:44] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Ping timeout: 256 seconds)
+[08:44:45] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[08:47:48] *** Joins: AugustusCaesar24 (~AugustusC@cpe-104-35-140-216.socal.res.rr.com)
+[08:55:32] *** Quits: x_kuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[09:00:31] *** Joins: djapo (~archangel@user/djapo)
+[09:15:13] *** Quits: henbruas (~henbruas@ti0003a400-4203.bb.online.no) (Quit: ZNC 1.8.2 - https://znc.in)
+[09:15:31] *** Joins: henbruas (~henbruas@ti0003a400-4203.bb.online.no)
+[09:22:57] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 240 seconds)
+[09:23:52] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Remote host closed the connection)
+[09:25:01] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[09:25:20] *** Joins: fikran (~fikran@user/fikran)
+[09:28:52] *** Quits: Xaldafax (~xaldafax@cpe-198-72-160-101.socal.res.rr.com) (Quit: Bye...)
+[09:34:01] *** Joins: pmb (~pmb@89-64-79-51.dynamic.chello.pl)
+[09:34:31] *** Joins: andyandyandy (~andyandya@c-73-240-237-212.hsd1.or.comcast.net)
+[09:37:01] *** Quits: beastDivision (~beastDivi@user/beastdivision) (Remote host closed the connection)
+[09:37:30] *** Joins: beastDivision (~beastDivi@user/beastdivision)
+[09:37:49] *** Joins: Throgkt (~Throgkt@user/throgkt)
+[09:43:02] *** Quits: andyandyandy (~andyandya@c-73-240-237-212.hsd1.or.comcast.net) (Ping timeout: 240 seconds)
+[09:55:29] *** Quits: django-ticketbot (~django-ti@django/ops/ticketbot) (Remote host closed the connection)
+[09:55:45] *** Joins: django-ticketbot (~django-ti@django/ops/ticketbot)
+[09:57:58] *** Joins: DnzAtWrk (~DnzAtWrk@mobile-access-6df0a8-162.dhcp.inet.fi)
+[10:02:29] *** Joins: warnabas (~warnabas@142.247.177.44)
+[10:11:07] <warnabas> hello, everybody, when I updated from django 3.1.7 to 3.2.10 I have tests fallled with 404 status of response when it uses from django.test.Client, and 302 when it use rest_framework.test.APITestCase client. anyone had this issue?
+[10:12:42] *** Parts: derelict (derelict@user/derelict) (WeeChat 3.3)
+[10:20:06] *** Quits: DnzAtWrk (~DnzAtWrk@mobile-access-6df0a8-162.dhcp.inet.fi) (Quit: Leaving)
+[10:20:22] *** Joins: dor (~erg@78.11.12.207)
+[10:21:14] *** Quits: djapo (~archangel@user/djapo) (Remote host closed the connection)
+[10:24:30] *** Joins: jmd (~user@195.243.197.82)
+[10:25:16] *** Joins: djapo (~archangel@user/djapo)
+[10:26:47] *** Quits: pmb (~pmb@89-64-79-51.dynamic.chello.pl) (Quit: pmb)
+[10:27:05] *** Joins: 040AACZQJ (~pmb@89-64-79-51.dynamic.chello.pl)
+[10:27:06] *** Quits: beastDivision (~beastDivi@user/beastdivision) (Remote host closed the connection)
+[10:27:42] *** Joins: beastDivision (~beastDivi@user/beastdivision)
+[10:29:12] *** Quits: dor (~erg@78.11.12.207) (Remote host closed the connection)
+[10:29:24] *** Joins: dor (~erg@78.11.12.207)
+[10:34:08] *** Quits: LuxuryMode (uid91005@id-91005.ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[10:34:51] *** Quits: GJdan (~quassel@107-190-26-133.cpe.teksavvy.com) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[10:36:00] *** Joins: GJdan (~quassel@107-190-26-133.cpe.teksavvy.com)
+[10:41:25] *** Quits: GJdan (~quassel@107-190-26-133.cpe.teksavvy.com) (Ping timeout: 240 seconds)
+[11:00:07] *** Joins: luigibu (~luigi@80.30.200.2)
+[11:09:22] *** Joins: DnzAtWrk (~DnzAtWrk@mobile-access-6df0a8-162.dhcp.inet.fi)
+[11:09:53] *** Quits: pidroid (~pidroid@user/pidroid) (Read error: Connection reset by peer)
+[11:10:22] *** Joins: pidroid (~pidroid@user/pidroid)
+[11:17:26] *** Quits: jmd (~user@195.243.197.82) (Remote host closed the connection)
+[11:17:57] *** Quits: gopar (~gopar@c-67-164-79-22.hsd1.ca.comcast.net) ()
+[11:18:34] *** Quits: djapo (~archangel@user/djapo) (Ping timeout: 256 seconds)
+[11:25:59] *** Joins: pycode (~pycode3@2001:b07:5d28:551:4fe:ad2a:904f:a38e)
+[11:27:35] *** Quits: explore (uid233125@id-233125.hampstead.irccloud.com) (Quit: Connection closed for inactivity)
+[11:32:44] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 256 seconds)
+[11:34:39] *** Joins: fikran (~fikran@user/fikran)
+[11:34:39] *** Quits: warnabas (~warnabas@142.247.177.44) (Read error: Connection reset by peer)
+[11:59:41] *** Joins: vladoski (~foo@2001:b07:add:d406:75a4:815:4160:aae9)
+[12:02:19] *** Quits: vladoski (~foo@2001:b07:add:d406:75a4:815:4160:aae9) (Client Quit)
+[12:04:40] <LordKalma> moorning
+[12:04:41] <LordKalma> https://github.com/wagtail/wagtail/issues/2695
+[12:04:44] <LordKalma> I was looking at this
+[12:04:54] <LordKalma> In fact, this: https://github.com/wagtail/wagtail/issues/2695#issuecomment-373002412
+[12:05:13] <LordKalma> shouldn't `APIRichTextField(APIField):` inherir from RichTextField?!
+[12:05:27] <LordKalma> And I don't even understand `APIRichTextSerializer(fields.CharField)`
+[12:05:57] *** Joins: pipapipapibo (~w@2601:601:cf7f:e380::877)
+[12:08:19] *** Joins: vladoski (~foo@2001:b07:add:d406:75a4:815:4160:aae9)
+[12:08:56] <pycode> hello everybody, can i not use composite primary key with django 3.2? i do not need the ID column because i already have other two fields in unique constraint (Meta class in the model)
+[12:09:01] <pycode> how can i do?
+[12:10:22] <FunkyBob> pycode: no, django still does not support composite keys
+[12:10:42] <FunkyBob> mark those other fields unique, and continue using the auto-created surrogate key
+[12:10:51] <pycode> FunkyBob, any workaround? as i said i have a unique costraints with both fields
+[12:10:53] <pycode> FunkyBob, ok
+[12:11:15] <pycode> the problem here is that that model has many inserts per days
+[12:11:20] <FunkyBob> there is a trick to having a FKey work on composite fields, iirc
+[12:11:23] <FunkyBob> so?
+[12:11:25] <pycode> so basically i delete and insert so the id will increase very fast
+[12:11:27] <FunkyBob> why iisi that a problem?
+[12:11:54] <pycode> becase everyday i delete / insert around 50M rows
+[12:11:58] <FunkyBob> and?
+[12:12:11] <FunkyBob> you delete the whole table?
+[12:12:15] <pycode> so the table has 50M Rows but i need to delete and insert
+[12:12:18] <pycode> no FunkyBob
+[12:12:34] <pycode> cant truncate and insert
+[12:12:35] <FunkyBob> yes, we get that you need to delete and insert a lot of rows
+[12:12:40] *** Quits: vladoski (~foo@2001:b07:add:d406:75a4:815:4160:aae9) (Client Quit)
+[12:12:44] <FunkyBob> what has that to do with the topic we were discussing?
+[12:12:56] <FunkyBob> state, don't imply
+[12:13:07] <pycode> because in that can i suppose that i need a bigserial instead of "normal" serial
+[12:13:10] *** Joins: vladoski (~foo@2001:b07:add:d406:75a4:815:4160:aae9)
+[12:13:57] <FunkyBob> why?
+[12:14:40] <pycode> FunkyBob, int support 2147483647 as max value if i delete and insert i need to divide by 50M SO 2147483647 / 50000000 = 42 days ... so with 42 days i will reach the max value for Serial
+[12:15:41] <FunkyBob> see? a lot easier to state
+[12:15:52] <FunkyBob> originally I thought you were hintiing at some possible performance iissue
+[12:16:08] <pycode> FunkyBob, is that wrong? so for that reason i replied to you that int cant works good
+[12:16:18] <pycode> FunkyBob,  no no as i said i will never use the ID
+[12:16:33] <pycode> just the unique costr.
+[12:17:22] <pycode> for that reason i asked if i can "remove" the ID
+[12:17:47] <FunkyBob> django will always want one field marked as primary key -- even if it isn't really.
+[12:18:06] *** Quits: DnzAtWrk (~DnzAtWrk@mobile-access-6df0a8-162.dhcp.inet.fi) (Read error: Connection reset by peer)
+[12:18:38] <pycode> ok FunkyBob so the only thing i can do is to create a bigserial instead, can i force it somehow ?
+[12:18:45] <pycode> should i create the id manually
+[12:18:50] <pycode> with that field type
+[12:18:55] <FunkyBob> no
+[12:18:57] <FunkyBob> not the only thing
+[12:19:19] <FunkyBob> you can create the table unmanaged, lie to django about which is the pkey... and never reference that
+[12:22:02] <FunkyBob> also, you probably want to read https://devblog.kogan.com/blog/custom-relationships-in-django
+[12:22:59] <pycode> FunkyBob, yes i thought to create it, but can i create it with a migration? without following the model ? i mean, create the field manually inside a custom migrationto avoi d running CREATE TABLE... In server ?
+[12:23:05] <pycode> ok i read that
+[12:23:57] <FunkyBob> what do you mean "without following the model"?
+[12:24:27] <FunkyBob> you can't avoid running CREATE TABLE... the table must exist
+[12:25:13] <pycode> FunkyBob, no i mean... that i would like to create the table WITH a migration so in server i do python manage.py migrate and that's it... without logging into the sql server and running the create table sql manually..
+[12:25:19] <pycode> i know the table must exists, sure.
+[12:25:27] <pycode> i mean if i set it as unmanaged
+[12:25:37] <pycode> can i create a custom migration to create that table ?
+[12:26:11] <FunkyBob> of course
+[12:26:13] <FunkyBob> RunSQL
+[12:27:55] <pycode> ok perfect i will create it via migration and set the model as unmanaged
+[12:27:57] <pycode> thanks!!
+[12:34:32] <LordKalma> Hey, I found a "bug" in the docs
+[12:34:33] <LordKalma> https://docs.djangoproject.com/en/3.2/ref/contrib/postgres/fields/#arrayfield
+[12:34:38] <LordKalma> If you give the field a default, ensure it’s a callable such as list (for an empty default) or a callable that returns a list (such as a function).
+[12:34:43] <LordKalma> should read
+[12:34:54] <LordKalma> If you give the field a default, ensure it’s **an iterable** such as list (for an empty default) or a callable that returns a list (such as a function).
+[12:43:22] <serafeim> LordKalma: no it's not wrong
+[12:43:36] <serafeim> `list` is a *also* a callable
+[12:44:02] <LordKalma> >>> [1,2,3]()
+[12:44:02] <LordKalma> <stdin>:1: SyntaxWarning: 'list' object is not callable; perhaps you missed a comma?
+[12:44:04] <LordKalma> hahaha
+[12:44:09] <LordKalma> but is it called a callable too?
+[12:44:26] <serafeim> `list` is a callable because `list()`  works.
+[12:44:42] <LordKalma> ahhhhh the list keyword
+[12:44:43] <serafeim> [] is not a callable but an empty list
+[12:44:51] <LordKalma> yes yes, thanks, sorry
+[12:49:28] *** Joins: DnzAtWrk (~DnzAtWrk@mobile-access-6df0a8-162.dhcp.inet.fi)
+[12:59:12] *** Joins: SteveR (~SteveR@103.215.168.1)
+[13:10:52] *** Joins: rusrushal13 (~rusrushal@2401:4900:5d35:747b:26c4:9a76:2a7d:1900)
+[13:12:14] <FunkyBob> list is a callable... list() yields an iterable
+[13:12:37] <FunkyBob> list is not a keyword
+[13:12:47] <FunkyBob> it's one of the builtin types
+[13:13:08] <LordKalma> technically correct, best type of correct :p
+[13:15:32] <FunkyBob> ...
+[13:15:44] <LordKalma> just messin
+[13:15:49] <FunkyBob> if it were a keyword you wouldn't be able to redefine it
+[13:16:04] <LordKalma> hahah is that a challenge for James Powell?
+[13:16:26] <FunkyBob> ?
+[13:16:39] <LordKalma> ah, he's a notable speaker in the pydata world
+[13:16:59] <LordKalma> and he likes to do crazy stuff, like pip-installeable cpython stubs
+[13:17:14] <LordKalma> a talk was "from __past__ import print_keyword"
+[13:17:23] <FunkyBob> better https://www.youtube.com/watch?v=H2yfXnUb1S4
+[13:19:30] *** Joins: dre (~dre@2001:8003:c932:c301:4bc5:1b72:1f27:b67f)
+[13:23:24] *** Quits: vladoski (~foo@2001:b07:add:d406:75a4:815:4160:aae9) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[13:26:14] <LordKalma> Question: does anybody happen to have a `from wagtail.core.rich_text import expand_db_html` reference implementation in JS?
+[13:26:38] <LordKalma> I'm using wagtail via the API and yeah, there's https://github.com/wagtail/wagtail/issues/2695 and I already have soemthing working
+[13:26:49] <LordKalma> but @gasman is totally right on that thread
+[13:27:09] <LordKalma> one might need to parse it on the frontend side
+[13:28:48] <dodo> LordKalma: just render a template and return that from your own api endpoint?
+[13:29:23] <LordKalma> interesting idea
+[13:32:18] <dodo> or use that expand_db_html in your api? if that returns what you want
+[13:32:34] <LordKalma> I've made a serializer that uses it, indeed
+[13:32:42] <LordKalma> it's just that I might want to change some stuff :)
+[13:32:49] <LordKalma> namely the css tags and etc
+[13:32:52] <LordKalma> it'll do for now
+[13:37:32] <LordKalma> dodo, do you know how you return a rendered template as a "string" in a DRF serialization?
+[13:40:03] <luigibu> hi! any good package to work with charts? specially Radar charts.. thanks!
+[13:40:08] <dodo> LordKalma: render_to_string
+[13:40:39] <LordKalma> thank you :)
+[13:40:41] *** Quits: rusrushal13 (~rusrushal@2401:4900:5d35:747b:26c4:9a76:2a7d:1900) (Ping timeout: 256 seconds)
+[13:40:43] <LordKalma> very helpful
+[13:40:53] <dodo> luigibu: i've used chartjs, it was ok
+[13:41:37] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 240 seconds)
+[13:42:14] <luigibu> dodo: yes.. i was looking at ipychart.. is a wraper of chart.js
+[13:42:21] <luigibu> good enoght right?
+[13:42:50] <dodo> i've used django-chartjs, iirc it's only a very thin wrapper
+[13:43:24] <luigibu> nice! thansk dodo
+[13:43:59] *** Joins: fikran (~fikran@user/fikran)
+[13:47:34] *** Quits: DnzAtWrk (~DnzAtWrk@mobile-access-6df0a8-162.dhcp.inet.fi) (Read error: Connection reset by peer)
+[13:58:03] *** Quits: newdimension (~newdimnes@user/newdimension) (Quit: Bye)
+[13:59:23] *** Joins: newdimension (~newdimnes@user/newdimension)
+[13:59:28] *** Joins: DnzAtWrk (~DnzAtWrk@mobile-access-6df0a8-162.dhcp.inet.fi)
+[14:00:10] *** Joins: vladoski (~foo@2001:b07:add:d406:75a4:815:4160:aae9)
+[14:06:42] *** Quits: Throgkt (~Throgkt@user/throgkt) (Quit:  )
+[14:12:38] *** Quits: vladoski (~foo@2001:b07:add:d406:75a4:815:4160:aae9) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[14:13:01] *** Joins: vladoski (~foo@2001:b07:add:d406:75a4:815:4160:aae9)
+[14:17:38] *** Quits: AugustusCaesar24 (~AugustusC@cpe-104-35-140-216.socal.res.rr.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[14:22:04] <pycode> FunkyBob, https://bpa.st/PSSA
+[14:22:15] <pycode> oh i  miss the constrain
+[14:28:52] <FunkyBob> umm.. what is this mess?
+[14:34:51] *** Quits: newdimension (~newdimnes@user/newdimension) (Quit: Bye)
+[14:39:01] <pycode> FunkyBob, do you think is better to create a plain sql
+[14:39:04] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[14:39:08] <pycode> without any other django calls ?
+[14:40:37] *** Joins: mad_moses (~ps@2a02:6d40:2348:4601:fc74:e092:a18e:8ecf)
+[14:41:11] *** Joins: newdimension (~newdimnes@user/newdimension)
+[14:41:45] <pycode> FunkyBob, https://bpa.st/74JA
+[14:41:48] <pycode> right?
+[14:41:55] <mad_moses> Hi, I am using github and would like to undestand how I can use github actions to build a ci cd pipeline. Do you have a good tutorial or starting point?
+[14:44:33] *** Quits: newdimension (~newdimnes@user/newdimension) (Client Quit)
+[14:45:53] *** Joins: newdimension (~newdimnes@user/newdimension)
+[14:46:27] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Ping timeout: 250 seconds)
+[15:03:33] <FunkyBob> pycode: yes
+[15:07:40] *** Quits: newdimension (~newdimnes@user/newdimension) (Quit: Bye)
+[15:10:59] *** Joins: newdimension (~newdimnes@user/newdimension)
+[15:25:16] *** Quits: vladoski (~foo@2001:b07:add:d406:75a4:815:4160:aae9) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[15:32:50] *** Quits: dre (~dre@2001:8003:c932:c301:4bc5:1b72:1f27:b67f) (Quit: Leaving)
+[15:44:46] *** Joins: dez (uid92154@user/dez)
+[15:46:34] *** Quits: DnzAtWrk (~DnzAtWrk@mobile-access-6df0a8-162.dhcp.inet.fi) (Read error: Connection reset by peer)
+[15:48:16] *** Joins: DnzAtWrk (~DnzAtWrk@mobile-access-6df0a8-162.dhcp.inet.fi)
+[15:51:23] *** Joins: brsc2909 (~Thunderbi@109.255.244.60)
+[15:51:43] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 256 seconds)
+[15:53:21] *** Joins: fikran (~fikran@user/fikran)
+[15:54:32] *** Quits: DnzAtWrk (~DnzAtWrk@mobile-access-6df0a8-162.dhcp.inet.fi) (Ping timeout: 256 seconds)
+[15:57:00] *** Joins: DnzAtWrk (~DnzAtWrk@mobile-access-6df0a8-162.dhcp.inet.fi)
+[15:57:22] <pycode> FunkyBob, ok
+[16:05:18] *** Joins: yanchai (~yanchai@115.147.34.99)
+[16:32:17] *** Quits: idontneedanick (~idontneed@h-85-24-184-105.A189.priv.bahnhof.se) (Ping timeout: 240 seconds)
+[16:32:20] *** Joins: imakestuff (~imakestuf@197.156.77.70)
+[16:32:34] <imakestuff> can anyone share me a good starter configuration for logging?
+[16:32:38] *** Joins: Camilo (~hugh@host-92-1-126-125.as13285.net)
+[16:37:46] *** Joins: masta`` (~oyster@user/masta/x-2645138)
+[16:38:16] *** Joins: vladoski (~foo@2001:b07:add:d406:75a4:815:4160:aae9)
+[16:39:41] <yanchai> try django-simple-history
+[16:42:05] *** Joins: dkliban_ (~dkliban@99-3-68-61.lightspeed.rlghnc.sbcglobal.net)
+[16:42:22] *** Quits: vladoski (~foo@2001:b07:add:d406:75a4:815:4160:aae9) (Client Quit)
+[16:42:34] <withered_wolf> @imakestuff  the docs have a great starter configuration for logging. https://docs.djangoproject.com/en/4.0/topics/logging/#examples
+[16:42:59] <imakestuff> withered_wolf: didn't know that. thanks
+[16:43:37] *** Quits: pipapipapibo (~w@2601:601:cf7f:e380::877) (Ping timeout: 240 seconds)
+[16:43:47] <imakestuff> withered_wolf: is it a good idea to modify the logger configuration based on whether DEBUG is set to True or not?
+[16:44:31] <withered_wolf> I do. Because in production, we have it spit out a message to our Slack for work so we know instantly that there are issues. So we specify a different setup for DEBUG vs. Production
+[16:44:41] <withered_wolf> So it really depends on your needs
+[16:44:52] <withered_wolf> if you're just writing to a file? Probably doesn't matter
+[16:45:42] <withered_wolf> If you run it locally, the logs will be local. If it's on a staging or production server - the files will be created there.
+[16:48:16] *** Joins: vladoski (~foo@2001:b07:add:d406:75a4:815:4160:aae9)
+[16:48:17] <withered_wolf> @imakestuff https://pastebin.com/MwftqgJF that file shows a way you can make it so the log file is recreated daily - keeping a max of 60. Something like that can be useful in the event your log files get very large.
+[16:48:46] <withered_wolf> Also shows a basic example of how you handle file vs. slack alerts or w/e
+[16:49:23] <withered_wolf> The slack / discord / w/e alerts would require additional setup (obviously)
+[16:51:17] *** Quits: imakestuff (~imakestuf@197.156.77.70) (Ping timeout: 240 seconds)
+[16:51:37] *** Quits: vladoski (~foo@2001:b07:add:d406:75a4:815:4160:aae9) (Client Quit)
+[16:51:56] *** Joins: slav0nic (slav0nic@python.su)
+[16:52:28] *** Joins: vladoski (~foo@2001:b07:add:d406:75a4:815:4160:aae9)
+[16:59:27] *** Quits: vladoski (~foo@2001:b07:add:d406:75a4:815:4160:aae9) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[16:59:50] *** Joins: andyandyandy (~andyandya@c-73-240-237-212.hsd1.or.comcast.net)
+[17:04:06] *** Quits: andyandyandy (~andyandya@c-73-240-237-212.hsd1.or.comcast.net) (Ping timeout: 245 seconds)
+[17:10:37] *** Quits: pepper (~pepper@user/pepper) (Ping timeout: 240 seconds)
+[17:15:52] *** Joins: pembo13 (~pembo13@47.196.95.206)
+[17:23:52] *** Joins: imakestuff (~imakestuf@197.156.77.35)
+[17:25:38] *** Parts: yanchai (~yanchai@115.147.34.99) ()
+[17:28:49] *** Quits: withered_wolf (~withered_@1437135-v103.1561-static.stchilaa.metronetinc.net) (Ping timeout: 268 seconds)
+[17:35:52] <imakestuff> withered_wolf: is is possible to make sure that the handler is only console when i'm running the app locally?
+[17:39:31] *** Joins: pepper (~pepper@user/pepper)
+[17:43:59] *** Quits: masta`` (~oyster@user/masta/x-2645138) (Quit: Going offline, see ya! (www.adiirc.com))
+[17:50:30] *** Joins: ciurca (~Thunderbi@86.125.174.133)
+[17:51:09] *** Quits: ciurca (~Thunderbi@86.125.174.133) (Client Quit)
+[17:51:34] *** Joins: ciurca (~Thunderbi@86.125.174.133)
+[17:51:37] *** Joins: idontneedanick (~idontneed@h-85-24-184-105.A189.priv.bahnhof.se)
+[17:52:31] *** Quits: ciurca (~Thunderbi@86.125.174.133) (Client Quit)
+[18:00:55] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 256 seconds)
+[18:02:42] *** Joins: fikran (~fikran@user/fikran)
+[18:04:16] *** Joins: ovnicraft (~ovnicraft@corp-179-49-44-28.uio.puntonet.ec)
+[18:10:20] *** Quits: DnzAtWrk (~DnzAtWrk@mobile-access-6df0a8-162.dhcp.inet.fi) (Read error: Connection reset by peer)
+[18:27:43] *** Quits: SteveR (~SteveR@103.215.168.1) (Quit: Client closed)
+[18:41:56] *** Quits: pycode (~pycode3@2001:b07:5d28:551:4fe:ad2a:904f:a38e) (Ping timeout: 252 seconds)
+[18:49:37] *** Quits: x88x88x (~x88x88x@2001:19f0:5:39a8:5400:3ff:feb6:73cb) (Ping timeout: 240 seconds)
+[18:52:03] *** Joins: x88x88x (~x88x88x@149.28.53.172)
+[18:55:29] *** Joins: withered_wolf (~withered_@1437135-v103.1561-static.stchilaa.metronetinc.net)
+[19:28:45] *** Quits: luigibu (~luigi@80.30.200.2) (Ping timeout: 256 seconds)
+[19:30:25] *** Joins: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net)
+[19:44:52] <Camilo> I have a django rest framework as my back end, and a reactjs page for my front end. I'm setting up an S3 bucket for users to upload files.
+[19:45:15] <Camilo> Presumably to save files, the front end sends the file to the django api, which saves it to S3 using the storages app
+[19:46:10] <Camilo> How does requesting files work, does the frontend ask the django api for the image url, then the clients browser loads the image directly from s3?
+[19:46:42] <Camilo> Or does django api request the file from s3, then send the file to the clients browser
+[19:49:40] *** Quits: imakestuff (~imakestuf@197.156.77.35) (Remote host closed the connection)
+[19:54:37] *** Quits: x88x88x (~x88x88x@149.28.53.172) (Ping timeout: 240 seconds)
+[19:55:20] <GinFuyou> Django should typically provide correct static\media urls, and not be involved in serving requests for them
+[20:01:55] *** Joins: x88x88x (~x88x88x@2001:19f0:5:39a8:5400:3ff:feb6:73cb)
+[20:04:09] <Camilo> Which leads me to wonder how does one prevent unauthorized users from accessing files
+[20:05:40] *** Joins: Throgkt (~Throgkt@user/throgkt)
+[20:06:37] <Camilo> For example, if django responds with a url, couldn't a user who isn't logged in also access that url?
+[20:09:59] *** Joins: thecircleisround (~thecircle@c-73-133-222-109.hsd1.md.comcast.net)
+[20:10:07] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 256 seconds)
+[20:10:16] *** Joins: bambanxx (~bambanx@181-163-36-214.baf.movistar.cl)
+[20:10:44] <thecircleisround> This may be more a Vue question, but is there anyway to have persistant components if I'm using django urls to serve pages?
+[20:11:59] *** Joins: aavrug (uid524982@id-524982.lymington.irccloud.com)
+[20:12:03] *** Joins: fikran (~fikran@user/fikran)
+[20:16:54] <GinFuyou> Camilo, that's another big question, no idea how it solved with CDN
+[20:17:19] *** Joins: andyandyandy (~andyandya@c-73-240-237-212.hsd1.or.comcast.net)
+[20:22:57] *** Quits: andyandyandy (~andyandya@c-73-240-237-212.hsd1.or.comcast.net) (Ping timeout: 240 seconds)
+[20:23:56] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Remote host closed the connection)
+[20:24:53] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[20:31:26] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Remote host closed the connection)
+[20:32:04] *** Quits: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net) (Quit: WeeChat 3.4)
+[20:32:15] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[20:33:36] *** Quits: cmbengue (~Thunderbi@207.191.249.160) (Remote host closed the connection)
+[20:36:17] *** Quits: x88x88x (~x88x88x@2001:19f0:5:39a8:5400:3ff:feb6:73cb) (Ping timeout: 240 seconds)
+[20:42:59] *** Quits: thecircleisround (~thecircle@c-73-133-222-109.hsd1.md.comcast.net) (Ping timeout: 256 seconds)
+[20:45:43] <doismellburning> Camilo: usually you generate a temporary access token with timeout
+[20:46:38] <doismellburning> Camilo: https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html is the S3 docs - there's pre-existing things that will let you do that with Django, but I can't remember names off the top of my head
+[20:47:36] <doismellburning> Oh, django-storages will do it for you https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html
+[20:47:46] <doismellburning> uh https://github.com/jschneier/django-storages/blob/master/storages/backends/s3boto3.py#L567
+[20:47:49] *** Joins: vladoski (~foo@2001:b07:add:d406:75a4:815:4160:aae9)
+[20:48:44] *** Joins: cmbengue (~Thunderbi@207.191.249.160)
+[20:52:38] *** Joins: x88x88x (~x88x88x@149.28.53.172)
+[20:54:53] *** Joins: gopar (~gopar@c-67-164-79-22.hsd1.ca.comcast.net)
+[20:57:25] *** Quits: ovnicraft (~ovnicraft@corp-179-49-44-28.uio.puntonet.ec) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[20:57:52] *** Joins: djapo (~archangel@user/djapo)
+[20:57:53] *** Joins: ovnicraft (~ovnicraft@ftth-179-49-44-28.cue.celerity.ec)
+[21:13:08] *** Quits: beastDivision (~beastDivi@user/beastdivision) (Remote host closed the connection)
+[21:13:35] *** Joins: beastDivision (~beastDivi@user/beastdivision)
+[21:14:32] *** Quits: withered_wolf (~withered_@1437135-v103.1561-static.stchilaa.metronetinc.net) (Remote host closed the connection)
+[21:15:23] *** Joins: withered_wolf (~withered_@1437135-v103.1561-static.stchilaa.metronetinc.net)
+[21:29:38] *** Quits: x88x88x (~x88x88x@149.28.53.172) (Ping timeout: 260 seconds)
+[21:33:46] <Camilo> thanks for the links doismellburning, I'll have a read of those docs
+[21:36:54] *** Joins: x88x88x (~x88x88x@149.28.53.172)
+[21:41:46] *** Quits: bambanxx (~bambanx@181-163-36-214.baf.movistar.cl) (Quit: Textual IRC Client: www.textualapp.com)
+[22:02:19] *** Quits: djapo (~archangel@user/djapo) (Ping timeout: 256 seconds)
+[22:03:27] *** Quits: ovnicraft (~ovnicraft@ftth-179-49-44-28.cue.celerity.ec) (Ping timeout: 256 seconds)
+[22:05:55] *** Joins: ovnicraft (~ovnicraft@ftth-179-49-44-28.cue.celerity.ec)
+[22:14:27] *** Joins: Xof (~Xof@157-131-136-66.dedicated.static.sonic.net)
+[22:15:20] *** Joins: xkuru (~xkuru@user/xkuru)
+[22:19:19] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 256 seconds)
+[22:21:23] *** Joins: fikran (~fikran@user/fikran)
+[22:21:48] *** Joins: nmat[m] (~nmatsemat@2001:470:69fc:105::1:5553)
+[22:24:55] *** Quits: rb (~augh@theguntretort.com) (Read error: Connection reset by peer)
+[22:25:06] *** Joins: rwb (~augh@theguntretort.com)
+[22:27:00] *** rwb is now known as rb
+[22:42:33] *** Quits: ovnicraft (~ovnicraft@ftth-179-49-44-28.cue.celerity.ec) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[22:43:57] *** Quits: x88x88x (~x88x88x@149.28.53.172) (Ping timeout: 240 seconds)
+[22:54:13] *** Joins: mimmy (~mimmy@69.174.8.146)
+[22:55:57] *** Joins: x88x88x (~x88x88x@2001:19f0:5:39a8:5400:3ff:feb6:73cb)
+[23:13:02] *** Quits: x88x88x (~x88x88x@2001:19f0:5:39a8:5400:3ff:feb6:73cb) (Ping timeout: 240 seconds)
+[23:19:24] *** Quits: mad_moses (~ps@2a02:6d40:2348:4601:fc74:e092:a18e:8ecf) (Ping timeout: 240 seconds)
+[23:21:16] *** Joins: x88x88x (~x88x88x@149.28.53.172)
+[23:22:41] *** Joins: teut (~teut@106.202.152.122)
+[23:27:42] *** Quits: darkstarx (~darkstard@50.39.115.145) (Quit: Leaving)
+[23:30:24] *** Quits: teut (~teut@106.202.152.122) (Quit: Client closed)
+[23:30:41] *** Joins: teut (~teut@106.202.152.122)
+[23:51:26] *** Joins: darkstardevx (~darkstard@50.39.115.145)
+[23:52:53] *** Quits: darkstardevx (~darkstard@50.39.115.145) (Remote host closed the connection)
+[23:53:19] *** Joins: darkstardevx (~darkstard@50.39.115.145)

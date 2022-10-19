@@ -1,0 +1,94 @@
+[00:49:47] <basshelal[m]> headius: https://github.com/jnr/jnr-ffi/pull/269
+[00:49:47] <basshelal[m]> How did I screw this up? 🤦‍♂️
+[00:49:47] <basshelal[m]> Embarrassing, well it's a good slice of humble pie
+[00:52:32] <headius> Ha ok
+[00:54:19] <headius> Guess we need a new round of releases
+[00:54:32] <headius> I didn't notice it either
+[00:58:22] <basshelal[m]> Yeah probably
+[00:59:14] <basshelal[m]> It took what a couple of days for someone to find a new bug? that's pretty good, means people are using it 😁
+[01:19:26] <headius> Yeah surprisingly popular library I guess
+[09:11:15] *** Quits: satyanash (~satyanash@143.110.247.92) (*.net *.split)
+[09:11:45] *** Joins: satyanash (~satyanash@143.110.247.92)
+[21:17:52] <headius> woot, moving along today... strscan and stringio gem ports are moving toward acceptance
+[21:18:04] <headius> basshelal: gonna spin those jnr releases now
+[21:22:46] <headius> wow someone using Nim for native code on this PR: https://github.com/jnr/jnr-ffi/issues/268
+[21:22:59] <headius> I saw their example and didn't recognize it at all
+[21:28:18] <headius> ok I don't see anything else to go in this release... proceeding
+[22:17:20] <ahorek[m]> @headius https://github.com/jruby/jruby/issues/6800 I didn't see the OOM for a while
+[22:19:16] *** Joins: mattpatt[m] (~mattpattm@2001:470:69fc:105::315d)
+[22:27:01] <ahorek[m]> I ran a new build check on coverity and there's a new warning about a recent monitor to native rewrite
+[22:27:04] * ahorek[m] uploaded an image: (19KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/cLmXdPchKwyEqxBYVKudEdir/obrazek.png >
+[22:29:43] <ahorek[m]> but I think it's a false positive. Since the counter should be always acessed by the current thread owner. headius ?
+[22:29:51] <headius> yo
+[22:30:59] <headius> re: OOM, yeah it seems to have gone away with more metaspace. We used to bump that up at the drop of a hat but have been more cautious in recent years. We can continue to monitor but it may be a non-issue
+[22:31:28] <headius> specs continue to grow and our code generation evolves over time so we could easily just be generating more metaspace data now
+[22:33:34] <headius> re: coverity, I agree it probably should be fine but adding an atomic accessor getAndIncrement would boil down to fast code for same thread and avoid the issue
+[22:34:06] <headius> at a glance it looks weird but you are right that it should never get incremented except by the owning thread
+[22:36:20] <headius> you know, if the jnr release process didn't take so long I wouldn't get distracted as easily
+[22:48:53] <mattpatt[m]> I'm trying to do something with a URLClassLoader - I have a JRuby system that's a long-running pipeline processor and now I need to sometimes execute jobs that load something from a JAR, and I need a class loader because it's entirely possible that multiple versions of the same JAR will be in play. The Jar I want to load has dependencies. Is there a relatively sane way to combine this Class loader and maven at runtime, or should I just
+[22:48:53] <mattpatt[m]> commence weeping now?
+[22:52:00] <mattpatt[m]> Maybe I just need to go to squeak and demand Fat JAR be built for anything that could conceivably be wanted to be used in this way
+[22:52:57] <headius> mattpatt: hello!
+[22:53:07] <mattpatt[m]> hey
+[22:53:41] <headius> yeah that sounds complicated
+[22:54:09] <headius> if you managed your own classloaders and yanked code from them directly you might be able to get it to work but I think no matter what there's going to be a lot of manual work
+[22:54:26] <headius> I'm not sure exactly where the classloaders fit into JRuby
+[22:54:32] <headius> you classloaders I mean
+[22:54:49] <mattpatt[m]> The whole system runs is written in Ruby and runs on JRuby
+[22:55:51] <headius> by default JRuby will load external jars into a single JRubyClassLoader (extends URLClassLoader) per runtime so the isolation would be additional logic on your end and might cause some peculiar java integration issues
+[22:56:04] <mattpatt[m]> yeah
+[22:57:36] <headius> I can't say I've heard of anyone running a JRuby rig that might have two versions of some Java class in flight
+[22:57:47] <headius> at least not within a single JRuby instance
+[22:57:58] <mattpatt[m]> I imagine I need to sandbox all the Jar's dependencies inside the same ClassLoader and make sure classloader delegation doesn't bite me
+[22:58:07] <headius> yes at least that
+[22:58:36] <headius> you might have to isolate the JRuby instances based on those jar clusters as well since we may not know a v1 FooBar from a v2 FooBar everywhere in the Java integration code
+[22:58:58] <headius> it should be based on the actual Class object, which would differ by classloader, but it has never been tried that I know of
+[23:01:00] <mattpatt[m]> In theory the ClassLoader for each cluster can be short lived - only needs to exists for as long as the job is running - and can be destroyed at the end of the job so hopefully that helps
+[23:01:45] <mattpatt[m]> fortunately all the expected uses for this are utility converter classes that need testing
+[23:02:01] <mattpatt[m]> so pretty isolated string in - string out kind of things
+[23:02:30] <headius> well it should be possible to do it manually, but it will be interesting to see what you run into 😀
+[23:02:40] <mattpatt[m]> woo
+[23:03:11] <headius> having a common interface outside of the child classloaders will make it cleaner, since you'll always be calling against a known interface from JRuby
+[23:03:12] <headius> if that is possible to do
+[23:04:04] <headius> I also make no guarantees about GCing those classes and classloaders since Java integration guts can get kinda sticky... we try to make it possible for classes to GC but that is assuming our usual classloader structure
+[23:04:55] <mattpatt[m]> i'm not worried as much about GC, fortunately - the instances themselves only live as long as there are jobs to process
+[23:06:10] <mattpatt[m]> i wouldn't be worrying about it at all except that an instance will process hundreds of jobs, and the idea of shelling out to a new JVM for each job makes me sad, and would add huge amounts of time to the processing...
+[23:07:58] <headius> if the spin-up time for JRuby itself is not a concern (instances after the first start up much faster) isolating that way is a possible fallback option
+[23:08:32] <mattpatt[m]> and the person waiting on the job has to assess correctness of output, so interactions between older/newer converter and the XSLT built for the other version is guaranteed to generate utter undebuggable confusion if it does happen...
+[23:09:42] <mattpatt[m]> there'd be no JRuby startup at all - the converters are all pure-java - so they'd be probably much quicker 
+[23:10:21] <headius> ok
+[23:12:33] <mattpatt[m]> i think i will try just shelling out first and see if it's acceptable
+[23:14:01] <headius> ok jnr update releases should be out... gonna take care of a late lunch while they propagate and then we can update JRuby proper
+[23:15:22] <enebo[m]> heh this optimization had an error where I would delete outgoing CFG edges but not remove the incoming edges from the destination BB...but...it made me find a whole new weird thing
+[23:15:50] <enebo[m]> defined? self.some_method will create a b_nil(label, "self")
+[23:15:55] <headius> incoming edges kept those blocks from being culled I assume?
+[23:16:05] <enebo[m]> which we now go "oh wait that is dead code"
+[23:16:16] <headius> oh weird
+[23:16:28] <enebo[m]> but I am wondering when is defined? going to return a nil to begin with
+[23:16:40] <enebo[m]> I think it may be just defined? to_not_exist perhaps
+[23:17:03] <headius> it returns nil when whatever is points at is not defined or otherwise an opaque expression
+[23:17:05] <headius> or is it false?
+[23:17:18] <enebo[m]> but without fixing my CFG issue I just realized we can statically examine this result and kill the first obvious branch which is mostly not needed
+[23:17:29] <enebo[m]> heh well good question
+[23:17:35] <headius> yeah self will never be undefined
+[23:17:50] <headius> and if it is nil that doesn't matter
+[23:18:01] <enebo[m]> but no undef specifically nil
+[23:18:24] <enebo[m]> b_nil so I guess defined? logic returns nil on stuff that is not there?
+[23:18:29] <enebo[m]> which seems weird also
+[23:19:02] <headius> yeah should be nil, because the positive result is a string describing the kind of thing
+[23:19:23] <enebo[m]> anyways our defined? code seems to work so this is just an oddity more than anything.  I can prune some branches no matter what though
+[23:19:32] <headius> it's really more "what kind of thing does this code resolve to"
+[23:19:44] <enebo[m]> yeah
+[23:19:52] <enebo[m]> which is a string representing what or nil if not
+[23:20:11] <enebo[m]> I do find it interesting as an internal it is not just undef but I suppose in the end it wants to be nil
+[23:21:46] <enebo[m]> headius: as to your earlier question about incoming edges preventing something...nope the problem is when optimize in CFG runs it asks for incoming edges and we removed it from the other direction so it gets a NPE
+[23:21:59] <headius> hah ok
+[23:22:40] <enebo[m]> weirdly this does not happen for the b_false case in kpeg.  I think something larger is happening because of the original elimination which probably is a bb is getting merged
+[23:23:18] <enebo[m]> if only defined? was a hot path anywhere :)
+[23:25:26] <headius> it might be but I usually only see it in metaprogramming
+[23:25:51] <headius> one of those weird older features I'm not sure everyone realizes how weird it is
+[23:25:56] <enebo[m]> oh yeah it is conceivable but if it is hot code people probably are not doing it 
+[23:27:21] <enebo[m]> yay I hope this works...dirgra has a removeEdge(Edge) which is exactly what I want
+[23:27:44] <enebo[m]> hmm
+[23:27:52] <enebo[m]> nope
+[23:31:36] <enebo[m]> doh..I see what is wrong..I stored returnBBs as a list in CFG as part of this change and in this case a BB it points back to is no longer there

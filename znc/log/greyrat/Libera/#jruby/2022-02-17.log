@@ -1,0 +1,323 @@
+[00:24:46] <byteit101[m]> enebo: so the last example jcomponent to jbutton isn't useful unless it hits the last point of my condition (ruby2java doing something extra) which I don't think is the case for that
+[00:25:50] <enebo[m]> byteit101: so I guess I am trying to understand if this can just be true/false or we need an option to specify what type.  If so then we figure out the issues (if any) with that
+[00:26:36] <byteit101[m]> see the issues with j.l.Object +  the need for to_java to take a type parameter for why it can't just be true/false
+[00:27:01] <byteit101[m]> jruby-9.3.0.0 :001 > "yay".to_java true
+[00:27:04] <byteit101[m]> TypeError (expected a Java class, got: true)
+[00:27:35] <enebo[m]> but then why is the field Object?
+[00:27:41] <byteit101[m]> Ok, wait
+[00:27:42] <byteit101[m]> ^ where is that overload?
+[00:27:42] <byteit101[m]> I couldn't find it before
+[00:27:42] <byteit101[m]> jruby-9.3.0.0 :003 > "yay".to_java().class
+[00:27:42] <byteit101[m]>  => Java::JavaLang::String 
+[00:28:00] <byteit101[m]> I want to store any json type=> java has no union/product types
+[00:28:08] <byteit101[m]> ergo Object as the storage
+[00:28:56] <enebo[m]> So you have a field where from Ruby you know it will always be a type but from Java side you don't know?
+[00:29:10] <byteit101[m]> correct
+[00:29:32] <enebo[m]> Will the java side ever write to that field?
+[00:29:48] <byteit101[m]> A summary of when convert: is useful:
+[00:29:49] <byteit101[m]>     When Java is reading the field after Ruby writes, and
+[00:30:09] <enebo[m]> If I write a specific type to Object and the thing which uses it from java is Object it still work
+[00:30:31] <byteit101[m]> Ok here's the alternative: we don't have a convert argument and store the IRO directly in object
+[00:30:57] <byteit101[m]> then java can't read Object, only subclasses appropriately converted
+[00:31:13] <byteit101[m]> yes
+[00:31:49] <byteit101[m]> If we don't ever store IRO's, then we don't need convert, but then you can't put ruby classes in the fields
+[00:31:58] <enebo[m]> IRO means IRubyObejct?
+[00:32:01] <byteit101[m]> yes
+[00:32:47] <enebo[m]> I don't mind the convert.  I see the value in it
+[00:33:03] <enebo[m]> I am just confused about the field declaration needing to be different from the convert type
+[00:33:57] <enebo[m]> Any ruby -> java will unconditionally make it a specific type.  Any writes from Java can write anything to that field so the convert on the way out will only work if it is the specific type
+[00:34:03] <enebo[m]> unless convert is only for writing the field
+[00:34:34] <enebo[m]> but any specific type is still all the general types so having a more speciifc field would still work on any API wanting the more general thing
+[00:34:47] <byteit101[m]> convert is only for ruby writing the field, not reading
+[00:34:56] <enebo[m]> oh
+[00:35:17] <enebo[m]> headius: did you know that convert was only for writing to the field?
+[00:35:44] <enebo[m]> byteit101: it makes a bit more sense to me for writing since some Ruby types potentially can be made into different Java types
+[00:36:08] <byteit101[m]> Yes, only the setter uses it: https://github.com/jruby/jruby/pull/7012/files#diff-657d0aaf7fba4fbea21ac0d258973d43777f7ce24450fac5e04c97cb33637752R78
+[00:36:11] <enebo[m]> but that would not be an argument for more specific or less specific values but that they may be totally different
+[00:36:11] <byteit101[m]> (called toJava)
+[00:36:59] <byteit101[m]> tyhe getter only has "basetype" witch is the type of the field, not the convert argument "toJava"
+[00:37:09] <byteit101[m]> *the getter (line 166)
+[00:37:09] <enebo[m]> I was mostly hung up on not getting how this fit in because I thought it was bi-directional
+[00:37:18] <byteit101[m]> nope
+[00:38:16] <enebo[m]> Ok.  So then I think my next question is whether there would ever be a need to specify how to convert the stored Java value back to a Ruby value
+[00:38:16] <byteit101[m]> see the getter code, it calls javaUtil.convertJavaToUsableRubyObject(javaobj) or javaUtil.convertJavaToUsableRubyObject(rubyobj.unwrap())
+[00:38:57] <enebo[m]> yeah I am just trying to understand semantics.  Reading code will not make this discussion go quicker (at least I don't think so :) )
+[00:39:05] <byteit101[m]> fair
+[00:39:49] <enebo[m]> I mostly am just trying to make sure we do not realize we should have changed the design but then we sort of get stuck with the decision we make.   Iknow you are also concerned about that from the issue comments
+[00:40:18] <byteit101[m]> I think there is a nicitiey to have the same object back that you set, but I wasn't sure how to implement that nicely, so now @foo.equals?(@foo) being false for some types (ex: j.l.String)
+[00:40:29] <byteit101[m]> Yes, that's good
+[00:40:31] <enebo[m]> yeah
+[00:40:46] <enebo[m]> So we have 4 theoretical cases
+[00:40:48] <byteit101[m]> why I said "this isn't bikeshedding" when I implemented this to headius's comments about a nicer name
+[00:40:59] <enebo[m]> no conversion in or out (convert: false)
+[00:41:38] <enebo[m]> convert in and out (bidirectional)
+[00:41:46] <enebo[m]> convert in only
+[00:41:50] <enebo[m]> convert out only
+[00:41:57] <enebo[m]> These may not be useful
+[00:42:02] <byteit101[m]> I'm... not sure that's the best framing
+[00:42:22] <enebo[m]> of these we are really only specifying no conversion and conversion in
+[00:43:54] <byteit101[m]> My framing has been: object instance is {ruby, raw java, wrapped java} {matching,not matching} field type accepting {compatible, incompatible, conversion-necessary} types
+[00:44:38] <byteit101[m]> ex: object is ruby not matching field type accepting compatible (IRubyObject) types. "convert; false"
+[00:45:14] <byteit101[m]> ex: object is wrapped java not matching field type accepting compatible (Numeric) types. "convert; int, etc"
+[00:45:57] <enebo[m]> and you only mean for writing although you could look at this for reading perhaps
+[00:46:10] <byteit101[m]> Ruby field writing
+[00:46:11] <byteit101[m]> correct
+[00:46:24] <byteit101[m]> that's roughtly how I've been framing this as I implemented it
+[00:47:09] <enebo[m]> So you have a particular real use case and you pretty much only need to write to the Java field and then a Java API will consume that field
+[00:48:04] <enebo[m]> But do you also ever read it again?
+[00:48:26] <enebo[m]> Is it just a wrapped java at that point
+[00:48:44] <byteit101[m]> wrapped java = IRO holding a java object
+[00:49:11] <enebo[m]> yeah I think so
+[00:49:25] <enebo[m]> what do you get in the current impl if you convert and then read from the ivar?
+[00:49:47] <byteit101[m]> a new IRO wrapping things again (probably)
+[00:50:12] <enebo[m]> ok yeah that's what I would have thought.  You have a java object and you call javaToRuby or whatever
+[00:50:51] <enebo[m]> So if I make a field with j.l.String and convert to the Java String we sort of luck out in that because Java String is special we will actually get a Ruby String back
+[00:51:38] <enebo[m]> but if I wrote Date and it converts to one of the Java Date/DateTime or whatever when it comes out it will be wrapped Java instance
+[00:52:48] <enebo[m]> As you have said this is an advanced feature that will not probably be commonly used but I am wondering if we want ability to convert both directions (or not so much we implement both but we name it so we can have both eventually)
+[00:53:21] <enebo[m]> I don't like to yak shave on something we will never do but it seems like something someone might want (convert on reading the ivar)
+[00:54:14] <byteit101[m]> that was one reason I proposed to_java initially, then store_as
+[00:54:19] <enebo[m]> yeah
+[00:54:41] <enebo[m]> yeah I think something like 'write_as'
+[00:54:47] <enebo[m]> read_as
+[00:55:12] <enebo[m]> read/write load/store 
+[00:56:25] <enebo[m]> field 'java.lang.Obejct address', instance_variable: true, store_as: java.lang.String
+[00:56:44] <enebo[m]> maybe we implement load_as or maybe we don't
+[00:59:28] <enebo[m]> I did not review the code but what happens when the two java signatures do not match
+[01:00:36] <byteit101[m]> https://github.com/jruby/jruby/pull/7012/files#diff-84b531b8362a9a549d6c2e1cdebf0e838800649766933032d712bf52a0dc24dcR206-R207
+[01:02:04] <byteit101[m]> I'll update the messages when we finialize the config names
+[01:02:18] <enebo[m]> So it will raise when the field is being processed with that error.  Ok.  It is likely also just a type Error when you try and write to the ivar?
+[01:02:44] <enebo[m]> So those two types agree but then you pass something which does not agree
+[01:07:31] <byteit101[m]> TypeError (could not coerce Integer to class java.lang.String)
+[01:07:59] <byteit101[m]> from the to_java methods
+[01:08:13] <byteit101[m]> (or whatever your types are)
+[01:08:59] <enebo[m]> yeah so this is just a normal rubyToJava sort of error so consistent with what we would expect
+[01:09:27] <byteit101[m]>         1: from org/jruby/java/addons/KernelJavaAddons.java:34:in `to_java'
+[01:09:29] <byteit101[m]> yes
+[01:09:49] <enebo[m]> well my preference is to use store_as or write_as to imply direction to be future proof
+[01:10:14] <enebo[m]> we can decide if we want the dual (e.g. load_as) at a later date
+[01:10:34] <enebo[m]> My vague thought is wondering how much of what we do as Java native extensions could leverage this
+[01:11:11] <enebo[m]> more than you are doing I should say
+[01:11:49] <byteit101[m]> ok, I'll change it to store_as this evening
+[01:11:55] <enebo[m]> in most cases native extensions want to avoid any conversion if possible but it may just make it ship with no java in it
+[01:11:58] <enebo[m]> which is useful
+[01:13:00] <enebo[m]> cool.  and headius will chime in if he has an issue but I think if I was a consumer of this API I may get confused without some notion of direction
+[01:13:03] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[01:13:49] <enebo[m]> Also if you consider store_as could take the same Ruby object but make different potentially unrelated Java objects then I think you could also see load_as also having that potential
+[01:18:23] <byteit101[m]> enebo: what's your verb/no-verb opinion?
+[01:18:24] <byteit101[m]> (main config)
+[01:18:48] <enebo[m]> you mean for instance_variable?
+[01:19:33] <enebo[m]> I think these are all adjectives now of the field and declarative so I see no verbs
+[01:20:09] <enebo[m]> store_as maybe is a bit verbish but I see a type and not an action
+[01:20:19] <byteit101[m]> cool, will update PR this evening
+[01:20:43] <enebo[m]> byteit101: this is pretty cool and we will even get a new jrubyfx release out pretty soon
+[01:20:53] <headius> I'll be back in office shortly
+[01:21:01] <headius> Will review but I think we're on the same page
+[01:21:46] <byteit101[m]> yes, though... should this go in 9.3 or 9.4? 9.3 = sooner jrubyfx release
+[01:21:58] <byteit101[m]> (I presume)
+[01:22:27] <enebo[m]> I guess we will discuss this but we are pretty early and this is essentiall new syntax
+[01:22:38] <byteit101[m]> This is so minimally disruptive I could see either being valid
+[01:23:04] <enebo[m]> For me risk is not very high for 9.3 and I doubt anyone has written this exact code (which would be something totally unrelated to this) so I think we will not trample over another method
+[01:24:00] <enebo[m]> I think 9.3 is still early and this is additive so that is my stance but we will talk through this before merging
+[01:24:14] <headius> Agree
+[01:24:43] <enebo[m]> ok and it is targetted for jruby-9.3 so that's easy too
+[01:24:56] <enebo[m]> oh I guess it is master
+[01:25:05] <byteit101[m]> yea, I didn't think about that before starting on master
+[01:25:08] <enebo[m]> byteit101: retarget for jruby-9.3
+[01:25:14] <enebo[m]> you can do it at top of PR
+[01:25:26] <byteit101[m]> will re-merge this evening
+[01:25:46] <enebo[m]> I don't expect it will be hard.  I don't recall having to touch JI at all yet
+[01:26:02] <enebo[m]> We did change some IRRuntimeHelpers
+[01:26:11] <enebo[m]> but I doubt any you would hit
+[01:28:53] <byteit101[m]> plus this is a very small PR compared to the previous PR
+[02:01:15] <headius> retarget might try to pull all of master in so it may have to be a rebase
+[02:01:18] <headius> in office now, catching up
+[02:03:36] <headius> > convert is only for ruby writing the field, not reading
+[02:03:39] <headius> that makes sense
+[02:04:14] <headius> I assumed at least the writing side, for when we want to coerce as a specific type but the field is a more generic one... numerics was the main example for me too, but maybe something like a Serializable field and we have a Time object in hand
+[02:04:53] <headius> > I'll change it to store_as this evening
+[02:05:02] <headius> hey in keeping with existing names, what about `to_java:`?
+[02:05:40] <headius> `java_field "j.l.Object blah", instance_variable: :@blah, to_java: java.lang.String`
+[02:05:51] <headius> since that is what you would call to convert it directly
+[02:06:16] <headius> And I am on board with adding this to 9.3 since it doesn't alter much existing behavior
+[02:06:31] <headius> byteit101 enebo: that's it from me then
+[02:07:08] <headius> so the default to_java is just the field type, and you can turn it off with to_java: false, or specify a type
+[02:07:20] <headius> I like that synchronicity
+[02:08:32] <byteit101[m]> headius commented 9 days ago:
+[02:08:32] <byteit101[m]> > One problem with "to_java" to me is that it's really bi-directional, so it's both "to_java" and "to_ruby" depending on whether you set or get.
+[02:08:41] <byteit101[m]> ^ changed your mind?
+[02:08:43] <headius> yeah now that we are clear it is just writing
+[02:09:23] <headius> if we decide we need to change how the value comes from field into Ruby we can have a to_ruby later or something
+[02:10:18] <byteit101[m]> enebo good with to_java too versus store_as ?
+[02:11:03] <byteit101[m]> headius: oh did you ever get around to ensuring this stuff was inlined properly? IIRC you said you wanted to check that?
+[02:12:06] <headius> I have not, got into other quagmires... it doesn't have to happen for this PR though and it may already work as is
+[02:12:24] <headius> field-based instance vars do inline fine so I suspect it will just work
+[02:14:44] <byteit101[m]> cool. I just remembered you said that and was curious
+[02:14:56] <byteit101[m]> and I suspect so too
+[02:15:06] <headius> I am eager to get back to perf and then we will look into all this stuff
+[02:15:17] <headius> gotta get 9.4 done first
+[02:18:03] <headius> enebo: one issue with the way I am cloning and rewriting is that I'm rewriting UnresolvedSuper to one of the other types that does not need frame name, but there's no re-optimization based on that
+[02:18:23] <headius> if we can get this to also use a more static place for the frame klass then we will want to reopt to remove the protocol
+[02:18:38] <headius> so then that makes me wonder if I should instead be cloning the simple IR
+[02:30:28] <enebo[m]> headius: ah
+[02:30:50] <enebo[m]> You know if you do this transformation pre-full you could get around this
+[02:31:02] <headius> I have expanded the rewriting a bit so it now will turn UnresolvedSuper into Instance, Class, or ModuleSuper depending on where it is doing define_method
+[02:31:25] <headius> I had to add a definingModule variable to Unresolved so we can rewrite it later
+[02:31:33] <enebo[m]> byteit101: headius I am fine with to_java
+[02:31:42] <headius> it is not used for Unresolved, but then again Unresolved will very soon just become InvalidSuperInstr
+[02:31:48] <headius> because that will be the only cases left
+[02:31:59] <enebo[m]> you mean it throws?
+[02:32:04] <headius> yeah
+[02:32:19] <enebo[m]> that can just be instr(s) which throw.  We do not need an instr for that
+[02:32:22] <headius> it already does in a roundabout way when there's no frame name to super
+[02:32:33] <headius> I need to know it is for a super though to rewrite it
+[02:32:47] <headius> it becomes valid if the super is now in a define_method method
+[02:32:54] <headius> I'm open to other ideas
+[02:33:19] <enebo[m]> So you make an InvalidSuperInstr but if it is a define_method yuo make it into a real call?
+[02:33:26] <headius> I can go back to simple IR for this, sure... the lifecycle of this stuff is still very confusing
+[02:33:29] <headius> yes
+[02:33:32] <enebo[m]> ok
+[02:33:46] <headius> it becomes a specific type of super with a static name (and hopefully direct class access in the future)
+[02:34:02] <headius> it could remain UnresolvedSuper but at this point the only cases that will go through it are invalid supers
+[02:34:07] <headius> (probably)
+[02:34:07] <enebo[m]> yeah I think in this case we are always at startup so it may be simpler since you just will have simple lists of instrs to swap
+[02:34:14] <headius> yeah ok
+[02:34:25] <headius> does clone work on simple though?
+[02:34:38] <enebo[m]> Then when you are done it will at some point become full or JIT and then ACP will be right
+[02:35:11] <headius> yes
+[02:35:16] <enebo[m]> I will have to check but it should 
+[02:35:46] <enebo[m]> hmm this is weird
+[02:36:47] <enebo[m]> ok I think this will not work as it stands but it should be made to work
+[02:37:29] <enebo[m]> I guess this was designed around happening from a CFG and from inlining which also has CFG/full at that point so I must have realized we would never go back to interpreterContext and nulled it out
+[02:38:24] <enebo[m]> but I think this could be IRScope#IRSCope @line 142 (for cloning) to do
+[02:38:42] <enebo[m]> if (this.fulleInterpreterContext != null) this.interpreterContext = null;
+[02:38:51] <headius> yeah that's why I went straight to full
+[02:39:09] <enebo[m]> At the point you are doing this you know you have just interpreterContext
+[02:39:10] <headius> if I could hook into building I could change the way supers get compiled out of def, but I was scare by all the def = null clearing
+[02:39:12] <headius> this has to always work
+[02:39:47] <enebo[m]> how would this work from a main script?
+[02:39:57] <enebo[m]> we immediately full compile
+[02:40:04] <enebo[m]> err even more I guess
+[02:40:27] <headius> JIT still serializes simple IR
+[02:40:39] <headius> into the generated bytecode class
+[02:40:47] <headius> so it will have to stand it up again
+[02:40:49] <enebo[m]> I mean main script we JIT immediately
+[02:40:57] <enebo[m]> not AOT
+[02:41:10] <headius> it's not much of a distinction for the target script
+[02:41:18] <headius> JIT always serializes IR into the class
+[02:41:27] <headius> so we can return to it if necessary
+[02:41:32] <headius> we just don't
+[02:42:01] <enebo[m]> I am just saying if it JITs we will make fullinterpretercontext which means in the case of main script we will not assume interpretercontext can still exist
+[02:42:11] <enebo[m]> and main script is one case where it happens right away
+[02:42:11] <headius> ah, sure
+[02:42:25] <headius> well I could rewrite both ways but obviously it's getting messy
+[02:42:28] <enebo[m]> So doing it with startup is not great in that case
+[02:42:45] <headius> if I do both then we don't have to worry about parent method being full and new closure being simple
+[02:42:50] <headius> so that is a bit of a question
+[02:43:19] <enebo[m]> If this is a more of a pass it could just determine if it still needs framing and removes that if it is not needed but as you noticed manipulating instrs is some work
+[02:43:40] <headius> e.g. a script like cls = Class.new { def self.do_it; define_method(:foo) { super }; end }
+[02:43:50] <headius> compiled at command line do_it will go full and then JVM
+[02:44:01] <enebo[m]> The best way to do this though is not to change the instrs but to mark them as dead
+[02:44:02] <headius> if we then revert the define_method block to simple it will act weird
+[02:44:12] <enebo[m]> that should noop them
+[02:44:24] <headius> hmmm ok
+[02:44:38] <enebo[m]> I am looking at ACP atm
+[02:45:30] <enebo[m]> so fic.needsFrame could go away if super was the only reason for it
+[02:46:24] <enebo[m]> This is quite weird
+[02:46:36] <enebo[m]> I do not see usesSuper() only usesZSuper()
+[02:46:46] <headius> hmm
+[02:46:48] <enebo[m]> That is because we don't need the name?
+[02:47:03] <headius> before this work only UnresolvedSuper needs frame, which is the supertype for ZSuper
+[02:47:12] <headius> now there is ModuleSuper which needs frame only for the klass
+[02:47:41] <enebo[m]> So we should figure out what flag makes a super in a define_method forces a frame
+[02:47:59] <enebo[m]> there are things like canCaptureBinding() or binding has escaped
+[02:48:27] <headius> it is just the two frame fields, name and class
+[02:48:42] <headius> Unresolved reports that it needs them; ModuleSuper only requests class
+[02:49:02] <enebo[m]> / For now, we always require frame for closures
+[02:49:27] <enebo[m]> I think ACP unconditionally frames all IRClosures
+[02:49:41] <enebo[m]> So needsFrame is not the cause of the frame but a second check on closure
+[02:50:04] <enebo[m]> At the time we run ACP we don't know how the closure is used
+[02:50:33] <enebo[m]> ACP could be smarter about this perhaps but even if it was then we would need to see if it usesSuper (which it appears we do not)
+[02:50:47] <enebo[m]> then we would still be in the same position that we need to see if we still need a frame or not
+[02:51:19] <headius> we do
+[02:51:26] <headius> need frame always for closures
+[02:52:04] <headius> yeah it is odd it does not check that because a super in a module method does need frame
+[02:52:06] <enebo[m]> except in this case?
+[02:52:20] <headius> a super in a block might not but the block will always have the frame anyway
+[02:52:42] <enebo[m]> so define_method { super() } will always be framed
+[02:52:55] <enebo[m]> Did I fall off track here?
+[02:53:04] <headius> well it might not with this rewrite
+[02:53:12] <enebo[m]> ok
+[02:53:20] <headius> if it is define_method in a normal class that super will turn into an InstanceSuper that does not request frame
+[02:53:45] <headius> I have to rewrite all super instructions to the correct type during this so they will not have to do unresolved stuff if not necessary
+[02:53:50] <enebo[m]> so there is a lot of logic here deciding that for non-closures and all of that needs to be reexamined and the needsFrame instrs added in ACP should be marked dead if they are not needed
+[02:54:03] <headius> or they will do it if necessary (like if we wrongly detected it as an InstanceSuper but the define_method call is actually in a module)
+[02:54:11] <enebo[m]> ala instr.markDead()
+[02:54:11] <headius> yeah
+[02:54:55] <enebo[m]> but since you are looking at this I can say I think there are things to look at
+[02:55:11] <enebo[m]> usesSuper does not mean we need a frame but it does in some cases right?
+[02:55:51] <enebo[m]> so needsFrame() in FIC probably needs some extra logic to encapsulate that
+[02:58:19] <enebo[m]> heh...I don't see how the visitor excludes dead instrs
+[02:59:59] <enebo[m]> now I am thinking markDead is not a good way to go
+[03:01:02] <enebo[m]> I am a bit baffled why visitor does not skip dead instrs since they are not alive but I don't know if we should push forward or just BB.instrs.remove(instr)
+[03:01:25] <headius> well usesSuper is a bit too overloaded
+[03:01:38] <headius> it should be just looking for specific frame things
+[03:01:45] <enebo[m]> That is much more direct than marking.  I just figured marking is simpler because you are iterating over the list you would remove from
+[03:01:49] <headius> super needs access to frame sometimes, zsuper needs access to raw args
+[03:02:04] <headius> but other supers may not need anything special and are just a call on superclass
+[03:02:32] <enebo[m]> well I use super specially to know if a scope has super for constructor splitting
+[03:03:18] <enebo[m]> if something is put to needs_name or something like that we really want to know why in case we remove what specified that
+[03:03:47] <enebo[m]> but usesSuper would appear to be too broad here
+[03:04:29] <enebo[m]> also we do have those flags
+[03:05:26] <headius> right
+[03:05:30] <headius> I think it is just old
+[03:05:49] *** Quits: fidothe (sid1130@id-1130.uxbridge.irccloud.com) (Read error: Connection reset by peer)
+[03:06:09] <headius> when we did not have the plumbing in place to piece apart the actual needs
+[03:06:11] <enebo[m]> flags still exist for values which are determined specific to the IC they live in where in IRScope those are meant to be truisms about the scope
+[03:06:25] <enebo[m]> So frame info in FIC is based on those truisms and other info but the scope booleans are meant to always be true (until they are unconditionally not)
+[03:06:45] <headius> I have to run to pool but I will push what I have... all super instrs are being rewritten to appropriate type now at define_method time
+[03:06:47] *** Joins: fidothe (sid1130@id-1130.uxbridge.irccloud.com)
+[03:06:49] <headius> not everything passes but this is the right direction
+[03:06:57] <enebo[m]> In this case if you remove super then we can toggle usesSuper to false
+[03:07:00] <headius> the rewriting can change without much effort here
+[03:07:15] <enebo[m]> ok I will look in the morning
+[03:07:38] <enebo[m]> I am really interested in the rewriting aspect here since this will also fit into speculative opt of removign frame
+[03:07:40] <headius> so we will be at a point where there's no unresolved supers in the system soon, and the only frame requirement is when it's in a module
+[03:07:58] <headius> which we should be able to get from Java stack or from an as-yet-undefined place in the binding
+[03:08:06] <enebo[m]> I was thinking about this and the full deopt is not really needed to do frame elision with deopt
+[03:08:27] <enebo[m]> there are so few instrs we can special case what we need to dump and even make space for any temps we need for framing
+[03:08:46] <headius> all super instrs extends a new abstract SuperInstr for simplicity
+[03:08:57] <headius> but we will want to make this more mutable... change thyself into this kind of super
+[03:09:04] <enebo[m]> It would be nice to be generic but I think we can special case this just for removing framing for things like $_
+[03:09:12] <headius> it might be one instr once this all boils out
+[03:09:27] <enebo[m]> that would be great
+[03:10:23] <enebo[m]> anyways I will look at your stuff tomorrow and see what pain points exist
+[03:10:32] <headius> yeah it is not passing everything but I'm getting there
+[03:10:33] <enebo[m]> hopefully we can make modifying this stuff simpler
+[03:10:44] <headius> mostly issues with define_method in weird cases like singleton class
+[03:11:00] <headius> oh and still not rewriting child closures
+[03:11:14] <headius> I was not sure if that gets cloned or I have to do additional cloning
+[03:11:34] <headius> the cloning and simple/full/jit lifecycle is the main confusion for me right now
+[03:11:36] <enebo[m]> I would have to look but I think it should if it doesn't since those closures may have the actual super
+[03:11:57] <headius> yeah I just need the whole tree cloned and I can rewrite the nested supers
+[03:12:02] <enebo[m]> yeah
+[03:12:06] <headius> my stuff is pushed
+[03:12:20] <enebo[m]> I would think it would
+[03:12:23] <enebo[m]> ok
+[03:12:36] <headius> I am optimistic about this
+[03:13:26] <headius> all this to support `__callee__`
+[03:13:45] <headius> 🤦‍♀️
+[03:14:45] <enebo[m]> have fun at pool
+[03:31:04] <headius> 🎱🏊‍♀️
+[03:39:48] *** Joins: lucerne0 (~lucerne@ip202.ip-51-178-215.eu)
+[03:41:34] *** Quits: lucerne (~lucerne@ip202.ip-51-178-215.eu) (Ping timeout: 250 seconds)
+[03:41:35] *** lucerne0 is now known as lucerne
+[03:57:54] *** Quits: lucerne (~lucerne@ip202.ip-51-178-215.eu) (Quit: Ping timeout (120 seconds))
+[03:58:15] *** Joins: lucerne (~lucerne@ip202.ip-51-178-215.eu)
+[07:37:44] <lopex[m]> https://www.youtube.com/watch?v=i5lYo2chZ54
+[08:19:15] <byteit101[m]> rebased and updated
+[08:41:58] <headius> cool
+[08:42:14] <headius> 😎
+[09:27:54] <headius> enebo: ok I must be doing this all wrong... replacing instrs does not seem to replace them, not sure if it is still falling back on startup instrs or what
+[09:36:50] <headius> so I went head and just used getInterpreterContext and rewrote that and it seems to work
+[09:37:40] <headius> or at least it passes one of the tests that fail, and others now blow up worse
+[12:30:11] *** Quits: ssaschaa[m] (~ssaschaam@2001:470:69fc:105::1:605e) (Quit: You have been kicked for being idle)

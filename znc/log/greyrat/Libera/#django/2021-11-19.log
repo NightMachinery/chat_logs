@@ -1,0 +1,566 @@
+[00:26:42] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 260 seconds)
+[00:28:29] *** Quits: LuxuryMode (uid91005@ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[00:28:41] *** Joins: fikran (~fikran@user/fikran)
+[00:29:13] *** Joins: PaulWay[w] (~PaulWay@2001:44b8:1110:f800:4b79:e11c:c2f:5c75)
+[00:30:56] *** Joins: tga (~tga@user/tga)
+[00:33:09] <la_croix_> Are there anybody in who knows about the interaction between pytest-django (+django.test.utils) and psycopg2? I am using the __init__ method of a field's metaclass to create a type in the db. This works fine through shell, or runserver, but fails on pytest. It looks as though pytest is running the __init__, then creating the test database, I just don't know how to fix it
+[00:33:28] *** Joins: PantelicGR2 (~pantelicg@user/pantelicgr)
+[00:38:11] *** Quits: luigibu (~luigibu@80.30.201.209) (Ping timeout: 264 seconds)
+[00:39:23] *** Quits: audiocat (~audio@user/audio) (Ping timeout: 264 seconds)
+[00:45:30] *** Quits: dor (~erg@78.11.12.207) (Remote host closed the connection)
+[00:47:34] *** Joins: nesoi (~Adium@172-3-140-156.lightspeed.sntcca.sbcglobal.net)
+[00:59:29] *** Joins: vdamewood (~vdamewood@fedora/vdamewood)
+[01:08:46] <nbjoerg> la_croix_: use the pytest.mark.django_db fixture to explicitly add it?
+[01:09:52] <nbjoerg> I would expect you can run into issues with non-default databases too
+[01:14:47] <la_croix_> nbjoerg: I was under the impression that that allowed the test to use the database, but not to modify run a SQL command before the tests start?
+[01:15:03] *** Joins: luigibu (~luigibu@80.30.201.209)
+[01:19:14] <nbjoerg> btw, why do you not have an actual migration for that type?
+[01:19:23] <nbjoerg> instead of doing it in __init__?
+[01:21:25] *** Joins: abrantesasf (~abrantesa@187.36.170.211)
+[01:23:02] <la_croix_> I tried that, and it did work, with the conversion to/from the type happening in the to_python/db_prep_value method. Then I decided to be clever * :( * and register the type with psycopg2 itself, so that it could adapt to/from the type automatically. This works really nicely, just not in tests: https://dpaste.org/epiii
+[01:24:02] <la_croix_> https://dpaste.org/epii , sorry
+[01:25:01] <nbjoerg> line 18 is using django.db.connection?
+[01:25:49] <la_croix_> nbjoerg: Yeah, it's a regular django (postgres) database, using the regular django db system, I'm just adding a type to it
+[01:26:50] <nbjoerg> what about using db_check instead?
+[01:27:08] <nbjoerg> hm.
+[01:27:10] <nbjoerg> no
+[01:27:39] *** Quits: django-ticketbot (~django-ti@django/ops/ticketbot) (Remote host closed the connection)
+[01:27:56] *** Joins: django-ticketbot (~django-ti@django/ops/ticketbot)
+[01:27:57] *** Quits: brsc2909 (~Thunderbi@109.255.244.60) (Quit: brsc2909)
+[01:29:07] <nbjoerg> la_croix_: look at how reset_queries is implemented and hooked?
+[01:31:48] <la_croix_> In django or pytest?
+[01:32:31] <nbjoerg> in django
+[01:32:48] <nbjoerg> I would hope the same works for pytest
+[01:33:11] <la_croix_> I've put a bunch of debug statements it, it looks as though it runs the init method and then creates the test database (meaning that the init method is never run on the new test database). I did find a comment somewhere on a pytest-django ticket (which I now can't find), that suggested that __init__ methods suffered from this, but it didn;'t say how to fix it
+[01:33:31] *** Joins: LuxuryMode (uid91005@ilkley.irccloud.com)
+[01:34:10] <la_croix_> i could do it with a system level fixture, if it weren't for the fact that it needs to exist _before_ the test database is migrated. It would be helpful if pytest-django had a pre_migrate hook
+[01:34:57] <nbjoerg> hm. actually
+[01:35:14] <nbjoerg> connection_created
+[01:35:24] <nbjoerg> django.db.backaneds.connection_created
+[01:35:26] <LuxuryMode> Trying to upgrade to Django 3.2 from 3.1 and Django is wanting to create a migration for one of my dependencies `/root/.cache/pypoetry/virtualenvs/great-control-QJlTk0kd-py3.8/lib/python3.8/site-packages/impersonate/migrations/0002_alter_impersonationlog_id.py` which is confusing me. Any ideas on what is going on herE?
+[01:36:13] <nbjoerg> la_croix_: see django.contrib.postgres.apps
+[01:37:41] <tga> quick poll: are you running your own databases in production or using managed?
+[01:38:06] * tga is looking at various providers for a good vps/container + managed database + s3 combo
+[01:38:56] <nbjoerg> running the database is easy compared to most other parts
+[01:40:16] <tga> is it?
+[01:40:52] <tga> most of my persistent data is in the database, so it needs to be always on, replicated, backed up
+[01:41:21] <tga> on the compute nodes I run docker swarm, either standalone or through caprover, they are basically disposable
+[01:42:40] <tga> I don't have a lot of static files, so my experience with S3 is limited. so far I've been using managed and not cared much beyond daily backups
+[01:42:50] *** Joins: GinFuyou (~GinFuyou@reya.cloud.tilaa.com)
+[01:44:27] <la_croix_> nbjoerg: Interesting, if I can hook into this: https://github.com/django/django/blob/5e218cc0b704ebf64c460050a97b5fafe63e92b0/django/contrib/postgres/apps.py#L63 I can probably do it without having to subclass the postgres app
+[01:45:22] <nbjoerg> oh, I was expecting the use of a vps
+[01:45:33] * nbjoerg doesn't really believe in the cloud
+[01:48:12] *** Joins: rpkilby_ (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[01:48:29] *** Quits: la_croix_ (~la_croix@cpc117350-walt24-2-0-cust237.13-2.cable.virginm.net) (Read error: Connection reset by peer)
+[01:48:42] *** Quits: thiras (~thiras@user/thiras) (Read error: Connection reset by peer)
+[01:49:09] *** Joins: la_croix_ (~la_croix@cpc117350-walt24-2-0-cust237.13-2.cable.virginm.net)
+[01:49:56] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Ping timeout: 268 seconds)
+[01:50:59] <tga> nbjoerg: managed databases are still "the cloud"
+[01:51:41] <nbjoerg> yes :)
+[01:51:44] <nbjoerg> kind of my point
+[01:51:58] <nbjoerg> if you run a vps anyway, hosting your own database is easy
+[01:52:44] <tga> installing and starting a dbms is easy, but managing it isn't trivial
+[01:53:37] *** Joins: dre (~dre@2001:8003:c932:c301:7b6:ec18:50ab:337c)
+[01:54:17] <tga> also, as a business, I need to pay someone to do it -- and even AWS is cheaper than a qualified sysadmin/dba
+[02:01:01] *** Quits: luigibu (~luigibu@80.30.201.209) (Ping timeout: 268 seconds)
+[02:02:37] <la_croix_> nbjoerg: Hooking into that signal worked perfectly. Thank you so much!!
+[02:04:23] *** Quits: znpy (~znpy@user/znpy) (Remote host closed the connection)
+[02:05:32] *** Joins: znpy (~znpy@user/znpy)
+[02:06:25] *** Quits: mimmy_ (~mimmy@37.19.213.65) (Quit: WeeChat 3.3)
+[02:06:54] *** Quits: la_croix_ (~la_croix@cpc117350-walt24-2-0-cust237.13-2.cable.virginm.net) (Remote host closed the connection)
+[02:07:00] *** Quits: znpy (~znpy@user/znpy) (Client Quit)
+[02:09:49] <SpecialK> tga: I always outsource
+[02:10:23] <SpecialK> tga: the cost of Heroku PG or AWS RDS is <<< the _full_ cost of self-hosting, at the scale I run at
+[02:20:49] <nbjoerg> depends on a lot of factors
+[02:24:52] *** Parts: nesoi (~Adium@172-3-140-156.lightspeed.sntcca.sbcglobal.net) ()
+[02:35:52] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 256 seconds)
+[02:37:38] *** Quits: Staunch (~Staunch@c-24-7-237-208.hsd1.mn.comcast.net) (Remote host closed the connection)
+[02:38:03] *** Joins: fikran (~fikran@user/fikran)
+[02:42:32] *** Joins: znpy (~znpy@user/znpy)
+[02:43:16] *** Quits: EvilDMP (~textual@django/moderator/EvilDMP) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[02:45:29] *** Joins: la_croix_ (~la_croix@cpc117350-walt24-2-0-cust237.13-2.cable.virginm.net)
+[02:50:18] *** Quits: rje (~rje@65.141.156.170) (Quit: rje will be back)
+[02:55:54] <dre> ^
+[03:05:09] *** Quits: djapo (~archangel@user/djapo) (Ping timeout: 268 seconds)
+[03:08:03] *** Joins: rje (~rje@65.141.156.170)
+[03:25:29] *** Quits: rje (~rje@65.141.156.170) (Quit: My computer has gone to sleep. ZZZzzz…)
+[03:28:38] *** Quits: dre (~dre@2001:8003:c932:c301:7b6:ec18:50ab:337c) (Remote host closed the connection)
+[03:36:35] *** Joins: yanchai (~yanchai@124.6.141.226)
+[03:38:27] *** Joins: rje (~rje@65.141.156.170)
+[03:39:35] *** Quits: cmbengue (~Thunderbi@207.191.249.160) (Remote host closed the connection)
+[03:48:07] *** Quits: la_croix_ (~la_croix@cpc117350-walt24-2-0-cust237.13-2.cable.virginm.net) ()
+[03:50:03] *** Quits: rje (~rje@65.141.156.170) (Quit: My computer has gone to sleep. ZZZzzz…)
+[03:53:44] *** Joins: rje (~rje@65.141.156.170)
+[03:58:36] *** Joins: dre (~dre@2001:8003:c932:c301:f4c:269a:f23f:f4fc)
+[04:00:23] *** Joins: mimmy (~mimmy@2607:fea8:6e0:7f90:c01b:60fe:9558:2d95)
+[04:01:53] *** Quits: Haudegen (~quassel@178.115.237.87.static.drei.at) (Ping timeout: 268 seconds)
+[04:02:48] *** Quits: dre (~dre@2001:8003:c932:c301:f4c:269a:f23f:f4fc) (Client Quit)
+[04:03:11] *** Joins: dre (~dre@2001:8003:c932:c301:f4c:269a:f23f:f4fc)
+[04:05:15] *** Quits: slav0nic (slav0nic@python.su) (Ping timeout: 265 seconds)
+[04:10:04] *** Quits: dre (~dre@2001:8003:c932:c301:f4c:269a:f23f:f4fc) (Quit: Leaving)
+[04:10:24] *** Joins: dre (~dre@2001:8003:c932:c301:f4c:269a:f23f:f4fc)
+[04:15:57] *** Joins: slav0nic (slav0nic@python.su)
+[04:20:23] *** Quits: slav0nic (slav0nic@python.su) (Ping timeout: 268 seconds)
+[04:24:55] *** Quits: dre (~dre@2001:8003:c932:c301:f4c:269a:f23f:f4fc) (Quit: Leaving)
+[04:25:19] *** Joins: dre (~dre@2001:8003:c932:c301:f4c:269a:f23f:f4fc)
+[04:27:36] *** Quits: rje (~rje@65.141.156.170) (Quit: My computer has gone to sleep. ZZZzzz…)
+[04:27:42] *** Quits: abrantesasf (~abrantesa@187.36.170.211) (Remote host closed the connection)
+[04:28:26] *** Quits: yanchai (~yanchai@124.6.141.226) (Ping timeout: 260 seconds)
+[04:31:28] *** Quits: rpkilby_ (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Remote host closed the connection)
+[04:43:18] *** Joins: Atque (~Atque@user/atque)
+[04:45:23] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 264 seconds)
+[04:47:24] *** Joins: fikran (~fikran@user/fikran)
+[04:55:10] *** Joins: rje (~rje@50.35.241.164)
+[04:55:12] *** Quits: rje (~rje@50.35.241.164) (Client Quit)
+[04:57:08] *** Joins: rje (~rje@50.35.241.164)
+[04:57:20] *** Joins: PantelicGR (~PantelicG@user/pantelicgr)
+[04:59:31] *** Joins: ednhmn (~ednhmn@200.173.179.51)
+[05:02:00] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[05:05:35] *** Quits: Kvothe (~weechat@user/elodin) (Ping timeout: 250 seconds)
+[05:09:30] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Ping timeout: 260 seconds)
+[05:11:52] *** Quits: LuxuryMode (uid91005@ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[05:15:45] *** Quits: PantelicGR (~PantelicG@user/pantelicgr) (Quit: Leaving)
+[05:36:53] *** Quits: rje (~rje@50.35.241.164) (Quit: My computer has gone to sleep. ZZZzzz…)
+[05:37:35] *** Quits: Rikem (~mike@user/rikem) (Ping timeout: 264 seconds)
+[05:42:09] *** Joins: ednhmn_ (~ednhmn@200.173.177.188)
+[05:44:15] *** Quits: ednhmn (~ednhmn@200.173.179.51) (Ping timeout: 268 seconds)
+[05:45:27] *** Joins: bl4ck (~bl4ck@141.170.202.66)
+[05:45:29] <bl4ck> wtf
+[05:45:35] <bl4ck> man i got lost finding this channel lol
+[05:45:43] <bl4ck> wtf happend to freenode
+[05:45:51] <bl4ck> not just this chann
+[05:45:56] <bl4ck> but most of them lol
+[05:46:53] <mattmcc> Long story.
+[05:47:08] <mattmcc> https://arstechnica.com/gadgets/2021/05/freenode-irc-has-been-taken-over-by-the-crown-prince-of-korea/
+[05:47:31] <bl4ck> lol
+[05:47:45] <bl4ck> everything clear just from the title
+[05:48:41] <bl4ck> guys i have a question
+[05:48:45] *** Joins: dkliban__ (~dkliban@99-3-68-61.lightspeed.rlghnc.sbcglobal.net)
+[05:48:56] <bl4ck> can this be optimized with django orm, or maybe raw query ?
+[05:49:16] <bl4ck> https://i.ibb.co/NC0bdSZ/Deepin-Screenshot-select-area-20211119031718.png
+[05:49:49] <bl4ck> default 8511.63 ms (1837 queries including 1620 similar and 727 duplicates )
+[05:51:09] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[05:51:35] *** Quits: dkliban_ (~dkliban@99-3-68-61.lightspeed.rlghnc.sbcglobal.net) (Ping timeout: 265 seconds)
+[05:51:55] *** Quits: ednhmn_ (~ednhmn@200.173.177.188) (Remote host closed the connection)
+[05:55:20] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Ping timeout: 256 seconds)
+[05:55:48] *** Joins: rje (~rje@50.35.241.164)
+[05:57:43] *** Joins: tm007 (uid287041@uxbridge.irccloud.com)
+[05:57:55] <tm007> mornin
+[05:58:13] <tm007> afternoon*
+[06:02:32] *** Joins: ednhmn (~ednhmn@200.173.177.188)
+[06:06:58] *** Quits: ednhmn (~ednhmn@200.173.177.188) (Remote host closed the connection)
+[06:07:12] *** Joins: ednhmn (~ednhmn@200.173.177.188)
+[06:08:38] *** Quits: ednhmn (~ednhmn@200.173.177.188) (Remote host closed the connection)
+[06:14:03] *** Quits: rje (~rje@50.35.241.164) (Quit: My computer has gone to sleep. ZZZzzz…)
+[06:27:12] *** Joins: rje (~rje@50.35.241.164)
+[06:29:32] <dre> bl4ck, are you trying to increase the index by 1 for all books?
+[06:30:08] <dre> why lol?
+[06:30:58] *** Quits: bl4ck (~bl4ck@141.170.202.66) (Quit: WeeChat 3.3)
+[06:31:02] *** Quits: mimmy (~mimmy@2607:fea8:6e0:7f90:c01b:60fe:9558:2d95) (Ping timeout: 240 seconds)
+[06:33:55] <FunkyBob> ...  records.update(index=F('index')+1)
+[06:34:21] *** Joins: mimmy (~mimmy@2607:fea8:6e0:7f90:9965:319a:ef17:fff9)
+[06:38:36] *** Quits: bambanxx (~bambanx@181-163-37-62.baf.movistar.cl) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[06:40:59] *** Quits: dkliban__ (~dkliban@99-3-68-61.lightspeed.rlghnc.sbcglobal.net) (Ping timeout: 268 seconds)
+[06:46:32] *** Quits: mimmy (~mimmy@2607:fea8:6e0:7f90:9965:319a:ef17:fff9) (Ping timeout: 240 seconds)
+[06:48:03] *** Joins: mimmy (~mimmy@2607:fea8:6e0:7f90:c9c2:f9da:e6bb:5682)
+[06:54:59] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 264 seconds)
+[06:56:44] *** Joins: fikran (~fikran@user/fikran)
+[07:12:17] *** Joins: ednhmn (~ednhmn@200.173.177.188)
+[07:12:17] *** Quits: ednhmn (~ednhmn@200.173.177.188) (Remote host closed the connection)
+[07:27:00] *** Joins: mimmy_ (~mimmy@2607:fea8:6e0:7f90:f54f:22a2:7c84:1461)
+[07:29:42] *** Quits: mimmy (~mimmy@2607:fea8:6e0:7f90:c9c2:f9da:e6bb:5682) (Ping timeout: 268 seconds)
+[07:37:09] *** Joins: mimmy (~mimmy@2607:fea8:6e0:7f90:9d18:4862:d949:6f72)
+[07:39:02] *** Quits: mimmy_ (~mimmy@2607:fea8:6e0:7f90:f54f:22a2:7c84:1461) (Ping timeout: 240 seconds)
+[07:46:07] *** Joins: mimmy_ (~mimmy@2607:fea8:6e0:7f90:2da1:529b:e827:2fbb)
+[07:47:32] *** Quits: mimmy (~mimmy@2607:fea8:6e0:7f90:9d18:4862:d949:6f72) (Ping timeout: 240 seconds)
+[07:56:57] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[08:02:47] *** Joins: mimmy (~mimmy@2607:fea8:6e0:7f90:45bd:2d1d:42f2:f442)
+[08:06:05] *** Quits: mimmy_ (~mimmy@2607:fea8:6e0:7f90:2da1:529b:e827:2fbb) (Ping timeout: 268 seconds)
+[08:19:39] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[08:31:06] *** Quits: mimmy (~mimmy@2607:fea8:6e0:7f90:45bd:2d1d:42f2:f442) (Quit: WeeChat 3.3)
+[08:47:23] *** Joins: yanchai (~yanchai@222.127.97.162)
+[08:56:53] *** Joins: bambanxx (~bambanx@181-163-37-62.baf.movistar.cl)
+[09:04:35] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 264 seconds)
+[09:06:05] *** Joins: fikran (~fikran@user/fikran)
+[09:09:26] *** Quits: bambanxx (~bambanx@181-163-37-62.baf.movistar.cl) (Quit: Textual IRC Client: www.textualapp.com)
+[09:30:14] *** Joins: dor (~erg@78.11.12.207)
+[09:37:44] *** Joins: audiobirb (~audio@user/audio)
+[09:45:58] *** Quits: yanchai (~yanchai@222.127.97.162) (Ping timeout: 256 seconds)
+[09:46:14] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[09:47:09] *** Quits: Xaldafax (~xaldafax@cpe-198-72-160-101.socal.res.rr.com) (Quit: Bye...)
+[09:51:33] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Remote host closed the connection)
+[09:54:35] *** Joins: mattil (~mattil@helsinki.portalify.com)
+[10:10:47] *** Joins: mrwick (~mrwick@user/mrwick)
+[10:12:30] *** Quits: PaulWay[w] (~PaulWay@2001:44b8:1110:f800:4b79:e11c:c2f:5c75) (Ping timeout: 268 seconds)
+[10:13:21] *** Quits: mattil (~mattil@helsinki.portalify.com) (Remote host closed the connection)
+[10:20:11] *** Quits: audiobirb (~audio@user/audio) (Ping timeout: 264 seconds)
+[10:28:00] *** Quits: Atque (~Atque@user/atque) (Quit: ...)
+[10:48:59] *** Joins: ferz (~ferz@2001:b07:645b:b50e:c16b:20d0:1142:f24)
+[10:49:05] <ferz> Hi
+[10:58:12] *** Joins: luischi (~luigi@80.30.201.209)
+[10:58:52] *** Joins: kuter (~kuter@public-gprs400608.centertel.pl)
+[11:03:41] *** Quits: ferz (~ferz@2001:b07:645b:b50e:c16b:20d0:1142:f24) (Ping timeout: 268 seconds)
+[11:06:05] *** Joins: Tas-sos (~Tas-sos@78-203-151.adsl.cyta.gr)
+[11:07:32] *** Quits: dre (~dre@2001:8003:c932:c301:f4c:269a:f23f:f4fc) (Ping timeout: 240 seconds)
+[11:12:56] *** Joins: pycode (~pycode@2001:b07:5d28:551:8675:ecb3:a4d9:c37)
+[11:13:48] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 256 seconds)
+[11:15:26] *** Joins: fikran (~fikran@user/fikran)
+[11:15:45] *** Joins: ferz (~ferz@2001:b07:645b:b50e:c16b:20d0:1142:f24)
+[11:16:07] *** Quits: tm007 (uid287041@uxbridge.irccloud.com) (Quit: Connection closed for inactivity)
+[11:16:49] <pycode> hello
+[11:37:35] *** Quits: ferz (~ferz@2001:b07:645b:b50e:c16b:20d0:1142:f24) (Ping timeout: 264 seconds)
+[11:52:06] *** Joins: ferz (~ferz@2001:b07:645b:b50e:c16b:20d0:1142:f24)
+[11:54:35] <vlt> Good morning!
+[11:56:50] *** Quits: ferz (~ferz@2001:b07:645b:b50e:c16b:20d0:1142:f24) (Ping timeout: 260 seconds)
+[11:56:56] *** Joins: yanchai (~yanchai@222.127.97.162)
+[12:00:01] *** Joins: sandeepk (~sandeepk@202.14.122.202)
+[12:05:36] *** Joins: DnzAtWrk (~DnzAtWrk@mobile-access-567343-143.dhcp.inet.fi)
+[12:05:54] *** Joins: Ergo^ (~ergo@91.238.59.144)
+[12:11:37] *** Joins: ferz (~ferz@93-39-141-241.ip76.fastwebnet.it)
+[12:16:03] *** Joins: EvilDMP (~textual@django/moderator/EvilDMP)
+[12:16:04] *** ChanServ sets mode: +v EvilDMP
+[12:16:08] *** Quits: jess (~jess@libera/staff/jess) (Quit: Lost terminal)
+[12:16:52] *** Joins: jess (~jess@libera/staff/jess)
+[12:24:01] *** Quits: sandeepk (~sandeepk@202.14.122.202) (Remote host closed the connection)
+[12:24:28] *** Joins: sandeepk (~sandeepk@202.14.122.202)
+[12:36:16] *** Parts: yanchai (~yanchai@222.127.97.162) ()
+[12:39:21] <ferz> How can I fix these troubles http://paste.scsys.co.uk/596178?
+[12:39:21] <ferz> Have you hints to understand these problems?
+[12:46:27] *** Quits: luischi (~luigi@80.30.201.209) (Quit: WeeChat 3.3)
+[13:02:51] <pycode> ok i try to start thinkiing a different approach, i am speding too much time on that, i have a page with a form then i need to open a modal that has ANOTHER form then i need to handle the submit, if the form in invalid i just need to reload the modal body otherwise redirect to a page (get_success_url. basically)
+[13:03:16] <pycode> so the question is, should i create a view that return the form html so i can then use fetch to load that content?
+[13:04:06] *** Joins: tamere (~tamere@user/loodoons)
+[13:04:14] <tamere> Hello guys 👋
+[13:05:32] *** Joins: Haudegen (~quassel@178.115.237.87.static.drei.at)
+[13:05:39] <tamere> I'm using a custom manager that return super().get_queryset()
+[13:05:40] <tamere> When I want to use the filter method on the .objects. it's not using my custom manager. I think I found a bug in Django 💪
+[13:20:44] *** Joins: Rikem (~mike@user/rikem)
+[13:21:33] *** Joins: dre (~dre@119-18-0-198.771200.syd.nbn.aussiebb.net)
+[13:23:03] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 268 seconds)
+[13:24:47] *** Joins: fikran (~fikran@user/fikran)
+[13:24:54] *** Quits: kuter (~kuter@public-gprs400608.centertel.pl) (Ping timeout: 268 seconds)
+[13:29:29] <pycode> is there a way to handle two forms in the same page?
+[13:32:31] *** Quits: EvilDMP (~textual@django/moderator/EvilDMP) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[13:46:04] *** Joins: tm007 (uid287041@uxbridge.irccloud.com)
+[13:48:08] <tm007> possible to set django admin panel default as dark theke
+[13:56:19] *** Joins: EvilDMP (~textual@django/moderator/EvilDMP)
+[13:56:19] *** ChanServ sets mode: +v EvilDMP
+[13:58:43] *** Quits: DnzAtWrk (~DnzAtWrk@mobile-access-567343-143.dhcp.inet.fi) (Read error: Connection reset by peer)
+[14:13:44] *** Joins: ednhmn (~ednhmn@200.173.177.188)
+[14:18:18] *** Quits: ednhmn (~ednhmn@200.173.177.188) (Ping timeout: 260 seconds)
+[14:29:07] *** Joins: brsc2909 (~Thunderbi@109.255.244.60)
+[14:29:59] *** Joins: luischi (~luigi@80.30.201.209)
+[14:30:29] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[14:34:32] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Ping timeout: 240 seconds)
+[14:43:02] *** Joins: DnzAtWrk (~DnzAtWrk@mobile-access-567343-143.dhcp.inet.fi)
+[14:44:15] *** Quits: DnzAtWrk (~DnzAtWrk@mobile-access-567343-143.dhcp.inet.fi) (Read error: Connection reset by peer)
+[14:50:02] *** Joins: mattil (~mattil@helsinki.portalify.com)
+[14:58:02] *** Quits: mattil (~mattil@helsinki.portalify.com) (Remote host closed the connection)
+[14:58:43] *** Joins: mattil (~mattil@helsinki.portalify.com)
+[14:58:58] *** Quits: mattil (~mattil@helsinki.portalify.com) (Remote host closed the connection)
+[14:59:10] *** Joins: mattil (~mattil@helsinki.portalify.com)
+[15:06:08] *** Quits: lucascastro (~lucascast@177-185-133-154.dynamic.isotelco.net.br) (Ping timeout: 256 seconds)
+[15:11:35] *** Quits: pycode (~pycode@2001:b07:5d28:551:8675:ecb3:a4d9:c37) (Ping timeout: 268 seconds)
+[15:23:15] <tamere> Do you know why calling filter on a QuerySet doesn't use the custom manager ? :)
+[15:24:04] <GinFuyou> custom manager is not default ("objects")?
+[15:28:03] *** Joins: lucascastro (~lucascast@45-167-143-6.netfacil.inf.br)
+[15:28:30] <tamere> I'm using it with the objects property :)
+[15:28:30] <dre> is that 3 questions in as row?
+[15:29:00] <dre> tamere, have you set it to be the queryset? you should send some code :P
+[15:30:05] *** Quits: withered_wolf (~withered_@1437135-v103.1561-static.stchilaa.metronetinc.net) (Ping timeout: 268 seconds)
+[15:30:21] <GinFuyou> yes. Also - how do you know it's not being used?
+[15:32:02] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 260 seconds)
+[15:32:38] <tamere> Here you are: https://bpa.st/HK5A
+[15:33:39] <tamere> Wrong link: https://bpa.st/7YOQ
+[15:34:08] *** Joins: fikran (~fikran@user/fikran)
+[15:34:23] <tamere> I know because the values are not overwritten
+[15:38:21] <dre> what's the best way to stylise my forms to confirm with my bootstrap css ?
+[15:38:42] <dre> I don't want to use the pip dependency
+[15:39:02] <dre> shoudl I make "widgets" so that I can override the class attributes?
+[15:43:19] <dre> where's FunkyBob, i haven't seen him in a while, normally he'd tell me what to do :P
+[15:45:21] *** Quits: sunarch (uid526836@user/sunarch) (Quit: Connection closed for inactivity)
+[15:45:22] *** Joins: cmbengue (~Thunderbi@207.191.249.160)
+[15:45:45] <apollo13> dre: I'd strongly urge you to use a dependency
+[15:45:53] <apollo13> I found https://github.com/jazzband/django-widget-tweaks very helpful
+[15:46:31] <apollo13> but sure you can probably override all the widgets as well, but even that might be easier with the widget tweaks
+[15:47:26] <apollo13> you could also use crispy forms etc…
+[15:50:57] <dre> hmm
+[16:01:01] <GinFuyou> tamere, well, you are not using what we suggested here?
+[16:02:12] <GinFuyou> this implementation is flawed, what will happen if you try chaining it with filters? actually are you?
+[16:02:57] <tamere> Yes
+[16:03:35] <tamere> And how I can achieve the override of None value with default settings only when I'm reading data from database ?
+[16:03:57] <tamere> In SQL I can easily make a query with COALESCE but here I'm a bit lost
+[16:05:13] *** Joins: kuter (~kuter@public-gprs525515.centertel.pl)
+[16:07:01] *** Quits: schinckel (uid38120@ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[16:07:15] *** Quits: cmbengue (~Thunderbi@207.191.249.160) (Quit: Thanks, see you later.)
+[16:07:55] <tamere> GinFuyou
+[16:09:39] *** Quits: mattil (~mattil@helsinki.portalify.com) (Read error: Connection reset by peer)
+[16:10:50] *** Joins: pro_z (~pro_z@37.214.63.5)
+[16:12:38] *** Quits: dre (~dre@119-18-0-198.771200.syd.nbn.aussiebb.net) (Ping timeout: 260 seconds)
+[16:32:51] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[16:33:32] *** Joins: slav0nic (slav0nic@python.su)
+[16:34:47] <GinFuyou> well, django ORM also has COALESCE
+[16:35:14] <GinFuyou> but as was suggested before, you can use model methods / properties
+[16:38:02] *** Quits: dor (~erg@78.11.12.207) (Remote host closed the connection)
+[16:38:14] *** Joins: dor (~erg@78.11.12.207)
+[16:39:14] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Ping timeout: 260 seconds)
+[16:41:00] *** Joins: mattil (~mattil@helsinki.portalify.com)
+[16:46:39] *** Quits: Haudegen (~quassel@178.115.237.87.static.drei.at) (Quit: Bin weg.)
+[16:50:40] *** Joins: dkliban__ (~dkliban@99-3-68-61.lightspeed.rlghnc.sbcglobal.net)
+[16:52:15] *** Joins: Elodin (~weechat@user/elodin)
+[16:56:39] *** Quits: tga (~tga@user/tga) (Quit: leaving)
+[17:03:12] *** Quits: Elodin (~weechat@user/elodin) (Ping timeout: 268 seconds)
+[17:10:17] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Quit: = "")
+[17:14:46] *** Joins: pycode (~pycode@2001:b07:5d28:551:d666:ccd4:fe1b:cd35)
+[17:17:46] *** Joins: DnzAtWrk (~DnzAtWrk@mobile-access-567343-143.dhcp.inet.fi)
+[17:21:14] *** Joins: cmbengue (~Thunderbi@207.191.249.160)
+[17:29:46] *** Quits: mattil (~mattil@helsinki.portalify.com) (Remote host closed the connection)
+[17:37:21] <tamere> I know but with property I have this issue  Cannot resolve keyword 'username' into field
+[17:39:14] <tamere> Honestly, I've made hundred APIs with NodeJS or Rust and the devx was a lot better. Unfortunately I have to use django for this project.
+[17:41:17] *** Quits: ferz (~ferz@93-39-141-241.ip76.fastwebnet.it) (Ping timeout: 265 seconds)
+[17:42:03] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 268 seconds)
+[17:43:29] *** Joins: fikran (~fikran@user/fikran)
+[17:49:13] *** Joins: ciurca (~Thunderbi@5-15-40-153.residential.rdsnet.ro)
+[17:56:34] *** Joins: ferz (~ferz@93-39-141-241.ip76.fastwebnet.it)
+[18:08:14] <GinFuyou> unfortunately, you don't seem to have a good skill in solving problem =\
+[18:08:58] <pycode> is it possible to "translate" https://bpa.st/TUHQ using get_object_or_404  ?
+[18:09:36] <GinFuyou> pycode, iirc it does take queryset as parameter
+[18:09:45] <pycode> i do not know how to deal with the prefetch related part
+[18:09:53] <pycode> GinFuyou, yes but ok i need to try more
+[18:09:54] <pycode> :D
+[18:10:19] <GinFuyou> https://docs.djangoproject.com/en/3.2/topics/http/shortcuts/#id1
+[18:11:29] <GinFuyou> so instead of model class give it a queryset with prefetch
+[18:19:06] <pycode> YEAH WORKS
+[18:19:07] <pycode> thanks
+[18:20:24] *** Joins: niv (~niv@limbo.cypherpunks.io)
+[18:20:50] *** Quits: tamere (~tamere@user/loodoons) (Quit: Client closed)
+[18:20:51] <pycode> GinFuyou, i have a strange behavior...i have a very simple modelform
+[18:21:11] <pycode> https://bpa.st/FGZQ
+[18:21:21] <pycode> i would like to work with billing_email only
+[18:21:28] <pycode> i pass the instance on the form
+[18:21:34] <pycode> but then when i try to save the form
+[18:21:47] <pycode> i see that it sets to null some other fields
+[18:21:51] <pycode> how is that possible?
+[18:22:20] <pycode> i do contract_form.is_valid(): contract_form.save()
+[18:25:59] *** Joins: mimmy (~mimmy@146.70.75.190)
+[18:27:04] *** Quits: lucascastro (~lucascast@45-167-143-6.netfacil.inf.br) (Ping timeout: 268 seconds)
+[18:27:19] <pycode> GinFuyou, found the problem i am basically loading the self.object
+[18:27:25] <pycode> and then on form i pass instance = object
+[18:27:33] <pycode> the problem is that i have TWO forms
+[18:27:35] <pycode> so i do
+[18:27:41] <pycode> instance = object
+[18:27:44] <pycode> two times
+[18:27:48] <pycode> that's the problem
+[18:27:56] <pycode> should i clone the instance variable?
+[18:28:44] *** Joins: Elodin (~weechat@user/elodin)
+[18:29:48] <pycode> i can see the correct "price" value on the first two prints https://bpa.st/D6KQ
+[18:29:53] <pycode> the other not
+[18:30:05] <pycode> i am trying to send the second form "contract_form"
+[18:30:16] <pycode> what should i do? clone the object?
+[18:32:12] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[18:35:45] <pycode> i think i need to add an hidden field to detect what form has been sent
+[18:37:12] <GinFuyou> self.object is instance for both forms?
+[18:39:37] <pycode> GinFuyou, exactly
+[18:39:46] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Ping timeout: 256 seconds)
+[18:39:55] *** Joins: audiobirb (~audio@user/audio)
+[18:40:19] <GinFuyou> and offer form sets new price on it?
+[18:40:34] <GinFuyou> or does it happen somewhere else?
+[18:41:41] <pycode> GinFuyou, i have a Quote (Quote is the model) i load that instance and put it in self.object then i have two forms one OfferForm and another ContractForm those forms are based on the same model but the COtnractFOrm just need to deal with "billing_email" ... the other OfferForm is the complete one... however both forms need to update the instance
+[18:42:20] *** Quits: kuter (~kuter@public-gprs525515.centertel.pl) (Read error: Connection reset by peer)
+[18:42:25] <pycode> GinFuyou, the forms are: https://bpa.st/SESA
+[18:45:46] <pycode> as you can see COntractFOrm needs to deal with billing_email only i have that field in Meta.fields
+[18:46:07] <pycode> the other OfferForm has all the fields except "user"
+[18:46:17] <pycode> i do not need to chagne the user field via that form
+[18:46:18] <GinFuyou> I have a few ideas but could also try printing what it says about `offer_form.instance is contract_form.instance` ?
+[18:46:41] <GinFuyou> I expect them to be same object, which should work. But maybe I'm wrong
+[18:48:32] <pycode> GinFuyou, yeah i see the same objhect there
+[18:48:47] <GinFuyou> so it' "True" ?
+[18:49:19] *** Quits: luischi (~luigi@80.30.201.209) (Quit: WeeChat 3.3)
+[18:49:26] <pycode> GinFuyou, as you can see i call the same method
+[18:49:27] <pycode> https://bpa.st/SVDA
+[18:49:34] <pycode> so i suppose yes
+[18:49:35] <pycode> wait
+[18:50:01] <GinFuyou> don't suppose here. Run `is`
+[18:50:19] <pycode> yes
+[18:50:27] <pycode> print(offer_form.instance is contract_form.instance)
+[18:50:30] <pycode> True
+[18:50:53] <pycode> added that this way: https://bpa.st/H47A
+[18:51:25] <pycode> i suppose that...calling OfferFOrm first (and that form works will all the field)
+[18:51:35] <pycode> i suppose that receving the POST data of the other form
+[18:51:45] <pycode> will basically remove the entire fields it has
+[18:51:58] <pycode> so i must add an hidden field to detect which form has been sent
+[18:52:00] <GinFuyou> if you set prefix it shouldn't
+[18:52:22] <GinFuyou> and it looks like you did
+[18:52:41] <GinFuyou> could print contract_form.cleaned_data
+[18:53:18] <GinFuyou> since it's same object as I expected change in one form should change it in another
+[18:53:20] <pycode> GinFuyou, i used the prefix with one only
+[18:53:25] <pycode> wait let me post the entire class
+[18:53:26] <pycode> one moment
+[18:53:30] <GinFuyou> pycode, that's should be enough
+[18:53:38] <GinFuyou> it will namespace post data
+[18:53:56] <pycode> https://bpa.st/3X3Q
+[18:54:04] <pycode> GinFuyou, how?
+[18:54:31] <pycode> noooooooooooo
+[18:54:32] <pycode> wait
+[18:54:39] <GinFuyou> wait, why both forms have same prefix?
+[18:54:40] <pycode> i copied "contract" prefix on the other one tooo!!
+[18:54:43] <pycode> eyah wait
+[18:54:44] <pycode> grrrrrrrrr
+[18:54:50] <GinFuyou> Yes, it could be it
+[18:55:51] *** Quits: Elodin (~weechat@user/elodin) (Quit: WeeChat 3.3)
+[18:56:21] <pycode> same problem
+[18:56:31] <pycode> it override "price" and "original_price" fields
+[18:56:34] <pycode> i do not know the reason
+[18:56:40] *** Quits: mimmy (~mimmy@146.70.75.190) (Ping timeout: 268 seconds)
+[18:56:48] *** Joins: Elodin (~weechat@user/elodin)
+[18:57:02] <GinFuyou> It's back to what it was before the first form right?
+[18:57:43] <pycode> GinFuyou, very strange...take a look: https://bpa.st/HPKA
+[18:57:51] <pycode> look at the prints
+[18:58:07] <pycode> the output is: 5345
+[18:58:07] <pycode> 5345
+[18:58:07] <pycode> None
+[18:58:13] <pycode> so the first two are ok
+[18:58:19] <pycode> the third no
+[18:58:40] <pycode> after the offer_form.is_valid()
+[18:58:48] <pycode> so for some reason it changed the original instance
+[18:59:54] <GinFuyou> hm, and what you sent in the POST?
+[19:00:17] <GinFuyou> If it's what you said it prints we have problems with the first form
+[19:00:30] <GinFuyou> e.g. more prefix issues
+[19:00:42] <pycode> I add print(self.request.POST)
+[19:00:46] <pycode> one moment
+[19:01:53] <pycode> GinFuyou, https://bpa.st/4SHQ
+[19:02:22] <pycode> 'contract' is the SUBMIT input i add that name because i was thibking to detect which form has been sent
+[19:02:32] <pycode> however as you see there is contract-billing_email
+[19:02:37] <pycode> i see the prefix "contract"
+[19:04:31] <pycode> GinFuyou,  https://bpa.st/OXEA
+[19:04:40] <pycode> for some reason it creates a new instance!?!?
+[19:06:41] <pycode> the kwargs i am passing to the form class are correct: https://bpa.st/RJGA
+[19:06:43] <GinFuyou> ah I think I got it
+[19:06:49] <pycode> as you can see there is the "instance"
+[19:06:55] <GinFuyou> You don't set initial in kwargs
+[19:07:05] <pycode> no i dont
+[19:07:08] <GinFuyou> so all data you send in post are set
+[19:07:23] <GinFuyou> everything that is not in POST becomes None
+[19:07:37] <pycode> so what can i do? initial = {} ?
+[19:08:00] <GinFuyou> kwargs = {'initial': self.get_initial(), <...>}
+[19:08:17] *** Joins: mimmy (~mimmy@146.70.75.189)
+[19:08:20] <GinFuyou> actually
+[19:08:23] <pycode> i do not have get_initial() method...however should be empty?
+[19:08:33] <GinFuyou> Why do you have overriden get_form_kwargs?
+[19:08:41] <pycode> i thought that passing an existant instance was enough
+[19:08:43] <GinFuyou> If you comment it - it should work
+[19:08:58] <pycode> GinFuyou, because it is a "custom" CBV
+[19:09:03] <pycode> because i am dealing with two forms
+[19:09:08] <pycode> it is a TemplateView
+[19:09:27] <GinFuyou> Oh, you are basing on TemplateView
+[19:09:27] <pycode> GinFuyou, whole class: https://bpa.st/ACHA
+[19:09:37] <GinFuyou> Wouldn't recommend that
+[19:09:44] <pycode> yes because i did not find and built-in
+[19:09:53] <pycode> for two or more forms
+[19:10:11] <pycode> *i did not found any built-in CBV to deal with two or more forms
+[19:10:57] <pycode> because i need to handle two form_valid two form_invalid etc
+[19:11:13] <pycode> how could i do?
+[19:12:47] <GinFuyou> Oh, Bob had a guide for a FBV https://blog.tinbrain.net/blog/updating-two-models-single-post.html
+[19:13:17] <pycode> i need to update the same model (same instance)
+[19:13:37] <GinFuyou> Well, it doesn't make much difference.
+[19:13:42] <pycode> and NOT "at the same time" (with the same requesT)
+[19:14:11] <GinFuyou> ah, you submit those separately?
+[19:14:28] <pycode> GinFuyou, exactly..
+[19:14:31] <pycode> i have on the same page
+[19:14:33] <pycode> two forms
+[19:14:41] <pycode> one just update the "billing_Email" field
+[19:14:52] <pycode> and another all fields
+[19:14:56] <GinFuyou> Sorry, I've assumed wrong then... but it doesn't really matter that much
+[19:15:09] <GinFuyou> give a moment
+[19:15:35] <pycode> as you can see in the article it is passing two different instances because the model are different
+[19:15:36] <pycode> ok
+[19:17:47] *** Joins: defb (~defb@user/defb)
+[19:18:18] *** Quits: ciurca (~Thunderbi@5-15-40-153.residential.rdsnet.ro) (Ping timeout: 256 seconds)
+[19:18:39] <GinFuyou> it's just more common case, if it's same model it doesn't make much difference
+[19:18:54] <GinFuyou> https://bpa.st/WCQA hm, probably this will already work? (not sure)
+[19:19:32] <pycode> there is no get_form_kwargs
+[19:19:40] <pycode> templateview has no get_form_kwargsmethod
+[19:19:46] <GinFuyou> there is, in CreateView
+[19:19:58] <GinFuyou> I've changed base class
+[19:20:14] <GinFuyou> lines 1 and 4
+[19:20:19] <pycode> i already have the instance so i suppose it is an Editview no?
+[19:21:02] <GinFuyou> yes that makes sense, but both should work
+[19:21:17] <GinFuyou> could use UpdateView view
+[19:22:10] <GinFuyou> ah, there is a catch after all, it doesn't take prefix
+[19:22:35] <pycode> Using ModelFormMixin (base class of OfferView) without the 'fields' attribute is prohibited.
+[19:25:35] <GinFuyou> https://bpa.st/ILGA
+[19:26:02] <GinFuyou> form_class = OfferForm
+[19:26:19] <GinFuyou> add this, should remove this error, doesn't matter
+[19:28:03] <pycode> self.object is None
+[19:28:04] <pycode> hmm
+[19:30:04] <pycode> GinFuyou, it is really strange that there is no CBV that supports two forms....
+[19:31:30] *** Joins: ciurca (~Thunderbi@5-15-40-153.residential.rdsnet.ro)
+[19:32:13] <pycode> let me try a different approach one moment
+[19:34:31] *** Joins: ciurca1 (~Thunderbi@2a02:2f07:de04:e100:c8db:5346:6b92:97f7)
+[19:36:23] *** Quits: ciurca (~Thunderbi@5-15-40-153.residential.rdsnet.ro) (Ping timeout: 264 seconds)
+[19:39:14] *** Quits: ciurca1 (~Thunderbi@2a02:2f07:de04:e100:c8db:5346:6b92:97f7) (Ping timeout: 268 seconds)
+[19:39:20] <pycode> GinFuyou, this works https://bpa.st/7N2Q
+[19:39:45] <pycode> i basically pass the data if i need to work with the form...
+[19:40:12] <pycode> then my submits are:
+[19:40:16] <pycode> <input type="submit" name="contract" class="btn" value="Invia la richiesta">
+[19:40:27] <pycode> i use the name == prefix
+[19:40:44] <pycode> <input type="submit" name="offer" class="btn" value="Invia offerta">
+[19:41:40] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[19:41:53] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Remote host closed the connection)
+[19:41:54] <GinFuyou> this is a good addition, but how come it solves intial problem?
+[19:42:35] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[19:43:22] <pycode> GinFuyou, the price could be overwritten on the offerform
+[19:43:27] <pycode> the problem here is the smaller form
+[19:43:30] <pycode> that only has one form
+[19:43:50] <pycode> if i send that form and execute the check on the other first will give me the problem we were talking about
+[19:43:59] <pycode> so that way...    1. i just run the form i need
+[19:44:10] <pycode> (there is no 2 point) :D
+[19:45:45] <GinFuyou> nope, earlier tests showed problem was not with second form, or did I get that wrong?
+[19:51:23] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 264 seconds)
+[19:51:39] *** Joins: abrantesasf (~abrantesa@187.36.170.211)
+[19:52:21] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Remote host closed the connection)
+[19:52:50] *** Joins: fikran (~fikran@user/fikran)
+[19:53:30] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[19:56:29] *** Quits: pycode (~pycode@2001:b07:5d28:551:d666:ccd4:fe1b:cd35) (Ping timeout: 268 seconds)
+[20:01:56] *** Quits: mimmy (~mimmy@146.70.75.189) (Ping timeout: 265 seconds)
+[20:06:46] *** Quits: dor (~erg@78.11.12.207) (Remote host closed the connection)
+[20:06:58] *** Joins: dor (~erg@78.11.12.207)
+[20:07:30] *** Joins: mimmy (~mimmy@146.70.75.189)
+[20:16:30] *** Joins: kostkon_ (~androirc@2.142.66.94.static.otenet.gr)
+[20:22:37] *** Quits: sandeepk (~sandeepk@202.14.122.202) (Quit: Leaving)
+[20:25:00] *** Quits: mrwick (~mrwick@user/mrwick) (Quit: leaving)
+[20:26:28] *** Quits: DnzAtWrk (~DnzAtWrk@mobile-access-567343-143.dhcp.inet.fi) (Quit: Leaving)
+[20:33:49] *** Joins: mastardet (~mastardet@user/mastardet)
+[20:36:28] <mastardet> hello everyone, I've correctly set TEMPLATES setting with the right paths, app_dirs, etc. Though I'm using an app called django_json_widget which when setting the template_name, it's not searching in the right paths as per TEMPLATES setting, but in django.contrib.auth, django.contrib.admin, django_json_widget 3rd party app dir, and just one filesystem loader for django/forms as per the
+[20:36:30] <mastardet> Template-loader postmortem
+[20:42:59] *** Quits: mimmy (~mimmy@146.70.75.189) (Ping timeout: 264 seconds)
+[20:55:41] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 268 seconds)
+[20:57:11] *** Joins: fikran (~fikran@user/fikran)
+[21:00:47] *** Joins: xkuru (~xkuru@user/xkuru)
+[21:06:23] *** Quits: audiobirb (~audio@user/audio) (Ping timeout: 264 seconds)
+[21:08:11] *** Joins: mimmy (~mimmy@146.70.75.190)
+[21:10:19] *** Joins: audiobirb (~audio@user/audio)
+[21:16:45] *** Quits: kostkon_ (~androirc@2.142.66.94.static.otenet.gr) (Quit: AndroIRC - Android IRC Client ( http://www.androirc.com ))
+[21:20:10] *** Quits: rje (~rje@50.35.241.164) (Ping timeout: 256 seconds)
+[21:20:13] *** Quits: BinarySavior (~BinarySav@idlerpg/player/BinarySavior) (Quit: BinarySavior has dropped the mic)
+[21:32:12] *** Joins: djapo (~archangel@user/djapo)
+[21:32:39] *** Joins: Xaldafax (~xaldafax@cpe-198-72-160-101.socal.res.rr.com)
+[21:32:59] *** Joins: Staunch (~Staunch@c-24-7-237-208.hsd1.mn.comcast.net)
+[21:38:14] *** Quits: djapo (~archangel@user/djapo) (Ping timeout: 268 seconds)
+[21:56:43] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Remote host closed the connection)
+[21:57:21] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[21:57:21] *** Joins: rje (~rje@65.141.156.170)
+[21:58:51] *** Quits: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net) (Remote host closed the connection)
+[21:59:07] *** Joins: rpkilby (~rpkilby@c-24-20-208-106.hsd1.or.comcast.net)
+[22:06:04] *** Quits: pro_z (~pro_z@37.214.63.5) (Ping timeout: 256 seconds)
+[22:10:18] *** Quits: rb (~augh@theguntretort.com) (Quit: ZNC - https://znc.in)
+[22:10:37] *** Joins: rwb (~augh@theguntretort.com)
+[22:37:49] *** Quits: mimmy (~mimmy@146.70.75.190) (Ping timeout: 256 seconds)
+[22:41:27] *** Joins: Haudegen (~quassel@178.115.237.87.static.drei.at)
+[22:59:43] *** Joins: mimmy (~mimmy@146.70.75.189)
+[23:04:34] *** Quits: fikran (~fikran@user/fikran) (Ping timeout: 268 seconds)
+[23:06:33] *** Joins: fikran (~fikran@user/fikran)
+[23:13:05] *** Joins: djapo (~archangel@user/djapo)
+[23:40:50] *** Quits: djapo (~archangel@user/djapo) (Remote host closed the connection)
+[23:42:23] *** Quits: mimmy (~mimmy@146.70.75.189) (Ping timeout: 264 seconds)
+[23:58:25] *** Quits: Tas-sos (~Tas-sos@78-203-151.adsl.cyta.gr) (Quit: Lost terminal)

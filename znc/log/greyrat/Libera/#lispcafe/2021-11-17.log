@@ -1,0 +1,743 @@
+[00:01:30] <moon-child> gilberth: 'returns a character for #xd800' most implementations do that, ccl was the only one I tested that doesn't
+[00:01:33] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Ping timeout: 276 seconds)
+[00:02:11] <moon-child> ligature behaviour is frankly rather bizarre
+[00:03:57] <moon-child> ...I was wondering why it did not print with pipes.  Apparently / is not #\/, but in fact #\FRACTION_SLASH
+[00:04:15] *** Joins: Inline (~Inline@2a02:908:1252:7a80:c0ad:80c4:dd74:5cc0)
+[00:05:23] *** Quits: Inline (~Inline@2a02:908:1252:7a80:c0ad:80c4:dd74:5cc0) (Remote host closed the connection)
+[00:07:40] *** Joins: Inline (~Inline@2a02:908:1252:7a80:c0ad:80c4:dd74:5cc0)
+[00:08:52] <gilberth> moon-child: Only because most do that, doesn't make this correct. ECL, ABCL, and ACL don't count because they use silly UTF-16 encoded strings. And btw ABCL has (char-code (code-char #x10001)) => 1, which is most silly. Next bug found.
+[00:10:25] <moon-child> 'doesn't make this correct' agreed!  I made a patch to sicl to make it reject such values
+[00:12:33] <gilberth> What happens to the UTF-8 and UCS-2 decoder, when it encounters those surrogates?
+[00:13:58] <moon-child> it should fail, same as it if encounters an out-of-place continuation byte, or a #xff or #xfe
+[00:14:34] <gilberth> Sure it should, but does it do?
+[00:14:46] <moon-child> depends on the decoder
+[00:15:17] <gilberth> I was talking about SBCL, as you patched that.
+[00:15:40] <moon-child> no, I patched sicl, not sbcl
+[00:16:02] <gilberth> My bad. Bad vision :-)
+[00:16:04] <moon-child> :)
+[00:16:06] <moon-child> I don't know about its utf8 decoder, or if it has one
+[00:17:27] <gilberth> However, I should take notes about all the bugs I find and perhaps augment the test suite we have.
+[00:18:03] <selwyn> enjoying filmmaker
+[00:18:15] <moon-child> that would be good.  Though the unicode part is not a bug, exactly, in that it doesn't contradict spec
+[00:18:40] <gilberth> What should #::FOO read as?
+[00:19:25] <moon-child> yes, that is a bug!
+[00:19:29] <gilberth> CCL, SBCL, CLISP signal an error. ECL, ACL, ABCL return #:|:FOO|.
+[00:19:56] <gilberth> So it's 50:50. I would need to read what the spec says.
+[00:22:52] <gilberth> It says "Syntax: #:⟨⟨symbol-name⟩⟩ #: introduces an uninterned symbol whose name is symbol-name. [...] The symbol-name must have the syntax of a symbol with no package prefix." So I guess, the former three are correct.
+[00:24:49] <gilberth> Then I have ":::BLAH" read as :|:BLAH| by CCL and ABCL and signalling an error in the others.
+[00:25:04] <moon-child> hmm, what does 'must' mean?  If it is anything like 'should' then there are problems :)
+[00:25:21] <gilberth> What about "::BLAH"?
+[00:25:49] <GreaseMonkey> consistency yaaaaay (reverse "\\:D/")
+[00:26:23] <gilberth> moon-child: Indeed. Even when this is "should" I would prefer an error signaled.
+[00:27:09] <GreaseMonkey> i only have sbcl and ccl and i can see you're probably having fun with the fact that ccl treats things prefixed with ':'
+[00:27:14] <GreaseMonkey> as commands
+[00:27:21] <GreaseMonkey> erm, as special repl commands
+[00:28:08] <gilberth> While we are at smilies. What is "(#:)" supposed to read as?
+[00:28:37] <gilberth> Or just "(:)"?
+[00:29:20] <GreaseMonkey> just '#: is kinda fun
+[00:29:31] <gilberth> GreaseMonkey: I am bored and implement READ, so I play a bit with the corner cases. And, yes, I feel like CCL would need a few patches.
+[00:30:00] <GreaseMonkey> SBCL reports #:|| while CCL... waits for you to enter something that isn't whitespace
+[00:34:40] <hayley> https://www.youtube.com/watch?v=HuXl5LUN7TE
+[00:34:41] -ixelp- Stories (Live 1980) - YouTube
+[00:36:46] *** Quits: Inline (~Inline@2a02:908:1252:7a80:c0ad:80c4:dd74:5cc0) (Quit: Leaving)
+[00:39:36] <gilberth> GreasMonkey, indeed, "#: foo" reads as #:FOO. That must be a bug. And "(#:#|foo|#bar)" as well as "(#: #|foo|# bar)" are nice corner cases.
+[00:44:31] <gilberth> This is fun: (progn (make-package ":::F") (read-from-string ":::foo")), ECL returns |:::F|::OO
+[00:57:10] *** Joins: Inline (~Inline@2a02:908:1252:7a80:9455:4a3b:6504:3d0c)
+[01:03:05] <hayley> gilberth: https://old.reddit.com/r/rust/comments/qvf6dk/rust_foundation_announces_free_compute_resources/
+[01:03:06] -ixelp- Rust Foundation announces free compute resources for Rust Project maintainers : rust
+[01:03:19] <gilberth> lol
+[01:03:34] <hayley> Cloud companies are literally giving away cloud computers in order to build rustc at sane speeds.
+[01:05:49] <gilberth> hayley: Imagine each c-c c-c in a Lisp buffer would take 15 minutes.
+[01:07:11] * hayley still wonders if the GPU can accelerate anything without turning all her nice graphs into adjacency matrices.
+[01:07:33] <moon-child> adjacency matrix has really bad space usage
+[01:08:02] <moon-child> i'm still looking for a good graph representation.  Can do edge pairs but ehh
+[01:08:45] <gilberth> moon-child: How large are your graphs?
+[01:09:21] <moon-child> gilberth: how large is your code?  Didn't you want whole-program optimization with closed-world assumption?
+[01:10:36] <gilberth> moon-child: Yes, but my dream is to have that in an incremental fashion. At least I should be able to still use an interactive development style.
+[01:11:05] <sham1> Orange crab showing its ways and shuffling along at the speed of slow compilation
+[01:12:09] <hayley> gilberth: Quick, calculate how much CO₂ is produced by rebuilding the compiler on 96 cores that frequently.
+[01:13:04] <gilberth> hayley: Do I look like I have the relevant information in my head?
+[01:13:20] <hayley> Maybe?
+[01:13:22] <moon-child> gilberth: closed-world assumption is kind of incompatible with incremental.  You can keep dep graphs but they will be deep and you will not gain much
+[01:14:42] <hayley> The other assumption is that recompilation is rare (perhaps moreso on the time scale of the computer). Say, Self would add a dependency for adding fixnums, but practically no one would violate that and require bailing out.
+[01:15:11] <gilberth> hayley: Ok. So many joules are needed for one build?
+[01:15:25] <hayley> Apparently David Ungar had a game where he would try to add another slot to Object, and see if the Smalltalk system survived. Usually not.
+[01:15:36] <moon-child> ha!
+[01:15:36] *** Quits: shka (~herr@83.175.151.96.piasta.pl) (Ping timeout: 256 seconds)
+[01:15:39] *** Joins: dec0d3r (~dec0d3r@2001:8003:480a:e00:e07:e7c3:7efc:ed0f)
+[01:16:24] <hayley> gilberth: 25 minutes on a 4 core CPU (say 65W), 5.5 minutes on a 96-core CPU (IIRC Threadripper is like 220W)  
+[01:16:49] <hayley> inb4 CLOSOS Foundation gives out $2,000 SSDs
+[01:19:18] <hayley> 97.5kJ on the small machine, 72.6kJ on the large machine.
+[01:21:11] *** Quits: Inline (~Inline@2a02:908:1252:7a80:9455:4a3b:6504:3d0c) (Quit: Leaving)
+[01:21:16] <hayley> Apparently emissions are like 765g CO₂ per kWh generated from hard coal. So 20.7kg and 15.4kg respectively.
+[01:24:57] <gilberth> I believe you're off by a factor of 1000.
+[01:25:43] <hayley> I had to divide by 3600 to go from kJ to kWh. Or maybe I've done that wrong.
+[01:27:13] <gilberth> Maybe I am wrong. But you say (20.7kg/765g) kWh, that is 27kWh. Not plausible.
+[01:28:12] <gilberth> That would be EUR 8.10 for one build! I don't believe Rust is that expensive.
+[01:28:28] <hayley> Right.
+[01:30:04] <gilberth> I still think this is hilarious. How could people hack with that long recompilation times?
+[01:31:05] * hayley computes 0.02 kWh, i.e. 10g of CO2
+[01:31:14] <hayley> ...per recompile of course.
+[01:32:23] <hayley> 14g for the small machine. Yes, off by a large margin.
+[01:32:39] <gilberth> What is the conclusion? We need dynamic languages to save the climate?
+[01:32:58] <sham1> We need languages other than Rust to save the climate, obviously
+[01:33:56] <gilberth> Maybe the strategy is to lower the O_2 content of the atmosphere, so that things won't rust anymore?
+[01:34:35] <hayley> https://www.youtube.com/watch?v=s37cUyTGRUM
+[01:34:35] -ixelp- Firth Of Fifth (Remastered 2008) - YouTube
+[01:35:13] <gilberth> Which actually makes be curious, is there less O_2 in the atmosphere than before? I mean the O_2 in CO_2 must come from somewhere.
+[01:35:56] <Alfr> gilberth, can ecl read the "|:::F|::OO"?
+[01:36:27] <hayley> "I read 'Objective-S is the world's first general purpose programming language.' Were the rest chopped liver?" - Dave Ungar
+[01:36:46] <sham1> Objective-S
+[01:37:03] *** Joins: eschaton (~eschaton@li541-49.members.linode.com)
+[01:37:14] <gilberth> Alfr: Yes, it can, provided that there is a package named ":::F".
+[01:37:22] <selwyn> gilberth: iirc the oxygen change is negligible
+[01:37:30] *** Joins: Inline (~Inline@2a02:908:1252:7a80:731:d6ac:6e05:dbb3)
+[01:39:11] <gilberth> selwyn: Of course, it is. With 21% oxygen and only 0.03% CO_2. But still, ...
+[01:39:37] <Alfr> gilberth, out of curiosity, what's symbol-name of it?
+[01:42:35] <gilberth> "OO", what else?
+[01:42:56] *** Joins: Aurora_v_kosmose (~LispyLigh@user/lispylights)
+[01:43:26] * hayley uploaded an image: (449KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/ZFeDHuelgwWZEZKtTpHiqPrS/randy-wtf.png >
+[01:43:28] <gilberth> After all |:::F|::OO is perfectly legal syntax.
+[01:44:10] <Alfr> gilberth, but you obtained it from (read-from-string ":::foo"), I guess that's the real reason I'm asking.
+[01:45:39] <hayley> tbh, I don't know why they want faster compile times, I thought LSP doing type checking was good enough.
+[01:46:09] <Alfr> gilberth, I don't think |:::F|::OO is defined to be valid; the reader will spit out a token :::F::OO. Then see 2.3.5 point 5.
+[01:46:46] <gilberth> Alfr: Yes, the ECL reader is very confused and threats that as a package prefix of ":::F". I wonder how that happened. But CCL and ABCL read that as :|:FOO| and :|::FOO|, which is wrong also.
+[01:48:34] <gilberth> Alfr: This is ":::F" is escaped, a package marker "::" followed by "OO". Legal.
+[01:49:22] <gilberth> When a colon is escaped it loses its meaning as a package marker.
+[01:49:27] *** Inline is now known as Guest1099
+[01:53:21] <Alfr> gilberth, you refer to the following in 2.2? "If a valid token is neither a representation of a number nor a potential number, it represents a symbol."
+[01:53:53] *** Joins: Inline (~Inline@2a02:908:1252:7a80:731:d6ac:6e05:dbb3)
+[01:54:39] <Alfr> gilberth, not that it usually matters. But I somehow always interpreted it to mean, that the token accumulated must satisfy what's stated in 2.3.5 .
+[01:56:12] <gilberth> Alfr: Only very indirectly. The reader treats escaped characters in tokens the same as alphabetic characters. Thus to the reader |:::F|::OO is the same as AAAA::BB syntax-wise.
+[01:57:42] <gilberth> You could put everything between |'s. Try '(|100| |Hello Lispcafé!| | :-) |) for example.
+[02:01:09] <gilberth> I refer to 2.1.4.5
+[02:01:18] <Alfr> gilberth, understood. I guess, package marker really refers to the constituent trait and not the colon itself?
+[02:02:49] <gilberth> Yes, although you cannot change it to another character as those traits are fixed. Escaping makes characters being treated has having the alphabetic trait, no matter what they may otherwise be.
+[02:02:53] <Alfr> gilberth, and that can't be changed, so it's always colon--unless escaped. Guess that's how I got this mixed up.
+[02:06:42] <gilberth> What you can change is what characters are single and multiple escapes. (let ((*readtable* (copy-readtable))) (set-syntax-from-char #\' #\|) (read-from-string "('Funny symbol' 'Here is another one!')"))
+[02:08:39] <gilberth> It's a bit confusing.
+[02:11:56] *** Joins: robin (~robin@user/terpri)
+[02:12:41] *** Joins: kevingal (~quassel@2a02:8084:4140:f300:b1d1:b373:5ce1:d5ce)
+[02:14:33] <hayley> https://www.youtube.com/watch?v=NIzleISU5jw
+[02:14:34] -ixelp- Beat the Clock - YouTube
+[02:17:05] <selwyn> https://www.youtube.com/watch?v=gcASdGaTUlk
+[02:17:05] -ixelp- Filmmaker - Lust Riders - YouTube
+[02:18:21] <gilberth> Where is my annotatable ANSI-CL spec?
+[02:19:03] <selwyn> wondering how useful it would be to know the entire spec off by heart
+[02:19:10] <selwyn> less time looking stuff up
+[02:20:17] <selwyn> reminded of my plan to turn it all into flashcards
+[02:23:42] <edgar-rft> selwyn: you whold have to memorize all the quirks and typos :-)
+[02:25:43] <Alfr> edgar-rft, log has a nice one: (log base number) == (/ (log number) (log base))
+[02:28:28] <gilberth> The spec says that set-macro-character would have a readtable designator as an argument. Being a readtable designator would imply that NIL passed would be treated as the standard readtable, which is not necessarily the same as *readtable*. CCL does not respect that and modifies *readtable* instead, when you pass NIL as the readtable.
+[02:30:05] <Alfr> gilberth, ccl can rightfully do that, iirc modifying the standard readtable is ub.
+[02:30:23] <gilberth> ECL gets a bus fault and ABCL is happy to modify the standard readtable.
+[02:30:33] <selwyn> someone call the bus driver
+[02:31:20] <gilberth> Alfr: I don't like when implementations count on UB and do just something arbitrary like they see fit.
+[02:32:19] <Alfr> gilberth, at least it's only the wrong readtable and not nasal daemons. ;)
+[02:35:15] <gilberth> So in my book that is a weak argument. Or would you expect (pairlis '(a) '(1 2)) to prepare coffee?
+[02:35:47] <gilberth> Alfr: ABCL is worse as it does allow you to mess with the standard readtable.
+[02:36:37] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 265 seconds)
+[02:37:46] <gilberth> It's dangerous, as one may write (set-macro-character #\( 'read-blah nil) believing it would do so to *readtable*, which it does with CCL, but won't work with say SBCL, which signals an error and do something different with ABCL rendering your system potentially fubar.
+[02:38:32] *** Joins: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se)
+[02:40:45] <gilberth> Or put otherwise: When we don't insist on as much UB to be caught as feasible, we could as well use C.
+[02:41:08] <Alfr> gilberth, that's a problem with the bad code. (I admit erroring certainly is what I'd prefer, but it simply isn't required.)
+[02:41:34] <moon-child> ehh, I think partly the responsibility is on the specifiers, for saying things are ub rather than specifying what happens
+[02:42:12] <gilberth> As I said, (pairlis '(a) '(1 2)) could bus fault, or scribble somewhere random, or whatever. I just don't want that.
+[02:44:39] <gilberth> But perhaps I am a dreamer and want a safe language instead of CL.
+[02:45:46] <moon-child> well, what do you want (other than for an error to be signalled)?  If you _just_ don't want a bus fault or write to random memory location, then it seems like simply allowing you to modify the standard readtable is a reasonable interpretation of 'undefined behaviour'
+[02:46:09] <moon-child> (talking about the other case)
+[02:47:05] * hayley uploaded an image: (89KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/jxPZbPCilVYOMscHdHaiYxgM/unique-and-its-prototypes.jpg >
+[02:49:21] *** Joins: ec (~ec@gateway/tor-sasl/ec)
+[02:51:56] <gilberth> moon-child: Rendering the Lisp system potentially fubar is reasonable?
+[02:52:53] <gilberth> Frankly, I would prefer outright crashing instantly.
+[02:53:26] <Alfr> Reminds me of something ph\oe once mentioned ...
+[02:54:15] <Alfr> 2020-12-28T17:13:03+0100 <ph\oe>	suicide lisp, doing something non-conforming deletes your home directory
+[02:55:26] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Quit: ec)
+[02:59:31] <gilberth> Trouble is: CCL also does that for get-macro-character, where I may want to pass NIL as the readtable to get at the standard read macro. It returns the macro in *readtable* instead.
+[02:59:48] <hayley> https://www.youtube.com/watch?v=RZJQ-JBHxWA
+[02:59:49] -ixelp- Dazzle Ships 1-7 - YouTube
+[03:01:56] <moon-child> gilberth: I do not think there should be any undefined behaviour at all.  So this is all hypothetical to me; I am not sure what counts as reasonable for something undefined
+[03:02:27] <gilberth> Alfr: A pity we don't use CRTs anymore, that could be fried. That would be suicide.
+[03:03:25] <Alfr> gilberth, I'm glad we don't, those things are heavy.
+[03:03:49] <gilberth> moon-child: Undefined implies, that every implementation could do what ever it wants. I may by accident get the behavior which works for me, yet have a non-portable program. So I would prefer that as much UB is caught and signaled as an error as feasible.
+[03:04:48] *** Joins: pjb (~pjb@user/pjb)
+[03:05:12] <gilberth> I say feasible, because often you find UB involving e.g. circular lists and that is harmless, if the program would just go into an infinite loop and relatively expensive to detect.
+[03:06:50] <gilberth> Alfr: Yes, especially when you have one of those fancy colour CRTs. Monochrome CRTs much lighter.
+[03:07:55] <gilberth> And in this very case, it's a bug with CCL, not some effect happening because of being careless.
+[03:15:19] <Alfr> gilberth, not sure if going into an infinite loop when asking for (length circ-list) is really better than trashing the current readtable. I can imagine situations where each one of them would be bad.
+[03:16:01] <Alfr> (... and where the other one doesn't cause much harm.)
+[03:19:36] <gilberth> Going into an infinite loop doesn't render my system potentially fubar and acting randomly.
+[03:21:27] <gilberth> I mean, some application running in my system may only function correctly, when the standard readtable is intact. An infinite loop just produces CO_2, bad for the climate, but no harm otherwise. And I could bail out of that loop.
+[03:22:47] <hayley> *you are going to FAA committee meme* "Good thing I use a memory safe language" "But is integer arithmetic done in a finite group?" *silence*
+[03:22:58] <Alfr> Or break some service which otherwise handles error conditions gracefully or gets restarted in case it crashes.
+[03:23:01] <gilberth> Just trashing random data isn't better than any buffer overflow really. And pretty dangerous when the system pretend everything would be fine at first.
+[03:23:30] <hayley> gilberth: "Carbon emissions of Pauseless read barrier"
+[03:25:20] <gilberth> Yep. Being an Aussie makes you convicted of climate crime as charged, anyway :-p
+[03:26:28] <gilberth> But so is Germany as we shut down our nuclear power plants for no good reason, while everyone else is planing new ones.
+[03:26:28] <hayley> Hey, I don't use cpython or rustc. No fair.
+[03:27:15] <gilberth> hayley: Your country burns a lot of coal.
+[03:27:27] <hayley> gilberth: True. But I'm not doing it.
+[03:27:46] <selwyn> return to coal
+[03:27:54] <Alfr> hayley, one nice answer would be that no only do they have a finite group but actually a commutative finite ring.
+[03:28:07] <selwyn> i remember elon offered to fix south australia's electricity for free
+[03:28:10] <gilberth> hayley: You still use the electricity. But then, yes, it also isn't me shutting down those nuclear power plants we have.
+[03:28:26] <hayley> gilberth: BTW I might just move to compiler hacking for the forseeable future, as programmers are aware that making perfect things are hard, and thus there are fewer asshole users.
+[03:28:32] <selwyn> things must be bad when mr epic reddit offers to step in
+[03:28:37] <hayley> But then again, the people I am thinking of are mostly supposed to be programmers. Hm.
+[03:29:31] <hayley> Mostly I am not motivated to do anything else.
+[03:29:37] <gilberth> You let users dictate what you hack?
+[03:30:38] <hayley> If "users" means "people biting the hand that feeds constantly", then yes.
+[03:31:15] <gilberth> Why do you care?
+[03:31:28] <hayley> I mean, if I were to do an end user program...let's see, the UI has to be perfect or people will start bitching about it, I can't miss any features, and I can't ever tell them how much effort anything would take, lest I be accused of bickering instead of working for them.
+[03:31:48] <hayley> Why would I program for anyone that is just an asshole back?
+[03:32:21] <gilberth> Why not just hack for yourself?
+[03:32:54] <hayley> Won't put food on the table, and I wouldn't need to actually make a program then.
+[03:33:30] <gilberth> Hacking compilers doesn't put food on the table either.
+[03:35:44] *** Quits: kevingal (~quassel@2a02:8084:4140:f300:b1d1:b373:5ce1:d5ce) (Remote host closed the connection)
+[03:36:59] <hayley> Really? Somehow I think most programmers want a compiler.
+[03:37:44] <gilberth> When was the last time, you payed for a compiler?
+[03:42:32] <hayley> So GCC and SBCL came out of thin air?
+[03:43:27] <gilberth> For the most part, yes.
+[03:48:45] <waleee> "in the beginning, there was a university subsitence living Stallmann .." 
+[03:48:58] <hayley> It's pretty funny that you can get dangling pointers in Go by racing on updating a map or slice or something like that.
+[03:49:43] <hayley> Now I wonder what the first backend for GCC was.
+[03:50:06] <hayley> https://gcc.gnu.org/releases.html only has from 1997.
+[03:50:58] <hayley> "In late 1983, in an effort to bootstrap the GNU operating system, Richard Stallman asked Andrew S. Tanenbaum, the author of the Amsterdam Compiler Kit (also known as the Free University Compiler Kit) for permission to use that software for GNU. When Tanenbaum advised him that the compiler was not free, and that only the university was free, Stallman decided to work on a different compiler."
+[03:50:59] <hayley> lol
+[03:51:17] <hayley> Sounds like some 68k/Unix system though.
+[03:55:14] <gilberth> VAX and Sun it says: https://groups.google.com/g/mod.compilers/c/ynAVuwR7dPw
+[03:55:15] -ixelp- GNU C compiler beta test release
+[04:05:35] <gilberth> https://gcc.gnu.org/pub/gcc/old-releases/gcc-1/
+[04:06:37] <gilberth> slocount says gcc-0.0 is 32k lines. That's not much.
+[04:07:50] <gilberth> I wonder, if I could build it.
+[04:08:46] <moon-child> I wonder if it could build anything else :P
+[04:11:39] <gilberth> Uh, I get a lot of prototype errors.
+[04:13:25] <hayley> Prototype errors? You sure you aren't building Self?
+[04:16:02] <gilberth> Me has flashbacks of porting gcc-1.38 to XENIX.
+[04:16:41] <gilberth> hayley: Have you ever ported C code written 30 years ago?
+[04:16:55] <hayley> No.
+[04:18:18] <gilberth> You often find prototypes of standard rountines right in the code and not included via an .h file. Also often local to a function. Like myfree (x) char *x; { extern void free (); if (x != NULL) free (x); }
+[04:20:28] <gilberth> Actually blah() { extern errno; ... } is a classic. At least it's not "extrn".
+[04:22:24] <hayley> .oO(Patch that massively simplifies the Rust compiler: +3 lines -1111111 lines +++ src/compile.rs @@ -1,1 +1,1 @@ fn main() { \n loop { } \n } )
+[04:22:48] <gilberth> I spot "register int value = realloc (ptr, size);"
+[04:22:55] <gilberth> Notice the "int"!
+[04:23:10] <hayley> lol no estimated distance to use
+[04:23:44] <gilberth> And 'ptr' also is an 'int'.
+[04:24:23] <moon-child> gilberth: classic bug that happens when moving 32 -> 64 bit.  Declare 'malloc();' (or don't even declare and rely on the implicit one).  'int *x = malloc(whatever); *x'.  ret will be inferred as int, so truncated and then widened back to ptr
+[04:25:49] <gilberth> hayley: <https://termbin.com/nmgp8> Actually I wonder why 'ptr' and 'size' are declared at all, as 'int' is the default.
+[04:28:11] <gilberth> moon-child: Yep. This is why I won't attempt a 64-bit build at all. Actually this would be fine, if 'int' would be the intended 'int' on 64-bit. Due to the B heritage 'int' is meant to be an integer of the natural word size. BTW, those errors you already saw with DOS, where 'int' would be 16-bit, while pointers would be 32-bit.
+[04:30:12] *** Quits: random-nick (~random-ni@87.116.165.220) (Ping timeout: 265 seconds)
+[04:31:39] <gilberth> It's also hopeless to attempt to compile the original UNIX sources. Sanest would perhaps be to hack an ancient C -> reasonable C compiler. You find old syntax there like int x 10; for int x = 10; Or x=+5; for x+=5; The worst thing is that structure field would be used on variables declared of a different structure or just being an int.
+[04:32:20] <gilberth> As "foo_count(p) { return p->count; }" was fine.
+[04:33:09] <hayley> But if you compile the original UNIX sources, you get the original UNIX. Why do you want that?
+[04:33:22] <gilberth> Anyhow, I am surprised that gcc wasn't written more careful.
+[04:33:47] <gilberth> hayley: Why do I play with the CADR?
+[04:33:55] <hayley> At least that's a lispm.
+[04:34:22] <gilberth> Still a shitty Lisp for todays standards.
+[04:34:58] <hayley> It's quite good for today's standards.
+[04:35:06] <hayley> You know, with our favourite implementation book and all.
+[04:36:06] <gilberth> Let me see, no character datatype, no lexical closures, a broken GC, a lot of places resorting to manual memory management.
+[04:36:13] <gilberth> hayley: Perhaps.
+[04:38:09] <gilberth> hayley: Actually I kind of like the primitive nature of UNIX. And remember that it ran on 16-bit byte-addressed machine. That is the address space is just 64KB.
+[04:38:23] <gilberth> And it swaps!
+[04:39:46] <gilberth> What I also find curious is that you find assembler code there. troff for example is written in assembler.
+[04:39:47] * hayley considers special casing POSITION = 0 in LDB
+[04:40:17] <hayley> Anything PC-relative would probably be helped by it. And as I touch VM state in memory a lot, it should be good.
+[04:40:44] <gilberth> And pcc is far less portable as you may believe, despite its name.
+[04:40:56] <hayley> Well, I had fun times with lcc.
+[04:41:17] <hayley> It wouldn't emit a constant in memory, rather just generating ADD r0, r0, #15 repeatedly.
+[04:41:23] <gilberth> I rejected lcc. I consider gcc to be easier to retarget.
+[04:41:34] <gilberth> hayley: lol
+[04:41:54] <hayley> So when you wanted to do int offset(int instruction) { return instruction & 0x3ff; }
+[04:42:26] <moon-child> how about tcc?
+[04:42:36] <moon-child> it suffers from tight coupling.  But backends are only a couple of thousand lines iirc
+[04:43:03] <gilberth> gcc is actually pretty clever somehow. I got an older version, because of being smaller, and just deleted all insn definitions for the ARM backend, which have no equivalent for my projected RISC design and it would find other instructions to use instead.
+[04:43:57] <gilberth> moon-child: tcc isn't optimizing at all. It doesn't keep things in registers. A bad fit for a three-address RISC load/store architecture.
+[04:44:45] <moon-child> a while ago somebody wrote a basic optimizer for it.  As I recall, the performance was on par with gcc -O0.  Not incredible but--well, something
+[04:44:56] <moon-child> you might revive that patch.  (It languishes on a years-old mailing list post)
+[04:46:58] <hayley> Down from 2896 instructions to 2726 for one VM layer. Wonder how two fares.
+[04:47:19] <hayley> ...it hangs. Cool.
+[04:47:55] <gilberth> moon-child, I am happy with gcc after considering the other options. I took some 2.something version, which wouldn't be too large to then also run on the target itself.
+[04:48:13] <moon-child> cool
+[04:48:15] <moon-child> good luck!
+[04:48:16] * hayley off by one.
+[04:48:53] <hayley> I really need to have an AREF macro, as I am bored of the LEA, ADD, LDR shuffle.
+[04:50:31] <gilberth> I mean, I used 2.6.3 or something for quite a while on an i486 with just 16MB RAM. With XENIX and then Linux, with X11 and with Emacs.
+[04:50:53] * hayley waits for a5.obj to run again.
+[04:51:01] <hayley> gilberth: Any plans to emulate your RISC in your RISC?
+[04:51:22] <gilberth> hayley: Nope.
+[04:51:59] <gilberth> But it has a barrel shifter projected. :-p
+[04:52:23] <hayley> ):
+[04:52:29] <hayley> Hey, I didn't design LC-3.
+[04:52:57] *** Quits: Catie (~user@user/catie) (Quit: heading home)
+[04:53:56] <hayley> Down from 90.4e9 instructions to 56.7e9 instructions. Not bad.
+[04:55:03] <gilberth> hayley: Will cost me 8*7 = 56 ICs for the rotation alone. Mask generation is a bit cheaper.
+[04:55:57] <hayley> With my stupid JIT and slightly optimized VM, it now takes less than three minutes to run a program that just prints 'A' in 5 nested VMs.
+[04:56:17] <gilberth> One of the key features of the initial ARM was its barrel shifter and when you look at die photos you recognize that it uses a quite large part of the area.
+[04:56:38] <hayley> Wonder if I can be bothered to add a DFA pass to detect if we actually need to update registers or not.
+[04:57:13] * hayley now gets lectured by stylewarning and Scott McKay about how maintaining free software isn't fun.
+[04:57:46] <gilberth> hayley, why don't you emulate an ARM and run Linux on your itty LC-3?
+[04:58:01] <hayley> gilberth: I'm not that bored.
+[04:58:22] <gilberth> Well, you could then run SBCL.
+[04:58:42] <gilberth> Put "run" is perhaps not the right term.
+[04:58:44] <hayley> And, short of implementing LDB and SIGN-EXTEND, you don't need any fancy things like multipliers or left shifting to implement LC-3.
+[04:58:57] <hayley> Also, 64kwords won't suffice.
+[04:59:45] <gilberth> Do as the CADR did, treat your RAM as a peripheral.
+[05:00:05] <gilberth> Or better yet: Run the CADR microcode. :-)
+[05:00:11] <hayley> There isn't much room for peripherals in the spec.
+[05:00:44] <gilberth> Go serial, you would only need two pins.
+[05:01:49] <gilberth> Implement PPP and run it over an RS232 talking to an NFS server for keeping your RAM.
+[05:02:26] <hayley> Yeah, no.
+[05:02:46] <gilberth> Why not? ;-)
+[05:04:21] <hayley> fib3.obj is also about twice as fast with the little TLB and LDB optimisation.
+[05:05:13] <hayley> Well, I think having a made-up instruction set that no one likes self-interpret is funny enough.
+[05:05:18] <hayley> It's completely useless.
+[05:06:02] <gilberth> https://dmitry.gr/?r=05.Projects&proj=07.%20Linux%20on%208bit
+[05:06:04] -ixelp- Linux on an 8-bit micro? - Dmitry.GR
+[05:06:23] <hayley> At least you get Linux then. But LC-3 in LC-3 is worthless.
+[05:06:35] <hayley> But still worth more than the end of year hackathon, of course.
+[05:07:47] <gilberth> When I would be more bored, I could attempt to implement an LC-3 emulator on the B32. But it will be a pain, as it has no shifter.
+[05:08:08] <hayley> Oh, come on, I don't have a shifter either, and you don't see me complaining.
+[05:08:28] <gilberth> lol. You complain all the time, milady.
+[05:08:29] <hayley> https://github.com/no-defun-allowed/lc3-in-lc3/blob/master/vm/bits.lisp#L5-L42
+[05:08:30] -ixelp- lc3-in-lc3/bits.lisp at master · no-defun-allowed/lc3-in-lc3 · GitHub
+[05:08:55] <hayley> But I still have a working LDB, and that suffices to interpret LC-3 instructions.
+[05:10:01] <hayley> How big is the B32 address space? I guess 2^32 words?
+[05:10:05] <gilberth> I remember that code. Hadn't we discussed a routine like that a few month ago?
+[05:10:16] <hayley> If so, you also don't have to bother with a TLB or LDBing every instruction read.
+[05:10:29] <hayley> s/instruction read/memory access/ - yes, all of them.
+[05:10:38] <hayley> gilberth: I think so, yes. First thing I used my macro assembler for.
+[05:11:16] <gilberth> hayley: 28-bit word addresses. Each word being 32-bit.
+[05:11:35] <hayley> Maybe I should submit a pull request to the tutorial, saying that I followed the tutorial in LC-3 assembly.
+[05:12:40] <gilberth> Would I implement indirect load/store, that could be full 32-bit addresses. But that is cheating.
+[05:12:55] <hayley> Still larger than 2^16, no?
+[05:13:23] <gilberth> A little larger, yes.
+[05:14:41] <gilberth> Perhaps I'll give it a shot, when I'm bored.
+[05:15:30] <hayley> LC-3 in LC-3 in LC-3 in LC-3 in B32 in CL
+[05:15:56] <gilberth> The other way around would be more nifty.
+[05:16:59] <gilberth> How about LC-3 in B32 in LC-3 in B32 in ...?
+[05:20:45] <hayley> "4247950985 cycles, 132.07 MIPS 940.96user 0.27system 15:42.70elapsed 99%CPU (0avgtext+0avgdata 1560maxresident)k"
+[05:20:51] <gilberth> Actually, B32 in B32 wouldn't be too bad. The only hard part would be to remap the emulated address space to the real address space.
+[05:21:07] <hayley> Yes, hence the tiny MMU.
+[05:22:56] <gilberth> I would not bother to decode the full op code. I would only need to recognize jumps and otherwise construct a new instruction with just the address part replaced. And decting jumps is easy. Opcodes 11xx are jumps.
+[05:24:24] <gilberth> JITing wouldn't work in practice as the instruction set relies on being able to self-modify the code. You can't have indirect addressing otherwise.
+[05:25:04] <hayley> https://www.youtube.com/watch?v=lwx8A0XUpfM
+[05:25:05] -ixelp- Time Zones - YouTube
+[05:29:35] <gilberth> For the TLB I would have a code vector with a series of SUB entry1 ; JZ found1 ; SUB entry2 ; JZ found2 ; ... Relatively fast, you just would need to keep those entries relative to each other.
+[05:30:30] <hayley> I just have one entry, and it seems to work okay.
+[05:31:38] <gilberth> I would want at least three. One for code, one for the current working "registers" and one for data indexed to.
+[05:32:20] <hayley> Sure.
+[05:32:20] <gilberth> The B32 has just the accumulator, so you need to keep any other temporary in RAM.
+[05:32:45] <hayley> I had to make sure the microcode and registers are close in memory, so that PC-relative addressing still works.
+[05:33:37] <gilberth> Milady, I have too many projects on my hand.
+[05:34:16] <hayley> Well, this then means that there is better spatial locality, so the single TLB entry is somewhat more likely to be useful.
+[05:34:46] <gilberth> I always wanted to see how far you can get with just three TLB entries and no HW MMU. For some useful program being executed.
+[05:35:18] <gilberth> For my RISC, that is.
+[05:35:39] <hayley> .oO(Good marketing idea: "Your language packages have backdoors? What are those backdoors gonna do? 'Everything'? Why let them do everything then, idiot! Use first class global environments!")
+[05:35:51] <gilberth> Could also be four or perhaps eight. But certainly not more.
+[05:48:23] *** perrierjouet is now known as Charles_Attends
+[05:48:50] <gilberth> hayley: The LC-3 cannot even right shift by one bit?
+[05:51:26] <hayley> Nope!
+[05:53:36] <hayley> https://www.youtube.com/watch?v=jjbKSg97-SI
+[05:53:37] -ixelp- Tryouts for the Human Race [Alternative Extended Version] - YouTube
+[06:01:11] <gilberth> hayley: I don't like that design. It is scarce on ALU operations with just ADD, AND, and NOT. Fine. But why it then has the [double] indirect LDI and STI instructions. That is very un-load/store-ish. RISC CPUs usually don't have those kind of instructions.
+[06:01:45] <hayley> gilberth: Yes, clearly no one thought it through.
+[06:02:08] <hayley> See p.5 of https://justinmeiners.github.io/lc3-vm/supplies/lc3-isa.pdf
+[06:02:10] <gilberth> So as scarce as it is with ALU ops, as anti-minimalistic it is with addressing modes for load and stores.
+[06:03:27] <hayley> And my microcode includes two :LOAD or one :LOAD and one :STORE step, so the memory step in a RISC pipeline could stall everything else.
+[06:05:20] <gilberth> Also, why this LEA? I know the value of my program counter. Completely superfluous.
+[06:05:41] <hayley> LEA is rather "compute PC relative".
+[06:06:28] <gilberth> It says Rn <- PC + immediate. Doesn't it?
+[06:06:55] <hayley> Right.
+[06:07:51] <gilberth> This value is known and constant. It would have made some sense, with just a single LD Rd, Rs ; Rd = [Rs] instruction.
+[06:09:07] <gilberth> Milady, this ISA is not balanced. Intentionally scarce on ALU, but baroque in branches and load/store. You could also skip JSR, if you wish.
+[06:09:26] <hayley> No doubt.
+[06:10:40] <gilberth> I mean you are expected to construct say an XOR out of NAND essentially. But have double indirect loads? Looks like one designed the ALU and the other the load/store stuff.
+[06:14:49] <gilberth> OK. I see two challenges here for a B32 implementation. The foremost is that I would need to address 16-bit words unless I cheat and just have half the RAM been unused.
+[06:15:40] <gilberth> I could only shift one bit at a time, either left or right. The opcode is right in the middle from a 32-bit perspective, which is the most inconvenient spot of all.
+[06:16:25] <gilberth> So I would need ages just to get at the individual fields of an instruction.
+[06:17:05] <hayley> Yes.
+[06:18:09] <gilberth> I see now why the CADR designers were so proud of their LDB.
+[06:20:56] <gilberth> hayley: But yes, I won't need an MMU or a TLB. Missed what you said. My address space is way larger and I certainly could spare 64k or just 32k. (32-bit words).
+[06:21:24] <gilberth> A simple addition will give me the right address.
+[06:23:01] <gilberth> Heck, when I spend some memory I even could have a 64k entry jump table. One entry for each possible instruction!
+[06:41:23] * hayley wonders if anyone ever made a soundcard which just had a Minimoog circuit on it or something.
+[06:41:48] <hayley> https://www.youtube.com/watch?v=PATlf0W3m7k
+[06:41:48] -ixelp- I built an analog synthesizer from scratch. Here is how I did it... - YouTube
+[06:45:07] <hayley> gilberth: Get DACs and hook that up to the B32?
+[06:52:31] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[06:53:56] *** Joins: dave0 (~davezero@069.d.003.ncl.iprimus.net.au)
+[06:54:31] <dave0> maw
+[06:55:52] <hayley> maw
+[06:56:47] <dave0> maw hayley 
+[06:56:49] <dave0> how's it going?
+[06:57:26] <hayley> Fine, I guess. My back hurts.
+[07:01:56] * dave0 gets hayley a pillow
+[07:09:20] <gilberth> hayley: My take at an 16-bit ISA: <http://clim.rocks/gilbert/b15.html>
+[07:09:20] -ixelp- A very simple 16-bit RISC ISA
+[07:09:34] <hayley> sex()
+[07:09:47] <gilberth> I was sure that you'll spot that.
+[07:10:00] <hayley> sext()
+[07:10:39] <gilberth> sxt()?
+[07:11:04] <hayley> But can you synthesize AND, OR and NOT?
+[07:12:02] <gilberth> There is AND. And NOT Rd, Rs == XOR Rd, Rs, #-1
+[07:13:04] <gilberth> OR follows from DeMorgan's rules.
+[07:13:58] <hayley> Sure.
+[07:14:10] <gilberth> For AND, I could have a different immediate encoding: rriiii == iiii << 4*rr, which would be useful for extracting things.
+[07:14:51] <gilberth> Or test some bit.
+[07:14:53] <dave0> gilberth: there's a typo ..   1001 ddd sss ttt ???   STR Rd, [Rs + #imm]     should be   1001 ddd sss iii iii
+[07:15:10] * gilberth checks
+[07:16:31] <gilberth> dave0: Fixed! I am obliged.
+[07:16:39] <dave0> no worries
+[07:17:37] <dave0> if you wanted to go more minimal you could replace AND and XOR with NAND
+[07:18:13] <hayley> https://www.youtube.com/watch?v=Tdl5t-l5-4E
+[07:18:14] -ixelp- All You Ever Think About Is Sex - YouTube
+[07:18:27] <gilberth> dave0: Of course. But I have the room.
+[07:19:01] <gilberth> dave0: All the spaces you sent me pay off :-)
+[07:20:35] <dave0> ehehe
+[07:21:15] *** Quits: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se) (Quit: WeeChat 3.3)
+[07:21:18] <gilberth> hayley, dave0: What do you think? Is that more simple than LC-3?
+[07:21:26] <hayley> Yes.
+[07:22:18] <hayley> Hm, AVX512 has this weird instruction where one register has a lookup table for some binary function. Use that instead of XOR/AND/OR/NOT?
+[07:22:44] <gilberth> hayley: BOOLE?
+[07:23:11] <hayley> vpternlog
+[07:23:25] <hayley> https://www.chessprogramming.org/AVX-512#VPTERNLOG
+[07:23:25] <gilberth> CL:BOOLE?
+[07:24:01] <hayley> You can create any Boolean operation by encoding its truth table in a word. Not the case for BOOLE.
+[07:24:54] <gilberth> hayley: BOOLE does exactly that. Or do you miss any operation?
+[07:25:13] * hayley counts
+[07:26:24] <hayley> Ah, so there are 16 operations for all possible truth tables of a bit x bit -> bit function.
+[07:26:59] <hayley> But AIUI the names are opaque and you can't just say "give me an operator from this truth table".
+[07:27:06] <gilberth> Yes, and the common values of the BOOLE-... constants come from some actual architecture having such an instruction.
+[07:28:22] <hayley> So just have BOOLE r0, r1, r2, r_table or maybe just BOOLE r0, r1, r2, constant table.
+[07:28:58] <hayley> Well, if you just have shifting and BOOLE then you can even simulate ADD.
+[07:29:35] <hayley> ...or extend the table to include "feedback" from the last output bit, as you have 12 bits spare.
+[07:31:10] <hayley> No, it wouldn't be feedback from the output, you'd have a_n x b_n x a_{n - 1} x b_{n - 1}
+[07:31:34] <hayley> It even fits 16 bits perfectly.
+[07:31:38] <dave0> gilberth: can i request a shift instruction?
+[07:31:59] <gilberth> dave0: Left shift is there. :-)
+[07:32:13] <dave0> phew i guess
+[07:32:20] <gilberth> hayley: This is an interesting approach.
+[07:32:53] <hayley> Then, just load the truth table for ADD and you don't need it either!
+[07:33:03] <gilberth> dave0: But, yes, shift right is missing. The very reason why the B32 has this sifht right by one bit insn.
+[07:33:30] <hayley> So apparently the course for "information technology" gives you the same experience and is accredited the same, but gives you more electives. But "computer science" sounds cooler. *sigh*
+[07:34:21] <dave0> gilberth: you have a little bit of code space you could use for shifts
+[07:34:23] <hayley> BOOLE + SHR + J{N,Z,} and you're good to go.
+[07:36:06] <hayley> I wonder if it'd be hairier than a traditional ALU to take in a full truth table. But then again the 74181 was somewhere in the middle.
+[07:36:12] <gilberth> dave0: I could either implement hayley's approach or have the "???" bits as a rotation count for the Rt operand. That would be nifty. Rotate and AND at the same time. With that immediate encoding from above for AND, you have a poor man's partial LDB.
+[07:36:32] <dave0> 00 SHL 01 SHR 10 SAR 11 ROR
+[07:36:48] <dave0> gilberth: i was thinking of the ??? bits
+[07:36:59] <dave0> it's 16 bit
+[07:37:39] <gilberth> hayley: Muxes are fast. It won't hurt to feed it a truth table. Actually you find home brew designs, not using the out of production '181, doing that.
+[07:37:51] <dave0> 0110 ddd sss iii irr    rr=00 SHL Rd,Rs,#iiii    rr=01 SHR Rd,Rs,#iiii   rr=10 SAR Rd,Rs,#iiii  rr=11 ROR Rd,Rs,#iiii
+[07:38:26] <dave0> oh one more thing... how do you load a 16 constant into a register?
+[07:38:31] <dave0> 16 bit constant
+[07:39:17] <gilberth> dave0: As the ARM does. LDR R0, [PC + #offset], with R7=PC
+[07:39:28] <dave0> ah cool
+[07:40:00] <dave0> were you thinking of having self-modifying code? indirect jump would need it i think
+[07:40:30] <dave0> JMP R0
+[07:40:33] <dave0> JMP [R0]
+[07:40:34] <gilberth> dave0: AND R7, R1, R1 = jump to R1
+[07:40:42] <dave0> aaah!
+[07:41:03] <dave0> right right R7=PC
+[07:41:06] <dave0> nice
+[07:41:19] <gilberth> That's the trick, yes.
+[07:41:26] <hayley> OTOH you'd need bit test in hardware to implement my BOOLE-with-feedback. And then a few to make a fast ALU.
+[07:41:52] <gilberth> dave0: I'll consider your proposal for shifts. I still have the room for that.
+[07:42:38] <hayley> Worse would be to cut out feedback on every byte/word/etc so that you can do SIMD-within-a-register too. Would be a connection machine for broke people.
+[07:43:24] <gilberth> But I wanted to be very minimal, like the LC-3. For a practical design, I also would like to have an overflow flag and a carry flag. Especially with such a small word width.
+[07:43:26] <dave0> gilberth: oh cool!
+[07:43:36] <dave0> gilberth: i copied it from ARM :-)
+[07:44:02] <gilberth> dave0: The ARM encoding is very clever, indeed.
+[07:45:38] <dave0> gilberth: in my forth, i only implemented rotate-left, because its pretty easy to make everything else from it
+[07:45:58] <gilberth> The LDM and STM instructions are also very clever for tight encoding of saving and restoring registers on subroutine entry and exit.
+[07:46:07] <hayley> >"very minimal" >has doubly indirect load/store
+[07:46:53] <gilberth> hayley: Which still is hilarious. Consider how your pipeline must look to have that.
+[07:49:45] <dave0> gilberth: can i change my proposal to just    ROL Rd,Rs,Rt    which rotates Rs left by (Rt & 15) bits and puts it in Rd    ?
+[07:51:28] <dave0> i think you could make  SHL  out of ROL
+[07:52:02] <hayley> (If anyone in #sicl wonders why anyone named Mauro cannot change the kernel APIs: https://lkml.org/lkml/2012/12/23/75)
+[07:52:26] <moon-child> dave0: sure, rotate and mask
+[07:52:36] <moon-child> but sar is harder
+[07:52:52] <dave0> a SHL c = (a ROL c) & NEGATE(1 ROL c)
+[07:53:07] <dave0> hmm sar
+[07:54:49] <moon-child> if you have a cmp instruction which generates either an all-ones or all-zeroes work--like avx cmp--you can do it
+[07:55:18] <moon-child> a SAR c = (a ROR c) | ((a < 0) SHL c)
+[07:55:59] <moon-child> s/work/result, I think?  Don't remember
+[07:56:10] <moon-child> (you can also generate that by generating a 1/0 result of the opposite comparison and decrementing it)
+[08:06:19] <hayley> gilberth: Still, we have 16 16-to-1 multiplexers for the ALU. That's a lot of gates, no?
+[08:06:26] *** Quits: lisp123 (~lisp123@5.30.23.247) (Remote host closed the connection)
+[08:08:23] <dave0> is 6502 cool? it only has add-with-carry and no add instruction :-)
+[08:09:22] <gilberth> hayley: Turn the mux by 90°.
+[08:09:25] <dave0> i find 6502 a bit tricky.. i don't think i have the right mindset to code it
+[08:11:52] <gilberth> dave0: I never try to program an 6502. I find it pretty odd, being grown up with the 8080.
+[08:13:30] *** Quits: bcasiello__ (~bcasiello@066-189-087-112.biz.spectrum.com) (Ping timeout: 265 seconds)
+[08:13:31] <gilberth> hayley: You have two input bits A and B, That is your selector, a 4:1 mux. One for each bit of the word. All the 4 four [selected] inputs of these muxes come from your Boolean op.
+[08:14:23] <gilberth> That isn't really many gates.
+[08:16:19] <White_Flame> dave0: 6502 is the best cpu evar
+[08:16:20] <hayley> Hm, I wanted a 16:1 to have feedback from the smaller bits, so that we could ADD too.
+[08:16:28] <hayley> 68k or gtfo
+[08:16:39] <White_Flame> also, it's not very tricky, coding is quite straightforward
+[08:17:09] <White_Flame> zero page is basically another 256 bytes of "registers" including pointers
+[08:17:28] <White_Flame> clc, adc foo is a common pattern, for obvious reasons.  If you know carry is clear, then you can skip the clc
+[08:17:42] <gilberth> hayley: I see.
+[08:19:06] <gilberth> White_Flame: Isn't it essentially a one address architure, where you would load from zero page, ALU with something else from zero page, and stash the result somewhere else? Or am I missing something?
+[08:19:44] <White_Flame> you can load or ALU from basically any addressing mode
+[08:20:00] <White_Flame> I only ever need like 3 bytes or so temp zeropage usage in large codebases
+[08:20:17] <White_Flame> you can tend to converge to a very direct address map pretty easily
+[08:21:36] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[08:22:19] <gilberth> Ok. But you still use the memory as what would otherwise be register? At least I got that impression from reading the ISA. Never really tried using it.
+[08:24:33] *** Quits: semz (~none@user/semz) (Ping timeout: 250 seconds)
+[08:26:50] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 256 seconds)
+[08:27:36] <White_Flame> well, the 6502 has no pointer registers, zeropage is used exclusively for that
+[08:27:44] <White_Flame> (well, I guess you can fake pointers with self-modifying code, but whatever)
+[08:28:58] <White_Flame> and the fast/short access to fixed zeropage addresses basically puts your internal state there pretty easily, without having to shuffle it around with temporaries
+[08:29:15] <White_Flame> it's all in situ
+[08:29:47] <gilberth> I noticed. But missing index registers, implementing a Lisp will be a pain, wouldn't it?
+[08:29:58] <White_Flame> it has 2 index registers
+[08:30:01] <White_Flame> X and Y
+[08:30:09] <gilberth> 16-bit wide?
+[08:30:33] <White_Flame> no, 8-bit wide, plus a 16-bit base pointer from zeropage (or literal absolute address)
+[08:31:03] <White_Flame> so yes, some 16-bit address operations & pointer following can be tedious
+[08:32:48] <gilberth> Well, I once looked at the ISA and went .oO(Gosh! How to reasonable chase pointers?) But, again, I have zero practical experience with the 6502 being an Intel-child.
+[08:32:51] <dave0> gilberth: you can indirect through (X+n) or (Y)+n where n is 8 bits (so 0-255 ie. direct page)
+[08:33:15] <dave0> zero page i mean not direct
+[08:33:45] <White_Flame> "direct page" is the proper name of it past the original nmos CPU
+[08:33:47] <gilberth> dave0: Yes, that won't allow me to implement CAR or CDR.
+[08:33:59] <White_Flame> you can implement it easily enough.  it just won't be one instruction
+[08:34:13] <gilberth> ok.
+[08:34:14] <White_Flame> and probably just be a small subroutine instead
+[08:34:36] <White_Flame> it's highly optimized for fixed memory maps
+[08:35:24] *** Quits: robin (~robin@user/terpri) (Read error: Connection reset by peer)
+[08:35:40] *** Joins: robin (~robin@user/terpri)
+[08:35:48] <gilberth> Well, with the 8080 it also isn't a single instruction. You would rather do MOV E, M : INX H : MOV D, M to have DE=[HL]
+[08:37:21] *** Joins: semz (~none@user/semz)
+[08:39:40] <gilberth> It isn't that bad, to have the CAR in BC and the CDR in DE, you could do MOV C,M : INX H : MOV B,M : INX H : MOV E,M : INX H : MOV D,M -- not too bad. Say XCHG to have HL<->DE, for the next CDR-down in a loop for say MEMQ.
+[08:41:11] <gilberth> Would be even easier with the Z80.
+[08:46:30] <White_Flame> yep
+[08:55:24] *** Joins: shka (~herr@83.175.151.96.piasta.pl)
+[09:03:22] <hayley> Which will come first: - affordable RISC-V computers - hoverboards
+[09:08:58] <gilberth> The former.
+[09:16:05] *** Quits: Guest1099 (~Inline@2a02:908:1252:7a80:731:d6ac:6e05:dbb3) (Quit: Leaving)
+[09:16:13] *** Quits: Inline (~Inline@2a02:908:1252:7a80:731:d6ac:6e05:dbb3) (Quit: Leaving)
+[09:23:03] <hayley> They really should have just extended Smalltalk on a RISC to 64 bits in my opinion.
+[09:25:14] *** Quits: White_Flame (~quassel@user/white-flame/x-6930243) (Remote host closed the connection)
+[09:26:29] *** Joins: White_Flame (~quassel@user/white-flame/x-6930243)
+[09:29:49] <hayley> https://www.youtube.com/watch?v=cLhI4JLFzR0
+[09:29:50] -ixelp- Telegraph (Extended Version / 2008 Digital Remaster) - YouTube
+[09:34:30] *** Joins: treflip (~user@95.79.32.99)
+[09:50:44] * hayley notes ~/.steam/steamapps/common/GarrysMod is 40GB these days
+[09:50:57] <hayley> Wouldn't be a way to do LRU caching?
+[10:03:16] <hayley> Oh well, I deleted all the maps and we'll see what I have to reinstall.
+[10:04:17] <hayley> So far it seems I am at about 10τ per LC-3 instruction, which is like 2.5x as fast as the C++ interpreter. But I still want lower.
+[10:37:44] *** Quits: shka (~herr@83.175.151.96.piasta.pl) (Ping timeout: 256 seconds)
+[10:42:48] *** Joins: tophullyte (tophullyte@gateway/vpn/protonvpn/tophullyte)
+[11:06:18] <hayley> One more daft optimisation would be to properly inline LDB, and use data flow analysis to show that we don't diddle the link register. But that has the side effect that you need to search for more instructions after DFA, which you presumably want to optimise again.
+[11:06:37] * hayley puts on https://www.youtube.com/watch?v=r0UOlF8vXy8
+[11:23:17] <moon-child> 'the guarantees on time and space are worst-case with high probability in n'  what does that _mean_?
+[11:23:22] <moon-child> 'worst-case, but not really'
+[11:24:48] <hayley> "99th percentile" but for academic papers?
+[11:25:13] <hayley> Most input has some property which is O(n)?
+[11:29:57] <hayley> I read volume 1 of the RISC-V specification, notably pages 22-23, to say that there are no static branching hints. But someone told me otherwise?
+[11:31:47] *** Quits: clothespin (~awolven@c-73-209-95-92.hsd1.il.comcast.net) (Remote host closed the connection)
+[11:32:14] <moon-child> wiki says 'RV32I reserves a "HINT" instruction space that presently does not contain any hints on branches'
+[11:33:10] <hayley> Yes, there's HINT and a comment which says it might be used for branches, but not now.
+[11:33:28] <moon-child> 'can result in poor performance if production runs do not match profiling runs'  I mean ... I kinda feel like if that happens to you it's your own fault
+[11:33:32] *** Quits: treflip (~user@95.79.32.99) (Quit: ERC (IRC client for Emacs 27.2))
+[11:35:11] <moon-child> but ooh, uarch-level stuff described two paragraphs later looks neat
+[11:39:38] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[11:39:46] <hayley> Someone also did not like me saying that ±15% can sadly be noise on some benchmarks. It is for NonBlockingHashMap, idk why.
+[11:42:55] <moon-child> anecdote: 'we perform benchmarks on every release, but ignore differencess less than 5% as they tend not to be reproducible.  There are high frequency traders, who can discriminate so finely.  They can tell the difference between fibre and copper signal, and know how to find the _exact_ midpoint of new york and chicago so as not to lose any time on their trades.  We brought in some such and asked
+[11:42:56] <moon-child> them to teach us how to reproduce <5% differences on benchmarks; but apparently they were unable or unwilling to do so'
+[11:43:26] <hayley> lol
+[11:43:50] <hayley> Theoretically you just run it more, reducing the standard deviation cause maths. But that takes a while.
+[11:44:10] <moon-child> well, I would guess the HFT people run in much more tightly-controlled environments
+[11:44:19] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 250 seconds)
+[11:44:27] <hayley> If you want to go from 1 thread to 12, 20 seconds each, then do this test across 4 hash tables...
+[11:44:47] <hayley> 16 minutes is more than my attention span admittedly.
+[11:59:49] <hayley> Okay, there aren't branch prediction hints and the guy thought HINT was better specced.
+[12:06:10] <dave0> once i put the wrong hint on a jump and my whole program got slower :-(
+[12:07:14] <dave0> but then i put the opposite hint on it and it was still slow
+[12:07:20] <dave0> the lesson is don't hint
+[12:14:35] <dave0> another time i profiled a function that took 80% of the runtime, so i unrolled an inner inner loop to squeeze every cycle, but i blew out the i-cache and the execution time doubled :-/
+[12:15:26] <dave0> it surprised me that the speed dropped so dramatically
+[12:22:07] <hayley> https://www.youtube.com/watch?v=dLiqdtOuYVY
+[12:22:07] -ixelp- Tim's Chaotic Magnets! - YouTube
+[12:22:39] *** Quits: dec0d3r (~dec0d3r@2001:8003:480a:e00:e07:e7c3:7efc:ed0f) (Quit: Leaving)
+[13:07:01] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[13:29:01] *** Joins: treflip (~user@95.79.32.99)
+[13:39:58] *** Quits: treflip (~user@95.79.32.99) (Quit: ERC (IRC client for Emacs 27.2))
+[13:45:51] *** Joins: treflip (~user@95.79.32.99)
+[13:46:27] *** Quits: treflip (~user@95.79.32.99) (Remote host closed the connection)
+[13:47:08] *** Joins: treflip (~user@95.79.32.99)
+[13:47:55] *** Joins: random-nick (~random-ni@87.116.165.220)
+[13:50:59] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[13:54:19] *** Quits: random-nick (~random-ni@87.116.165.220) (Ping timeout: 250 seconds)
+[13:55:30] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 256 seconds)
+[13:55:35] *** Joins: random-nick (~random-ni@87.116.165.220)
+[14:05:51] *** Quits: tophullyte (tophullyte@gateway/vpn/protonvpn/tophullyte) (Ping timeout: 265 seconds)
+[14:08:21] <hayley> https://www.international-lisp-conference.org/2005/media/baker-audio.mp3 https://www.international-lisp-conference.org/2005/media/baker-slides.pdf grub up kids
+[14:08:41] <selwyn> international lisp conference?
+[14:08:49] <hayley> Yes
+[14:09:04] <selwyn> i see we share the 'wall of text' approach to presentation slides
+[14:23:05] *** Quits: edgar-rft (~edgar-rft@HSI-KBW-109-193-249-223.hsi7.kabel-badenwuerttemberg.de) (Quit: Leaving)
+[14:37:45] <Gnuxie> https://www.international-lisp-conference.org/2005/media/baker-audio.mp3
+[14:39:55] <hayley> I linked that already
+[14:40:29] <hayley> :angrybaker: 
+[14:44:33] <selwyn> why isnt there video
+[14:46:54] <hayley> It was redacted by Amazon for causing too many un-carcinisations or whatever the word is
+[14:47:29] <hayley> de-carcinisation
+[14:51:21] <selwyn> return to crab
+[14:51:57] <sham1> Orange crab suboptimal
+[14:54:13] <hayley> Hey, I put de- at the front.
+[14:57:34] *** Quits: pl (sid98063@helmsley.irccloud.com) (Ping timeout: 268 seconds)
+[15:00:06] *** Joins: pl (sid98063@helmsley.irccloud.com)
+[15:24:08] <mfiano> Sigh. I just discovered a huge oversight with ZFS, or at least that's what it appears as.
+[15:26:54] <mfiano> You can create a bookmark of a snapshot, but the metadata of the bookmark only contains the GUID of the snapshot, not its name. And the only way it seems to map a GUID to a snapshot is to list out all of them, which can easily grow to tens of thousands, and parse out the guid property to find the one that matches. No idea why there isn't a constant time solution...
+[15:49:02] <dave0> 127 qubit processor from ibm
+[15:49:38] <hayley> Robert Smith took the piss out of it, saying that you need other numbers to be impressed or not.
+[15:50:46] <hayley> But he doesn't seem to like IBM stuff ever, could be biased by working in competing products, but I like his analogy that's it's like "AMD annoucing a 1,000 core machine". But more realistic would have been the MHz wars or whatever that was called in the 00's.
+[16:03:17] <selwyn> you indeed need other numbers
+[16:06:28] <selwyn> the qubits have a 'quality' associated with them, and if they are too bad they are kind of useless
+[16:08:29] *** Quits: Posterdati (~posterdat@host-95-233-159-142.retail.telecomitalia.it) (Ping timeout: 268 seconds)
+[16:13:12] *** Quits: X-Scale (~ARM@46.50.0.92) (Ping timeout: 256 seconds)
+[16:13:40] *** Joins: X-Scale` (~ARM@165.201.137.78.rev.vodafone.pt)
+[16:18:11] *** Quits: X-Scale` (~ARM@165.201.137.78.rev.vodafone.pt) (Ping timeout: 250 seconds)
+[16:18:57] *** Joins: X-Scale (~ARM@83.223.235.65)
+[16:21:33] *** Joins: Posterdati (~posterdat@host-87-19-166-231.retail.telecomitalia.it)
+[16:23:50] *** Quits: Charles_Attends (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.3)
+[16:24:14] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[17:10:26] <selwyn> issue with quantum hardware is that none of it works perfectly, while classical hardware essentially always does
+[17:13:34] <sham1> I still believe that QC is going to mostly become a co-processor similarly to the GPU instead of replacing classical computers. Classical computers are very good at what they do and I do foresee that even if with the whole quantum mastery or whatever one could replace a classical computer with a quantum computer, it'd probably be more expensive than its worth
+[17:13:49] <selwyn> yeah definitely
+[17:14:08] <selwyn> i don't think it will be a co-processor so much as a 'datacenter' though
+[17:14:54] <sham1> Perhaps
+[17:14:58] <selwyn> with the possible exception of qkd modules for pcs
+[17:15:02] <selwyn> but that is a way off
+[17:16:10] <selwyn> all of the applications we have so far are not things that you would want to put in a home computer, or an office
+[17:17:27] <sham1> Mmhm. Breaking prime-based cryptography isn't a good thing to give to anyone. Let alone to any home user
+[17:18:02] <selwyn> that too
+[17:19:07] <selwyn> can foresee a case in which replacing most of crypto is too difficult/expensive to do in a reasonable time frame
+[17:19:29] <selwyn> in which case, do governments impose a 'non-proliferation regime' on qc
+[17:21:12] <sham1> From the small amount of cryptography and QC literature I've read, I'd think that at least AES would be somewhat resistant to a quantum attack, since from what I've understood, there really isn't anything in quantum computing that would help with reversing the various AES steps
+[17:22:29] <sham1> RSA of course goes bye-bye but even for that we do have ED25519 which also I don't think is that susceptible to a quantum attack
+[17:22:39] <selwyn> am not familiar with aes
+[17:23:29] <selwyn> all crypto methods are vulnerable to a quadratic speedup on brute force attacks, but that is not really the worry
+[17:23:54] <selwyn> afaik post quantum crypto is still a very active field
+[17:24:00] <sham1> Yeah.
+[17:24:09] <selwyn> so i don't think they cracked it yet
+[17:24:12] <sham1> And it seems that AES is believed to be quantum resistant
+[17:26:29] <sham1> Although reading more it seems that ed25519 and various other such elliptical curve asymmetric ciphers might also be breakable. Welp, gotta hope that we get those fancy lattice-basee ciphers otherwise SSH is going to get interesting indeed
+[17:26:33] <selwyn> i see, its symmetric
+[17:26:37] <selwyn> it probably is resistant then
+[17:26:57] <selwyn> yes elliptic curves are vulnerable. for a while we hoped they were not
+[17:27:46] <sham1> Well there has already been some doubt about elliptic curves at least with NIST ones, so that's depressing
+[17:32:22] <selwyn> i know people involved in lattice based crypto who are optimistic
+[17:32:26] <selwyn> though i suppose they would be
+[17:33:43] <sham1> Well I'd hope they'd be
+[17:34:33] <ck_> We've always been at war with Cryptasia .. or was it Cypherania
+[17:37:14] <sham1> Suddenly Literally 1984
+[17:40:10] <ck_> :q
+[17:41:18] <sham1> Wrong window?
+[18:03:29] *** Quits: random-nick (~random-ni@87.116.165.220) (Ping timeout: 250 seconds)
+[18:03:42] *** Quits: X-Scale (~ARM@83.223.235.65) (Ping timeout: 256 seconds)
+[18:12:15] <ck_> yes, and I didn't even notice. sorry about that
+[18:18:49] *** Joins: X-Scale (~ARM@83.223.235.65)
+[18:22:39] <gilberth> Good morning #lispcafe!
+[18:30:06] <dave0> maw gilberth 
+[18:30:19] <dave0> it sure is morning.. it's 2am here
+[18:30:25] <dave0> i should sleep
+[18:30:36] <ck_> (palpatine voice) do it
+[18:31:34] <dave0> eep
+[18:31:38] <dave0> the dark side!
+[18:33:12] <dave0> nite all
+[18:33:30] *** Quits: dave0 (~davezero@069.d.003.ncl.iprimus.net.au) (Quit: dave's not here)
+[18:54:08] *** Quits: johnjay (~pi@192.142.100.50) (Ping timeout: 256 seconds)
+[18:56:24] *** Joins: johnjay (~pi@192.142.100.50)
+[19:21:46] <sham1> Morning? It's almost 18 o'clock
+[19:24:19] <gilberth> When the sun sets, it's the perfect time to get up.
+[19:25:31] <sham1> Sadly the world does revolve around the early birds and the apparent motions of the Sun in the sky
+[19:27:54] <gilberth> Indeed. I never got why getting up early is considered to be a good thing and demanded by society.
+[19:29:08] <sham1> Agrarian culture, thinks me
+[19:29:10] <gilberth> I'm a pretty late bird. My natural sleep pattern is to get up like around 14:00. This works best for me. Hence, I'm doomed in this society.
+[19:29:33] <selwyn> i used to commute an hour to school and swore i would never do it again
+[19:29:39] <selwyn> have managed it so far
+[19:30:25] <gilberth> sham1: Perhaps. Perhaps also from working outside. In summer time it gets hot around noon, but is moderate in early morning, so it would make sense to get work done in the morning.
+[19:31:46] <sham1> That too. Also the lack of many options wrt. artificial lighting also probably contributed
+[19:33:13] <gilberth> selwyn: I failed the calculus exam at uni, the only test I ever failed. I was not used to actually be there at lectures. But in this case I attended every damn calculus lecture for a year. And as mathematician appear to be early bird, this implied hitting uni at felt night twice a week. IIRC lecture started by 7:00.
+[19:33:22] <selwyn> hm
+[19:33:37] <selwyn> condolences
+[19:34:47] <gilberth> sham1: Which is funny, because at winter time we have daylight by 10:00. So why get up at, say, 06:00? And in summer there still is daylight by 22:00. (23:00 with DST applied).
+[19:34:59] <sham1> Mmhm
+[19:36:19] <sham1> One can probably "tune" their circadian rhythym to be more "early" but it's annoying
+[19:36:32] <gilberth> selwyn: I was too lazy. Calculus implies to just memorize a lot of "tricks". I was not used to needing to do homework for school. But I passed the second attempt with ease. To my defense: Those exams were marked for a 50% failure rate.
+[19:37:09] <selwyn> i spent so much time learning integration tricks when i was finishing high school
+[19:37:44] <gilberth> sham1: There are limits. I cannot tune it to get up at 06:00, that would be eight hours off. And no matter how little I slept or when I got up, my most alert time is 21:00 an onwards.
+[19:37:50] <selwyn> would say the trick there is to practise a lot which reduces the time taken to solve questions
+[19:38:04] <selwyn> i could do sqrt(tan x) back in the day
+[19:38:31] <selwyn> good challenge for anyone who wants to try, you can do it with parts/substitution, nothing further required
+[19:39:03] <sham1> u-sub?
+[19:39:07] <gilberth> selwyn: Yep. And I practiced very little the first time. All the theory was easy to me. But that doesn't help to actually find solutions to equations.
+[19:40:25] <selwyn> indeed
+[19:40:52] <gilberth> I did way better with algebra though. Way less to memorize, more to actually grasp.
+[19:41:37] <gilberth> For most students it was the reverse though. Most could better cope with calculus because it feels less abstract.
+[19:43:02] <selwyn> yeah
+[19:43:12] <selwyn> you could be a pure mathematician
+[19:49:29] *** Joins: bcasiello__ (~bcasiello@066-189-087-112.biz.spectrum.com)
+[19:58:01] <aeth> I had issues with algebra because of the various factoring rules.
+[19:58:26] <aeth> Differential calculus isn't bad (except the trig special cases), and the part of integral calculus where you just reverse into differential calculus isn't bad.
+[19:58:43] <aeth> It's integral calculus where you get the dozens of tricks that aren't even used in reality because everyone just uses numeric (rather than symbolic) computers
+[19:59:17] <johnjay> aeth: education lags behind reality somewhat
+[19:59:55] <sham1> Algebra (or in some parts of the world abstract algebra) is very interesting though. Groups and such
+[20:00:30] <aeth> yeah, actual advanced algebra isn't bad
+[20:01:27] <aeth> but factoring in the basic algebra subjects can be tricky and if you can't remember how to factor the thing at the time then you have to fall back to the quadratic equation, which will take more time than the test has anticipated
+[20:01:54] <aeth> it's not that bad once you have the experience though because it's fast to reverse to verify
+[20:01:57] <sham1> Ah, you mean expressing a polynomial in terms of its roots
+[20:03:15] <aeth> e.g. x^2-4
+[20:03:21] <sham1> Yeah
+[20:03:29] <aeth> that's just (x+2)(x-2) but you kinda just need to know that, or you need to take a while with the quadratic equation
+[20:03:42] <aeth> gets worse once you have to repeatedly apply it and it's not just x^2
+[20:03:48] <sham1> Yeah, you need to find the roots and that can be annoying yes
+[20:03:57] <aeth> brute force is polynomial long division until you can use the quadratic equation, I guess?
+[20:04:03] <aeth> at least on paper
+[20:04:49] <sham1> Well you could also use some root finding algorithm to find some approximations until you get forms (x-x_1)(x-x_2)...(ax^2 + bx + c)
+[20:05:18] <sham1> And from there you could possibly try and backsolve the other roots
+[20:05:49] <sham1> That does require some polynomial division though
+[20:06:57] <aeth> yeah
+[20:07:07] <aeth> I took two computational courses, one from the math side and one from the comp sci side
+[20:07:16] <aeth> I was trying to keep it from a K-12 pen-and-paper perspective
+[20:07:28] <aeth> I guess you're introduced to one or two of them there, though
+[20:08:00] <aeth> Newton's method.
+[20:08:18] <sham1> Yeah
+[20:08:55] <sham1> Speaking of Newton's method, one of my favourite maths courses in university thus far has been numeric analysis. Such a simple concept yet so much depth
+[20:09:32] <johnjay> one of the original lambda papers used newton's method as an example
+[20:09:32] <sham1> It also helped me understand how floating-point works, so that's nice
+[20:14:10] *** Joins: shka (~herr@83.175.151.96.piasta.pl)
+[20:18:00] *** Quits: aeth (~aeth@user/aeth) (Ping timeout: 256 seconds)
+[20:19:37] *** Joins: aeth (~aeth@user/aeth)
+[20:24:17] * semz wishes more people learned how FP works
+[20:29:30] *** Joins: edgar-rft (~edgar-rft@HSI-KBW-109-193-249-223.hsi7.kabel-badenwuerttemberg.de)
+[20:29:40] *** Joins: Catie (~user@user/catie)
+[20:47:00] <selwyn> https://nitter.eu/pic/media%2FFEYsQUBXIAMcvNT.jpg%3Fname%3Dorig
+[21:02:11] <White_Flame> "working mothers", so their kids get to spend quality time alone in the slaughterhouse.
+[21:03:09] <White_Flame> hm, this reads weird in any case
+[21:03:39] <White_Flame> could also sound like a modest proposal sort of thing
+[21:20:16] <selwyn> good old fashioned social policy
+[21:24:19] <ck_> I hope all the children not being born into this world smile upon us from the not-even-afterlife
+[21:29:58] <selwyn> wonder if british people get to go to heaven
+[21:42:25] *** Quits: treflip (~user@95.79.32.99) (Quit: good night)
+[21:44:15] <ck_> but of course, selwyn 
+[21:44:22] <ck_> (after queueing for entry, of course)
+[22:01:49] *** Quits: aeth (~aeth@user/aeth) (Ping timeout: 250 seconds)
+[22:02:00] <selwyn> re factoring polynomials: i've often suspected that doing polynomial long division on the factors must suffer from some floating point madness once you get to higher degrees
+[22:02:04] <selwyn> but i don't know for sure
+[22:03:29] *** Joins: aeth (~aeth@user/aeth)
+[22:26:46] *** Quits: ryanbw (~ryanbw@mab.sdf.org) (Ping timeout: 245 seconds)
+[22:27:05] *** Joins: ryanbw (~ryanbw@mab.sdf.org)
+[22:43:29] <copec> My new hacker handle is going to be "Trailing Slash"
+[23:00:10] <selwyn> perhaps i should get one
+[23:02:02] *** Joins: Inline (~Inline@2a02:908:1252:7a80:e1d1:e64a:139f:9e8)
+[23:02:35] <selwyn> https://www.theguardian.com/uk-news/2021/nov/17/british-f35-jet-crashes-into-mediterranean
+[23:02:36] -ixelp- British F-35 jet crashes into Mediterranean | Royal Air Force | The Guardian
+[23:45:35] *** Quits: Inline (~Inline@2a02:908:1252:7a80:e1d1:e64a:139f:9e8) (Remote host closed the connection)
+[23:54:06] <pjb> selwyn: why is it on the newspaper? f35 => crash, not newsworthy.
+[23:55:49] *** Joins: Inline (~Inline@2a02:908:1252:7a80:7839:e0f2:7ca6:b112)

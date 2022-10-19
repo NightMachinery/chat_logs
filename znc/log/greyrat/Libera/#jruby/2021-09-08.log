@@ -1,0 +1,167 @@
+[00:10:21] <headius> oops
+[00:12:23] <headius> JNR update pushed and seems to be working
+[00:12:53] <ahorek[m]> about https://github.com/jruby/jruby/pull/6679 https://github.com/jruby/jruby/blob/master/core/src/main/java/org/jruby/exceptions/ThreadKill.java#L31 is an Unrescuable exception which is the reason why some workers are failing
+[00:17:20] <headius> ah, because of https://github.com/jruby/jruby/pull/6679/files#diff-720b83048da17006a68eb965d903dc4c62b0aeb88c723ec2c0e8d34d2bc858b2R1966 ?
+[00:17:43] <headius> hmm but it was doing that before for unrescuable
+[00:18:09] <headius> what changed in this PR that caused unrescuables like ThreadKill to cause a problem?
+[00:18:55] * ahorek[m] sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/34436adec957bf3954a3ee96c8a66060f51eea4b
+[00:22:36] <headius> add that to the PR
+[00:22:41] <headius> I can't see what changed to cause this
+[00:23:26] <ahorek[m]> yeah, I'll add a comment
+[00:24:00] <headius> it must be something pretty subtle... as far as I can tell unrescuable should propagate the same way it did before
+[00:29:53] <headius> woo missing rdoc version got released
+[00:30:39] <enebo[m]> yay I found it.  It was the returnBB list.  When orphaning a dead BB I needed to remove it from that list 
+[00:31:28] <enebo[m]> In the massive yak shave of this opto I notice that we can coalescence two BBs and we don't...
+[00:32:28] <headius> so many opportunities
+[00:33:08] <enebo[m]> this may be directly from this opto that it is not happening
+[00:33:36] <enebo[m]> these bbs used to be unmergable but now are but I can see optimize is not performing it.  
+[00:33:58] <headius> rdoc update PR repushed, should be good now
+[00:36:13] <headius> byteit101: will you have any time this week to help us look into that last issue? That is pretty much the only thing blocking 9.3 now
+[00:36:31] <headius> I am of the opinion that we could ship without this since we are sure to have other reports after release
+[00:36:51] <headius> reports we will never get until we release
+[00:36:56] <byteit101[m]> Yes, excepting tomorrow early afternoon
+[00:38:28] <headius> excellent!
+[00:38:29] <byteit101[m]> >other reports after release
+[00:38:29] <byteit101[m]> I agree, given how much I touched
+[00:38:49] <headius> I need to review what's in that issue already, but have we isolated a cause yet?
+[00:39:10] <enebo[m]> Ah I am wrong these cannot be collapsed because the runtime_helper instr requires an exception region
+[00:39:26] <enebo[m]> that is not super clear once the CFG is made (or it is but I have not looked at a problem in CFG for a while)
+[00:39:29] <headius> we should probably split up RuntimeHelper into more fine-grained operations
+[00:39:47] <headius> it is a weird opaque "I'M DOING SOMETHING DANGEROUS" instruction
+[00:40:04] <headius> n
+[00:40:08] <byteit101[m]> given r1 <r2 <j1, iirc, super in r2 has self = r1, so it goes to super of r1, which obviously loops
+[00:40:22] <enebo[m]> headius: It is also an option but we also have to encode it for serialization and we try to make all instrs be emittable as a single byte
+[00:40:40] <enebo[m]> we have gotten rid of a couple of instrs I should check on the count
+[00:41:08] <headius> enebo: a few catch-all instrs like "PerformFrameOperation" with subtypes could avoid bloating up instrs too much
+[00:41:16] <headius> I just don't like that all of those RH operations get pegged with the same side effects, regardless of what they do
+[00:42:13] <headius> byteit101: I suppose first step would be to try this on current master... there have been some method lookup changes in the last few weeks
+[00:42:18] <enebo[m]> Actually I think merge_kwargs and is_hash_empty are the only two that do not have the same operations
+[00:42:24] <headius> not sure if they help this case or not
+[00:42:28] <enebo[m]> they could be moved out
+[00:42:57] <headius> enebo: kwargs especially will want special treatment once we optimize the hash away
+[00:43:34] <enebo[m]> headius: those two are both my fault
+[00:43:46] <enebo[m]> I should not have added them because they do not have the same operations
+[00:44:36] <enebo[m]> but we could make 4 instrs from the complete set: is_defined, handle_flow_control_change, merge_kwargs, is_hash_empty
+[00:45:08] <enebo[m]> I will have to do a tally on full count I guess but I am pretty sure we dropped a couple of instrs in the last 2 years
+[00:45:17] <headius> yeah
+[00:45:49] <enebo[m]> The other thing I have disliked about this catch all is that it does lots of operand length stuff
+[00:46:11] <enebo[m]> since not all instrs use same number of operands
+[00:46:28] <enebo[m]> so I can probably do this after we get out 9.3
+[00:46:48] <enebo[m]> The other instr work I wanted to do was merge inheritance of lexical constant search into a single instr
+[00:47:09] <enebo[m]> we gain zero analysis benefit for them being apart
+[00:47:19] <headius> yeah it really does nothing for us
+[00:48:12] <enebo[m]> that one is a tad more important than runtime helpers because it will reduce instr size quite a bit for Rails (as an example) since there are long constant chains
+[00:48:41] <enebo[m]> So the idea to collapse the two is to collapse entire chains and make the isntr variadic
+[00:50:37] <enebo[m]> 	%v_2 = search_const(%scope ;name: A, no_priv: false)... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/646b9ee7d7a3521acbde82ee633be64dd0959138)
+[00:51:08] <headius> how much are those used in practice?
+[00:51:08] <enebo[m]> A::B::C::D::E will just be a single instr with no temps
+[00:51:13] <headius> class Foo; Object; end, for example, just uses SearchConst that does both
+[00:51:37] <headius> same within `def foo; Object; end`
+[00:51:50] <headius> I don't know when those are actually used
+[00:51:53] <enebo[m]> yeah you there are a couple of search combos
+[00:52:08] <headius> for a single-level bare const lookup we use search_const
+[00:52:27] <headius> for A::B we use inheritance search
+[00:52:35] <headius> when do we use lexical alone?
+[00:52:38] <enebo[m]> yeah I am mixing up concerns here
+[00:52:51] <enebo[m]> we use lexical in only one place which is defined
+[00:52:57] <headius> stacked const lookups definitely would be better to condense, no doubt about that
+[00:53:02] <headius> ahhh I see
+[00:53:06] <headius> defined does the two pieces separately
+[00:53:24] <enebo[m]> yeah I meant that...I just keep remembering about this other instr and mix it into the idea
+[00:53:27] <headius> ok
+[00:54:09] <headius> something odd going on with the JNR update PR
+[00:54:15] <enebo[m]> this lexical only happens for first constant in a defined chain and then inheritance after that
+[00:54:26] <enebo[m]> This is pretty maddening when I think about how weird defined is
+[00:54:57] <headius> the openj9 Java 8 "mvn test" and the JDK8 "mvn test" are hanging
+[00:55:05] <enebo[m]> I was going to say I can merge this behavior into the idea but I guess I should just make the defined instr variadic and merge those two into one as well
+[00:55:09] <headius> almost nothing changed in this PR except removing the junit dep from jnr-ffi
+[00:55:33] <headius> guess I'
+[00:55:37] <headius> I'll try to repro locally
+[01:27:55] <headius> hanging in JRubyEngineTest locally
+[01:51:04] <headius> ok wtf
+[01:51:05] <headius> https://github.com/jruby/jruby/blob/e81f299f930d5e6c32f595334571eb8d8071f04f/core/src/test/java/org/jruby/embed/jsr223/JRubyEngineTest.java#L771-L776
+[01:51:08] <headius> that loop never terminates
+[01:51:17] <headius> suddenly during a JNR update
+[01:52:19] <headius> I'd say this could be traced to a JDK8 update but the version of OpenJ9 Java 8 we used is fixed
+[01:56:01] <headius> this code is broken
+[01:56:11] <headius> it keeps getting a new iterator
+[01:56:25] <headius> something changed so that nashorn is first and now it just endlessly sees jdk.nashorn.api.scripting.NashornScriptEngineFactory@1a2ac487
+[01:56:36] <headius> it only worked when we were the only registered engine
+[01:56:42] <headius> beats me what changed
+[03:13:15] <byteit101[m]> headius: yup, ruby -e 'class Parent < java.lang.Object;def toString;"parent " + super;end;end;class Child < Parent;def test;"child " + toString;end;end;p Child.new.test' still blows up
+[03:14:25] <byteit101[m]> (from this reproduction: https://github.com/jruby/jruby/issues/6718#issuecomment-864470045 )
+[13:08:10] *** Quits: joast (~rick@cpe-98-146-112-4.natnow.res.rr.com) (Ping timeout: 240 seconds)
+[13:15:27] *** Joins: joast (~rick@cpe-98-146-112-4.natnow.res.rr.com)
+[16:54:15] <headius> Ok so it is simple to repro anyway
+[17:43:19] <headius> something about this jnr-ffi update is causing very peculiar failures
+[18:12:19] <headius> this is not making any sense
+[18:12:36] <headius> I go back and forth between the commits and sometimes the jnr update fails and sometimes it does not
+[18:15:34] <basshelal[m]> Is this the JNR-FFI build failing or JRuby?
+[18:16:08] <headius> JRuby... the JNR update only fixed that test scope thing and then a test for our embedding API started failing out of nowhere
+[18:16:22] <headius> I have no explanation
+[18:16:29] <headius> this should have been a trivial update
+[18:28:20] <headius> enebo: can you try running `mvn package -Ptest` on this branch? https://github.com/jruby/jruby/pull/6811
+[18:29:01] <headius> it doesn't fail for me locally but it is apparently failing on both 8 and 11 on GHA
+[18:41:12] <enebo[m]> headius: ok
+[18:41:59] <enebo[m]> going to run master first just to make sure I can tell what the difference may be
+[18:42:51] <headius> all that has changed on this branch is updating jnr-ffi and up, with the jnr-ffi change only being to move junit from compile scope to test scope in the maven build
+[18:43:26] <headius> I will double check that but there's no reason it should affect this... the failures in GHA look like our JSR223 scripting engine is not getting registered so the tests get NPE trying to use it
+[18:43:50] <headius> I have no leads
+[18:45:11] <enebo[m]> ok master is green for me locally.  If I ran into any  issue I would have run it anyways
+[18:49:28] <enebo[m]> For master I noticed this:
+[18:49:30] <enebo[m]> [INFO] -------------------------------------------------------... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/f85727ad4c98c4ce593f129848d9954697ec7a57)
+[18:50:24] <enebo[m]> I only happened to notice this because on your branch a lot of tests are running with highlighting which did not happen before
+[18:52:12] <enebo[m]> err
+[18:52:28] <enebo[m]> I see that in this branch run too...I guess default-test is nothing
+[18:52:37] <enebo[m]> headius: it ran to completion
+[18:53:33] <enebo[m]> headius: but my oddity still stands...master took 42s to run and your branch took 5 minutes because test runs
+[18:54:03] <headius> hmm
+[18:55:19] <headius> yeah that is the default tests for lib or something
+[18:55:21] <headius> there are none
+[18:55:33] <headius> Tests run: 437, Failures: 0, Errors: 0, Skipped: 0
+[18:55:59] <headius> master should not complete those tests in 42s
+[18:56:20] <headius> is it possible they stopped running on master somehow and this is a regression?
+[18:56:35] <headius> but it is green for you and me on branch
+[18:56:49] <headius> do you see those 437 tests run further up the log?
+[18:58:36] <enebo[m]> on branch but not on master
+[19:55:14] <headius> by jove you're right
+[19:55:15] <headius> master is not running tests with this command
+[19:55:29] <headius> so this may be a valid regression that was not caught because tests stopped running
+[20:45:00] <headius> lunch break and then I will try to figure this out
+[21:17:03] *** Quits: _whitelogger (~whitelogg@uruz.whitequark.org) (Remote host closed the connection)
+[21:17:13] *** Joins: _whitelogger (~whitelogg@uruz.whitequark.org)
+[22:04:15] <headius> hmm
+[22:06:24] <headius> https://github.com/jruby/jruby/commit/da7883573a294d12e9461ec611d7171b432d8c7e
+[22:06:52] <headius> a bad commit some time back flipped this to a single test... wondering if my commit somehow didn't take properly
+[22:26:10] <headius> basshelal: https://dzone.com/articles/why-your-junit-5-tests-are-not-running-under-maven
+[22:26:17] <headius> you know anything about this?
+[22:28:37] <headius> enebo: I think this might be the root cause, mostly because of this junit/surefire conflict: https://github.com/jruby/jruby/pull/6788
+[22:31:26] <headius> ahorek: I did not notice until now that the test runs in that PR didn't actually run the tests
+[22:31:46] <headius> the same ones that started failing in my JNR update
+[22:32:02] <headius> I've created https://github.com/jruby/jruby/pull/6814 to revert that and see what happens
+[22:35:40] <headius> ok that did not fix it
+[22:35:41] <headius> may need to go back further
+[22:35:59] <headius> or figure out this junit conflict (the article linked just fixes it by using an older surefire)
+[22:37:01] <headius> maybe this one is the culprit, since it brought us to surefire 3: https://github.com/jruby/jruby/pull/6296
+[22:38:08] <ahorek[m]> headius: feel free to revert it if it helps. But there wasn't any dependency change between jnr-ffi-2.2.5 vs jnr-ffi-2.2.6?
+[22:38:57] <headius> a PR by basshelal updated junit for jnr-ffi and accidentally made it "compile" scope, so we had to fix that... and then this issue showed up
+[22:39:14] <headius> but even before that it seems surefire stopped running these tests
+[22:39:29] <headius> something about the jnr changes may have exposed the problem but I don't have a good explanation yet
+[22:40:24] <headius> I will try the latest milestone of surefire 3, and if that doesn't work I'll try the last 2.x release
+[22:41:14] <ahorek[m]> aha, ok
+[22:42:59] <headius> ok nevermind, M5 is the latest released
+[22:49:14] <headius> 2.22.2 did not help... I'm going to bisect
+[22:49:14] <ahorek[m]> https://github.com/jruby/jruby/blob/master/pom.rb#L201 there seems to be a conflict
+[22:49:33] <headius> I noticed that... unsure if it is the problem
+[22:51:04] <ahorek[m]> probably not
+[22:51:19] <headius> I'm not sure why that version is specified separately to begin with
+[23:02:38] <headius> ugh this is just resolving to the last time I updated JNR
+[23:07:00] <headius> basshelal: seems like that junit5 update caused way more problems than either of us expected!
+[23:07:32] <headius> I'm going to try to add the junit5 jupiter engine to JRuby's build and see where we stand then
+[23:30:26] <headius> ok I think I have master running tests again without the jnr change and it also seems to have engine problems
+[23:36:30] <basshelal[m]> <headius> "basshelal: seems like that junit..." <- damn, that's upsetting, the benefits are big
+[23:37:03] <basshelal[m]> If it's failing with JRuby too using JUnit5 then we might be doing something wrong with JUnit5 ?
+[23:55:42] <headius> The change I have locally enables the legacy engine and that seems to get tests running again
+[23:56:08] <headius> So the junit 5 dependency in compiled scope broke the tests and prevented them from running
+[23:56:17] <headius> And during that time we may have regressed on this engine test
+[23:57:04] <headius> The updated jnr-ffi removes the compile dependency and the tests start running and failing

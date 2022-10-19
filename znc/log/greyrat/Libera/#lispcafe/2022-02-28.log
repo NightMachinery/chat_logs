@@ -1,0 +1,971 @@
+[00:04:24] *** semz_ is now known as semz
+[00:21:22] *** Joins: Lycurgus (~juan@98.4.112.204)
+[00:26:55] *** Joins: Catie (~user@user/catie)
+[00:33:49] <hayley> gilberth: Thing is, the pauses get worse with larger heaps, and more threads allocating at a given time.
+[00:35:16] <hayley> GC time is already significant with 10 allocating threads vs. 1 GC thread, and pauses are bad with 1e6 objects to synchronise in decentralise2 already.
+[00:44:53] *** Quits: rogersm (~rogersm@90.166.180.250) (Quit: Leaving...)
+[00:45:32] *** Quits: tane (~tane@user/tane) (Quit: Leaving)
+[00:47:12] <shka> https://www.youtube.com/watch?v=-D1WVfZaMqc
+[00:47:13] -ixelp- RIP Antonov An-225 Mriya - YouTube
+[00:47:27] <shka> so that was the last time we have seen this machine in air 
+[00:53:54] *** Quits: recordgroovy (~recordgro@50.35.20.8) (Remote host closed the connection)
+[00:56:53] <hayley> https://www.youtube.com/watch?v=QarizoUnRfk
+[00:56:53] -ixelp- The Best way to Solder? Hot Plate to the rescue! (DIY or Buy) - YouTube
+[00:59:31] <gilberth> hayley: Yes, but will pauses get better with no or only mildly concurrent threads? clothespin was complaining about latency and so do I. Somehow I got the impression that SBCL exposes worse pauses than CCL.
+[00:59:59] <Lycurgus> is this regular or cheney?
+[01:00:23] <Lycurgus> s/regular/default/
+[01:00:23] <hayley> Regular (gencgc).
+[01:00:38] <Lycurgus> ah
+[01:01:13] <hayley> gilberth: Usually, yes. But SBCL copies everything to GC, so a concurrent gencgc would need a read barrier.
+[01:01:50] <hayley> Generally one hopes that a concurrent GC only pauses to scan stacks, though I guess any real implementation also has to manage weak references too.
+[01:02:32] <gilberth> So it's also concurrent to the mutator?
+[01:02:49] <hayley> (There's a way to handle weak references without pausing, but I discussed it with Richard Jones, one of the designers and a co-author of the GC handbook, and he didn't think it was usually necessary.)
+[01:03:03] <hayley> Right, a concurrent GC is concurrent to the mutator. Whereas parallel GC is just concurrent with itself.
+[01:03:55] <gilberth> Yes, and this is why I ask you if your plan for SBCL will be a concurrent GC because you always talk about a parallel GC.
+[01:04:43] <hayley> It will not be concurrent, that's much harder IMO.
+[01:05:04] <gilberth> Sure that's way harder.
+[01:05:18] <hayley> We can hope that a parallel GC, however, will divide our O(live) stuff by the number of threads. So pauses should still be shorter.
+[01:06:13] <hayley> The MMTk has a parallel and generational Immix port, and there is an experimental fork with concurrent marking, but copying to defragment would still be stop-the-world.
+[01:06:15] <gilberth> Given enough cores, maybe.
+[01:07:15] *** Joins: kevingal (~quassel@176.61.88.240)
+[01:08:11] <hayley> The Haskell parallel GC paper states "The bottom line is that on a dual-core machine our parallel GC reduces wall-clock garbage-collection time by 20% on average, while a quad-core can achieve more like 45%." And it entirely copies, which is bad for cache.
+[01:13:14] <selwyn> shka: f
+[01:15:46] <hayley> https://twitter.com/Dictionarycom/status/1498033493561032710
+[01:17:12] <Lycurgus> if generational collection is used why isn't the switch from old to new practically imperceptible, like a regular context switch?
+[01:18:47] <Lycurgus> so that if the copy is done in dedicated thread(s) it would be a non issue?
+[01:20:52] <hayley> That'd be how a concurrent collector works, yes. But the mutator could find an object before the GC threads have gotten to them yet, which generally leads to nothing good.
+[01:20:58] <selwyn> i heard they were going to repair it though
+[01:21:23] <shka> selwyn: dream is dead
+[01:22:53] <hayley> So then you have to add a read barrier, where reading a from-space pointer causes the mutator to perform the copy (or forwarding) itself. FWIW that is for any copying collector, not just generational.
+[01:22:54] <Lycurgus> i c
+[01:23:03] <hayley> c.f. https://plover.com/~mjd/misc/hbaker-archive/RealTimeGC.html
+[01:23:04] -ixelp- Comm. of the ACM 21, 4 (April 1978), 280-294.
+[01:23:32] <Lycurgus> so there needs to be some way to tell the mutator to use new 
+[01:23:54] <hayley> Right.
+[01:24:31] <hayley> Either the mutator finds a forwarding pointer left by the GC before, or it performs the copy itself.
+[01:31:15] <Lycurgus> in '09 rainer joswig said that no implementation had both concurrent and supported lisp threads, i assume that's no longer the case 
+[01:31:40] <Lycurgus> *concurrent gc
+[01:33:31] <hayley> https://www.fsf.org/news/publication-of-the-fsf-funded-white-papers-on-questions-around-copilot
+[01:33:32] -ixelp- Publication of the FSF-funded white papers on questions around Copilot — Free Software Foundation — Working together for [...]
+[01:33:54] <hayley> ABCL on a JVM with appropriate collector would fit the bill, but ABCL is usually slower than SBCL.
+[01:34:54] <Lycurgus> yeah I meant sans java
+[01:35:23] <Lycurgus> i was underwhelmed by co-pilot possibly because it was overhyped
+[01:35:41] <Lycurgus> but I didn use it a lot
+[01:35:49] <Lycurgus> and only in haskell
+[01:35:51] <hayley> ECL uses Boehm, which can also be concurrent IIRC. But Boehm is too conservative for its own good, and ECL is slow too.
+[01:36:40] <hayley> I'd sorta expect more traditional program synthesis methods to work better in Haskell.
+[01:37:56] <Lycurgus> well they sell it as "AI" and it just came across to me as basic autocomplete which I would call data processing, the opposite of "AI"
+[01:38:10] <Lycurgus> or they were selling it as such
+[01:38:25] <hayley> I can't remember.
+[01:39:47] <Lycurgus> well one gordian knot approach to the lisp gc matter is just put ur real time stuff in some c code
+[01:40:06] <Lycurgus> ur super critical real time stuff
+[01:41:36] * Lycurgus checks on critical sections in lisp
+[01:42:26] <Lycurgus> franz has a macro
+[01:45:59] <hayley> I don't want real time per se, I just want half-decent latency.
+[01:46:54] <Lycurgus> one gets the impression that the last spurt of lisp gc activity was '09/10
+[01:46:56] *** Quits: euandreh (~euandreh@2804:14c:33:9fe5:e14b:875c:3570:34de) (Quit: WeeChat 3.3)
+[01:47:41] <Lycurgus> i think in practice people get that when they need it by coloring within the lines so as to make it so
+[01:48:22] <random-nick> clasp has support for a couple of GC options chosen at build time, maybe one of those are parallel?
+[01:50:34] <hayley> Clasp uses Boehm, which is parallel and concurrent, sure, MPS, which is incremental, and there is a MMTk port underway, which is where I got the idea from.
+[01:51:47] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Quit: ERC (IRC client for Emacs 27.1))
+[02:05:43] *** Quits: Lycurgus (~juan@98.4.112.204) (Quit: Exeunt)
+[02:23:08] <hayley> https://www.youtube.com/watch?v=pA63bspHDpE
+[02:23:08] -ixelp- Turn - YouTube
+[02:39:04] *** Quits: eugercek (~user@user/eugercek) (Remote host closed the connection)
+[02:39:23] *** Joins: eugercek (~user@user/eugercek)
+[02:39:35] *** Quits: chiselfuse (~chiselfus@user/chiselfuse) (Ping timeout: 240 seconds)
+[02:39:41] *** Quits: eugercek (~user@user/eugercek) (Remote host closed the connection)
+[02:40:25] *** Joins: chiselfuse (~chiselfus@user/chiselfuse)
+[03:00:05] *** Quits: kevingal (~quassel@176.61.88.240) (Remote host closed the connection)
+[03:00:23] *** Quits: Aurora_v_kosmose (~LispyLigh@user/lispylights) (Remote host closed the connection)
+[03:00:55] *** Joins: Aurora_v_kosmose (~LispyLigh@user/lispylights)
+[03:17:33] *** Quits: shka (~herr@109.231.3.55) (Ping timeout: 250 seconds)
+[03:38:28] *** Quits: random-nick (~random-ni@87.116.176.196) (Ping timeout: 272 seconds)
+[03:46:37] *** Quits: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340) (Ping timeout: 240 seconds)
+[04:20:00] *** Joins: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340)
+[04:25:00] *** Quits: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340) (Ping timeout: 240 seconds)
+[04:27:12] *** Joins: waleee (~waleee@h-98-128-229-110.NA.cust.bahnhof.se)
+[04:45:36] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-98.dsl.bell.ca)
+[04:49:20] *** Joins: robin_ (~robin@user/terpri)
+[04:51:48] *** Quits: robin (~robin@user/terpri) (Ping timeout: 240 seconds)
+[05:29:28] *** robin_ is now known as robin
+[06:31:54] <moon-child> '[Java's] GC doesn't really care for preserving the cache locality of objects when compacting the heap'
+[07:04:34] <hayley> Hm, false. Going for false.
+[07:05:19] * hayley taps on https://shipilev.net/jvm/anatomy-quarks/11-moving-gc-locality/
+[07:05:50] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-98.dsl.bell.ca) (Remote host closed the connection)
+[07:39:58] *** Joins: dave0 (~davezero@069.d.003.ncl.iprimus.net.au)
+[07:51:00] <hayley> I mean, even a simple Cheney implementation will be breadth first, so you'll get your objects in an array laid out contiguously. There's also "hierarchical copying" as well as runtime profiling to find the best order for copying, but most moving GCs are much better than random.
+[07:56:51] *** Joins: semz_ (~semz@user/semz)
+[07:59:31] *** Quits: semz (~semz@user/semz) (Ping timeout: 245 seconds)
+[08:04:47] <neominimum> Been playing with the logical ops, is `(+ (lognand x y) 2)` the only way to do a logical nand on the 'bits' x and y, where x and y are either 0 or 1? I don't know what the `log*` functions are for really, it says something about two's-complement which I have only the vaguest idea of.
+[08:04:47] <neominimum> I thought 0 and 1 were considered bits so the way `lognot` works surprised me a little, although the spec says that the log* functions take integers which would probably be a good explanation as to why, if I knew more about the concepts involved.
+[08:04:47] <neominimum> /me is off to google to see what two's-complement is about
+[08:07:09] <neominimum> Oh, just realised that you can do `(mod (logand x y) 2)` it seems a bit more intuitive.
+[08:07:09] <dave0> wikipedia has an article on 2's complement
+[08:07:43] <dave0> https://en.wikipedia.org/wiki/2%27s_complement
+[08:08:04] <dave0> neominimum: the short answer is 2's complement is a way to represent negative numbers in a binary computer
+[08:08:04] <neominimum> Thanks!
+[08:17:18] <neominimum> dave0: Ah, it makes a little more sense now.
+[08:21:15] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Ping timeout: 240 seconds)
+[08:28:02] *** semz_ is now known as semz
+[08:37:03] *** Quits: Catie (~user@user/catie) (Quit: sQuit)
+[08:48:41] <kakuhen> i only ever do bitwise operations on (integer 0 *)
+[08:48:43] <kakuhen> that way the log functions work as i expect
+[08:49:05] <kakuhen> and by "as I expect" I really mean "given what little i know about computers storing integers"
+[08:53:50] <White_Flame> bitwise ops on negative numbers are pretty cool, though
+[08:54:24] <White_Flame> but I do have a strong history of assembly language, where signedness operations are very specific and exposed
+[08:56:16] <White_Flame> neominimum: if you just want the lowest bit, even if you made all the higher bits 1 (eg, (lognot 1) = ...111110), then you really want (logand 1 (...)), not mod 2
+[08:57:20] <White_Flame> remember, the bitwise operations work on the _entire_ number, which is unbounded in number of bits
+[08:58:50] <moon-child> alternately, try (logand (logxor x 1) (logxor y 1))
+[08:58:57] <moon-child> to only NOT the lowest bit
+[09:03:19] <kakuhen> hmm for me i'd do something like
+[09:04:24] <kakuhen> (setf (ldb (byte 1 0) x) (lognot (ldb (byte 1 0) x))
+[09:04:43] <kakuhen> or at least if i had to do it... probably very inefficient but it makes sense to my head
+[09:05:10] <moon-child> not (ldb (byte 1 0) (lognot x))?
+[09:05:23] <kakuhen> oh i guess that works, too
+[09:05:31] <kakuhen> the problem is idk how to "efficiently" or "cleverly" use common lisp functions
+[09:05:39] <White_Flame> yeah, (logand 1 ..) and (ldb (byte 1 0) ..) would be equivalent
+[09:07:09] <neominimum> White_Flame: Cool, thanks.
+[09:07:15] <moon-child> I find it confusing to say (setf (ldb (byte 1 0) x) y), when y has significant bits other than the lowest
+[09:08:48] *** Joins: humasect (~humasect@2001:1970:57e0:4100::1ae0)
+[09:08:50] <White_Flame> right
+[09:08:58] <kakuhen> that reminds me i need to work on my wrapper library for libao... so i can finally make my lisp code make my speakers move...
+[09:09:12] <humasect> https://www.youtube.com/watch?v=jX0caf1HvNs
+[09:09:13] -ixelp- King Crimson - Larks' Tongues In Aspic, Part Two - YouTube
+[09:09:46] <humasect> kakuhen: what kind of project? have you talked with dto? (emacs sound seq+daw-ish)
+[09:10:12] <kakuhen> uh im just writing a bunch of audio decoders for now so i can make a half-decent music player (for my personal tastes) in common lisp
+[09:10:25] <kakuhen> and i plan to eventually release them all as a single sound decoding library, one that's purely written in common lisp
+[09:10:41] <kakuhen> there is already audio decoding library but it's mostly CFFI madness. I don't blame them, it works, of course
+[09:10:42] <kakuhen> but I want something that's purely common lisp
+[09:10:42] <humasect> cool right on
+[09:10:58] <humasect> yeah, ffi and api bridges are bleh 
+[09:11:11] <kakuhen> for now i've only implemented decoders for flac and mu-law pcm
+[09:11:24] <kakuhen> but the flac code is really ugly and isn't using an actual binary parser
+[09:11:33] <kakuhen> in other words, i am parsing, but with potentially countless bugs...
+[09:11:37] <humasect> text parsing.. ?
+[09:11:43] <humasect> ahh
+[09:11:48] <humasect> super reader macros 
+[09:11:48] <kakuhen> binary parsing... 
+[09:12:02] <kakuhen> i implicitly assume the flac im processing isn't maliciously crafted
+[09:12:03] <humasect> erlang is good for that purpose particularily =) 
+[09:12:12] <kakuhen> e.g. there is always a steaminfo block, the partitions aren't lying to me, etc
+[09:12:20] <kakuhen> but i do signal conditions when i notice something's missing
+[09:12:24] <kakuhen> or if something violates the flac spec
+[09:12:32] <humasect> defensive coding leads to communism or what is it called tyranny 
+[09:13:00] <kakuhen>  s/steam/stream
+[09:13:01] <humasect> log/printf =)
+[09:14:03] <humasect> emacs M-x compile (compile-command, run prog) >> buffer >> jump to line etc
+[09:14:14] <humasect> but slime so
+[09:14:50] <kakuhen> hmm im looking at flac-decode
+[09:14:59] <kakuhen> and it seems if a flac lies to you about the offsets of frames and stuff
+[09:15:04] <kakuhen> my code will be signalling a million errors that are inaccurate
+[09:15:27] <humasect> CL usually comes with the other CL (comand line) which of most systems likely has modplayer flac thing 
+[09:15:30] <kakuhen> it'll mostly be complaining about invalid sync codes, reserved values being used in frame headers, invalid sample rates, and so on.
+[09:15:41] <kakuhen> but it wont give you the real problem: you're feeding flac-decode a fake flac or a corrupted one
+[09:15:46] <kakuhen> i wonder how ppl handle this 
+[09:15:54] <kakuhen> i know what quicktimes does (arbitrary code execution)
+[09:15:58] <kakuhen> but what about a sanely written media player
+[09:16:09] <humasect> most progs just bomb
+[09:16:21] <humasect> for example VLC loading an unfinished download 
+[09:16:31] <humasect> it tries its best assuming its real (no code exec etc)
+[09:17:05] <kakuhen> i know there is a parser generator(?) for binary stuff 
+[09:17:09] <kakuhen> but there's little documentation and idk how to use it
+[09:17:35] <humasect> hm. i just think of erlang stuff (it does pattern match on binary)
+[09:17:42] <humasect> likely there is a CL thing
+[09:17:43] <kakuhen> i also have some ugly hard-coded seek values, but it's because the flac spec guarantees you a flac will be X bits long and so on.
+[09:17:51] <kakuhen> there is lisp-binary but idk how to use it
+[09:17:57] <humasect> https://github.com/j3pic/lisp-binary  
+[09:17:58] -ixelp- GitHub - j3pic/lisp-binary: A library to easily read and write complex binary formats.
+[09:18:00] <humasect> aha
+[09:18:45] <kakuhen> the problem i have with my """parser""" is that e.g.
+[09:18:48] <humasect> unless going for military-grade its probably fine =) 
+[09:18:53] <kakuhen> so say i am processing streaminfo block
+[09:19:20] <kakuhen> obviously this has a fixed length X... but to process the block I use nibbles to read e.g. 16 bits, then another 16 bits, and so on
+[09:19:36] <kakuhen> then at the end I manually rewind the stream to the start of the streaminfo block, or else my callback function that processes metadata blocks will end up seeking to the wrong spot
+[09:19:41] <kakuhen> i just realized im so stupid holy shit
+[09:19:43] <humasect> just use exceptions and keep holding CC's 
+[09:19:45] <kakuhen> i only need to peek the stream...
+[09:19:53] <kakuhen> mind you i wrote this code 8 months ago
+[09:19:57] <kakuhen> and knew nthing about binary  or streams stuff
+[09:20:08] <kakuhen> but now that im seeing my code i am feeling increasingly stupid for decisions i made 8 months ago
+[09:20:11] <humasect> start fresh if its priority
+[09:20:23] <kakuhen> i likely wont start fresh
+[09:20:30] <humasect> oh thats why i never keep code around lol ahem or write any 
+[09:20:32] <kakuhen> if one of ym friends can figure out lisp-binary then i'll likely refactor tons of code but that's it
+[09:20:58] <humasect> but its lisp, you have all the code to see how it works ?
+[09:21:06] <humasect> lisp is verbose enough to be just about Actual Docs
+[09:21:20] <kakuhen> this is the number one thing i hate about common lisp, sorry.
+[09:21:25] <kakuhen> yes... I can spend 3 hours figuring out some 100-line macro
+[09:21:31] <kakuhen> or you can properly document your library before publishing it
+[09:21:47] <kakuhen> maybe i just suck at programming, but i've never liked the "self-documenting code" argument people use.
+[09:21:50] <humasect> i mean to say that (common)lisp is verbose enough to be docs. see:emacs 
+[09:22:03] <White_Flame> kakuhen: 100% agree
+[09:22:27] <humasect> im not sure, its just like reading a freaking language if you know it or have to "mind-translate" into english 
+[09:22:44] <humasect> there is native speaker, and tourist 
+[09:23:05] <kakuhen> well i'm definitely a tourist  considering i come from a pure math background, not a computer science one, hehe
+[09:23:07] <White_Flame> reading processing instructions does not necessarily easily reveal what the outcome of the process is
+[09:23:07] <humasect> try another lang that feels more natural, kakuhen
+[09:23:33] <kakuhen> my problem is mostly that i cant understand half the macros other ppl use in their libraries
+[09:23:43] <kakuhen> if im lucky, I can macroexpand-1 specific invocations of the macro
+[09:23:47] <kakuhen> then try understanding that output
+[09:23:58] <kakuhen> but otherwise it's just too much time, and it discourages me from using the library.
+[09:24:03] <humasect> White_Flame: to be literal yes, of course always, especially C is for PDP-11 =) (and unix on top of that), but ther is a certain way to just read easier rather than having to "translate" the code in the mind. which i would assume is a great cognitive obstacle/obstruction 
+[09:24:33] <humasect> interesting thing of lisp, kakuhen, is that each API is kind of its own dsl/language 
+[09:24:44] <humasect> or what we call Packages
+[09:25:06] <White_Flame> it's not about "translating" code, it's about figuring out its purpose/intent within the code
+[09:25:13] <humasect> the most common ones, the most generic ones, are the most linguistically similar to CL and the projects (on average) that use said lib
+[09:25:15] <White_Flame> when there are no docs
+[09:25:26] <humasect> White_Flame: yeah. but M-x and macroexpand 
+[09:25:28] <White_Flame> none of this is a syntactic issue
+[09:25:45] <White_Flame> that just gives you a big blog of stuff that you still don't understand what it's semantically doing
+[09:25:50] <humasect> i am only referring to syntactic iessues (about lisp-binary in question)
+[09:26:15] <humasect> anyhow 
+[09:26:19] <White_Flame> documentation is always necessary
+[09:26:39] <humasect> bible makes no sense without its own documentation too... living ppl (usually)
+[09:26:40] <White_Flame> and is extremely helpful as a design & rubber-duck-debugging tool for the developer, too
+[09:26:46] <humasect> explainers
+[09:27:04] <humasect> docs are static stone, cool, need teachers. other ppl's code 
+[09:27:13] <humasect> trial-and-error
+[09:27:23] <humasect> no one is marking this test 
+[09:28:08] <White_Flame> that means always asking the developer (or other users) questions?  that's not a good use of time when docs could alleviate that and be a concrete reference
+[09:28:48] <White_Flame> yes, with a lot of work & familiarity, you can do redundant work to figure it out yourself.
+[09:28:59] <White_Flame> which is sometimes done due to interest
+[09:29:07] <humasect> kakuhen: just read the math background quote, sorry i missed it =) and cool. coding taught me math 
+[09:29:09] <kakuhen> hmm...does peek-char work for file streams?
+[09:29:13] <White_Flame> but usually you just want to use a lib, not start a reverse engineering project
+[09:29:23] <humasect> but White_Flame coding is a social activity
+[09:29:29] <kakuhen> it says input-stream, but does input-stream get made if I use (with-open-file (f #"some:path" :direction :input) ... )
+[09:29:43] <humasect> making one thing with with another thing, the basic engineering kind of thing 
+[09:29:47] <White_Flame> humasect: not really.  it has social products, but coding is usually individual in this sort of group
+[09:29:50] <humasect> sorry on my vocabulary 
+[09:29:57] <humasect> work with**
+[09:30:09] <humasect> nah there is no lone wolf cowboy coder any more 
+[09:30:17] * White_Flame looks around
+[09:30:18] <White_Flame> uh, ok?
+[09:30:26] <humasect> ok
+[09:30:35] <White_Flame> no clue how you arrive tehre
+[09:31:50] <humasect> hmm same.. all good =) 
+[09:31:56] <kakuhen> aha peek-char is as i expected... only for the reader
+[09:32:00] <kakuhen> looks like i am implementing my own peek-stream function
+[09:32:09] <kakuhen> a very jank one: read n bytes then rewind n bytes
+[09:32:31] <White_Flame> yeah, the standard only has 1 char of peek & unread
+[09:32:43] <White_Flame> (or byte)
+[09:32:55] <sm2n> peek-byte doesn't exist last I checked
+[09:33:08] <White_Flame> I didnt' check :)
+[09:33:20] <sm2n> I am/was very annoyed by the inconsistencies in the CL streams api
+[09:33:27] <White_Flame> same
+[09:33:41] <kakuhen> (defun peek-stream (stream bytes) (prog1 (%read-n-bytes stream bytes) (%rewind stream bytes)))
+[09:33:46] <kakuhen> this should work for my flac-decoder
+[09:33:47] <White_Flame> flexi-streams is pretty okay
+[09:33:53] <kakuhen> using functions i made myself 8 months ago
+[09:33:56] <sm2n> there's also no unread-byte
+[09:34:08] <sm2n> I usually end up abusing concatenated streams
+[09:34:09] <humasect> for cl they will last another 8 months 
+[09:34:23] <gilberth> Neither there is read-byte-no-hang.
+[09:34:31] <sm2n> Yup
+[09:34:33] <humasect> ;p
+[09:35:42] <gilberth> And LISTEN returns NIL on EOF. And this is a problem, when you want to act on an EOF on say a socket.
+[09:35:56] <humasect> grey-streams ? trivial ?
+[09:36:32] <kakuhen> cool my peek function works
+[09:36:45] <White_Flame> *gray streams, not grey
+[09:36:47] <sm2n> Can I get an (unsigned-byte 8) stream from a vector with flexi-streams?
+[09:36:57] <gilberth> You can.
+[09:37:00] <humasect> White_Flame: oops, nice (canadin)
+[09:37:04] <kakuhen> nibbles also has octect vectors
+[09:37:06] <kakuhen> octet*
+[09:37:11] <White_Flame> humasect: it's a last name, not a color
+[09:37:12] <humasect> octasect
+[09:37:19] <sm2n> Oh, nice
+[09:37:27] <humasect> White_Flame: oh =) i had thought like 'green threads' 
+[09:37:33] <sm2n> I see it, it's make-in-memory-input-stream
+[09:37:54] <humasect> github.com/flame-streams
+[09:38:12] <humasect> so wordy.. 
+[09:38:15] <kakuhen> anyway i do not use octet vectors because uh.... huh i wonder why i dont
+[09:38:26] <kakuhen> this may be a problem once i need to push arrays of chars to my wrapper library
+[09:38:27] <humasect> do-this-function-name-that-is-called-this
+[09:39:43] <gilberth> Anyhow because of no READ-BYTE-NO-HANG, I began to use character streams for binary i/o on sockets again. ISO-8859-1 is transparent to octets. Ugly? Ugly!
+[09:39:51] <White_Flame> kakuhen: probably because simple-array can specialize on the element type, and simple-vector can't?
+[09:40:08] <humasect> =//////
+[09:40:24] <humasect> that seems terrible if true 
+[09:40:43] <White_Flame> why not threads?
+[09:40:57] <White_Flame> let 'em hang
+[09:41:08] <humasect> streams+threads? madness
+[09:41:09] <sm2n> I assume gilberth is programming an event loop
+[09:41:13] <kakuhen> looks like i will want to create a octet vector eventually
+[09:41:23] <kakuhen> then somehow wrap this into a fixed-size array when i pass to my wrapper lib
+[09:41:31] <humasect> just (exec ..) an erlang prog 
+[09:41:34] <kakuhen> oh that's the other problem... libao is quite big to create a wrapper for
+[09:41:40] <kakuhen> so i am making a library around libao...
+[09:41:50] <humasect> you just like to type, eh?
+[09:41:55] <kakuhen> the problem: is it sane for a library to hold a global variable, and that variable is an audio device.
+[09:42:38] <kakuhen> i want to say no because it's not obvious to me how i will make a user from lisp reserve and free the audio device
+[09:42:38] <humasect> yeah same with socket
+[09:42:44] <humasect> its like a connection ..
+[09:42:49] <gilberth> Streams plus threads is fine. But I often have the problem, that I have some internal event queue, I want to listen to, too. I would wind up with just having a thread reading from the socket and stuffing things read into the event queue of sorts. And often you also need to or want to observe timeouts. select(2) is really missing here.
+[09:43:21] <humasect> gilberth: ah yeah. sounds more and more a purpose for erlang =) 
+[09:43:37] <White_Flame> yeah, I know.  and having select wait on internal stuff is a pain as well
+[09:43:40] <humasect> why is there not super language to do it all? oh wait computers (or emacs)
+[09:43:45] <White_Flame> even if it wer eexposed
+[09:44:17] <gilberth> Yep, you can't select(2) on a semaphore or lock. Not with UNIX.
+[09:44:36] <White_Flame> but apparently you can create a fd to wrap around it or something
+[09:44:39] *** Joins: shka (~herr@109.231.3.55)
+[09:44:44] <White_Flame> according to old C-heads I know
+[09:45:00] <humasect> libev
+[09:46:24] <gilberth> White_Flame: I hesitate a bit to allocate one fd for every mutex/semaphore. You could allocate an "event fd" (pipe) for every thread, but then this would be like implementing your own scheduler. All solutions are somewhat ugly.
+[09:46:31] <White_Flame> humasect: yeah, I've not used that yet.  haven't touched C in forever
+[09:50:53] *** Joins: treflip (~user@user/treflip)
+[09:58:16] *** Quits: Aurora_v_kosmose (~LispyLigh@user/lispylights) (Remote host closed the connection)
+[09:58:42] *** Joins: Aurora_v_kosmose (~LispyLigh@user/lispylights)
+[10:01:55] <gilberth> There is another thing I miss with CL streams: High speed I/O. The only way to get some speed is by means of READ-SEQUENCE and WRITE-SEQUENCE. However with READ-SEQUENCE you face two problems (1) it will block until all the elements are read, unlike read(2) which could return a short read and more severe IMHO (2) you can't return anything you don't want to consume.
+[10:03:05] <gilberth> I believe there should be some WITH-STREAM-INPUT-BUFFER macro, which gives you a buffer vector, a read pointer you can bumb and a fill pointer plus some underflow discipline.
+[10:04:11] <gilberth> Make it into some optional protocol generic function like INVOKE-WITH-STREAM-INPUT-BUFFER, so that Gray streams could provide their own, if they wish.
+[10:04:13] <humasect> hmm 
+[10:04:29] <gilberth> CMUCL has something like that internally.
+[10:05:32] <gilberth> Oh and CMUCL's READ-SEQUENCE for a long time was like read(2) which was a bug.
+[10:08:47] <gilberth> There is a reason why I implemented by own stream classes with Closure. And that shouldn't be necessary.
+[10:08:55] *** Quits: chiselfuse (~chiselfus@user/chiselfuse) (Ping timeout: 240 seconds)
+[10:10:01] <gilberth> Meanwhile, why can't CCL dynamically allocate closures? *sigh*
+[10:10:15] <humasect> (with-closure ..)
+[10:10:19] <humasect> =O
+[10:10:30] <moon-child> with sbcl, read-sequence was very slow (up til recently, I think, they might have fixed it)
+[10:10:36] <moon-child> because it always used 4k buffers
+[10:10:49] <gilberth> Rather (declare (dynamic-extent #'foo)). Doesn't stack allocate the thing.
+[10:10:51] <moon-child> even for large files, where that would be prohibitive (and it would not be worth buffering anyway)
+[10:11:36] *** Joins: chiselfuse (~chiselfus@user/chiselfuse)
+[10:12:21] <gilberth> Then that is regression. CMUCL would pass your buffer to read(2), if possible with READ-SEQUENCE. Of course that only works with binary streams these days.
+[10:14:10] <moon-child> I mean it makes sense you would want to buffer for smaller reads
+[10:14:25] <moon-child> I don't think they actually fixed the problem, just upped buffer size to 1mb
+[10:14:50] <gilberth> Sure you would. But when I supply a large buffer, that would be a clear hint.
+[10:15:26] <moon-child> yes
+[10:15:27] <gilberth> Isn't 1MB a bit excessive?
+[10:15:48] <humasect> i think so too
+[10:16:18] <White_Flame> it's a common file buffer size afaik
+[10:16:21] <moon-child> oh, no, apparently they just upped it from 4 to 8kb
+[10:16:23] <moon-child> lol
+[10:16:30] <moon-child> but also 'sequences larger than the buffer size are written to streams without going through a buffering stage'
+[10:16:50] <moon-child> presumably that also applies to reads.  Don't feel like digging up source to check, but
+[10:17:44] <gilberth> I would be surprised, if it didn't as I remember that CMUCL has that logic.
+[10:18:31] <moon-child> all I can say is, slurping a large file with read-sequence was extremely slow when I benchmarked it a few months ago
+[10:18:48] <moon-child> (into an array of (unsigned-byte 8))
+[10:18:51] <moon-child> and strace showed repeated read()s with a size of 4096
+[10:20:04] <gilberth> But in general I believe that the application providing the buffer is not a good choice. The OS should know best and just give me a pointer to a buffer and say me how much there is. This way having zero-copy I/O would be trivial.
+[10:20:22] <moon-child> mmap is there
+[10:20:32] <humasect> mount filesystem
+[10:20:32] <White_Flame> gilberth: yep
+[10:20:34] <gilberth> Does that work on streams?
+[10:20:35] <humasect> memfs/ramfs
+[10:20:49] <humasect> or what is it, 
+[10:20:52] <White_Flame> moon-child: you can't mmap incoming socket contents
+[10:21:09] <gilberth> moon-child: Curious how large was your supplied buffer to READ-SEQUENCE?
+[10:21:17] <humasect> https://www.gnu.org/software/libc/manual/html_node/Memory_002dmapped-I_002fO.html 
+[10:21:18] -ixelp- Memory-mapped I/O (The GNU C Library)
+[10:21:19] <moon-child> gilberth: same size as the file
+[10:21:20] <gilberth> As White_Flame says.
+[10:21:29] <gilberth> moon-child: Ouch!
+[10:21:52] <moon-child> White_Flame: sure.  Making that work properly is harder, though
+[10:22:00] <moon-child> you have to explicitly release the buffer later
+[10:22:20] <moon-child> reading from a socket is likely to be buffered _anyway_.  It'll be copied at least once, and you wouldn't need extraneous copies
+[10:22:36] <moon-child> on-disc files are different, as the os has a builtin cache, so mmap can share with that cache
+[10:22:56] <humasect> but to ramfs, a file as a piece of mem
+[10:23:04] <humasect> seek/read/etc
+[10:23:47] <gilberth> Yeah, but would the API have been different, I wouldn't need to care. And in general I don't like mmap for file I/O at all. A matter of taste.
+[10:24:11] <humasect> unix files+sockets were already there and invented for use =)
+[10:24:21] <moon-child> (and, incidentally, mmap is fraught even for disc stuff.  Per https://db.cs.cmu.edu/papers/2022/cidr2022-p13-crotty.pdf.  That assumes you are doing your own caching and buffering, because you are a sophisticated db.  If you are not a sophisticated db, the difference in performance is not likely to be noticeable)
+[10:24:29] <humasect> in my opinion files like amiga to access internals and etc (/proc /dev etc)
+[10:24:34] <moon-child> (given that you are probably also going to do _work_ on the things you read, which will exceed the cost of a copy)
+[10:28:18] <gilberth> I believe for a database mmap would make sense, as you also would need to lseek a lot to then read tiny bits here and there. Assuming that you need to chase pointers once in while. But most of the time you access files just like a stream and read through it once.
+[10:30:03] <moon-child> the paper explains pretty well the problems
+[10:30:37] <moon-child> also: pread is a thing
+[10:30:47] <moon-child> and you would not get around the kernel round-trips by only reading a tiny bit
+[10:31:35] *** Quits: scymtym (~user@ip-094-114-248-079.um31.pools.vodafone-ip.de) (Read error: Connection reset by peer)
+[10:31:40] *** Quits: Brucio-61 (~Brucio-35@ip-094-114-248-079.um31.pools.vodafone-ip.de) (Read error: Connection reset by peer)
+[10:45:15] <humasect> libev may help there if possibly there would be an ffi suchness
+[10:50:07] *** Quits: treflip (~user@user/treflip) (Ping timeout: 256 seconds)
+[10:51:14] <hayley> AIUI Java has a way of dynamically sizing thread-local allocation buffers. Do that for reading buffers? But I guess a TLAB by definition is thrown out, whereas you try not to re-allocate buffers.
+[10:56:18] <hayley> "When dequeuing, priority queues removes the element with the  ?  priority, while for normal queues, they remove the element at the front of the queue.  Select what ? should be." idk, some priority queues are specified to remove the lowest. (The ones I usually use are lowest.) But the slides for this class say highest. Boggle.
+[11:05:59] *** Quits: waleee (~waleee@h-98-128-229-110.NA.cust.bahnhof.se) (Ping timeout: 256 seconds)
+[11:13:32] <dave0> no multiple choice?
+[11:15:44] <hayley> Just one.
+[11:16:04] <hayley> Apparently it is always highest priority, but some queues make lower numerical values higher priority, like all those that I've used.
+[11:16:54] <dave0> bigger number=bigger priority
+[11:17:16] <humasect> number bigger. solves most problems
+[11:17:18] <hayley> I can't think of any queues I've used where that's the case.
+[11:18:47] <humasect> thinking too serial
+[11:21:24] <hayley> The slides and lecture also don't mention that, would we have an adjacency matrix for a directed graph, which index/direction corresponds to "from" or "to" directions. So I had to guess from the quiz.
+[11:21:52] <humasect> recurse-ion ?
+[11:26:54] <moon-child> I think that's part of the point of an adjacency matrix
+[11:27:13] <moon-child> you can choose, at any given point in time, which way you want the arrows to face
+[11:30:57] <hayley> Well, I still need to know in order to be able to finish the question.
+[11:34:18] <humasect> 'it depends'
+[11:35:10] *** Quits: lisp123 (~lisp123@120.154.103.52) (Remote host closed the connection)
+[11:35:24] *** Joins: lisp123 (~lisp123@120.154.103.52)
+[11:35:55] <dave0> ooh 'extreme'
+[11:40:57] <hayley> "Well, I can't do branch-free bullshit in CPython." "But doesn't avoiding branches make interpreting faster?" "Yes..."
+[11:41:00] * hayley sighs
+[11:43:18] <moon-child> hahaha
+[11:43:50] <hayley> He's not wrong, he's just not usefully right.
+[11:44:13] <moon-child> 'You get a branch!  And you get a branch!  And ...'
+[11:44:49] <hayley> But I was looking forward to doing bullshit optimisations this semester.
+[11:45:23] * hayley has absl::dense_hash_set memorised
+[11:45:25] <dave0> gilberth: you seem to be a history buff... do you know any links about debates over representation of negative numbers? wikipedia just has [citation needed] :-(
+[11:45:31] <moon-child> algorithmic optimizations are more fun though
+[11:45:35] <moon-child> and way less finicky
+[11:45:45] <hayley> And it'd work in Java 16, cause there's a SIMD vector API.
+[11:45:54] <moon-child> graalpy?
+[11:46:11] <hayley> They use CPython. Can't fix that.
+[11:46:18] <kakuhen> my knowledge of branches is exactly the same as that of steve jobs. to paraphase him: "The G5 also has something called a branch predictor. I don't know that what means. It predicts branches, I guess, and that's a good thing."
+[11:46:28] <kakuhen> what that means*
+[11:46:46] <moon-child> dave0: I will note that bigint libraries frequently use sign-and-magnitude
+[11:47:00] <GreaseMonkey> branch-free bullshit in Python? got you covered: {True: self.true_func, False: self.false_func}[bool(condition)]()
+[11:47:15] <hayley> https://www.youtube.com/watch?v=iwsn27J_tlo&t=226s
+[11:47:16] -ixelp- Apple WWDC 2003 Keynote - The Power Mac G5 introduction (part 1) - YouTube
+[11:47:21] <moon-child> \tf.t
+[11:47:27] <moon-child> \tf.f
+[11:47:33] <kakuhen> somewhere when comparing the g5 to the g4, he'll mention the branch predictor and literally say
+[11:47:41] <kakuhen> "I don't know what that is... it predicts branches, I guess"
+[11:48:00] <hayley> "Massive branch prediction logic, which I dunno what it does, it predicts branches."
+[11:48:48] <dave0> kakuhen: "dad, what's gabbo?" "i guess it's some guy's name. some guy named gabbo"
+[11:48:49] <hayley> "I don't know, but, it's a good thing!"
+[11:53:23] <kakuhen> did i tell you guys i finished my transmission-rss replacement
+[11:53:33] <kakuhen> i then proceeded to rewrite it in typescript, and now i'm going to rewrite it in common lisp
+[11:53:55] <kakuhen> i am quite literally the "rewrite everything in rust" meme, except ive been rewriting in everything but rust...
+[11:54:33] <humasect> imagine doing that with spoken languages 
+[11:55:03] <kakuhen> one of my friends native language is french, but he is also learning japanese with english resources
+[11:55:14] <humasect> =)
+[11:55:15] <kakuhen> so his head has to translate japanese to english to (canadian) french
+[11:55:42] <dave0> i think your friend is nuts ;-)
+[11:55:51] <humasect> heh 
+[11:56:09] <White_Flame> and if he isn't nuts already, that language path will make him so ;)
+[11:56:35] <kakuhen> let's see if I go crazy by the end of the javascript -> typescript -> common lisp pipeline
+[11:56:41] <humasect> depends how 'hard' one learns new languages. as a translation (dictionary, foreign accent etc) or as an actual Real Programmer to change the software of your mind as it is tied entirely linguistically with the lang we are most accustomed
+[11:56:44] <pjb> kakuhen: once you've learned a language, you don't translate in your head to a reference language. You just understand the learned language!
+[11:56:55] <moon-child> ^
+[11:56:56] <kakuhen> pjb: I already know this
+[11:57:00] <kakuhen> My post is supposed to imply he is a beginner in the language
+[11:57:10] <kakuhen> sorry for not making that clear
+[11:57:19] <pjb> and in English. Which is improbable if he's canadian.
+[11:57:34] <kakuhen> he lives in quebec and didn't learn english until a late age
+[11:57:39] <kakuhen> he does speak english very well, however
+[11:58:02] *** Joins: random-nick (~random-ni@87.116.167.125)
+[11:58:04] <kakuhen> but for school and work and family he's always spoken exclusively in french
+[11:58:15] <humasect> this one dude, fully Qatar, spoke english with heavy accent. but?? however can simulate/emulate perfect "British Accent"
+[11:58:29] <humasect> i asked him why not all the time, he said it feels wierd to "act
+[11:58:31] <humasect> "
+[11:59:19] <kakuhen> i wish i could change accents like that...
+[11:59:28] <humasect> being visual coder, i can't see how one could read out the programming code as if it were prose, as lisp(s) are prone 
+[12:00:05] <humasect> kakuhen: just acting apparently -- pretending? how we are most comfortable and natural to speak we are just not acknowledging the acting process 
+[12:00:20] <humasect> like walking or whatev
+[12:01:34] <humasect> per for man ce
+[12:03:11] * hayley finds a "check-regexp" program on the university server
+[12:03:13] <pjb> humasect:  you would transform the language. Not reading unessential syntax token, and perhaps adding auxiliary words to help hearing implicit syntax.
+[12:03:26] * hayley check-regexp 'a' 'aaa'
+[12:03:39] <hayley> "what[0]: a, suffix: aa" Well, okay.
+[12:03:58] * hayley check-regexp '(a)' 'aaa'
+[12:04:06] <hayley> "what[0]: a, what[1]: a, length: 1, suffix: aa" Okay, there's submatches.
+[12:04:16] * hayley check-regexp 'a*' 'aaa'
+[12:04:41] <hayley> "what[0]: <newline> what[0]: <newline> what[0]: <newline> what[0]: <newline>"
+[12:04:42] <hayley> And it keeps going. Hm.
+[12:04:58] <hayley> Whoever wrote this forgot to advance P after matching 0 characters. lol
+[12:05:25] <humasect> +0 ?
+[12:05:32] <hayley> Right.
+[12:05:45] <hayley> It also gets ol' (a|aa)+ wrong, of course.
+[12:05:57] <kakuhen> bugs are a normal fact of life :)
+[12:06:55] <humasect> itchy fscker
+[12:06:56] <humasect> s
+[12:07:20] *** Joins: mgl (~mgl@cpc87455-finc19-2-0-cust234.4-2.cable.virginm.net)
+[12:07:24] <humasect> engineer must fix 
+[12:07:29] <humasect> clean clean 
+[12:10:26] <hayley> Seems that a* loops indefinitely because there is a match at the end of the string.
+[12:10:28] <hayley> So close, yet so far.
+[12:10:51] <humasect> prolog tracing backtracking stuff = 
+[12:10:53] <humasect> =P*
+[12:25:02] <shka> https://www.newstatesman.com/science-tech/2018/03/forget-facebook-russian-agents-have-been-pretending-be-furries-tumblr
+[12:25:47] <shka> yes, we are gonna destabilize west by infiltrating every community there is
+[12:25:50] <shka> :P
+[12:31:20] <kakuhen> based
+[12:32:20] <kakuhen> i wonder if they have people infiltrating japanese communities, too
+[12:33:38] <kakuhen> i say this because anecdotally, not many on japanese net support russia's stance either
+[12:33:56] <kakuhen> but it's easy to guess someone supports russia if they hold a certain set of opinions
+[12:37:41] <dave0> war war what is it good for
+[12:38:49] <shka> absolutely nothing
+[12:39:01] <dave0> say it again
+[12:39:02] <dave0> :-)
+[12:39:16] <shka> https://www.youtube.com/watch?v=KZB9w1w9dKo
+[12:39:16] -ixelp- Edwin Starr and Slayer - "War (On and on South of Heaven)" - YouTube
+[12:44:43] * hayley commits REMOVE-DEAD-WRITES pass, but then removes it, because it doesn't help without global value numbering ):
+[12:46:28] <kakuhen> hmm... the prog1 indentation in emacs seems very funny
+[12:46:45] <kakuhen> is it intentionally putting the first form with extra indentation to emphasize something?
+[12:46:57] <kakuhen> I know that elisp does this (and I don't quite like it), I also want to know if this is an accepted practice
+[12:49:30] <hayley> moon-child: I mean, algorithmic optimisations are cool, but sorta hopeless when you can only run programs though a bytecode interpreter.
+[12:50:58] <hayley> A wise stassats once said "If you have a compiler that doesn't fold these forms then you are not concerned with performance." The lower bar here is "if you don't have a compiler then you are not concerned with performance."
+[12:52:17] * moon-child pondering issues of modularity in his apl/os
+[12:52:31] <humasect> =)
+[12:52:59] <moon-child> it's come up before wrt cl/osos: are symbols closed over their environments?  Or: if I intern "X" in a package named A in environment 1, and I intern "X" in a package named A in environment 2, are the resultant symbols EQ?
+[12:53:09] <moon-child> I don't think there was a concensus on that
+[12:53:42] <moon-child> but I realised I can avoid the problem entirely by going scheme-style and saying a package is a property of a syntactic object rather than of a symbol
+[12:53:49] <moon-child> whether that's worth it ... dunno
+[12:54:33] <humasect> emads
+[12:54:35] <humasect> emacs
+[12:54:37] *** Quits: humasect (~humasect@2001:1970:57e0:4100::1ae0) (Quit: Leaving...)
+[12:54:44] <hayley> I believe packages are per environment, so it should follow that symbols are per environment too.
+[12:55:51] <moon-child> oh, then your (funcall symbol) problem goes away
+[12:56:31] <moon-child> (though a problem which follows from that is that the CL package is shared)
+[12:56:52] <hayley> I thought the problem was that one could mistakenly think that providing a symbol provides its function definition, leading to an undefined function error. Not so much "calling the wrong function".
+[12:59:10] <moon-child> well, suppose I say  (in-environment 1) (defun call (f) (funcall f 0))  (in-environment 2) (defun f (x) (format t "got ~a~%" x)) (call 'f)
+[12:59:12] <hayley> This could become a problem if you modify a CL system definition facility to compile systems in their own FCGEs, and then share packages defined by a system with environments for systems that depend on them. You'd "need" to do the same backwards, which breaks encapsulation too much for my liking.
+[12:59:41] <moon-child> if symbols are per-environment, then that means they are closed over their environments; the symbol F that we pass to CALL is closed over environment 2, and so the function F can be called
+[12:59:49] <kakuhen> o great i found a bug in my 8 month old code
+[13:00:03] <kakuhen> somehow i understand it all.... that is thanks to me being obsessed with documenting things ;)
+[13:00:17] <hayley> Symbols don't close over environments.
+[13:00:33] <moon-child> I thought you said they were per-environment
+[13:00:35] <hayley> The function cell is in the environment, not the symbol.
+[13:00:35] <moon-child> maybe I misunderstood
+[13:01:23] <hayley> Maybe I have, I don't remember FCGE theory too well.
+[13:01:47] <moon-child> as I recall, when the topic came up in #sicl, beach said he didn't either :P
+[13:03:09] <hayley> Guess we get to make it up then.
+[13:03:58] * hayley makes a few too many redundant power sources for her FTB world.
+[13:04:12] <kakuhen> wow... people still use joint stereo in current year...
+[13:04:53] <kakuhen> i was processing a flac where channel 0 is the mid channel and 1 is the side channel...
+[13:05:18] <hayley> https://www.youtube.com/watch?v=bht5XoUy10Y
+[13:05:18] -ixelp- Stereo - YouTube
+[13:05:24] <kakuhen> up until this point i only assumed mono and normal stereo exist...now i have to rewrite methods to inform audio devices the format of the file
+[13:05:31] <kakuhen> or i can just be nice and uhh
+[13:05:44] <moon-child> FTB?
+[13:05:50] <moon-child> oh that's a minecraft mod, right?
+[13:06:00] <hayley> Yes.
+[13:06:03] <kakuhen> hmm actually no nvm... if I decode joint stereo for the output device rather than telling it "here's a joint stereo linear pcm," then i can run into more edge cases
+[13:06:15] <kakuhen> namely, if someone decided to make a funny flac where half the frames are normal stereo but the rest are joint stereo
+[13:06:21] <hayley> Well, nowadays a bunch of mod packs. A family. Call the mod-packs dialects. (:
+[13:06:57] <kakuhen> >left/side stereo
+[13:06:57] <kakuhen> why is this allowed
+[13:07:06] <moon-child> do they have an army and a navy?
+[13:07:23] <hayley> One which takes redstone dust and lava, one which takes any furnace fuel, one which takes only lava, and one which takes blaze powder and liquified redstone.
+[13:07:46] <kakuhen> i can make a flac whose channel assignments alternate between 11 different  configurations and a decoder has to be able to just accept it and figure out how to mix everything.... phew
+[13:07:47] <hayley> Making sure the first and last ones keep working is a control problem I often fail at.
+[13:08:27] <hayley> Brute-forcing configurations might give you better compression, who knows!
+[13:08:38] <kakuhen> mfw optiflac
+[13:08:55] <kakuhen> >finding the ideal permutation of 11 channel assignments on your set of frames
+[13:09:09] <kakuhen> n^11 for your number for frames
+[13:09:16] <kakuhen> wait no even more
+[13:09:18] <hayley> It appears the cows in this mod sometimes steal the wheat from you, btw.
+[13:09:55] <kakuhen> in any case, i understand why joint stereo exists, but im stupid and want audio files to fix an channel assignment and stay that way
+[13:10:11] <kakuhen> ;; TODO: what happens if I get a flac that alternates channel assignments every frame?
+[13:10:35] <hayley> Gaze in awe at whoever made it.
+[13:10:54] <kakuhen> this but unironically
+[13:11:14] <kakuhen> i wonder how libFLAC handles this
+[13:11:43] <kakuhen> every time I write a decoder for something and see how many ways an encoder can be...unforgiving... I always wonder how many decoders out there I can break with a specially crafted file
+[13:11:57] <kakuhen> in this case... I really want to make an evil flac and see how libflac and quicktime handle it
+[13:12:42] <kakuhen> presumably libflac, unlike my decoder, has an actual audio mixer, so it's actually not a big problem if each frame gives a different channel assignment
+[13:13:14] <kakuhen> i designed flac-decode under the assumption i'll only see stereo as an interleaved series of samples
+[13:13:16] <kakuhen> and now I'm paying the price...
+[13:18:11] * hayley now has 3 liquifacted coal cows. They must be terrible for greenhouse gases.
+[13:18:15] *** Quits: chiselfuse (~chiselfus@user/chiselfuse) (Ping timeout: 240 seconds)
+[13:18:43] <hayley> Make that 4. /me wanted to breed a molten iron cow.
+[13:18:50] <kakuhen> oh btw hayley you're going to scream at 8-month-old me once you find out what im doing to flac frames
+[13:19:08] <kakuhen> for some reason... i used to think it was a fantastic idea to encapsulate every single frame of a flac as an object
+[13:19:24] <kakuhen> so if you have a really long song....you will probably manage to use up the entire heap in sbcl
+[13:19:36] <kakuhen> unless you throw in the dynamic heap size flag
+[13:19:41] *** Joins: chiselfuse (~chiselfus@user/chiselfuse)
+[13:19:57] <kakuhen> why am i so stupid in designing things
+[13:20:38] * hayley uploaded an image: (725KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/eIwySjZJNGGZujhrefPcCsZE/2022-02-28_20.59.33.png >
+[13:20:43] <hayley> As they say, laziness is a virtue.
+[13:22:45] *** Joins: treflip (~user@user/treflip)
+[13:22:58] <kakuhen> >Zero bit padding, to prevent sync-fooling string of 1s 
+[13:22:58] <kakuhen> >This bit must remain reserved for 0 in order for a FLAC frame's initial 15 bits to be distinguishable from the start of an MPEG audio frame
+[13:23:01] <kakuhen> stop the madness
+[13:23:20] <kakuhen> why can't computers just work in identifying things
+[13:30:56] *** Joins: scymtym (~user@ip-094-114-248-079.um31.pools.vodafone-ip.de)
+[13:36:12] *** Quits: mgl (~mgl@cpc87455-finc19-2-0-cust234.4-2.cable.virginm.net) (Quit: Client closed)
+[13:38:38] <kakuhen> ok this is cursed
+[13:38:42] <kakuhen> the flac i am testing is alternating the sample rate of the blocks
+[13:41:46] *** Joins: Brucio-61 (~Brucio-93@ip-094-114-248-079.um31.pools.vodafone-ip.de)
+[13:42:07] <pjb> kakuhen: good question.  This is the problem of tagging the data.  A lisper would naturally write tags everywhere, so that the type of data is always identified.  But other programmers will just dump the plain data without green bytes, so ambiguities will abound.
+[13:43:02] <hayley> Finally, I got an iron cow.
+[13:43:06] <pjb> kakuhen: seems reasonable to use different sample rates of different kinds of channels, and if they're multiplexed, for alternate blocks.
+[13:46:37] * hayley is reminded of chroma sub sampling.
+[13:47:05] *** Quits: lisp123 (~lisp123@120.154.103.52) (Remote host closed the connection)
+[13:51:02] <kakuhen> most of the cases where i find benefit of alternating sample rate is served by special blocks in flac
+[13:51:42] <kakuhen> for instance, you have blocks for constant samples
+[13:52:01] <kakuhen> i guess this possibly covers the case where a set of packets is not using the full range of the file's sample rate
+[13:52:21] <kakuhen> so you can safely discard tons of zeros by reducing sample rate
+[13:52:33] <kakuhen> but now that  begs the question: why was the first frame of this flac 48 khz but the very next one 22.5 khz
+[13:53:13] <kakuhen> in any case, rather than question the flac im testing with, im gonna debug my shitty parser
+[13:53:50] <kakuhen> it's claiming "Invalid or reserved value for frame sample size" and I want to believe... so i'm opening the flac in a hex editor and checking the bytes myself lol
+[13:58:33] *** Quits: semz (~semz@user/semz) (Remote host closed the connection)
+[13:58:47] *** Joins: semz (~semz@user/semz)
+[14:15:57] <kakuhen> aha i found my mistake
+[14:16:36] <kakuhen> the way i calculate my jump to the next frame is wrong -- since the numbers I'm using are for the decoded output
+[14:34:07] *** Joins: cosimone (~user@93-47-229-38.ip115.fastwebnet.it)
+[14:36:36] <shka> selwyn: it seems that rent in London is going down
+[14:37:21] *** Joins: razetime (~quassel@117.254.35.156)
+[14:37:43] <selwyn> lol
+[14:37:48] <selwyn> maybe in mayfair
+[14:38:36] <selwyn> the whole british economy is based off of dirty money from other countries being kept safe here
+[14:39:12] <selwyn> if you pull too much at one thread, who knows what you might find
+[14:39:24] *** Joins: kevingal (~quassel@149.157.121.115)
+[14:39:33] <shka> well, it would be good for citizens
+[14:39:46] <selwyn> in the end, yes
+[14:40:00] <shka> for people, that, you know, live there
+[14:40:03] <selwyn> but the people who run britain are not going to let such a thing happen
+[14:40:30] <selwyn> top level people like deripaska are off limits for example
+[14:40:47] <shka> dunno about that
+[14:41:03] <shka> he will be loosing income, and fast
+[14:41:17] <selwyn> the other thing is that a lot of russian oligarchs in london are liberal ones who are against putin
+[14:41:57] <selwyn> the government is floating a lot of measures targeted at russian citizens and dual nationals
+[14:42:15] <selwyn> if they get caught up in the net it will be self-destructive
+[14:43:37] *** Quits: kevingal (~quassel@149.157.121.115) (Ping timeout: 240 seconds)
+[14:43:44] <selwyn> to be honest, i am really disgusted but not surprised at the british response
+[14:44:24] <selwyn> they led the ukrainians on with promises of nato membership, but when the war happened they were nowhere to be found
+[14:44:28] *** Joins: kevingal (~quassel@hamilton-nat.nuim.ie)
+[14:44:30] <selwyn> and we won't even take refugees
+[14:44:36] <selwyn> selfish island
+[14:47:38] <shka> well, regardless
+[14:48:10] <shka> Sputnik by accident posted official message from Putin 
+[14:48:19] <shka> by cron-failure
+[14:49:38] <shka> https://web.archive.org/web/20220226051154/https://ria.ru/20220226/rossiya-1775162336.html
+[14:49:39] -ixelp- Наступление России и нового мира - РИА Новости, 26.02.2022
+[14:50:00] <shka> this was scheduled to be presented today, but was retracted
+[14:50:19] <shka> and I think that this is legit because Belarus was supposed to hold referendum 
+[14:52:33] <selwyn> man, i have to keep writing instead of following the damn news lol
+[14:52:42] <shka> ikr
+[14:53:00] <shka> anyway
+[14:53:02] <shka> TLDR
+[14:53:08] <shka> Soviet Reunion 
+[14:53:24] <shka> luckly, it seems to at least not going as planned
+[14:53:35] <selwyn> is there much thought given in poland to having to look after a 'west ukraine' if it happens
+[14:54:30] <shka> no
+[14:55:07] <shka> so far everybody is thinking on how to destroy Russia 
+[14:55:59] <shka> while i think if Putin plans to Grozny 
+[14:56:39] <contrapunctus> "Grozny"?
+[14:56:54] <shka> the most destroyed city in the world
+[14:57:37] <selwyn> the battle of grozny was a huge attempt in 2000 to retake the capital city of chechnya
+[14:57:50] <shka> selwyn: that was the second attempt
+[14:57:52] <selwyn> it worked but it got destroyed
+[14:58:35] <shka> well, they failed to capture the city, captured ruins instead
+[15:00:00] <shka> also, Russia eventually installed Kadyrov as his puppet in the country
+[15:00:13] <shka> which is literally one of the worst human beings currently alive
+[15:00:35] <shka> probably this is how it would play out in the Ukraine if Putin has it his way
+[15:00:54] <shka> well, they installed kadyrov father
+[15:01:09] <selwyn> well, the other thing about chechnya is that
+[15:01:15] <selwyn> the approach actually worked
+[15:01:22] * hayley notes that, with a pure functional program, she can tell the user that the program is almost anywhere would they interrupt the program.
+[15:01:43] <shka> yeah, it only required genocide of 1/4 of the population
+[15:01:45] <selwyn> they managed to integrate chechnya completely into russia, although obviously on brutal terms
+[15:02:16] <selwyn> there are almost no other convincing real examples of successful counterinsurgency against islamists
+[15:02:29] <selwyn> done by the usa at least
+[15:02:58] <shka> chechenya was not islamist, merely separatist 
+[15:03:08] <shka> that  jihad shit came in later
+[15:03:52] <selwyn> well, ok
+[15:03:59] <shka> also, let me slaughter 1/4 of UK and I will make it France puppet 
+[15:04:13] <selwyn> but they got rid of the jihad shit as well
+[15:04:20] <shka> no, not really
+[15:04:31] <shka> it is just not pointed at Russia
+[15:05:22] <shka> Chechen Republic is fundamentalist shit-hole that makes Iran look tame 
+[15:08:16] <shka> selwyn: https://www.youtube.com/watch?v=OiEg4OZ_lBU
+[15:08:17] -ixelp- Kadyrov Chechen forces mobilized to fight against Ukraine - YouTube
+[15:08:28] <selwyn> i know
+[15:08:30] <shka> this is literally ISIS shit 
+[15:08:53] <shka> Allahu Akbar included 
+[15:14:03] <selwyn> i don't think it's accurate to characterise contemporary chechnya as islamist
+[15:14:25] <selwyn> the deal is that they can be ultra conservative as long as they fight for russia
+[15:14:34] <selwyn> they fight for russia, and not islam
+[15:14:54] <selwyn> you can't say someone like khabib nurmagomedov is islamist for instance
+[15:14:59] <selwyn> nevertheless its a very sad situation
+[15:18:03] <shka> well, whatever, grab yourself some electronic music instead https://www.youtube.com/watch?v=2Qr3b8Gn15M
+[15:18:04] -ixelp- Digital Kung Fu - Ninja Against Shaolin - YouTube
+[15:27:13] <hayley> https://twitter.com/alexeyguzey/status/1497774158578548738
+[15:28:13] *** Quits: chiselfuse (~chiselfus@user/chiselfuse) (Remote host closed the connection)
+[15:28:27] *** Joins: chiselfuse (~chiselfus@user/chiselfuse)
+[15:50:56] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-98.dsl.bell.ca)
+[16:00:16] *** Joins: mgl (~mgl@cpc87455-finc19-2-0-cust234.4-2.cable.virginm.net)
+[16:21:10] *** Joins: eugercek (~user@user/eugercek)
+[16:52:47] *** Quits: razetime (~quassel@117.254.35.156) (Ping timeout: 256 seconds)
+[16:53:06] *** Joins: razetime (~quassel@117.254.35.156)
+[17:35:06] *** Quits: chiselfuse (~chiselfus@user/chiselfuse) (Remote host closed the connection)
+[17:35:31] *** Joins: chiselfuse (~chiselfus@user/chiselfuse)
+[17:44:41] *** Quits: treflip (~user@user/treflip) (Quit: ERC (IRC client for Emacs 27.2))
+[18:03:54] *** Joins: waleee (~waleee@h-178-174-193-77.NA.cust.bahnhof.se)
+[18:13:38] <clothespin> morning
+[18:23:37] *** Quits: kevingal (~quassel@hamilton-nat.nuim.ie) (Ping timeout: 240 seconds)
+[18:23:44] *** Joins: kevingal (~quassel@2001:770:c0:401:14f0:8884:d7c5:adc9)
+[18:26:01] *** Quits: eugercek (~user@user/eugercek) (Ping timeout: 256 seconds)
+[18:27:59] <selwyn> good morning
+[18:43:45] *** Joins: Psybur (~Psybur@mobile-166-170-32-247.mycingular.net)
+[18:45:57] *** Quits: dave0 (~davezero@069.d.003.ncl.iprimus.net.au) (Quit: dave's not here)
+[18:55:14] <ck_> hello
+[18:57:17] <selwyn> i am finally writing again
+[18:58:04] <ck_> that's good
+[18:58:24] <ck_> put in some conclusions! people love those
+[19:00:36] <selwyn> tomorrow i am visiting my experimental collaborators for the first time in ages
+[19:00:40] <selwyn> which should be fun
+[19:03:30] *** Quits: jeosol (~jeosol@user/jeosol) (Quit: Ping timeout (120 seconds))
+[19:17:10] *** Joins: ec (~ec@gateway/tor-sasl/ec)
+[19:26:22] <ck_> you know what I'll be saying
+[19:26:24] <ck_> that selwyn
+[19:26:30] <ck_> he sure knew how to conclude something
+[19:26:59] <selwyn> the conclusion was one of the first chapters i wrote, actually
+[19:27:09] <selwyn> i should probably make sure it is still accurate tbh
+[19:27:29] <edgar-rft> you have collaborators who are experimental?
+[19:31:56] <ck_> no no it's a group of people called "my experimental" -- and they are first-time collaborators 
+[19:32:11] <ck_> not a bad name for a song, like my sherona
+[19:35:49] <edgar-rft> yeah, let's all do first-time experiments :-)
+[19:37:24] <selwyn> yes, we collaborate with an experimental group who are trying to implement some stuff we published
+[19:39:10] *** Quits: razetime (~quassel@117.254.35.156) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[19:40:44] <edgar-rft> ah, you're doing first-time group experiments
+[19:48:40] <selwyn> 170 pages
+[20:13:43] <gilberth> Good morning #lispcafe!
+[20:14:18] <moon-child> good morning!
+[20:14:35] <selwyn> good morning
+[20:14:53] <gilberth> For whatever suitable definition of "good" when the world is falling apart.
+[20:17:15] <moon-child> ‘What do you mean?  Do you wish me a good morning, or mean that it is a good morning whether I want it or not; or that you feel good this morning; or that it is a morning to be good on?’
+[20:19:18] <gilberth> Well, it's two things: (1) The official announcement that gilberth is awake and (2) the wish that whomever it may concern shall have a nice morning, day, or night.
+[20:21:42] * moon-child nods
+[20:21:45] <moon-child> but--tolkien
+[20:22:02] <moon-child> hmm, you could be gandalf.  Mysterious, reclusive, seems to know everything...
+[20:22:10] *** Joins: eugercek (~user@user/eugercek)
+[20:22:54] <gilberth> Heh, I know next to nothing. And is Gandalf a nocturnal creature?
+[20:24:38] <gilberth> btw, have you seen my motivation? I somehow have lost it.
+[20:26:13] <moon-child> :/
+[20:26:34] <shka> Castlevania Dracula?
+[20:27:24] <gilberth> shka: Who knows? /me shrugs.
+[20:27:50] <edgar-rft> TeleTubbies?
+[20:28:02] <gilberth> Certainly not.
+[20:28:58] <shka> https://www.youtube.com/watch?v=5bpVs97dFiY
+[20:28:59] -ixelp- One Villainous Scene - "You Must Be The Belmont" - YouTube
+[20:31:04] <gilberth> Anyhow, my latency from key stroke to final buffer flip with the input editor is at like 3ms. But it still feels not all too fast, which puzzles me. Maybe I ought to get some real Linux machine and see.
+[20:32:36] <gilberth> Or turn off double buffering, as XQuartz has its own buffer too. Hmm.
+[20:34:20] <shka> gilberth: just don't go all genocidal on our asses
+[20:35:41] <gilberth> shka: I don't get you, sorry. What are you trying to tell me?
+[20:37:23] <shka> Dracula in Castlevania season 2 is a sad depressed man that was alive for centuries, gathered impossible amounts of knowledge and for *spoilers* plans to exterminate the whole of the mankind
+[20:38:04] <gilberth> Ah, ok.
+[20:41:02] <selwyn> shka: don't scare me like that
+[20:41:08] <selwyn> i've not watched the news for like 5 hours now
+[20:41:17] <shka> https://youtu.be/SMu002EKg4s?t=4128
+[20:41:18] -ixelp- Vampire Hunter | Bloodlust | Anime | English | Dubbed | Full movie | Fight | Action| 2021#anime #new - YouTube
+[20:41:26] <selwyn> i thought you meant that germany was on its way to invade russia again or some shit
+[20:41:44] <shka> this movie is shockingly well animated
+[20:41:50] *** Joins: Catie (~user@user/catie)
+[20:42:09] <gilberth> selwyn: With what? Bare hands?
+[20:42:16] <selwyn> good point
+[20:42:23] <shka> selwyn: not enough meth for that
+[20:43:48] <shka> selwyn: so far it seems that Russia grossly miscalculated, and this will has to end in next two weeks 
+[20:43:52] *** Joins: Lycurgus (~juan@98.4.112.204)
+[20:44:26] <shka> and after that Europe will got to work on itself a bit 
+[20:44:28] <gilberth> shka: Now you are the optimistic one. I hope you're right.
+[20:44:54] <shka> gilberth: no, then comes the hard part
+[20:45:23] <gilberth> I just read news and I can't say that the news were in any kind insightful. I have no idea what will happen.
+[20:45:24] <Lycurgus> just saw the swiss have joined sweden in reversing their neutrality over the matter
+[20:45:27] <shka> Europe will has to figure out how to reshape itself and expand again
+[20:46:38] <Lycurgus> ultimately what will happen is putin will at least be out of power
+[20:46:54] <Lycurgus> there are rumours he has cancer
+[20:47:31] <Lycurgus> supposedly he had surgery in early '20 for it, that and parkinsons
+[20:47:36] <shka> anyway, military matters are easy, civilization direction is hard
+[20:47:59] <selwyn> europe needs to have its own collective security arrangement that isnt nato
+[20:48:02] <shka> brexit, stuff in hungary, and, sadly, in poland 
+[20:48:02] <gilberth> Lycurgus: It that the reason why he behaves as if there would be no tomorrow?
+[20:48:16] <Lycurgus> gilberth, it would explain a lot
+[20:48:25] <gilberth> You scare me.
+[20:48:45] <selwyn> meh, there were rumours that erdogan had cancer a couple of years ago
+[20:48:54] <selwyn> he is still alive
+[20:49:11] <shka> EU needs to somehow overwhelm it's problems, and i have a hard time seeing what would be the model for that
+[20:49:14] <selwyn> and putin is probably healthier than he is. people will always talk
+[20:49:35] <shka> selwyn: dunno man, he is acting peculiar
+[20:49:36] <Lycurgus> civilization are laggards, there's something better than any one of them emerging
+[20:49:59] <ck_> I don't think illness is really the problem, many leaders are too old in my opinion
+[20:50:13] <Lycurgus> he's not that old
+[20:50:28] <shka> that extreme social distancing he is employing is weird as fuck
+[20:50:33] <waleee> dementia/alzheimers can afflict you early
+[20:50:41] <shka> maybe fucker has AIDS
+[20:51:06] <waleee> and he's 70, not unheard of with dementia in that age bracket
+[20:51:24] <selwyn> he seems coherent enough to me
+[20:51:47] <selwyn> have not read his address to the nation in full yet
+[20:52:10] <waleee> a relative of mine with dementia can be coherent for an hour or so 
+[20:52:24] <Lycurgus> well he doesn't show cognitive decline, but just having his senses corrupted by absolute power isn't enough to explain the behaviour of the last week
+[20:52:27] <selwyn> but it seemed to be more indicative of 'great russian nationalism' than senility
+[20:52:50] <Lycurgus> starting with that unhinged speech about the history of ukraine in the last century
+[20:53:05] <ck_> yeah, the historical approach
+[20:53:09] <shka> selwyn: yeah, that's the problem, he is suddenly acting like he is believing in this bullshit
+[20:53:17] <selwyn> hm.
+[20:53:45] <ck_> many people had the same association i had as well after that speech. "have you heard of the Holy Roman Empire?"
+[20:53:50] <shka> he was also believing that ukrainians would simply let him have ukraine
+[20:53:57] <shka> which is just WTF
+[20:54:06] <ck_> shka: of course -- after all they are being liberated from nazism. or so I've heard
+[20:54:16] <Lycurgus> starting a major land war and threating the use of nukes, something is definitely wrong
+[20:54:21] <shka> yeah
+[20:54:29] <shka> it is one thing to spew nonsense
+[20:54:48] <ck_> https://www.youtube.com/watch?v=Wl959QnD3lM
+[20:54:49] -ixelp- Wide Putin walking but he's always in frame (full version) - YouTube
+[20:54:58] <shka> but when you believe this bullshit that you've made up, that's when i am seriously concerned 
+[20:55:14] <ck_> we've always been at war with oceania
+[20:55:26] <selwyn> it is a chauvinist school of thought that goes back a while
+[20:55:32] <Lycurgus> i blame yeltsin
+[20:55:39] <selwyn> solzenitsyn (sp?) believed similar
+[20:56:18] <Lycurgus> it seemed like a reasonable arguement until I reviewed the history
+[20:56:50] <Lycurgus> ukraine was only a part of russia for about a 100 years or so before the ussr
+[20:56:56] <ck_> selwyn: "Solzhenitsyn"
+[20:57:11] <ck_> I can also never remember where the h goes
+[20:57:22] <Lycurgus> and it's more the case that russia was once a part of ukraine (kievan rus)
+[20:57:26] <shka> Lycurgus: yeah, it was part of the commonwealth which was pretty weird country honestly 
+[20:57:37] <selwyn> and the crimean khanate/ottomans
+[20:57:50] <phoe> putler doesn't even want to think about Russia being a part of Ukraine though
+[20:57:56] <phoe> it's the ultimate sacrilege
+[20:58:16] <shka> thing with commonwealth is that it was ultimately a federation
+[20:58:46] <shka> and the Ukraine was probably the most free part of it
+[20:58:56] <Lycurgus> yeltsin made democracy looked foolish and disatrous (which it mostly is) so russia fell back on it's authoritarian tendency
+[20:59:02] <Lycurgus> maybe this will cure that
+[20:59:03] <shka> "wild fields" as we call it in Poland
+[20:59:35] <waleee> shka: it was maybe a bit sad that the polish branch of the Wasa dynasty had to persist with their claims on the Swedish throne
+[21:00:12] <Lycurgus> he doesn't seem to be aware that many or most russians think of ukraine as their closest slavic relatives
+[21:00:18] <shka> waleee: it is honestly complex, poland at the time was uh... constitutional monarchical federation???
+[21:00:22] <shka> or something like that
+[21:00:51] <waleee> shka: yeah, I know, but it unecessarily weakened the commonwealth
+[21:00:55] <shka> that system didn't work out great, and Sweden was just one of possible routes for a disaster
+[21:01:06] <waleee> (because of the wars)
+[21:01:13] <selwyn> what gets me about ukraine, is that there are some countries like iraq or yugoslavia that people erroneously assume that 'there was fighting' there since pretty much forever
+[21:01:35] <selwyn> but ukraine actually seems to have had it hard basically all the time
+[21:01:42] <shka> waleee: i think that the only way for the commonwealth to survive was to ally with sweden against the Russia
+[21:01:51] <shka> but that didn't happen
+[21:01:55] <Lycurgus> since the partition of poland anyway
+[21:03:50] <shka> waleee: it is possible that commonwealth would eventually reform itself into something like the Germany, but this country has tremendous problems
+[21:04:09] <selwyn> zapadslavia
+[21:04:24] <shka> partly because of it's ideological focus on freedom
+[21:04:40] <selwyn> it sounds like the star trek federation
+[21:04:51] <shka> selwyn: yeah, but with serfs 
+[21:04:56] <shka> (it was weird)
+[21:05:30] <shka> lack of modernization really destroyed any chance Poland had
+[21:05:46] <selwyn> idk how serious of a comparison it is, but it also sounds like modern britain
+[21:07:07] <selwyn> in britain, the main social goal is to buy an expensive property, become a landlord, and rent out some property to have a passive income that is guaranteed by ever rising house prices
+[21:07:13] <selwyn> it is basically aspirational feudalism
+[21:07:16] <shka> selwyn: well, Poland was also multicultural 
+[21:07:39] <selwyn> problem is that not everyone gets to make it to being a noble
+[21:07:51] <shka> needless to say, commonwealth was interesting experiment, it didn't work at all
+[21:08:16] <shka> well, it worked fine for some time, then became outdated
+[21:08:39] <shka> but the important part, we owe some historical justice for ukraine
+[21:08:39] <selwyn> russia modernised before any serious competitor like the ottomans
+[21:08:56] <shka> and we get them
+[21:09:07] <shka> we really do get them in Poland
+[21:09:34] <selwyn> shka: i don't understand how that coexists with historical memory of the upa
+[21:11:01] <shka> we are no stranger to extreme nationalism either 
+[21:12:03] <selwyn> i see
+[21:12:15] <shka> and at the end of the day Ukraine finally has it's own country, so we are not fighting about land anymore 
+[21:12:32] <shka> this conflict has been, for better or worse, resolved
+[21:13:10] <shka> only insane people question the current borders of Poland
+[21:13:32] <selwyn> are there a lot of them
+[21:13:41] <shka> nope 
+[21:14:04] <shka> Hungary on the other hand...
+[21:15:15] <shka> anyway, we don't want to fight Ukrainians, we don't want to fight Germans, we just want to be at peace with everyone 
+[21:15:30] <shka> expect Russia
+[21:15:58] <shka> because Russia is actually hated and despised 
+[21:16:37] <shka> arguably for a good reasons as the rest of the world has just noticed probably 
+[21:18:49] <shka> selwyn: regardless, the main current issue in Poland is the strife of what our country should be 
+[21:19:29] <shka> neoliberalism fatigue essentially
+[21:19:40] <selwyn> tfw
+[21:20:11] <shka> which is something many can sympathize i guess
+[21:22:19] <shka> lack of true left wing in Poland is a problem
+[21:26:54] <pl> heeey, we do have a bit of proper socialists and commies, not our fault other groups are so deeply rightist that we skirt nazis in parliament
+[21:27:29] <shka> pl: i kinda think that it is our fault, but i don't know what I, personally, can do
+[21:27:37] <shka> :-(
+[21:28:16] <pl> I was thinking more of it's not the left's fault that our political parties skirt so hard right
+[21:29:03] * pl has voted left ever since 2012 or so
+[21:29:11] <shka> i think that there must be something that is done wrong 
+[21:29:20] <shka> but i fail to pinpoint what
+[21:29:20] <pl> PO got two elections from me on being against PiS and pissed it all off
+[21:29:42] <shka> I would rather do something on a lower level 
+[21:29:47] <pl> shka: lots and lots of neoliberal propaganda in last 32 years
+[21:30:50] <shka> fuck, i am getting back into pessimistic mode 
+[21:31:52] <selwyn> shka: always look on the bright side of life
+[21:33:15] <shka> well, it is a social desolation in here 
+[21:33:33] <shka> and i also voted left ever since 2012
+[21:33:38] <shka> and you know what?
+[21:33:44] <shka> I AM NOT EVEN LEFTIST
+[21:33:58] <selwyn> i find that hard to believe
+[21:34:09] <selwyn> because you sound like one sometimes
+[21:34:40] <shka> nah, i consider myself 75% conservative and 25% pragmatic
+[21:35:21] *** Quits: kevingal (~quassel@2001:770:c0:401:14f0:8884:d7c5:adc9) (Remote host closed the connection)
+[21:35:32] <shka> and by conservative i mean that fundamental values are pivotal to me 
+[21:36:06] *** Quits: eugercek (~user@user/eugercek) (Remote host closed the connection)
+[21:36:25] *** Joins: eugercek (~user@user/eugercek)
+[21:36:56] <shka> and it just happens that i don't have anyone to vote 
+[21:37:16] <shka> polish "conservatives" are more of religious nationalists
+[21:37:59] <shka> and I don't consider "nationality" or "religion" to be morally relevant criteria
+[21:38:17] *** Joins: szkl (uid110435@id-110435.uxbridge.irccloud.com)
+[21:38:42] <shka> what i really want is humanist legalism
+[21:39:10] <clothespin> hello
+[21:39:11] <shka> and left is simply the best fitting thing there is here
+[21:39:14] <shka> clothespin: hi!
+[21:39:55] <clothespin> just had lunch
+[21:40:03] <shka> hopefully tasty
+[21:40:38] <shka> i would probably be more or less in the political mainstream in Germany 
+[21:40:56] <Lycurgus> hey clothespin 
+[21:47:46] <clothespin> hey
+[22:03:19] *** Quits: Lycurgus (~juan@98.4.112.204) (Quit: Exeunt)
+[22:04:24] <pl> ... Ukrainian Ambassador to UN is ballsy as hell
+[22:04:26] <pl> https://twitter.com/therecount/status/1498329367730077708
+[22:10:59] <shka> he is also right
+[22:11:38] <shka> nobody more has to die, Ukraine would never accept Moscow's rule anyway, this is dead end
+[22:11:41] <shka> GO HOME
+[22:15:08] <semz> This feels more like a stupid Twitter zinger than something at the UN
+[22:15:29] <semz> ukranian official comms have been surreal throughout this whole incident
+[22:17:09] <ck_> yes
+[22:17:11] <ck_> "thanx"
+[22:17:15] <selwyn> often reddit in tone
+[22:18:08] <selwyn> on the other hand, russia does not really try
+[22:18:19] <selwyn> it took them days to say that the snake island soldiers were alive
+[22:19:12] <ck_> after that one picture of a eight-or-so-person group of surrendering soldiers on a small dock, titled "russian soldiers surrender" and "ukrainian soldiers surrender" minutes apart, I'm not really paying attention anymore
+[22:20:23] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-98.dsl.bell.ca) (Remote host closed the connection)
+[22:21:42] <semz> same, there's so much disinfo flying around it's incredible
+[22:23:28] <pl> selwyn: probably took days to dress civilians in uniforms 
+[22:23:58] <pl> (there wasn't enough soldiers on snake island to make up '83 surrendering')
+[22:27:05] <gilberth> Heh, mulisp is sophisticated. When the stack is about to overflow, it tries a GC to see if room could be made for the stack to grow. Nice.
+[22:29:09] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 256 seconds)
+[22:29:32] <ck_> also, it is a good time to watch Wag the Dog again
+[22:30:21] *** Quits: eugercek (~user@user/eugercek) (Remote host closed the connection)
+[22:30:42] *** Joins: eugercek (~user@user/eugercek)
+[22:30:54] *** Quits: eugercek (~user@user/eugercek) (Remote host closed the connection)
+[22:40:00] <gilberth> I wonder, if given a task taking say 5ms could be sped up by more cores. What would be the overhead for spawning threads? Or rather queue some work to a thread pool.
+[22:49:31] <shka> gilberth: thread overhead on linux is small
+[22:49:53] <gilberth> As in general I believe, we should start to take advantage of having more than one core. Or rather adjust to transistors not getting any faster.
+[22:50:58] <gilberth> shka: I'll give it a try. I would of course have a thread pool so it's about latency due to a semaphore signaled essentially.
+[22:51:09] <shka> launching thread is something like 5 us IIRC
+[22:51:33] <gilberth> That fast? I am surprised.
+[22:51:42] <shka> on linux
+[22:52:10] <shka> but yes, it is actually so fast that queues and thread pools are not even faster
+[22:52:29] <gilberth> Reminds me that I ought to get a Linux machine with a display attached.
+[22:52:30] <shka> but maintaining constant number of threads is important
+[22:53:22] <gilberth> Well, in my case it would be trivial to divide the work by some /n/ I could pick, so that's easy.
+[22:53:48] <gilberth> shka: Thanks! I was not aware that thread spawning is that fast and it is not worth bothering with a pool.
+[22:54:00] <shka> there is a library for async handling of files that works by spawning new thread for each memory page to write 
+[22:54:20] <shka> so scheduler can reorder writes according to HDD sectors
+[22:54:26] <shka> IT IS HILARIOUS
+[22:54:41] <gilberth> To get around that you can't select(2) on files?
+[22:54:47] *** Quits: robin (~robin@user/terpri) (Remote host closed the connection)
+[22:54:59] <shka> i don't remember details
+[22:55:39] <shka> but i am bringing this up just to demonstrate that new threads are so cheap as to be actually used as messages in a queue, essentially
+[22:55:57] <gilberth> Well, I once thought about spawning threads for individual reads and writes, but always ditched the idea on the assumption that thread spawning is expensive.
+[22:56:00] <shka> which is weird, but true use case
+[22:56:22] <White_Flame> thread pools are useful if you have a bunch of them wanting to pin cpu at 100% and don't want thrashing
+[22:56:33] <shka> White_Flame: 1+
+[22:56:42] <shka> https://think-async.com/Asio/ not sure if this was this one or not
+[22:56:43] -ixelp- Asio C++ Library
+[22:57:32] <shka> I was really surprised once i found out how this thing works
+[22:58:21] <shka> and i did that by using strace, I think that I wanted to figure out where is the config file IIRC
+[22:58:38] <shka> and then I saw literally thousands of threads being spawned
+[22:59:04] <gilberth> Heh, who needs documentation when you have strace?
+[22:59:35] <shka> you would do the same, don't lie :P
+[22:59:54] <gilberth> Sure I would, and I often did.
+[23:00:05] <shka> well, right
+[23:00:24] <gilberth> I mean the strace can't lie to you, can it?
+[23:00:24] <shka> so that's how i discovered that threads are really damn cheap
+[23:00:27] <shka> on linux at least
+[23:00:36] <shka> gilberth: EXACTLY!
+[23:00:59] <shka> thanks for attending to my TED talk ;-)
+[23:01:55] <gilberth> Thanks, shka. I was not aware and am still surprised. At least I learned something today.
+[23:02:22] <shka> gilberth: you may still want to check how it is on your OSX
+[23:02:37] <shka> because linux kernel is optimized for certain types of loads
+[23:02:55] <gilberth> Sure. What I know is that Mach semaphores are blazing fast.
+[23:03:00] <shka> and it is ridiculous at times
+[23:20:11] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Quit: ec)
+[23:24:24] *** Joins: ec (~ec@gateway/tor-sasl/ec)
+[23:27:49] *** Joins: eugercek (~user@user/eugercek)
+[23:32:15] *** Quits: eugercek (~user@user/eugercek) (Read error: Connection reset by peer)
+[23:35:27] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-98.dsl.bell.ca)

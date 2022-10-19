@@ -1,0 +1,410 @@
+[00:08:30] <enebo[m]> ok jruby-core makes an empty file but lib/jruby.jar is supposedly the result of shading base...but it appears to have no shading.   jruby-complete I think is loading the empty jruby-core in shaded and not lib/jruby.jar
+[00:10:44] <enebo[m]> ok yeah jruby-core with no source is being copied to .m2/repository
+[00:11:09] <headius> byteit101: ah yeah good call
+[00:11:24] <headius> enebo: ouch
+[00:11:38] <enebo[m]> yeah so I typed a lot so I am not sure if you read back but I can catch you up if not
+[00:12:37] <enebo[m]> -Pcomplete (and more extended phase for travis test) has not worked in over a year (logs get lost at that point)
+[00:12:59] <enebo[m]> but it does not work because it is using jruby-core and the installed target has no source in it
+[00:13:34] <enebo[m]> weirdly when we do a release build we will get a jruby-complete which has classes in it but none of them are shaded
+[00:14:01] <enebo[m]> when core builds it does make lib/jruby.jar which has what we need but none of those are shaded
+[00:14:19] <enebo[m]> headius: Should lib/jruby.jar be shaded or not?
+[00:14:50] <enebo[m]> I assumed it would still be jruby-core version of jar but I don't remember if we switched to jruby-base
+[00:15:25] <enebo[m]> s/has no source/has no jruby classes/
+[00:15:45] <headius> lib/jruby.jar should be shaded for now
+[00:15:53] <headius> when we drop Java 8 it won't be and we will use module path logic
+[00:16:15] <headius> I will have to catch up a bit later, family duties for a while
+[00:17:20] <enebo[m]> ok. I am making some progress in seeing threads to pull on :)
+[00:18:18] <enebo[m]> and since I just wrote it I see that asm is actually shaded so ignore that claim that we were not shading
+[00:19:37] <headius> Ok good
+[00:20:47] <headius> FWIW none of this surprises me much... I knew the new artifact would probably need some tweaking. Well get it figured out this week
+[00:20:54] <enebo[m]> I feel like if we can just make sure that jruby-core is written to proper target location things may just work
+[00:21:28] <enebo[m]> we definitely need it to be there so we don't push an empty artifact up
+[01:07:12] <enebo[m]> I am very bold.  I think I fixed the build and just pushed it to master
+[01:08:28] <enebo[m]> I removed shading directly to lib/jruby.jar so it writes to proper target location then I use another plugin to copy that to lib/jruby.jar
+[01:11:31] <headius> That does seem better
+[01:12:48] <enebo[m]> https://app.travis-ci.com/github/jruby/jruby/jobs/537415976
+[01:13:23] <enebo[m]> hmm
+[01:18:50] <enebo[m]> so jruby-core is set to being <10M?  it is current 15M so this job has been looking at the empty jar I guess
+[01:19:16] <enebo[m]> jruby-complete is 2M larger than before but has not actually built in over a year
+[01:19:37] <enebo[m]> I think I will look at sizes of 9.2
+[01:19:37] <headius> It has grown but did not expect 5mb
+[01:19:50] <enebo[m]> yeah so that is what I am mainly concerned about
+[01:21:18] <enebo[m]> 26808 -rw-------. 1 enebo enebo 27447709 Jun 15 09:02 ../../releases/9.2.19.0/jruby-complete-9.2.19.0.jar
+[01:21:28] <enebo[m]> Weirdly this is actually larger than our check on master
+[01:21:37] <headius> Wow
+[01:21:43] <headius> Oh complete
+[01:21:55] <headius> Bug but yeah
+[01:21:55] <headius> Big
+[01:22:29] <headius> We have had problems with too much getting in these jars sometimes
+[01:22:43] <headius> Usually it is obvious if you unpack and look through it
+[01:23:00] <enebo[m]> yay...that failing job using jruby-complete is now running tests
+[01:23:20] <enebo[m]> It has not run for over a year so hopefully it runs to completion
+[01:26:12] <enebo[m]> jruby-core-9.2.19.0.jar                           2021-06-15 13:48  10319585   
+[01:26:26] <enebo[m]> ok so perhaps there is something unwanted in that
+[01:26:35] <enebo[m]> but it was there before this last commit as well
+[01:30:19] <headius> Yeah that is quite a big difference
+[01:31:00] <enebo[m]> So 2 other errors one is it cannot find JavaFields as a fixture for a test but that is in the job which has not in a long time
+[01:31:22] <enebo[m]> The other error is that stupid ScriptingContainerTest on J9
+[01:36:08] <enebo[m]> system ~/work/jruby master 1195% ls -l lib/jruby.jar
+[01:36:08] <enebo[m]> 15284 -rw-r--r--. 1 enebo enebo 15650418 Sep 14 15:45 lib/jruby.jar
+[01:36:08] <enebo[m]> system ~/work/jruby master 1196%  -rw-r--r--   enebo/enebo   16196214 jruby-9.2.19.0/lib/jruby.jar
+[01:37:02] <enebo[m]> headius: ok now I am confused.  jruby-bin for 9.2.19.0 is virtually the same size as 9.3.0.0 but jruby-core on sonatype is quite a bit smaller
+[01:46:47] <enebo[m]> ok this is amusing or not depending on your sense of humor
+[01:47:00] <enebo[m]> 9.2.19.0 and 9.3 have the same problem
+[01:47:20] <enebo[m]> Although my changes made it more obvious for 9.3
+[01:47:53] <enebo[m]> in addition to having the shaded versions of classes in our bin/dist we also still have all the original classes in the uber jar
+[01:48:27] <enebo[m]> however 9.3 maven works now that will end up being contained in jruby-core now
+[02:16:57] <enebo[m]> lopex: is tables/*.bin used at runtime to extra jcodings data?
+[02:17:32] <lopex[m]> enebo: yes
+[02:17:55] <enebo[m]> should it end up jruby-core?
+[02:18:11] <lopex[m]> in a jar ? yes
+[02:18:45] <enebo[m]> ok.  I don't think it is in any of our jruby-core releases
+[02:18:54] <lopex[m]> hmm
+[02:19:31] <enebo[m]> I am questioning whether jruby-core even works atm
+[02:19:57] <enebo[m]> It is also missing other non-relocated packages
+[02:19:58] <lopex[m]> it is in lataest jruby.jar release
+[02:20:21] <enebo[m]> yeah but you mean within jruby-bin.tar.gz
+[02:20:40] <enebo[m]> the lib/jruby.jar does contain them within the bin dist
+[02:20:48] <enebo[m]> but the jruby-core artifact does not have them
+[02:20:58] <enebo[m]> (and not just tables...it is missing other stuff too)
+[02:21:12] <lopex[m]> ok
+[02:21:40] <enebo[m]> I was just fixing a build issue and realized once I "fixed" things jruby-core was ~5MB larger
+[02:30:47] <enebo[m]> java -cp jruby-core-9.2.19.0.jar org.jruby.Main -e 1
+[02:30:47] <enebo[m]> Exception in thread "main" java.lang.NoClassDefFoundError: com/headius/options/Option
+[02:32:08] <headius> Can you push what you have to a branch and I might look at it more tonight?
+[02:32:24] <enebo[m]> It is all pushed
+[02:32:35] <headius> Ok
+[02:32:38] <enebo[m]> but I believe the issue is that jruby-core has never shipped shaded libs in it to maven
+[02:32:47] <enebo[m]> Or if it has it has not been for a while
+[02:33:13] <headius> So it may not have been quite right to begin with
+[02:33:21] <enebo[m]> master does now but that is why it is so much bigger
+[02:33:34] <enebo[m]> things like tables from jcodings makes some heft
+[02:34:02] <enebo[m]> So if you look there were 3 problems:
+[02:34:20] <enebo[m]> 1. checkVersion probably is using too low of values for sanity checks 
+[02:35:06] <enebo[m]> 2. on J9 scriptingcontainertest.testGetEnvironment threw a NPE trying to call instance.terminate()????
+[02:35:16] <headius> Weird
+[02:35:45] <enebo[m]> 3. Java::JavaLang::ClassNotFoundException: java_integration.fixtures.JavaFields
+[02:36:10] <enebo[m]> This last one is weird because the .java file is there but this was running complete tests which have not run in over a year
+[02:36:46] <enebo[m]> I find both 2 and 3 pretty weird but for all I know we have something flakey J9 is hitting like a shared container
+[02:37:38] <enebo[m]> tbh I was a little down about debugging this but it ended up being a bit more tractable than I thought
+[02:52:54] <enebo[m]> Ok #2 passed on next run so that is pretty weird
+[02:54:28] <enebo[m]> #3 seems to be that we are not compiling the java_integration fixtures any more as part of this run
+[02:54:38] <enebo[m]> going to hang it for the night
+[02:59:45] <headius> ok I'll see what I can do
+[03:08:03] <headius> confirmed that jruby-core is being compressed at least, so that isn't it
+[03:10:45] <headius> some of this could be the additional platforms in jffi, we have added several
+[03:10:54] <headius> but I thought 9.2 was mostly up to date on the same jffi
+[03:12:52] <headius> going to diff against 9.2's core jar
+[03:23:57] <headius> aha I think I have it
+[03:24:10] <headius> the check-versions script is expecting to check an unshaded jar file
+[03:24:28] <headius> the actual shaded jar has gotten smaller
+[03:24:46] * headius sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/8955782463b5d9094b65f7db8011e5b1db18a21a
+[03:28:43] <headius> the complete jar is a bit bigger but that may be due to more stdlib being in gems... I will investigate though
+[03:31:39] <headius> [ERROR] /Users/headius/projects/jruby-9.2/core/src/main/java/org/jruby/RubyEnumerable.java:171: error: invalid use of a restricted identifier 'yield'
+[03:31:39] <headius> [ERROR]                     return yield(context, packEnumValues(context, args));
+[03:31:39] <headius> [ERROR]                            ^
+[03:31:47] <headius> gonna have to look into that before we can build and deploy on 17
+[03:42:57] <headius> the complete jar appears to be including anything installed in the working copy, so for me it pulls in things like bin/benchmark_driver, bin/httpclient and so on
+[03:43:11] <headius> that needs to be checked against a clean working copy
+[03:44:28] <headius> only one new gem, for the new io-console jruby support, but that shouldn't be too much bigger
+[03:45:26] <headius> oh, and IRB... but I don't see the gem file being included in the complete jar
+[03:46:31] <headius> some of these are default gems but there are several new ones in 9.2 which would increase the size of complete jar
+[03:46:42] <headius> bundler is now shipped
+[03:47:07] <headius> csv is newer with more files
+[03:47:27] <headius> fileutils is a gem now
+[03:48:35] <headius> the 9.2 complete jar does not appear to shade the x86_64 and aarch64 assembler libraries from JNR
+[03:50:12] <headius> that's about it
+[03:50:30] <headius> only stuff that didn't seem to belong was from bin/ so the script is a little too eager there
+[03:50:42] <headius> that's probably because we kept missing files and modified it to include everything
+[03:51:52] <headius> here'
+[03:52:00] <headius> here's the diffs for core and complete from 9.2 to 9.3: https://gist.github.com/headius/2e43ef44ab3ed49d53b511e5587650b6
+[03:52:17] <headius> nothing seems particularly odd in 9.3 complete jar so I think bumping it to 30MB is probably appropriate
+[03:52:49] <headius> that makes sense because the jruby-jars gem size is also 30MB and should include basically the same things
+[03:59:17] <enebo[m]> ok cool.  yeah we always build on a shallow clone so how we include should be fine
+[03:59:41] <headius> yeah seems like the sizes are no worry... I am pushing a bump for the check_versions script
+[04:00:04] <headius> the complete jar may perform better in JNR because it actually includes the assembler for jni stubs now
+[04:00:12] <enebo[m]> headius: seriously makes me wonder if anyone uses jruby-core as an artifact too
+[04:00:19] <headius> the fact that the core jar shrunk is AMAZING to me though
+[04:00:28] <headius> I don't know if that has ever happened
+[04:00:46] <headius> we yanked out nailgun and the parser and ripper parser both lost a ton of inner classes
+[04:00:56] <headius> and many other inner classes replaced by lambdas
+[04:01:09] <enebo[m]> yeah 
+[04:01:38] <enebo[m]> lets make the entire codebase into lambdas and we will only load one class
+[04:01:38] <headius> sweet
+[04:01:46] <headius> one big file with lambdas
+[04:02:09] <headius> so #2 could just be openj9 glitchiness.. I'm not going to dwell on that right now
+[04:02:16] <headius> if it passed after that it isn't a priority
+[04:02:21] <enebo[m]> yeah it happened once and then didn't
+[04:02:45] <enebo[m]> tests for complete lost whatever fixture compilation
+[04:02:50] <headius> JI tests passed in the last run, where did you see a problem?
+[04:03:01] <headius> the only thing that failed unexpectedly in the latest travis run was check_versions
+[04:03:07] <enebo[m]> I rm'd my compiled fixtured and I see the same error
+[04:03:30] <enebo[m]> in the expected failure job running -Pcomplete_*
+[04:03:59] <headius> oh but that has been failing for some time... if that is the only problem now it may be fixable
+[04:04:03] <enebo[m]> once it makes it past that section there may be other errors but so long as we have them running we may as well make at least that section pass
+[04:04:11] <headius> it was unclear why it was failing before but I didn't think it was something that easy
+[04:04:20] <enebo[m]> It seems to be the only CI test we have to see if complete is working
+[04:04:32] <enebo[m]> I always check before release manually but catching it is nice
+[04:04:32] <headius> it is some maven thingy that mkristian created to test complete and it stopped working at some point
+[04:04:51] <headius> I would bet it just doesn't compile those sources because they are compiled in the rake target
+[04:04:56] <enebo[m]> it was because jruby-core as an artifact was a 4k file with nothing in it
+[04:05:00] <headius> that could be fixed by having them compiled by maven or something
+[04:05:07] <enebo[m]> so jruby-complete put that in and have no classes in it
+[04:05:12] <headius> right ok
+[04:05:23] <headius> so that is not new but if we want to get it working I can spend some time on it
+[04:05:35] <enebo[m]> So all we need to fix there is getting the test java fixtures compiling
+[04:05:46] <headius> I am pretty sure those files are only getting compiled by the rake target because they're in a weird place
+[04:06:08] <headius> spec/ji/fixtures is not part of any maven module's test sources
+[04:06:37] <enebo[m]> maybe we can just comment those out and open an issue too
+[04:07:10] <enebo[m]> I would like to see once we make it past those first section whether the other crud in there is missing stuff.  Once we pass the maven tests I think it does some app server things 
+[04:08:19] <enebo[m]> Maven really makes some class of activities painful
+[04:09:57] <headius> yeah we could skip the JI tests for the extended complete thing for now
+[05:30:03] <headius> master is green other than that exclude after fixing the size checks
+[06:34:40] *** Quits: _whitelogger (~whitelogg@uruz.whitequark.org) (Remote host closed the connection)
+[06:34:50] *** Joins: _whitelogger (~whitelogg@uruz.whitequark.org)
+[17:35:18] <headius> good morning!
+[17:58:27] <headius> enebo: I modified that failing test to use RubyBoolean.hashCode for its reflection stuff, since that will always be available
+[17:58:32] <headius> and always open to us
+[18:19:18] <headius> enebo: it passed... I
+[18:19:25] <headius> I'm going to move it out of expected fail
+[18:19:46] <enebo[m]> ok well that's neat
+[18:20:02] <enebo[m]> the expected fail was definitely why we never noticed complete was broken
+[18:22:37] <headius> I am wondering if it started failing in the first place because the complete build was broken
+[18:23:13] <headius> in any case we should have it up again now
+[18:49:23] <enebo[m]> it has failed immediately from not finding org.jruby.Main for over a year
+[18:51:59] <headius> enebo: yeah so there you go
+[18:52:14] <headius> it broke when jruby-base was created and we weren't sure why and mkristian never jumped in to fix it
+[18:52:35] <headius> we need to be able to take this all over so I think after 9.3 forks we should start guttin git
+[18:52:41] <headius> guttin' git
+[18:52:53] <enebo[m]> this also ended up uncovering that jruby-core never was a usable artifact although I suspect that has been true for years
+[18:53:09] <enebo[m]> truth is all embedders just use jruby-complete
+[18:54:15] <headius> jruby-core in 9.2 seems correct 
+[18:54:29] <enebo[m]> That was what I pasted last night
+[18:54:36] <enebo[m]> It has no shaded stuff in it at all
+[18:55:00] <enebo[m]> That is why it is 5M smaller than the jruby.jar in bin dist
+[18:57:07] <headius> oh I see
+[18:57:24] <headius> that's why the test expected it to be 10M but the lib/jruby.jar was also 15-16M
+[18:57:45] <headius> I compared 9.2 lib/jruby.jar to your fixed jruby-core and they are pretty much the same
+[18:58:03] <headius> but jnr-ffi is in 9.2 jruby-core for whatever reason
+[18:58:54] <headius> so should we fix 9.2?
+[19:05:57] <enebo[m]> yeah we should definitely add the missing stuff
+[19:06:28] <enebo[m]> I really think if people were using this as an artifact they would have reported this
+[19:07:12] <enebo[m]> although we do not have a jruby-base for 9.2 so if they did work around this issue or really desire jruby-base which is not too far off of what jruby-core was then that is the only risk in fixing core
+[19:07:29] <enebo[m]> Actually maybe we should just leave it on 9.2.  If someone reports it we can fix it
+[19:20:46] <headius> yeah I agree
+[19:20:52] <headius> leave it
+[19:21:08] <headius> nobody has ever noticed because if they're using us from Java they just go straight to complete
+[19:21:27] <enebo[m]> oh noes
+[19:21:28] <headius> people did report wanting base though
+[19:21:41] <enebo[m]> [ERROR] Failed to execute goal org.apache.maven.plugins:maven-dependency-plugin:2.8:copy (copy javadocs and sources from jruby-core) on project jruby-complete: Unable to find artifact.: Could not find artifact org.jruby:jruby-core:jar:sources:9.3.0.0-SNAPSHOT in sonatype (https://oss.sonatype.org/content/repositories/snapshots/)
+[19:21:49] <headius> hardy har
+[19:22:07] <enebo[m]> So my better fix did not actually fix this
+[19:23:17] <enebo[m]> My original solution was to make a source directory tree and I put A.java there but I could just put a META-INF/something
+[19:24:18] <enebo[m]> (copy javadocs and sources from jruby-core) @ jruby-complete ---
+[19:24:56] <enebo[m]> so it skips source perhaps it just needs to skip docs
+[19:25:04] <enebo[m]> theer are no docs in jruby-complete either
+[19:29:30] <enebo[m]> adding some of our LICENSING files into a src tree for shaded
+[19:29:47] <enebo[m]> so it will generate an empty source file which has semi-relevant files
+[19:32:34] <headius> I will look into the sonatype rules
+[19:33:19] <enebo[m]> yeah I am not sure if this is their's or just some rando maven thing
+[19:33:22] <headius> If, for some reason (for example, license issue or it's a Scala project), you can not provide -sources.jar or -javadoc.jar , please make fake -sources.jar or -javadoc.jar with simple README inside to pass the checking.
+[19:33:28] <headius> Scala? 🤔
+[19:33:43] <enebo[m]> hahah sbt perhaps does something different
+[19:33:57] <headius> pretty weird statement
+[19:34:11] <enebo[m]> scala is not code but merely type definitions
+[19:34:15] <headius> so they have this as a nagging requirement but it's not particularly strict
+[19:34:39] <enebo[m]> ok well what I am doing should work for source at least
+[19:35:12] <enebo[m]> I am trying it now...I may hit a snag on docs but I thought I ran through with this fix before and it completed
+[19:36:39] <enebo[m]> [ERROR] Failed to execute goal org.apache.maven.plugins:maven-dependency-plugin:2.8:copy (copy javadocs and sources from jruby-core) on project jruby-complete: Unable to find artifact.: Could not find artifact org.jruby:jruby-core:jar:javadoc:9.3.0.0-SNAPSHOT in sonatype (https://oss.sonatype.org/content/repositories/snapshots/)
+[19:36:40] <enebo[m]> LOL
+[19:37:39] <enebo[m]> [INFO] --- maven-javadoc-plugin:2.7:jar (attach-javadocs) @ jruby-core ---
+[19:37:39] <enebo[m]> [INFO] 
+[19:37:44] <enebo[m]> not even a message
+[19:55:43] <headius> sorry got distracted for a bit
+[19:56:05] <headius> so past source but still stuck on javadocs
+[19:56:14] <enebo[m]> ok first 9.3 bug! https://github.com/jruby/jruby/issues/6832
+[19:56:26] <enebo[m]> I am doing something to work around this
+[19:56:29] <enebo[m]> Or trying
+[19:56:44] <enebo[m]> shaded/src/main/java/Nothing.java
+[19:57:09] <enebo[m]> with a comment saying this is just for sonatype to generate a javadocs jar
+[20:00:55] <headius> woot
+[20:01:14] <headius> don't put it in default package
+[20:01:28] <headius> Java module system rejects modules with classes in default package
+[20:02:04] <headius> this person opened three issues today
+[20:02:49] <headius> I have no idea why this encoding one should pass
+[20:02:59] <headius> it is utf-8 content forced into windows-31j and then expected to parse
+[20:03:05] <enebo[m]> this is not used as source
+[20:03:24] <enebo[m]> I mean it will end up in jruby-complete-source.jar and the javadocs but nothing else
+[20:04:07] <headius> ok, as long as it does not end up in the published jar
+[20:04:09] <enebo[m]> The code he uses is ascii strings which are win32j butthey are unicode escapes
+[20:04:59] <enebo[m]> Maybe MRI is a little different codewise there
+[20:05:05] <headius> pretty weird
+[20:05:29] <enebo[m]> headius: not in the jar people use for reals just the javadoc and sources jars
+[20:06:11] <headius> I will look into these bugs
+[20:06:37] <enebo[m]>     else if (codepoint >= 0x80) {
+[20:06:37] <enebo[m]> 	rb_encoding *utf8 = rb_utf8_encoding();
+[20:06:37] <enebo[m]> 	if (*encp && utf8 != *encp) {
+[20:07:01] <headius> enebo: problem with your jruby-core copying
+[20:07:15] * headius sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/ee10011d882c314e88a1b3e0b2488d88fd4c07ce
+[20:07:21] <headius> lib/jruby.jar is supposed to be org.jruby.dist module
+[20:07:51] <headius> if we want it to be exactly the same as jruby-core we can do that but we have org.jruby.dist in the bash and native launchers
+[20:08:16] <headius> or we need to repackage from core to lib
+[20:08:18] <headius> or we rename the core module to dist
+[20:08:51] <enebo[m]> I am a bit confused now...I just changed outputDir from lib/jruby.jar in shaded to be default and then copy from there.
+[20:09:08] <enebo[m]> I don't see how the contents itself of lib/jruby.jar would be any different than before
+[20:11:15] <headius> right, but the way it was building before it got shaded into lib using the org.jruby.dist module in manifest
+[20:11:27] <headius> that might be what broke jruby-core shading
+[20:11:56] <headius> I think we could use a second jar plugin execution to rejar with the modified manifest
+[20:12:28] <enebo[m]> but wouldn't I just have put the wrong module into jruby-core and lib/jruby would still be the same as before?
+[20:13:04] <headius> hmm
+[20:13:18] <headius> I do see it in the shade config
+[20:13:25] <enebo[m]> a78b52ee1310ac655927689de966fad2e7c5808b
+[20:13:38] <headius> oh there's two shades?
+[20:13:46] <enebo[m]> I admit this would still be wrong but I am just trying to understand this
+[20:13:48] <enebo[m]> oh
+[20:13:57] <headius> there's a second one configured for other profiles
+[20:14:00] <headius> that uses core
+[20:14:03] <enebo[m]> I was actually confused about that
+[20:14:18] <headius> the way we intended to publish this was that the published jruby-core jar would be org.jruby.core and the one in lib would be org.jruby.dist
+[20:14:40] <headius> but I think at that time we thought or knew that the core jar was not quite right for lib/jruby.jar as is
+[20:14:48] <headius> that may have been because shading broke
+[20:15:07] <headius> they could possibly be identical now but there's no way for us to detect which one lib/jruby.jar is
+[20:15:37] <headius> bleh maybe we should stop publishing core
+[20:15:46] <headius> that would eliminate a bunch of problems here
+[20:15:53] <enebo[m]> ok so my change made the shading for core be to write to target but then copy out and for dist perhaps we need to explicitly specify lib/jruby.jar?
+[20:16:03] <headius> so you did not break a normal build
+[20:16:12] <headius> but I last ran this with -Pjruby_complete_jar_extended
+[20:16:18] <headius> which uses the other shade
+[20:16:34] <headius> release is also in here though so that would be the wrong name when you release it
+[20:16:42] <enebo[m]> so this is a toggle?
+[20:16:57] <headius> well when you select one of those profiles wrapping the second shade it changes the config
+[20:17:01] <headius> and that config uses org.jruby.core
+[20:17:16] <headius> so when you go to release with -Prelease it would have used the wrong one
+[20:17:26] <headius> hmm
+[20:17:38] <headius> I am leaning toward just making both of them org.jruby.dist
+[20:17:46] <headius> we know the old core didn't work even if it had a different module name
+[20:17:58] <headius> and base is available now
+[20:18:28] <headius> so we will publish the same identical jar for jruby-core as we have in lib/jruby.jar and they will both be module org.jruby.dist
+[20:18:46] <headius> that would be simplest
+[20:19:00] <headius> most module users will want to use base anyway since you're not supposed to shade in modules
+[20:19:05] <headius> and we will use that eventually
+[20:19:18] <enebo[m]> seems ok to me
+[20:19:43] <enebo[m]> The fake source fixed the issue in deployment (well it will run and push to sonatype
+[20:19:44] <enebo[m]> I will see if it can close now
+[20:19:51] <headius> the beginning of the end for jruby-core
+[20:20:09] <headius> shading is a dying hack anyway
+[20:22:48] <headius> that does fix this
+[20:23:28] <enebo[m]> I learned something interesting about sonatype staging
+[20:23:57] <enebo[m]> if you release 9.2.20.0 and 9.3.0.0 during the same session it puts that content into the same session/folders
+[20:24:31] <headius> ah yeah
+[20:24:35] <headius> so you would need to wipe it out before releasing
+[20:24:42] <enebo[m]> I guess so that you can release those artifacts together atomicly?
+[20:24:44] <headius> yeah
+[20:24:52] <enebo[m]> That is pretty surprising to me
+[20:25:02] <headius> that's how I do jnr releases all at once
+[20:25:06] <headius> they are in a single staging repo and the whole thing gets released atomically
+[20:25:19] <headius> it would take a million years to release them all if I didn't have that
+[20:25:34] <enebo[m]> It makes sense now that I noticed it but I guess a lesson is to always remember to view contents before you close
+[20:25:35] <enebo[m]> well release
+[20:25:42] <enebo[m]> close you got another chance
+[20:26:19] <headius> yeah I have gotten in that habit with jnr because once I had mismatched versions and one of the artifacts went into a different repo
+[20:26:26] <headius> which clued me in that I forgot to update a version
+[20:26:40] <headius> if I do it right they should all be together
+[20:26:44] <headius> I pushed that change
+[20:26:59] <enebo[m]> but I have two different versions of the same thing in the same repo
+[20:27:06] <headius> in the future jruby-base as a module will go under lib/modules and the launchers can detect that
+[20:27:12] <headius> we just can't detect which module lib/jruby.jar is without opening it
+[20:28:03] <headius> I don't want to say modules were a mistake but after all that work they still seem pretty half baked
+[20:28:49] <enebo[m]> I keep thinking their main benefit will be knowing about total usage in a way to do better runtime analysis but I have not seen anything about them actually doing that.
+[20:29:36] <enebo[m]> Coupling that with sealed classes to restrict it even more
+[20:38:07] <headius> varargs bug seems to only be primitives
+[20:46:35] <enebo[m]> ok it closed so sonatype is happy
+[20:49:04] <headius> json warnings are due to new openstruct adding aliases for all of Object's methods, which means it tries to alias stuff like `instance_eval` to `instance_eval!` and we warn about that
+[20:49:27] <headius> I can work around it by making these goofy names be forced frame but also filed a bug for them to revert this behavior: https://github.com/ruby/ostruct/issues/30
+[20:53:43] *** Joins: lopex (uid4272@id-4272.lymington.irccloud.com)
+[21:03:13] <headius> enebo: we can punt on this by rolling back to 0.1.0 which is what 2.6.8 ships
+[21:03:24] <headius> ostruct 0.1.0
+[21:03:31] <headius> I don't want to hack around it without making a stink
+[21:08:27] <headius> hmm do I mark this fixed, or just revert ostruct and punt the issue to 9.3.1
+[21:08:46] <headius> the warnings are still out there if you upgrade ostruct
+[21:11:54] <headius> that one is done
+[21:13:07] <enebo[m]> lunch...doing some testing and I glanced at the window-31j issue. MRI 2.6.8 also passes this. It may be a bit more involved to understand what is happening
+[21:13:39] <headius> 9.2.19 working as well means something's regressed here
+[21:13:45] <headius> so I think we need to fix it
+[21:13:59] <headius> I will leave that to you for now and look into the varargs bug
+[21:15:57] <headius> the varargs issue also works in 19
+[21:21:12] <headius> ahh this was due to an optimization byteit101 did for populating a primitive arg array I think
+[21:22:04] <byteit101[m]> I didn't optimize primitive arrays, just object arrays, IIRC
+[21:22:19] <headius> yeah it is just broken
+[21:22:31] <headius> if (varArrayType.isPrimitive()) {
+[21:22:41] <headius> varArrayType for a primitive int array is [I
+[21:22:45] <headius> it should be component type
+[21:22:52] <headius> I missed it too
+[21:23:25] <headius> apparently we have no tests for calling primitive varargs 🤪
+[21:23:54] <headius> honestly how does that get this far without being caught
+[21:24:07] <byteit101[m]> I remember I didn't want to figure out what to test for the primitive stuff, so just stuck that if there. Oops :-)
+[21:24:19] <headius> must not be many primitive varargs arrays out there
+[21:24:51] <headius> not sure I ever would have caught that just reading the code
+[21:25:35] <headius> trivial fix anyway and stepping found it right away
+[21:25:41] <byteit101[m]> So I correct my earlier statement: I didn't think I optimized primitive arrays
+[21:25:42] <headius> you didn't
+[21:25:51] <headius> you shortcutted object arrays since they don't have to use reflection
+[21:26:08] <headius> but because of this primitive arrays also did it
+[21:26:39] <headius> optimizing primitive arrays would require calling out to something that could cast to e.g. int[] and set directly (which might be worth it, except apparently this is really uncommon in varargs!)
+[21:27:40] <headius> zero hits for any primitive... in JI specs
+[21:27:56] <headius> let's call this a good thing 😀
+[22:05:29] <headius> varargs fix and tests: https://github.com/jruby/jruby/pull/6834
+[22:50:16] <enebo[m]> yuck on the string problem
+[22:50:52] <enebo[m]> JRuby always worked from the premise we make an encoding for a bytelist and add data as we build up the string
+[22:51:23] <enebo[m]> MRI passes in the encoding for the lex and another enc variable for whatever the string will be
+[22:51:30] <enebo[m]> It starts out as null
+[22:51:50] <enebo[m]> So when it enters the unicode escape processing it still has no encoding at all
+[22:52:05] <enebo[m]> but it sees it is processing unicode and sets it to utf-8
+[22:52:24] <enebo[m]> in the case it does not see a condition like that it will stay null
+[22:52:48] <enebo[m]> at the end of the method it will say "what no encoding yet...let's just use the other encoding we passed in"
+[22:53:55] <enebo[m]> So the problem I slowly backed into was trying to assume a default encoding up front but that means we end up losing this state to realize we have not figured out the strings encoding yet
+[22:54:14] <headius> so is it not supposed to be utf-8 when first parsed?
+[22:54:29] <enebo[m]> This worked for many years too but in fixing the last known parsing errors I finally realize I am at a dead end
+[22:57:24] <headius> I don't think I'm following... if the bytes are valid Windows-31J why does it fail?
+[22:57:36] <headius> or are we doing something with the bytes that makes them unicode only?
+[22:58:08] <enebo[m]> It reads a file which has unicode text escapes and quotes
+[22:58:16] <enebo[m]> that is all ascii
+[22:58:31] <enebo[m]> it then evals that ascii string which makes a utf-8 string
+[22:59:08] <enebo[m]> but because we set encoding to windows-31J it assumes the string will starts as a windows-31J string and not a null one until we determine what it should be
+[23:00:54] <enebo[m]> So I will need to change strterm to mimic this which means pushing through an extra nullable encoding field OR some state saying we have not figured that out yet
+[23:01:13] <enebo[m]> In both cases they end up as out params
+[23:01:24] <enebo[m]> which I suspect is why I did it by leaning on bytelist 
+[23:10:48] <basshelal[m]> headius 
+[23:10:48] <basshelal[m]> Sorry if you're busy but see this in case you haven't
+[23:10:48] <basshelal[m]> https://github.com/jnr/jnr-ffi/pull/273
+[23:11:28] <basshelal[m]> The guys at Jenkins use JNR-FFI, that's freaking awesome and freaking terrifying 😂🙃
+[23:12:53] <headius> basshelal: thanks, had not seen that
+[23:13:18] <headius> doesn't sound critical but I know maven projects get cranky if you have differing versions
+[23:17:00] <headius> enebo: ohhhh
+[23:18:04] <headius> if it's all ascii despite the escapes why is it not being encoded as US-ASCII at that point?
+[23:18:44] <headius> I'm still not clear why it isn't able to be forced to W31J if the bytes are valid as W31J
+[23:19:00] <enebo[m]> well it is likely whatever is the default external encoding at that point
+[23:19:26] <enebo[m]> the reason is when I make strings in a window31J file I just initially set the encoding to that
+[23:19:27] <headius> ohhhh
+[23:19:37] <enebo[m]> Which is normally what it is
+[23:19:40] <headius> so it gets marked as W31J but it has unicode escapes in it
+[23:19:50] <enebo[m]> but in the case of an explicit unicode escape it must be utf-8 then
+[23:19:54] <headius> and we don't know how to handle unicode escapes in W31J string
+[23:20:30] <enebo[m]> well at the point of the error we don't know that we did not have a reason for it to be windows-31j or whether it is fresh
+[23:20:59] <enebo[m]> If there were already valid windows-31J we would have set it to that already then run into a rnado unicode escape and in that case we should error
+[23:21:20] <enebo[m]> in this case there was nothing but unicode escapes so it should have not errored and become a utf-8 string
+[23:21:41] <enebo[m]> So the good news is I completely understand why it is broken
+[23:21:51] <enebo[m]> I just dislike the fix I will have to make
+[23:22:18] <headius> oops, I need to revert ostruct tests too
+[23:22:48] <headius> once again I am burned by committing to master
+[23:23:14] <enebo[m]> yeah
+[23:23:32] <enebo[m]> I am getting more into the groove but near release it is much more tempting
+[23:28:59] <headius> yeah
+[23:35:50] <enebo[m]> I do totally know the fix but I have to audit all paths to see which ones may decide to set the encoding
+[23:35:56] <headius> https://github.com/jruby/jruby/pull/6835
+[23:36:00] <headius> should clean up the test failures
+[23:36:02] <enebo[m]> I have found two calls in MRI which ignore the encoding param they pass in
+[23:54:25] <headius> son of a
+[23:54:37] <headius> https://github.com/ruby/ostruct/issues/31
+[23:54:42] <headius> I think it's time I filed a bug on ruby-core about all these mismatched versions
+[23:54:54] <headius> they need to stop committing directly to ruby when these libraries have already been gemified.

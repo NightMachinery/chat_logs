@@ -1,0 +1,194 @@
+[00:15:16] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Quit: Textual IRC Client: www.textualapp.com)
+[00:19:20] <headius> enebo: https://github.com/jruby/jruby/pull/6753
+[00:20:05] <headius> last few comments describe the actual bug here... basically because we will immediately JIT the block but still run it in interp once, we end up with two different values for a `//o` regexp if the block jits on its own
+[00:20:10] <enebo[m]> looks like in #6748.  A raw append caused a regression on inspect for Rubyarray.  It used to rbStrCat which would have promoted an encoding change
+[00:20:50] <headius> I'm not sure how to fix this but it is a very narrow set of conditions to trigger it
+[00:21:56] <enebo[m]> heh
+[00:22:31] <enebo[m]> So DRegex makes two forms startup and JIT and neither will pass anything to each other so they both make the same regexp
+[00:22:47] <enebo[m]> This is not normally an issue with regexps since they are made eagerly during AST creation
+[00:22:48] <headius> right
+[00:23:09] <headius> and it is not an issue for method bodies because if we execute once in interp we will see the regexp and use it in JIT
+[00:23:18] <headius> the problem is that the block executes in interp AFTER we jit
+[00:23:22] <enebo[m]> In 3.0 there are LOTS of all sites are unique issues and this one was one I did not look at
+[00:23:31] <enebo[m]> but this shows up as a test
+[00:23:44] <headius> (this is ignoring a lot of concurrency issues that are up in the air because CRuby has not responded to an issue I filed)
+[00:24:04] <headius> i.e. what should happen if two pieces of code run the same `//o` regexp at the same time
+[00:24:20] <enebo[m]> yeah I mean we can assume this is not deterministic in that case
+[00:24:26] <enebo[m]> how could it be?
+[00:24:27] <headius> this block case is just in a single thread though, just a weird side effect of how we always execute an unjitted block once before transitioning to jit
+[00:25:32] <headius> I suppose we could defer block jit until after the interpreted call returns
+[00:25:41] <headius> that would better reflect when it is actually enabled
+[00:26:07] <enebo[m]> headius: what was in your blah.rb in that comment?
+[00:26:27] <enebo[m]> I see that spec but I am confused why that would execute with threshold=0
+[00:26:34] <enebo[m]> from non-JIT
+[00:27:39] <enebo[m]> I am assuming it involves the snippet from the spec but what was in there exactly
+[00:28:09] <headius> the regexp executes twice in a 2.times loop
+[00:28:38] <enebo[m]> fwiw I somewhat doublt threshold=0 is the only case
+[00:28:39] <headius> with threshold=0 it will jit right away but because of how we transition to jitted block we still run it in interpreter once
+[00:28:46] <headius> pretty sure it is
+[00:29:11] <enebo[m]> if we ran startup 10 times and JIT went on 11th wouldn't we still make a new regexp?
+[00:29:13] <headius> threshold=1 might also be an issue but anything higher would have the `//o` regexp already
+[00:29:26] <headius> no, because of the fix I link there
+[00:29:44] <headius> I modified dregexp compilation to act like a normal static regexp if is is `//o` and already executed once
+[00:30:04] <headius> but in this case jit happens before interp and it does not see that it will be populated
+[00:30:57] <headius> if threshold=1 then we know interp will run at least once before we jit so it will see the already-compiled regexp
+[00:31:10] <headius> if threshold=0 and it is a method body we go straight into JIT
+[00:32:12] <headius> oh and my blah.rb there is just the body of the spec printing out the regexp
+[00:32:12] <enebo[m]> alright this is because JIT makes regexp at/before the time the interp instr makes it so it cannot grab it from the instr
+[00:32:21] <headius> right
+[00:32:34] <headius> and because we will still interp the block at least for the first time, we get two values
+[00:32:46] <enebo[m]> we need a promise added :)
+[00:33:00] <headius> yeah that is basically what we ant
+[00:33:01] <headius> want
+[00:33:11] <headius> a promise we can pass into the jitted code somehow
+[00:33:14] <enebo[m]> but we only need it for this very odd case
+[00:33:25] <headius> but since we can't do that I think deferring jit until after the first interp call returns would work?
+[00:33:46] <enebo[m]> assuming it does
+[00:33:48] <headius> it is a bit weird but we just move the tryJit to a finally rather than pre-call
+[00:33:53] <enebo[m]> but I suppose it may not matter in that case
+[00:34:14] <headius> well returns or raises
+[00:34:18] <enebo[m]> either case it executes
+[00:34:22] <headius> either way we don't trigger jit until we know we have done that first interp
+[00:34:30] <enebo[m]> but perhaps not to the point of hitting the regexp
+[00:34:38] <enebo[m]> which makes this a little weirder
+[00:34:48] <headius> also true
+[00:35:15] <enebo[m]> AtomicCallSite
+[00:35:21] <headius> short of having a global lookup table of `//o` regexp I don't have a better solution
+[00:35:53] <enebo[m]> yeah we could make a hack just for dregexps based on position for //o
+[00:37:02] <enebo[m]> ordering is not an issue though is it?  I would think not.  This is merely that bytecode generation is happening in parallel with execution
+[00:37:25] <enebo[m]> JIT generated block will never naturally get called before interp can hit the same point
+[00:37:29] <enebo[m]> "naturally"
+[00:38:36] <enebo[m]> I say this because interp could run something which never (or takes a long time) to get to first regexp and the JIT version would get called through some other mechanism a second time and then use JIT which would maybe have different captured values or passed values
+[00:39:09] <enebo[m]> but in that case I suppose it goes back to your original unanswered question of determinancy
+[00:39:44] <headius> yeah I am not trying to handle the concurrent execution cases at all here, that is a much more tangled issue
+[00:39:59] <enebo[m]> I don't even think it is a valid issue personally
+[00:40:03] <headius> this case is just unfortunate ordering of jit + interp execute + jit execute
+[00:40:36] <enebo[m]> If you have n threads calling something //o you cannot lock down which one wins without killing the reason you would have that situation
+[00:41:00] <enebo[m]> I think most programmers using //o in that case would get it and then change how they write their code
+[00:41:17] <headius> I guess another area this could be improved is modifying block jit to execute the jitted code right away, but I think we can't do that because the surrounding scope context may not be right?
+[00:41:29] <headius> I don't recall what the problem actually is though
+[00:41:34] <enebo[m]> well it definitely may still be executing interp already
+[00:42:28] <enebo[m]> we will make a JIT version back to a hard scope (e.g. method) but it may never execute that new version and just stay in the old interp'd one (think loop do)
+[00:42:54] <headius> right
+[00:43:04] <headius> in this case it never re-enters the containing scope but it executes fine
+[00:43:19] <enebo[m]> Simplest idea so far is to just make deregexp/o special and have some safe lookup table 
+[00:43:21] <headius> so I was trying to remember when it would NOT be fine to just go straight into a jitted block from an interpreted container scope
+[00:43:41] <headius> I think simplest idea is to move the jit edge to after block interp
+[00:43:51] <headius> that does fix this case
+[00:44:06] <enebo[m]> but then sync compile
+[00:44:20] <headius> https://gist.github.com/headius/7a6627d49bccaa88a1dc08ada9996a2c
+[00:44:23] <headius> ignore concurrency issues
+[00:44:30] <enebo[m]> so we lose some small up front cost but this is very uncommon
+[00:44:30] <headius> not trying to fix those
+[00:44:58] <enebo[m]> does this actually work?
+[00:45:00] <headius> this will still just submit the jit to a background thread normally, but under threshold=0 we do not background jit so this will be ready for the next call in the same thread
+[00:45:05] <headius> yes, it works
+[00:45:19] * headius  < https://libera.ems.host/_matrix/media/r0/download/libera.chat/da71099d7c0b020e3e17d6d679d160b77d8ec474/message.txt >
+[00:45:26] <enebo[m]> I thought we submitted this to compile threads and it then would race until next call
+[00:45:31] <enebo[m]> oh wait never mind
+[00:45:39] <enebo[m]> I see why it would work
+[00:45:49] <headius> I modified background jit to not background when threshold=0
+[00:45:58] <headius> since the intent is clearly to jit immediately
+[00:46:06] <enebo[m]> but I guess all methods would lose the ability to concurrently compile while interp version is still running
+[00:46:33] <enebo[m]> but your fix would not need to even disable I think because the regexp would have a valud in the instr
+[00:46:37] <headius> we do some sync around that, like swapping in the jitted method only once
+[00:46:46] <headius> yeah that is exactly it
+[00:47:04] <headius> just deferring the attempt to jit until interp has run at least once
+[00:47:19] <enebo[m]> yeah ok .. sorry I was not tracking why you said you modified to disable conc JITTing
+[00:47:19] <headius> so we know `//o` will have been encountered if they would be encountered
+[00:47:40] <headius> the real problem was doing jit and THEN still interpreting once before transition
+[00:47:48] <enebo[m]> yeah
+[00:48:45] <enebo[m]> well I guess I am having a hard time seeing what would break from this
+[00:48:57] <headius> yeah it seems pretty benign
+[00:49:17] <enebo[m]> if it only happens =0 and it is also synch then that case definitely has nothing bad happening
+[00:49:19] <headius> it also makes it a lot clearer that we will not actually jit a block until it executes once
+[00:49:37] <enebo[m]> non-zero could mean you may not ever actually JIT
+[00:49:37] <headius> unless the method surrounding it jits first
+[00:49:47] <enebo[m]> but with that said that would be fine
+[00:50:03] <enebo[m]> in that case you would only call the block once
+[00:50:14] <headius> yeah
+[00:51:38] <enebo[m]> JITd things will start a bit later (or never if the scope never stops executing in interp) but we will reduce concurrency considerations to some degree
+[00:52:38] <enebo[m]> with threshold > 0 we will conc compile but we will start later so possibly we may enter a second interp'd call to the same thing because JIT thread(s) have not replaced things yet
+[00:53:03] <headius> at some point maybe we want a concurrency-safe atomic lookup table for these but I raised the issue with CRuby and they have no answer
+[00:53:04] <enebo[m]> (and that can already happen anyways but it does not add in first interp run as part of the time)
+[00:53:43] <headius> concurrent jit could absolutely fail to see a `//o` if the interp doesn't hit it or is still executing during jit
+[00:53:59] <headius> so yeah this helps that case too by deferring jit until the first call has completed
+[00:54:49] <enebo[m]> yeah I think the bonus of not JIT'ing if it never returns is very weird property if you method count.  Not like most methods only execute 25 times and never return on the 25th call :)
+[00:55:07] <headius> yeah I didn't think of that case but it is a possibility
+[00:55:33] <headius> so if none of the calls to the block ever return, jit will never be submitted
+[00:56:12] <headius> clearly I would like this best if we did not have to continue interpreting an unjitted block
+[00:56:19] <headius> I am still not sure what breaks
+[00:56:21] <enebo[m]> I think it might be worth examining warmup for a larger app but I don't think this will have any cost.
+[00:58:07] <enebo[m]> I am sure we could make a case where it does but I am just thinking in general the methods we JIT are just called a lot and are not massive or something like that
+[01:01:40] <headius> I will repush ahorek's jit spec run as part of a series of fixes PR
+[01:04:01] <headius> https://github.com/jruby/jruby/pull/6757
+[01:06:17] <headius> enebo: if you look at my comment in that PR there's another case that we can't fix without a global lookup
+[01:06:58] <headius> specifically, any case that expects a regexp object to produce the same physical object every time
+[01:07:09] <headius> since jit and interp will do their own compile step the first time
+[01:07:49] <enebo[m]> yeah
+[01:08:11] <enebo[m]> although in this case I am surprised
+[01:08:28] <headius> this is not just regexp either.. things like floats and frozen strings may not always be the same identical object either
+[01:08:42] <enebo[m]> Ok I have a different solution for this one
+[01:08:58] <enebo[m]> I believe we really more or less make a regexp during parse to validate it
+[01:09:10] <enebo[m]> for non dregexp we should just eagerly make it
+[01:09:19] <headius> might be able to do that
+[01:09:30] <headius> I remember something about encoding changing at runtime could cause problems though
+[01:09:56] <headius> like if we parsed the script with one encoding and then someone changed the internal encoding it should do something different on first encountering the regexp
+[01:09:58] <headius> but that is wack
+[01:10:21] <enebo[m]> That also would be prone to when the method was called
+[01:10:31] <enebo[m]> internal_encoding that is
+[01:10:31] <headius> yes
+[01:10:52] <enebo[m]> So I don't think we can do much about that and whjo knows maybe MRI will change the same regexp in that case
+[01:11:13] <headius> it might indeed, I don't know
+[01:11:18] <headius> and we might actually handle that right alread
+[01:11:20] <headius> already
+[01:11:29] <headius> I remember debating this with brixen or evanphxat some point
+[01:11:42] <enebo[m]> RubyRegexp.preprocessCheck(runtime, value);
+[01:11:55] <enebo[m]> RubyRegexp.newRegexpParser(runtime, value, (RegexpOptions)options.clone());
+[01:12:05] <enebo[m]> one of these two is damn near just making the regexp
+[01:12:16] <headius> yeah
+[01:12:19] <enebo[m]> to the point where I believe we can just literally make it since we know it is valid
+[01:12:30] <enebo[m]> we have a precedent for this with symbol too
+[01:12:40] <headius> we could also just pre-cache it and use it if it is still valid, otherwise recompiling it
+[01:13:06] <headius> that would cover 99% of cases even if the weird encoding flippers see the weird behavior
+[01:13:12] <enebo[m]> yeah I guess I don't know what the edge case with respect ot encodings
+[01:13:46] <headius> I don't have to fix tainting do I?
+[01:13:50] <enebo[m]> haha
+[01:13:54] <enebo[m]> no
+[01:13:54] <headius> we are basically just going to remove it in 9.4
+[01:14:06] <enebo[m]> yeah I don't think tainting is even in 3 is it?
+[01:14:39] <enebo[m]> yeah I think it was iced in 2.7 (at least as far as being used)
+[01:14:52] <headius> $ rvm ruby-3.0.1 do ruby -e 'x = "foo"; x.taint; p x.tainted?'
+[01:14:52] <headius> false
+[01:14:56] <headius> noop
+[01:15:13] <headius> -e:1: warning: Object#taint is deprecated and will be removed in Ruby 3.2
+[01:15:13] <headius> -e:1: warning: Object#tainted? is deprecated and will be removed in Ruby 3.2
+[01:15:22] <headius> deprecated since 2.7 I think
+[01:15:42] <headius> confirmed
+[01:16:05] <headius> so we will noop in 9.4 like cruby does
+[01:16:34] <headius> I assume you will not object if I just tag off taint specs that fail only with jit threshold=0
+[01:17:05] <headius> it's probably the same issue... string or regexp should remain tainted but we transition and create a new one
+[01:23:14] * headius  < https://libera.ems.host/_matrix/media/r0/download/libera.chat/417d83b188ca21b54a6afe1c76c83e48241aa621/message.txt >
+[01:23:21] <headius> yeah this is not something I can fix right now
+[01:23:48] <headius> that block will always run once in interp and once in jit so it will make two regexp
+[01:23:52] <headius> your fix would work though
+[01:24:17] <headius> actually no it wouldn't because I can't supply the jit code with a regexp object
+[01:24:40] <headius> enebo: don't spin your wheels on that too much... this can't be fixed without a global table of literal regexp
+[01:25:22] <headius> unless you want to set up a global table of literal regexp 😀
+[01:43:22] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[02:24:37] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Ping timeout: 250 seconds)
+[16:11:42] *** Joins: drbobbeaty (~drbob@2601:249:1001:6940:e9ce:4485:b7e7:5af3)
+[21:03:59] <headius> ick binding eval
+[21:23:40] <headius> hmmm peculiar
+[21:24:20] * headius  < https://libera.ems.host/_matrix/media/r0/download/libera.chat/066a6b2aa75313589366aace546246389c276803/message.txt >
+[21:24:43] <headius> works interpreted (lines match), works AOT, but jit threshold=0 the eval produces 5
+[21:25:17] <headius> bytecode for the method looks ok and the script body should be the same as interp
+[21:33:53] <headius> to the debugger we go
+[23:19:44] <headius> aha
+[23:20:09] <headius> it's because we do not push backtrace information for jitted methods
+[23:20:37] <headius> caller etc work because they use the same logic as exceptions and will see the Java frame, but Kernel#binding only looks at the interpreter backtrace stack
+[23:21:30] <headius> it does not actually work at all in jit or aot mode because aot bails when it sees the binding call
+[23:26:35] <headius> enebo: https://github.com/jruby/jruby/issues/6163
+[23:26:47] <headius> this is the cause of the binding spec failures in the JIT mode run
+[23:27:54] <headius> AOT bails on compiling the script because it sees binding/eval, but JIT has no such limitation... it will compile with frame and binding but no backtrace
+[23:28:34] <headius> I had this marked to fix in 9.4 because it is rare that someone evals against a binding and expects the line numbers to be right

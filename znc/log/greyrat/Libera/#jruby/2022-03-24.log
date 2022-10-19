@@ -1,0 +1,370 @@
+[00:21:07] *** Joins: JasonLunn[m] (~jasonlunn@2001:470:69fc:105::1:e3aa)
+[00:39:40] <JasonLunn[m]> Is there any good reading to be had on overriding responds_to? from Java?
+[00:43:19] <headius> From Java? Can you elaborate?
+[00:44:23] <JasonLunn[m]> Sure - 
+[00:44:33] <JasonLunn[m]> I'm working on fixing https://github.com/protocolbuffers/protobuf/issues/9202 
+[00:45:04] <JasonLunn[m]> Basically, the base class of all JRuby protobuf messages today implements method_missing in Java, 
+[00:45:13] <JasonLunn[m]> but doesn't override responds_to?
+[00:45:19] <JasonLunn[m]> I thought it would be easy
+[00:45:44] <JasonLunn[m]> But in my tests, sometimes my customized responds_to? method gets invoked
+[00:45:47] <JasonLunn[m]> and sometimes it gets skipped
+[00:46:32] <JasonLunn[m]> I looked at the JRuby codebase to check that I was using @JRubyMethod correctly
+[00:46:43] <JasonLunn[m]> and I see that in some places, it uses frame=true
+[00:47:17] <JasonLunn[m]> But it isn't clear from reading the description of that attribute when to turn it on
+[00:48:31] <JasonLunn[m]> It's one of these situations where I wish we already had #6844
+[00:49:32] <JasonLunn[m]> jumping back and forth between the ruby debugger and the Java debugger is not a good workflow
+[01:10:55] <headius> I don't think frame should be necessary
+[01:11:22] <headius> Implementing it alongside method_missing should do it
+[01:11:32] <headius> I'll have a quick look
+[01:12:18] <JasonLunn[m]> What's zany is that I'm finding that I can repeatedly construct objects that respond identically to my customized method_missing,
+[01:12:47] <JasonLunn[m]> so I know that even though they're different classes that they're both getting their method_missing from my base class,
+[01:13:08] <JasonLunn[m]> but I get differential behavior for their responds_to?
+[01:13:23] <headius> Yeah that should work just adding respond_to? In roughly the same way as method_missing
+[01:13:39] <JasonLunn[m]> Also observed - I get different implementations of responds_to? based on how many arguments I pass it
+[01:13:57] <JasonLunn[m]> The single argument is the one I can't seem to override,
+[01:14:03] <headius> Can you show me an example of how you are binding it?
+[01:14:08] <JasonLunn[m]> but if i pass the optional second parameter, I get the one i've added
+[01:14:17] <headius> Oh, perhaps you are not using the annotation?
+[01:14:53] <headius> I think it has a couple overloads so you can override all overloads in Java or use the annotation and it will replace the superclass method defined in Ruby
+[01:14:57] <JasonLunn[m]>     @JRubyMethod(name="respond_to?", required = 1, optional = 1)
+[01:14:57] <JasonLunn[m]>     public IRubyObject respondTo(ThreadContext context, IRubyObject [] args) {...}
+[01:15:15] <headius> Hmm that looks fine
+[01:15:43] <JasonLunn[m]> and then I tried explicitly adding:
+[01:15:45] <headius> It should bind a new respond_to? and dispatch one or two arguments to it
+[01:15:54] <JasonLunn[m]>     @JRubyMethod(name="respond_to?", required = 1)
+[01:15:54] <JasonLunn[m]>     public IRubyObject respondTo(ThreadContext context, IRubyObject name) {...}
+[01:16:02] <JasonLunn[m]> to try to get the single argument version 
+[01:16:28] <headius> Does the method_missing work?
+[01:16:46] <JasonLunn[m]> The method missing works like a champ
+[01:16:56] <JasonLunn[m]>     @JRubyMethod(name = "method_missing", rest = true)
+[01:16:56] <JasonLunn[m]>     public IRubyObject methodMissing(ThreadContext context, IRubyObject[] args) {
+[01:17:23] <JasonLunn[m]> Do I need to use rest = true even though responds_to? only takes two args?
+[01:17:27] <headius> This stuff has gotten complicated over the years and there's a different form now called respond_to_missing? but I would need to review if that is the correct thing to do
+[01:17:38] <headius> No you could just have two arguments
+[01:17:58] <headius> It will dispatch to the one argument or two argument form for one required and one optional
+[01:18:09] <headius> It doesn't hurt anything but there's no three argument form
+[02:33:15] <byteit101[m]> is irb ctrl-c weirdless known?
+[02:33:20] <byteit101[m]> *weirdness
+[02:33:30] <byteit101[m]> 2.6.2 :001 > this is a ^C... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/3d1b90615e6d2bdb4dac432a52b46a8a09fa7ba0)
+[02:34:57] <byteit101[m]> (since at least 9.1, the oldest jruby I have installed)
+[02:56:09] <byteit101[m]> Ah, the footgun of the setter transformation only happening if the return type is void strikes again
+[03:10:24] <JasonLunn[m]> Is there a good `.java` reference to base off of for the purpose of a minimum repeatable failcase?
+[03:11:03] <JasonLunn[m]> I want to open an issue that is decoupled from the protobuf codebase
+[03:13:34] <JasonLunn[m]> But I'm snarled in trying to figure out how BasicLibraryService works.
+[03:58:53] <byteit101[m]> looking over the twitter answers, it looks like jackson is the best option with the least setup
+[04:02:05] <headius> Jason Lunn: there are a few gems that are good examples like psych I can try to find something and help more when I'm at my desk tomorrow
+[04:02:40] <JasonLunn[m]> I think I have it working finally. I must have messed something up in the naming scheme
+[04:04:55] <JasonLunn[m]> Opening the issue now
+[04:12:58] <JasonLunn[m]> https://github.com/protocolbuffers/protobuf/issues/9668
+[04:23:40] <byteit101[m]> I suppose this means I can release JRubyFX 2.0 now that 9.3.4.0 is out (oh, the matrix header still says 9.3.3.0 btw)
+[04:24:59] <headius> Oops
+[04:31:43] <byteit101[m]> enebo: I've updated jrubyfx master to use the new ivar names. Give it a whirl, and I'll likely snap the version and push 2.0 to rubygems Friday after work unless you encounter issues
+[17:29:16] <headius> Good morning!
+[18:21:23] <enebo[m]> byteit101: ok I will give it a shot
+[18:32:11] <headius> before I shut down last night I tried running part of that TCPSocket#initialize spec and it errored as before, so I think I've figured out that it is timing out setting up the server
+[18:32:20] <headius> that may be why the spec dies, because it hangs in a `before`
+[18:32:48] <headius> that could be a regression so I'll try to look into getting it working today
+[18:35:09] <enebo[m]> cool
+[18:35:24] <headius> once we have wip running to completion I'll see what I can knock down
+[18:35:29] <enebo[m]> I wasted hours yesterday changing the design of the DSL rewriter for generated ripper code
+[18:35:38] <headius> hah refactoring black hole
+[18:35:45] <enebo[m]> I will save what I have and just go back to what I had
+[18:36:16] <enebo[m]> well I ran into this case where one method was doing all this subtitution then realized it sometimes happens in a second method but that second method uses eval and method_missing
+[18:36:44] <enebo[m]> That had a big appeal because it basically breaks up the arguments into an array vs me trying to use regexps to get them
+[18:37:11] <enebo[m]> but eval'ing evals with interleaved m_m is a total fucking nightmare
+[18:37:30] <headius> yeah that doesn't sound fun
+[18:37:47] <enebo[m]> So I will go back to what I was doing since all this script really has to do is just process what is there now
+[18:38:34] <enebo[m]> Next time that code changes I might have to add another regexp maybe but the universe of things in that code is somewhat limited (and in 3 places I flat out just replaced it with my own code)
+[18:39:02] <enebo[m]> which means I can just replace places the dsl cannot parse easily with something it can
+[18:39:12] <enebo[m]> I just want that delta to be small
+[18:40:18] * headius sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/9bd3a6ea67d6ebaa7bf18f61ac854230fff5f74c
+[18:40:25] <headius> that doesn't seem right
+[18:40:26] <headius> join the server thread and then close it?
+[18:41:00] <headius> spec runs to completion (with errors) if I switch that
+[18:42:35] <enebo[m]> Can you close a server twice?
+[18:42:43] <headius> hmm
+[18:42:55] <headius> it seems like it is supposed to handle one client and then be done
+[18:42:58] <enebo[m]> I am just wondering if this should already be closed and that is just there to nuke it from orbit
+[18:43:02] <headius> so perhaps it is not being done right
+[18:43:53] <enebo[m]> Is that in the test code or in the lib itself?
+[18:44:23] <headius> aha
+[18:44:28] <headius> ok this makes sense
+[18:44:35] <headius> the client never connects because of the Hash error
+[18:44:44] <headius> so then it joins a server that should be shutting down but isn't
+[18:46:28] <headius> so I'm not sure how this was running to completion before but perhaps the shutdown expectations changed
+[18:46:42] <headius> it is a bit fragile this way though
+[18:47:03] <headius> I will file an issue
+[18:56:17] *** Quits: satyanash (~satyanash@143.110.247.92) (Quit: kthnxbai)
+[18:56:30] *** Joins: satyanash (~satyanash@143.110.247.92)
+[19:11:23] <rebelwarrior[m]> This is interesting new version installs using rbenv but throws errors in the process that don't seem to matter. Just an FYI. It's working fine so far.... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/9f4a0128172089ab0c77c43d85b821fd07d37084)
+[19:21:21] <headius> I really wish we had a good way to implement CRuby's scan_args
+[19:21:43] <headius> having to do this argument counting every place we try to pick apart optional args and kwargs is messy and error-prone
+[19:22:31] <headius> rebelwarrior: oh that is weird
+[19:23:24] <headius> maybe you can dig into that and try to figure out where that `tr` is coming from
+[19:23:45] <headius> probably worth a bug report to ruby-build but not sure if that's the problem or if it is rbenv processing output from it
+[19:29:19] * headius ponders scan_args in Java while he gets another cup of coffee
+[19:30:38] <JasonLunn[m]> Was #9668 reproducible for you, headius ?
+[19:34:55] <headius> aha
+[19:35:42] <headius> Jason Lunn: If you just want to define loose methods to add to a Ruby class that does not correspond to a specific Java class (e.g. RubyString is String), you should make them static and pass in receiver
+[19:36:01] <headius> if you had a Bar class in Java with this respond_to? on it it would work fine, but as it is defined on a different object I'm guessing it is just calling the base respondsTo
+[19:39:43] <headius> https://gist.github.com/headius/f9d6108d89c97bb7b2009254e3f79409
+[19:39:57] <headius> what you did is basically defining a new respond_to? on the Bar Ruby class by using the annotations from an unrelated class
+[19:40:08] <headius> so it created the binding but doesn't call the one you expect it to
+[19:40:34] <headius> could be an error in the binder for this 🤔
+[19:44:10] <headius> hmm we could make a scan_args that uses context as temp storage for "out" vars but they would escape then
+[19:44:18] <headius> not that we are very good about preventing that in the first place
+[19:44:42] <headius> and they would have to be cleared after retrieval
+[19:45:30] <headius> how likely is a little temp array to be escape-analyzed away I wonder? It would be created on return and immediately disassembled and abandoned
+[20:15:36] <JasonLunn[m]> headius: I'll give that a try;
+[20:15:48] <JasonLunn[m]> It's weird that it is such different behavior for the one vs two argument form
+[20:16:51] <headius> hmm yeah I would be interested in seeing a stack trace from within respondTo for both cases
+[20:17:20] <headius> I would not expect it to get called at all
+[20:17:43] <headius> it may be a quirk in how Java dispatches to this method given the options
+[20:18:09] <headius> it should try to cast the Bar to the Java type RespondTo, and fail at that point
+[20:18:45] * headius sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/d5affc7b869477e3a81694293192676bd0d6a89d
+[20:18:46] <headius> zing
+[20:19:34] <headius> enebo: 95% of the work was processing the args and kwargs
+[20:19:39] <headius> after that plumbing the timeout through was easy
+[20:19:57] <headius> we really could use a scan_args... so maybe I will take a side trip to do that
+[20:51:46] <enebo[m]> we do have some kwargs processor which marks a predefined array
+[20:52:24] <enebo[m]> You wrote it I think.  It is not as cool as scan_args but we don't really have pointers
+[20:52:29] <headius> yeah
+[20:53:33] <headius> Arity.scanArgs returns an array with the processed args but doesn't process much other than that
+[20:53:51] <headius> it just nils out anything optional that was not passed and returns a total args array
+[20:54:43] <headius> a first pass at a better version would return an object "AllArgs" that contains required, optional, rest, keywords, and kwrest
+[20:55:42] <enebo[m]> Annotation which generates a custom type with one field per named param
+[20:56:31] <enebo[m]> Although we will pay some price to box out parameter parsing
+[20:56:40] <headius> we need to expand the descriptor for methods to include specific keywords and kwrest
+[20:57:00] <headius> that will need to come along in order to generate optimized call paths anyway
+[20:57:20] <headius> boxing maybe... a simple box could be elided but that is not 100% reliable
+[20:57:26] <enebo[m]> value objects
+[20:57:33] <headius> yeah
+[20:57:56] <enebo[m]> Java 17+ but I suppose we could do something conditional too
+[20:58:08] <headius> value objects would allow passing multiple return values, which combined with destructuring would basically make out params
+[20:58:16] <enebo[m]> yeah
+[20:58:43] <headius> I started poking at a version that returns a bitmask and then you pass the bitmask in for each argument to get its real or default value
+[20:58:56] <enebo[m]> So I do think one blue sky here is to define the full signature in the annotation
+[20:59:08] <headius> int argDesc = scanArgs(args, min, max, keywords=true)
+[20:59:42] <enebo[m]> sure just document you can only have 32 parameters
+[20:59:44] <headius> name = extractArg(args, argDesc, index, default)
+[20:59:48] <headius> it's chatty though
+[21:00:04] <enebo[m]> It can be long too though
+[21:00:08] <headius> default probably wants to be a lambda too but avoiding allocation is hard then
+[21:00:44] <enebo[m]> I suppose it is debateable whether native java impls need to map to how JIT binds params
+[21:01:04] <enebo[m]> we have no native methods which accept more than I think 14 args
+[21:01:08] <headius> we could post-process code like scanArgs(args, "descriptor", var1, var2, var3) to expand to a line-by-line form 😀
+[21:01:45] <headius> marrying this with arity splitting is the holy grail so the plumbing would have to work within dispatch path too
+[21:01:53] <enebo[m]> yeah
+[21:02:17] <enebo[m]> ultimately this wound need to be aware of position passing of kwargs from dispatch path
+[21:02:24] <headius> scanArgs(args, desc, (var1, var2, var3) -> { rest of method })
+[21:02:39] <enebo[m]> heh
+[21:02:51] <headius> if we passed in self and context it could be a static lambda
+[21:02:59] <headius> effectively static anyway
+[21:03:18] <enebo[m]> I like it but this feels like @JRubyMethod encapsulating this could all be in the populator
+[21:03:25] <headius> a few overloaded versions with different arities would cover most cases
+[21:03:45] <headius> yeah but this is really just like having an intermediate arg handler that dispatches to arity-specific versions
+[21:04:10] <headius> JRubyMethod generation would use the same descriptor and logic to redispatch the right way
+[21:04:23] <headius> it's one possibility at least
+[21:04:54] <enebo[m]> yeah I guess I can see this from multiple angles but I really wish we had a language for this that was not Java :)
+[21:05:29] <enebo[m]> Even just multimethods to Have plus(IRubyObject arg) and plus(RubyFixnum arg)
+[21:06:04] <enebo[m]> but obviously it would be quite a bit more than just allowing narrow and wide types to go to the right place
+[21:09:15] * headius sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/cbf53a20e0b932117cb607b46f60791131ee3fa4
+[21:10:06] <headius> we really are defining our own sub-language with arity splitting as it is now
+[21:10:16] <headius> keywords will take that much farther
+[21:10:49] <headius> perhaps @JRubyMethod attached to a static class with a bunch of static method of different shapes... we bind them all as one method with several escape paths
+[21:11:09] <headius> JRuby X bruh
+[21:11:17] <enebo[m]> Jitanius
+[21:11:58] <headius> hah
+[21:13:08] <headius> usage of that method above is obviously trivialized for one arg but it would be like return withArgs(context, self, args, 0, 1, (name) -> puts(name));
+[21:13:50] <headius> longer body would need {} but not look much different from the current logic minus all the arg wrangling at the beginning
+[21:14:35] <headius> can't throw exceptions from lambda though so that would have to be tweaked
+[21:14:48] <headius> (terrible side effect of checked exceptions)
+[21:16:07] <enebo[m]> This function can also potentially be n functions too if it wants to be hooked up to specific arity call paths
+[21:16:36] <enebo[m]> which if you remove min and max as parameters could then be a plethora of functions which do not have most switch paths
+[21:17:01] <enebo[m]> this can be a refinement later obviously
+[21:22:05] <JasonLunn[m]> headius: in the last line of your gist, did you mean to call `respondTo` on `self`? IRubyObject has some methods that called `respondsTo` instead, but none of them have a type signature that takes a context...
+[21:25:02] <headius> ah yeah I meant one of those
+[21:25:15] <headius> or explicitly cast to RubyBasicObject and use the context ones
+[21:25:34] <headius> we have not wanted to add to the interface, which isn't actually useful to us now
+[21:26:12] <headius> enebo: we could use default methods to add more utilities to IRubyObject perhaps
+[21:26:55] <headius> default boolean respondsTo(ThreadContext context, String name) { return respondsTo(name); }
+[21:27:33] <headius> `RubyString localHost = convertOrNull(context, localOrOpts, RubyTCPSocket::convertToString);`
+[21:27:44] <headius> we could be using lambdas more to eliminate a lot of boilerplate in any case
+[21:29:01] <headius> (at risk of introducing code paths that HotSpot can't inline)
+[21:44:48] <JasonLunn[m]> hmm.  `return self.respondsTo(methodName) ? context.runtime.getTrue() : context.runtime.getFalse();` results in an infinite loop that eventually throws a stackoverflow
+[21:45:11] <headius> show me the stack
+[21:45:21] <headius> that should not be the case since the static method should call into an instance method
+[21:45:27] <headius> it should not end up back in the static method
+[21:45:42] * JasonLunn[m] sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/f4b767c69ff1896fc1503aee171a0ff3c0a489c5
+[21:46:06] <headius> not sure I can see enough of it but I don't see any RespondTo class in that chain
+[21:46:14] <headius> this is not the example you posted though
+[21:47:32] <JasonLunn[m]> Yeah I was trying to skip a step. Standby
+[21:48:32] <headius> in the stack you showed it is calling back to respondTo in the RubyMessage object which tells me you are binding it correctly as an instance method in that case
+[21:49:04] <headius> ah wait I see
+[21:49:17] <headius> the base respondTo method redispatches to `respond_to?` again
+[21:49:20] <headius> so that is not quite right
+[21:50:23] <headius> ok a different way to do that without the dispatch: self.getMetaClass().respondsToMethod(name, true)
+[21:50:26] <headius> true = only public
+[21:52:23] <headius> sorry this is kinda back and forth... if you can push a small repo with an example, or point me to the code in grpc, I might be able to help more directly
+[21:53:01] <headius> if you know the superclass will not have the method you don't really have to redispatch either
+[21:53:12] <headius> not sure of the use case here
+[21:54:46] * JasonLunn[m] sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/c34e6d63059f0a9fea561defc8608bc4b5aeb520
+[21:55:23] <JasonLunn[m]> Ported back to the example in the issue; I'll try the getMetacClass variant
+[21:57:05] <headius> yeah sorry, I was doing this from memory a bit
+[21:57:48] <JasonLunn[m]> No problem. I'm getting the same results binding it this way - 
+[21:57:56] <JasonLunn[m]> One argument nothing happens
+[21:58:06] <JasonLunn[m]> Two arguments, I get my custom message
+[21:58:16] <JasonLunn[m]> 0 or 3+ args, arg error
+[21:58:28] <JasonLunn[m]> I'll add the second example to the issue 
+[21:58:42] <headius> you have something simple I can build and run to test this?
+[21:59:50] <JasonLunn[m]> Yeah
+[22:00:04] <JasonLunn[m]> Just updated https://github.com/protocolbuffers/protobuf/issues/9668 with the static binding version
+[22:00:50] <headius> ok
+[22:08:21] <headius> $ jruby -r ./respond_to_java.jar -e 'Foo::Bar.new.respond_to? :foo'
+[22:08:21] <headius> Custom repond_to? got called!
+[22:08:42] <headius> $ jruby -r ./respond_to_java.jar -e 'Foo::Bar.new.respond_to? :foo, false'
+[22:08:42] <headius> Custom repond_to? got called!
+[22:08:45] <headius> seems to work ok
+[22:08:59] <headius> that is using your second example as is
+[22:09:18] <headius> Jason Lunn: ^
+[22:09:55] <JasonLunn[m]> Call it with one argument
+[22:10:08] <headius> see above, I did that
+[22:11:42] <headius> are you sure you're running the second form?
+[22:12:26] <headius> enebo: after fixing TCPSocket specs I found the same pattern in UDPSocket, where it expects the server to receive something and blindly joins it
+[22:12:44] <enebo[m]> yay
+[22:12:45] <headius> eregon seems to agree that explicitly closing it in shutdown makes sense so I will make that change locally and PR something
+[22:13:08] <JasonLunn[m]> Yeah... I just changed the error message to double check
+[22:13:10] <headius> I also had wip CI set up to run capi specs so I am fixing that, but I have a completing job now
+[22:13:36] <headius> Jason Lunn: not sure what to tell ya... I copied the second example into the right file, built jar, and it works
+[22:14:03] <JasonLunn[m]> Try it with `jruby -X-C -r ./respond_to_java.jar -w -e 'Foo::Bar.new.respond_to? :foo'`
+[22:14:42] <headius> aha something with -X-C is messing it up here
+[22:21:50] <JasonLunn[m]> Yeah I blindly copied the command line invocation from https://github.com/jruby/jruby/issues/3252 as I was grasping at straws yesterday trying to adapt a working basiclibraryservice
+[22:21:58] <JasonLunn[m]> I don't actually remember what -X-C does
+[22:22:23] <headius> this is weird
+[22:22:32] <headius> it doesn't seem to call the base class respond_to either
+[22:23:45] <headius> oh lordy
+[22:23:59] <headius> enebo: ok this is sorta funny
+[22:24:18] <JasonLunn[m]> Thanks for confirming I'm not crazy
+[22:24:22] <headius> we have RespondToCallSite that tries to cache previous results
+[22:24:40] <JasonLunn[m]> I've updated 9668 with a note about the variable behavior when using `-X-C` for the second example
+[22:24:48] <headius> if it sees that the respond_to? is a built-in one then it will skip the dynamic lookup and go straight to the method table
+[22:25:03] <headius> unfortunately isBuiltin just checks if the method is implemented in Java
+[22:25:34] <headius> it should really be checking if it is the default impl using some core logic
+[22:25:41] <enebo[m]> yeah
+[22:25:58] <enebo[m]> It seems we just never considered this use case
+[22:26:15] <headius> this is probably the first time someone has implemented respond_to? in Java without overriding the existing instance methods at the same time
+[22:27:16] <enebo[m]> What is the cheapest mechanism to know this is a core native method?
+[22:27:31] <enebo[m]> Knowing it is native is cheap which is likely why we did it
+[22:27:33] <headius> currently, we would have to cache it somewhere at boot and compare
+[22:27:51] <enebo[m]> We could make all native core methods an extended type
+[22:28:01] <headius> that's a possibility yes
+[22:28:01] <enebo[m]> NativeCoreMethod
+[22:28:03] <enebo[m]> of whatever
+[22:28:20] <headius> or make the annotation know about builtin and set it at boot
+[22:28:24] <enebo[m]> but I guess part of the issue with that is yeah
+[22:28:39] <headius> builtin = true all over seems gross, but @JRubyCoreMethod is maybe less gross
+[22:28:43] <enebo[m]> the actual construction of the method needs to know it is really a code method
+[22:28:50] <enebo[m]> err core
+[22:29:09] <headius> I'm not sure what is the best workaround here 🤔
+[22:29:10] <enebo[m]> Another way might be looking at type and making a class anno  "type = "core""
+[22:29:28] <enebo[m]> You can't reopen Java
+[22:29:29] <headius> true
+[22:29:43] <JasonLunn[m]> I've got to step away from keyboard for a couple of hours
+[22:29:49] <JasonLunn[m]> I think I've captured both issues in the ticket - 
+[22:29:53] <headius> Jason Lunn: I will come up with a workaround for this
+[22:30:15] <JasonLunn[m]> the original issue with the non-static method - that one is consistent regardless of the flags,
+[22:30:28] <headius> I have to ask... does this need to be in Java or is it an optimization thing only?
+[22:30:36] <JasonLunn[m]> and the second issue where the static method only works if -X-C isn't a flag
+[22:31:17] <JasonLunn[m]> I'd be happy to talk through how we might do this outside of Java  - 
+[22:31:28] <headius> -X-C uses the interpreter only, which is using this flawed call site logic
+[22:31:29] <JasonLunn[m]> the method_missing is implemented in Java,
+[22:31:35] <JasonLunn[m]> so it would be nice to have them adjacent
+[22:31:38] <headius> the jit mode code must not be using the same path
+[22:31:54] <headius> Jason Lunn: ok makes sense
+[22:31:59] <JasonLunn[m]> This is all in the context of wrapping the protobuffer Java lib,
+[22:32:32] <headius> but we need a general solution for what builtin means
+[22:32:32] <JasonLunn[m]> so there are a number of things that we think we have to do in Java, but we could be wrong
+[22:32:32] <headius> we can fix this in JRuby simply enough by not using this naive isBuiltin check for now
+[22:32:47] <headius> brb lunch and thinking about this problem
+[22:32:53] <headius> enebo: I will push updated wip in a second that should run to completion
+[22:33:05] <headius> includes the socket shutdown change plus TCPSocket connect_timeout
+[22:33:06] <JasonLunn[m]> ttfn
+[22:48:29] <headius> One work around would be to retrieve the method and set it as not built in
+[22:48:44] <headius> That's not pretty but it might be the fastest path forward to work around this bug in our respond to logic
+[22:49:59] <headius> enebo: if we passed a core class into isBuiltin It should be able to check whether that is where the implementing method comes from
+[22:50:12] <headius> It would be a more generic way of asking, does this method come from the base implementation in this class
+[22:50:42] <enebo[m]> we have implementation class so that is not so bad
+[22:51:02] <enebo[m]> on method that is
+[22:51:06] <headius> That is the ruby class, which would work, but I was thinking of passing in a Java class
+[22:51:24] <headius> But that brings up another use case, being able to tell when a method is from a base class and implemented in Ruby
+[22:52:05] <headius> Oh, one problem with that is that if you overwrite it the implementation class will still point at the same thing
+[22:52:38] <enebo[m]> So replace one native method with another into the Ruby class
+[22:52:43] <headius> I think we're starting to dance around a couple different definitions of built-in
+[22:53:08] <headius> There's built-in as in implemented in Java, which is what we have now and that breaks for user extensions
+[22:53:18] <enebo[m]> builtin was originally meant to signify the original native definition so we could java dispatch to it if it wasn't redefined
+[22:53:35] <headius> There's built-in as in shipped with JRuby but that doesn't cover cases where we override the same method in a few classes and the overrides should not be considered the base implementation
+[22:53:40] <enebo[m]> Whether we use it for more I guess maybe means we overloaded it
+[22:54:31] <headius> I think the most useful definition we're looking for is whether a given method corresponds to one specific piece of code in JRuby 
+[22:54:43] <headius> Since we're almost always using this to skip the Ruby logic
+[22:54:51] <enebo[m]> piece of Java code or Java & Ruby code?
+[22:54:57] <enebo[m]> I don'
+[22:55:10] <enebo[m]> t think I care that much about Ruby in this case
+[22:55:13] <headius> Could be either really as we move more stuff to Ruby
+[22:55:25] <enebo[m]> Ultimately I guess it depends on how we use that knowledge
+[22:55:35] <headius> The base method missing for example could probably be implemented in Ruby if we could tell it was a core version
+[22:55:55] <headius> Mostly it just has to raise a specific error
+[22:56:09] <enebo[m]> Hmm
+[22:56:42] <headius> Jason Lunn: I am still pondering this but I think if you ask the bar class for the respond_to method object and setBuiltin(false) it will work
+[22:56:50] <headius> Pulling us from memory so don't quote me on the exact names
+[22:57:01] <headius> s/us/this/
+[22:57:33] <enebo[m]> It is worth pointing out the caller of isBuiltin can do what it wants with that knowledge.  I guess a broader definition is reasonable so long as this does not make it all more complicated
+[22:57:50] <headius> barCls.searchMethod("respond_to?").setBuiltin(false)
+[22:57:55] <headius> Or something
+[22:58:28] <headius> Yeah in this case it's a bug in our respond to call site because it is assuming built-in means core
+[22:58:48] <headius> And really it is assuming built-in means specifically the one we've defined on RubyKernel
+[22:58:57] <headius> It just doesn't mean that unfortunately and we didn't realize
+[22:59:10] <enebo[m]> we didn't need to
+[22:59:29] <enebo[m]> I can see it is a problem now but it hasn't been for like 9 years
+[22:59:35] <enebo[m]> maybe more
+[22:59:42] <headius> Yeah
+[23:00:02] <enebo[m]> so isBuiltin() -> true then we need to instanceof on method type to know Java or Ruby
+[23:00:23] <enebo[m]> but today if we only fix for Java then it will only return true for Java
+[23:00:47] <enebo[m]> One is a subset of the other and I think we can expand the definition so long as parameters to it can determine both
+[23:00:59] <enebo[m]> but I don't know if we need to add both now 
+[23:01:00] <headius> I have logic that checks if method missing is literally the one defined on Kernel which has likely prevented this from breaking when people implement method missing in Java
+[23:01:30] <enebo[m]> so this can actually help remove some special code
+[23:01:50] <headius> I actually cache the method objects and do an identity comparison in the call site
+[23:01:54] <enebo[m]> fn(JavaClass, Method) or fn(RubyMethodClass, Method)
+[23:02:24] <enebo[m]> where RubyMethodClass I guess is actuall RubyModule
+[23:02:54] <enebo[m]> if we pass in RubyModule then we only know it has a method defined there but we don't want to searchMethod to see if it changed
+[23:03:08] <headius> The more I think about it, the more I realize what we want is to know if the method is specifically pointing at this one body of code, whether it's in Java or Ruby
+[23:03:59] <headius> isBuiltin(RubyKernel.respond_to_p) sort of 
+[23:04:00] <enebo[m]> I think it adds more possibilities but for the sake of existing code we really only use it to bypass Ruby dispatch
+[23:04:35] <headius> There are not too many of these cases, we could potentially have a stack of enums that represent all the things we want to check for built in status
+[23:04:53] <enebo[m]> One ENUM
+[23:04:54] <headius> IsBuiltin(Builtins.RESPOND_TO)
+[23:05:26] <headius> @JRubyMethod(built-in = RESPOND_TO)
+[23:06:00] <enebo[m]> yeah I guess so 
+[23:06:13] <headius> Another case to consider are built-in numeric operators
+[23:06:21] <headius> The ones on float and the ones on integer are both built in so you would need an additional type check to short circuited
+[23:06:28] <enebo[m]> My only reservation is people may think they can just use isBuiltin() and then forget it also needs an annotation to work
+[23:06:35] <headius> Which we have right now, but the built-in check is a bit flawed
+[23:06:45] <enebo[m]> Having all builtins being detectable reduces a potential coding mistake
+[23:07:09] <headius> What is the definition of a built-in though?
+[23:07:29] <headius> Something we ship in the box?
+[23:07:40] <enebo[m]> It originally just meant is was the original native code method
+[23:07:50] <headius> Yes
+[23:08:23] <headius> We can fix that definition by only setting this flag during core boot
+[23:08:29] <headius> Rather than for all Java bound methods
+[23:08:43] <headius> That is what we originally intended for it to mean
+[23:08:48] <enebo[m]>     /**... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/3cd3aed41c6d521beff2d97597b4861ff1152e90)
+[23:08:56] <enebo[m]> 2009
+[23:09:08] <headius> These other definitions would be nice to have but perhaps putting the cart before the host
+[23:09:24] <headius> Or maybe we add another flag called isCore
+[23:09:34] <headius> Dunno
+[23:09:43] <enebo[m]> As I said if we change this signature in a way to determine that later we can add that later when we want to use that as a feature
+[23:09:54] <enebo[m]> but I guess that means we need to have an idea of how that check would work
+[23:10:47] <enebo[m]> HAHAH can this be true...it only has two consumers?
+[23:11:28] <enebo[m]> wait...I keep forgetting we have this on method and basicobject
+[23:12:12] <enebo[m]> basic object will just eventually meander into method
+[23:42:34] <headius> Yeah I think we should adjust this to mean it is a method bound during our core boot logic and consider other use cases as they come up

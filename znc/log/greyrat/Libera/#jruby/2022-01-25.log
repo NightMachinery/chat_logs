@@ -1,0 +1,440 @@
+[00:26:03] <byteit101[m]> So is there anything in particular I need for the 7012 patch to wire it up to JIT or am I all good?
+[00:26:16] <byteit101[m]> (ivars in raw fields)
+[00:27:08] <headius> You should look at where the field variable accessor is referenced directly as part of the jit, basically it's just another branch in the instance variable accessor logic so it knows how to wire directly to the contained handle
+[00:27:36] <headius> It occurs to me now maybe you extended that class and it will be picked up as is?
+[00:27:45] <headius> I had to skim your PR on my phone so I might have missed that
+[00:27:45] <byteit101[m]> Yes, that's why I went with an extended class :-)
+[00:28:01] <byteit101[m]> and chained the getter and setter with binder
+[00:28:08] <headius> Then you're probably right, there shouldn't be anything more necessary
+[00:28:12] <byteit101[m]> cuz I was hoping it would do it for me automatically
+[00:28:41] <headius> With your patch we could also consider expanding class reification to use appropriately named fields for regular ruby classes, should that be useful to someone
+[00:29:09] <headius> Mainly it seems like it would be useful only for debugging purposes but as in this case perhaps also when passing a Ruby object to something that needs to reflect against its fields
+[00:29:19] <headius> I don't know of such a use case right now
+[00:29:29] <byteit101[m]> that already is configurable, this is mostly for java interop though
+[00:29:38] <headius> Ok cool
+[00:30:03] <byteit101[m]> Actually that's the test I think, no concrete inheritance
+[00:30:03] <headius> I will do a more complete review now if you are happy with it
+[00:30:57] <byteit101[m]> see the checklist at the top. I have some basic tests, but unsure if should add a jit test? (also unsure how)
+[00:31:04] <byteit101[m]> need to change the configuration name
+[00:31:23] <byteit101[m]> I need to consult with you for exception types
+[00:31:31] <byteit101[m]> and ensure clones/parents/frozens are taken care of
+[00:31:54] <headius> A test in spec/compiler/general_spec.rb will get run against all possible configurations
+[00:32:02] <byteit101[m]> Java Object (concrete extension) and Ruby BasicObject can't be frozen, correct?
+[00:32:12] <headius> Various interpreter configurations plus jit with and without invoke dynamic
+[00:32:13] <byteit101[m]> I have tests in j_i
+[00:32:36] <headius> That's probably fine, I was just pointing out if there was anything that really is relevant to the compiler it should go there
+[00:32:50] <headius> It's really just an extension of the existing field support which is always on and has been tested by stuff in there for a while
+[00:33:04] <byteit101[m]> I put it under become_java as it requires reification
+[00:33:38] <byteit101[m]> Only Ruby Object decendents can be frozen, or are there some exceptions?
+[00:33:59] <byteit101[m]> (also, I'm pleasantly surprised how short this PR is compared to the concrete stuff :-P)
+[00:34:46] <headius> BasicObject and down can be frozen from Java side but I think the Ruby methods are only on Object
+[00:36:10] <byteit101[m]> So any non-concrete IRubyObject should have .invokeVirtualQuiet(RubyObjectSpecializer.LOOKUP, "ensureInstanceVariablesSettable"); checked?
+[00:36:24] <byteit101[m]> (see FieldVariableAccessor)
+[00:37:00] <headius> Non-concrete as in not extending a Java class
+[00:37:06] <byteit101[m]> Correct
+[00:37:16] <headius> Yes
+[00:37:26] <byteit101[m]> and java extensions can bypass that check
+[00:37:38] <byteit101[m]> ?
+[00:38:15] <headius> Yeah that's an interesting point, we have the ability to also freeze just the Ruby subclass parts but is that useful
+[00:38:44] <headius> There's really no concept of delayed final in Java
+[00:39:13] <byteit101[m]> Thus @foo=test errors, but self.foo = test works
+[00:40:00] <byteit101[m]> which is freaky
+[00:40:30] <headius> Ha yeah
+[00:40:36] <headius> That is a bit unexpected
+[00:41:05] <headius> I'd say skip it for now but we should formalize what freeze means for Ruby Java subclasses
+[00:41:43] <headius> It's troublesome because we can never fully support it since we can't freeze the superclass fields but that means there will always be a behavioral difference for Ruby classes that simply implement an interface and can be fully frozen
+[00:42:17] <byteit101[m]> Actually, that self. vs @ extends to ruby-reified classes too
+[00:42:27] <byteit101[m]> wait
+[00:42:31] <headius> The simple answer may be that freeze only effects the fields declared in Ruby and leave it at that
+[00:45:01] <byteit101[m]> Yup, ok self.field= is not affected by freeze on `class A; end.become_java!`
+[00:45:20] <byteit101[m]> no java heirarchy
+[00:46:03] <headius> heh yeah
+[00:46:24] <headius> no way we can prevent writes to the Java fields from other Java stuff
+[00:46:41] <headius> unless it's final to begin with, which is hard to do with Ruby's alloc+init dance
+[00:46:58] <byteit101[m]> split supers ? :-D
+[00:47:28] <headius> a step in that direction to be sure
+[00:48:21] <headius> harder to make initialize into a real constructor for regular Ruby classes that might overwrite it or decorate it
+[00:48:34] <headius> we'd have to be able to make some guarantees about how the class will change in the future
+[00:51:23] <byteit101[m]> > Thus @foo=test errors, but self.foo = test works
+[00:51:23] <byteit101[m]> ^ happens today with reified ruby classes, but that's because they are two separate variables
+[00:53:19] <byteit101[m]> thus if you have a class, and become_java it, it becomes unfreezable for all java_field's defined
+[00:53:53] <headius> yeah
+[00:53:59] <headius> tricky
+[00:54:14] <byteit101[m]> should configuring the ivar storage wipe the default field accessors? forcing field access to go through the ivar?
+[00:54:34] <byteit101[m]> or re-set them with attr_accessor ?
+[00:54:51] <headius> hmm possibly
+[00:54:53] <byteit101[m]> (I've pondered with naming it java_attr_* to configure stuff)
+[00:55:08] <byteit101[m]> (but that confused the matter in my mind)
+[00:55:08] <headius> when are we adding the default field accessors in this case?
+[00:56:24] <headius> enebo: you have any thoughts on this?
+[00:56:32] <headius> it is a dichotomy we have had forever
+[00:56:57] <byteit101[m]> JavaClassAddons. part of the become_java! call
+[00:57:04] <headius> I feel weird about allowing the Ruby part to be frozen when we can't freeze the Java superclasses, but it also feels weird to not allow the Ruby part to be frozen
+[00:57:20] <headius> byteit101: I think we'd want to just insert the right accessors at that point then
+[00:57:43] <headius> if we decide that fields configured for a Ruby class should be freezable, that is
+[00:58:50] <headius> the simplest distinction here is that if you want Ruby freeze semantics it needs to be a variable governed only by Ruby semantics
+[00:59:17] <headius> if you make it into a non-final Java field then it's always going to be a non-final Java field and we can no longer enforce freeze semantics
+[00:59:38] <headius> I think it would be misleading to have it prevent modification from Ruby but be modifiable from Java since that would represent a possible exploit path
+[01:01:23] <byteit101[m]> A fair point of caution to users: "using java_field + ivar storage is an advanced use of jruby for integrating with the jvm more rightly. Ruby semantics no longer apply in such advanced usage of jruby"
+[01:01:46] <byteit101[m]> *tightly not rightly (though some may beg to differ :-D)
+[01:02:39] <byteit101[m]> "JVM semantics take precedence over ruby semantics in such usage"
+[01:03:41] <headius> I added some comments but it looks fine
+[01:04:31] <headius> yeah the next complicated feature we will want to add will be "I really want these ivars to be in final fields set in my reified constructor"
+[01:05:15] <headius> in which we would emit the initialize of a fully-Ruby reified class as its actual constructor so it can set finals
+[01:05:27] <headius> kinda has to be an opt-in since it changes the semantics of initialize
+[01:06:03] <byteit101[m]> I think I laid the groundwork for that in the concrete refactor
+[01:06:13] <byteit101[m]> cool, thanks!
+[01:06:29] <byteit101[m]> what's the best ruby exception to throw for the binder exceptions?
+[01:06:48] <headius> Yeah it can definitely happen in the concrete subclass stuff and might actually be easier to do in reified Ruby classes
+[01:06:54] <headius> Since we don't have that split initialization problem
+[01:07:17] <byteit101[m]> re the lambdafication: I really wanted to rename the "get" because it was always "Get or make"/"ensure", but didn't want to touch too much
+[01:07:32] <headius> Really the only guarantee we need, which the user will opt into, is that the initialize is really the constructor and always will be
+[01:08:14] <headius> Yeah this is fine for now but I wouldn't want to add too many other accessor types without formalizing an interface
+[01:11:14] <byteit101[m]> if you check the jvm output, storage of Object vs some java class should inline differently
+[01:11:31] <byteit101[m]> I'll work on the cloning and parent stuff this evening
+[01:11:43] <headius> Ok
+[01:13:14] <byteit101[m]> (because the object doesn't need to be unwrapped from an irubyobject)
+[01:13:36] <byteit101[m]> Oh, and: what's the best ruby exception to throw for the binder exceptions?
+[01:13:49] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 256 seconds)
+[01:17:01] <byteit101[m]> oh and confirmed false: @foo.equal? @foo
+[01:51:47] <enebo[m]> Hmm
+[01:53:03] <enebo[m]> I like the idea of configuring how we store field values reified as either IRubyObject or Java Object universes so if you know how you will be accessing those fields you can have it set to the way you need it (e.g. lots of reads from Ruby you probably want IRubyObject)
+[01:54:01] <enebo[m]> The duality of us trying to unify @ with 'this.field' I feel less certain on how it would be if we boiled the ocean
+[01:55:12] <enebo[m]> by boiling the ocean I think I mean in writing a complete specification on how these two generally separate things alias over each other
+[01:56:41] <enebo[m]> Have we ever talked about making a 'this' method?
+[01:56:52] <enebo[m]> @foo is Ruby and will be Ruby
+[01:57:24] <enebo[m]> this.foo will be Java field and only a Java field (but potentially any object including IRubyObject)
+[02:06:34] <byteit101[m]> yes I have a todo on how to expose an "unwrap parameter". ex: `java_field "blah", variable: {unwrap: true, type: java.lang.Object}`
+[02:07:15] <enebo[m]> That specifies how it is stored in reified class which is fine
+[02:07:30] <enebo[m]> I am talking more about how to access the field in Ruby
+[02:07:48] <enebo[m]> @blah can be how this works but this.blah could also be how it works
+[02:08:15] <byteit101[m]> Yes, Oh context for why I'm playing around with this: JRubyFX/JavaFX integration
+[02:08:29] <enebo[m]> yeah
+[02:08:33] <byteit101[m]> lots of times to have to extend java classes, and access their fields (particularly with fxml)
+[02:08:44] <byteit101[m]> and I was hoping to make it more ruby-esq
+[02:09:12] <enebo[m]> Can reified types still include Ruby modules?
+[02:09:30] <byteit101[m]> (which convieniently will avoid breaking api in jrubyfx, as it uses @ right with the "old" fxmlloader pre-concrete impl in jruby)
+[02:09:49] <enebo[m]> I am only bringing up this idea to tease through what ups and downs exist
+[02:09:56] <byteit101[m]> Yes, that's how jrubyfx works, and I know it works with reified types
+[02:10:05] <byteit101[m]> yes, it's a good thing to do
+[02:11:01] <enebo[m]> having a syntax for fields of Java and Ruby as separate eliminates some potential questions on how to handle the overlap but it is clearly a big change
+[02:12:08] <enebo[m]> So if there is no @foo as a field it will be a Ruby ivar but if there is one then it becomes a Java field and then all reflective methods in Ruby have to deal with this I guess
+[02:12:20] <enebo[m]> instance_var_get for example
+[02:12:27] <byteit101[m]> (only if you configure it as such, this is non-default behavior I'm adding)
+[02:13:25] <byteit101[m]> @foo and self.foo are different unless a) it's reified, b) you have a java_field, and c) you enable this feature on that specific field
+[02:13:41] <enebo[m]> ok this makes sense to me
+[02:13:54] <enebo[m]> especially if it is explicit in the definition of java_field
+[02:14:30] <enebo[m]> or explicit in seeing there is a definition of java_field if it makes sense to default @foo to field
+[02:14:30] <byteit101[m]> headius suggested `java_field 'java.lang.String mystrfield', variable: true`
+[02:14:46] <byteit101[m]> with the default being variable: false
+[02:15:12] <enebo[m]> I don't have an opinion on it and I can see variable: false probably breaks nothing
+[02:15:24] <enebo[m]> well I don't yet
+[02:15:56] <byteit101[m]> I'm slightly more in favor of `bind` or `bind_variable`, but yes, the goal is to change nothing with the defaults
+[02:16:09] <enebo[m]> Ok well my current thoughts are explicit java_field that configures your preference is making your funeral/party.  It is a visible line
+[02:16:13] <byteit101[m]> this is only for opt-in for advanced java-ruby integration
+[02:16:54] <enebo[m]> As such defaulting one way or another is just ergonomics and we perhaps will be ok with more setup to not break existing code
+[02:17:38] <byteit101[m]> yes, I'm happy with that. see the "proposed" name in the PR (7012)
+[02:18:13] <enebo[m]> So the second idea but I believe we decided this a long time ago when I made the java signature parser was how to specify the field
+[02:18:44] <enebo[m]> I think at that time the string form like you have in the above example had the advantage we could just paste in javadoc signatures
+[02:19:39] <enebo[m]> The other syntax was to make an API for this stuff like java_field java.lang.String, :mystrfield, variable: true
+[02:20:35] <enebo[m]> I am not sure why I am bringing this up other than seeing we are using java signature parser and trying to remember how those decisions happened
+[02:21:22] <enebo[m]> One thing I do remember is annotation parsing is surprisingly potentially complicated (so complicated I don't think that work ever got 100% completed)
+[02:21:55] <enebo[m]> That made the String format more appealing or we would need some API for building the expressions of annotations
+[02:24:42] <enebo[m]> java_field, "java.lang.String => testfield", variable: :@testfield
+[02:25:46] <enebo[m]> I think :@testfield could possibly be variable: true if it is same name and variable: :test_field or whatnot if not
+[02:26:12] <enebo[m]> truthy eliminates needing to write the name twice
+[02:26:46] <enebo[m]> removing the @, to me at least, doesn't make it look like you can do other weird stuff like :$testfield
+[02:27:57] <enebo[m]> byteit101: I added a comment of these last few lines
+[02:32:19] <byteit101[m]> yes, truthy then means you can add even more advanced configuration objects
+[02:32:20] <byteit101[m]> ex: `java_field "blah", variable: {unwrap: true, type: java.lang.Object}`
+[02:32:49] <byteit101[m]> type is what is used as the toJava() argument when setting
+[02:34:28] <enebo[m]> yeah perhaps but since this is already using a keyword arg it seems they could just be after variable
+[02:37:45] <byteit101[m]> `..., variable: false, unwrap: true` doesn't make sense, hence why I put it nested
+[03:11:12] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Read error: Connection reset by peer)
+[04:49:41] <byteit101[m]> Ok, pushed more changes. Last question is what types of exception should I be throwing (RawFieldVariableAccessor)
+[10:59:39] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[12:48:29] *** Joins: katafrakt[m] (~katafrakt@2001:470:69fc:105::1:41ff)
+[15:01:36] <basshelal[m]> headius: https://github.com/jnr/jnr-ffi/issues/297
+[15:01:36] <basshelal[m]> Someone's having a very strange macOS library loading problem, I don't know if this is indeed the JVM bug he referenced or just more macOS strangeness
+[15:01:36] <basshelal[m]> Maybe you know more about this or  know someone that can guide us in the right direction, I do hope it's just macOS just being weird again
+[15:36:22] <headius> I will try to repro today. Feels like that error might be a generic "I couldn't load" covering up the real cause.
+[15:41:34] <basshelal[m]> Actually "`image not found`" is a native error message returned from `dlopen` not JNR-FFI because you can find others online who have had this exact error message from `dlopen` ie: https://stackoverflow.com/questions/19776571/error-dlopen-library-not-loaded-reason-image-not-found
+[15:43:09] <basshelal[m]> Also what time is it in Yankeeland?
+[15:44:05] <headius> Early
+[15:44:35] <headius> I have a primary school aged son to get going in 15 min
+[15:45:29] <headius> If that is simply a dlopen error then I am back to wondering if this is an architecture mismatch
+[15:45:44] <basshelal[m]> Ah ok, thought I woke you up cuz I know you start your day much later
+[15:45:46] <headius> But I will have a look in an hour or so
+[15:46:00] <headius> My day is fluid 😀
+[15:46:04] <basshelal[m]> Sure no worries, you'll probably know better than me
+[17:16:15] <headius> basshelal: were you able to build this uapki project?
+[17:16:51] <headius> it fails to copy the first dylib it builds and then bails out
+[17:16:54] <headius> for me
+[17:17:01] <basshelal[m]> No, the sample repo the issuer gave already has the dylibs so I just used those
+[17:17:21] <headius> oh I see
+[17:17:41] <basshelal[m]> btw `nm` and `otool` show no errors with  those libs on x86 Big Sur so  I *assume* they're ok
+[18:02:04] <headius> basshelal: I'm leaning toward this being a quirk of MacOS library pathing
+[18:02:32] <headius> I can reproduce. Adding the resources dir to library.search gets past the first library and fails on the second
+[18:03:01] <headius> it is not seeing that the image is loaded probably because it sees a different name for the loaded library than what it's looking for
+[18:03:10] <headius> at the dlopen/dyld level
+[18:04:11] <headius> when I copy the libs to . they load
+[18:16:01] <headius> at the moment I would say this is not a jnr-ffi bug, since I can get the libraries to load from CWD, but I have no good explanation for why it cannot load the libraries simply by adding `library.search("src/main/resources")`
+[18:16:02] <headius> boo, element needs to handle multiline code snippits better... still have to cmd+shift to hit enter without it sending
+[18:16:03] <headius> ```
+[18:20:33] *** Joins: subbu (~subbu@user/subbu)
+[18:54:19] <headius> deploy job is failing to auth for some reason
+[18:54:23] <headius> looking into it
+[18:56:20] <basshelal[m]> sorry was cooking lunch
+[18:56:49] <headius> enebo: I think you forgot to update VERSION
+[18:56:59] <headius> do I just update that one file?
+[18:57:26] <enebo[m]>   oh on master?
+[18:57:27] <enebo[m]> where?
+[18:57:34] <headius> 9.3
+[18:57:50] <enebo[m]> oh for next snapshot
+[18:57:58] <headius> yes
+[18:57:59] <enebo[m]> hahah I thought you meant for release
+[18:58:09] <enebo[m]> ok yeah you just update release and run maven
+[18:58:14] <enebo[m]> it will update 4 poms
+[18:58:22] <headius> ok
+[18:58:57] <basshelal[m]> so when the second library comes to load `dlopen` and friends are not finding the library it depends on?
+[18:59:13] <headius> basshelal: I believe that's right
+[18:59:31] <basshelal[m]> But when the libs are on the project root they load??
+[18:59:32] <headius> the fact that it works fine from CWD tells me this is just a pathing issue
+[18:59:39] <headius> yep, works for me
+[18:59:55] <basshelal[m]> damn,  ok I'll try that now
+[19:01:20] <headius> I do not have a better explanation for why it fails but it does not seem to like the way they are being loaded from the subdir and does not recognize them as having been loaded
+[19:02:10] <headius> enebo: pushed... I don't think that will fix the deploy builds but perhaps
+[19:04:26] <enebo[m]> headius: There is something special about version not being the actual release. 
+[19:04:39] <enebo[m]> I think it being name SNAPSHOT fixes it
+[19:04:43] <headius> that's what I was thinking also
+[19:05:02] <headius> failed deploys correspond to the 17th which is when we released I think
+[19:05:11] <basshelal[m]> Yeah I was pretty sure it's a macOS thing, I suspect it's very similar to another issue we were facing with macOS library paths where the environment isn't being preserved.
+[19:05:11] <basshelal[m]> See: https://en.wikipedia.org/wiki/System_Integrity_Protection#:~:text=System%20Integrity%20Protection%20will%20also%20sanitize%20certain%20environmental%20variables%20when%20calling%20system%20programs%20when%20SIP%20is%20in%20effect.
+[19:05:11] <basshelal[m]> https://stackoverflow.com/questions/60126159/how-to-set-ld-library-path-dyld-library-path-on-macos
+[19:05:29] <basshelal[m]> I'm not super sure but they feel related somehow
+[19:05:56] <basshelal[m]> Yep works for me when they're in the project root!
+[19:06:14] <basshelal[m]> That's... very strange and very annoying :/
+[19:06:22] <headius> it is!
+[19:06:29] <headius> 🤷‍♂️
+[19:06:50] <headius> would you agree this is probably not a jnr-ffi issue specifically though?
+[19:07:30] <basshelal[m]> Oh yeah absolutely, I hate to say it, but it's not our problem 😂
+[19:08:02] <headius> I will keep it open until we get confirmation that they have it working but I'm not sure how to help now
+[19:08:03] <basshelal[m]> Still I was very curious and quite concerned at first but it became obvious it wasn't us
+[19:08:30] <basshelal[m]> We can't help really, other than to tell him that it works when they are in the project dir
+[19:08:51] <basshelal[m]> which is actually better than the proposed solutions I had for him so I think it's a win
+[19:09:28] <headius> yeah it bothers me that . works and src/main/resources does not even though I add the latter to `library.search`
+[19:09:34] <headius> I tried full path too, didn't help
+[19:09:40] <headius> and clearly . is a relative path
+[19:09:55] <headius> security? what security? 😀
+[19:11:59] <headius> enebo: just occurred to me... deploy depends on other jobs passing so it won't ever deploy 9.4 snaps with current setup
+[19:12:11] <headius> I'm going to kill master build from k77ch7 merge so I can see if it deploys right on 9.3
+[19:12:23] <headius> we can manually trigger master snap deploys if we want
+[19:12:50] <headius> we need to start deciding what to tag off too
+[19:12:55] <enebo[m]> headius: it may not but I was hoping to not tag out 250 failures just so we get snapshots
+[19:13:02] <headius> yeah agree on that for sure
+[19:13:13] <enebo[m]> headius: I have tagged a few things already...most of what is left is doable
+[19:13:32] <headius> just saying it will either not deploy until green or we need to soften that requirement
+[19:13:35] <enebo[m]> and should be done but it is perhaps less than it looks too if you see probably 100+ are 3 things
+[19:13:57] <headius> sure... I want to get back to it but we have had a steady trickle of user issues
+[19:14:02] <enebo[m]> So I think we are not that far from tagging so I don't think we need to worry too much about this yet
+[19:14:23] <enebo[m]> I think by next week we can have this tagged out
+[19:14:43] <enebo[m]> with issues for what is missing
+[19:15:51] <headius> ok
+[19:23:38] <headius> basshelal: how did you run Main btw?
+[19:23:50] <headius> I have a theory
+[19:24:01] <basshelal[m]> headius: Do you think this is a JVM issue or a macOS thing
+[19:24:20] <basshelal[m]> I used IntelliJ's run button like a plebian
+[19:24:36] <headius> novel
+[19:25:32] <headius> running this via maven may be a cause
+[19:26:19] <headius> that security thing on mac, SIP or whatever, prevents library paths from being propagated into child processes, like some of these posts mention
+[19:26:27] <headius> specifically it prevents passing them through sh/bash
+[19:26:41] <headius> `mvn` is such a script
+[19:26:59] <basshelal[m]> I don't think I used maven to run it though
+[19:27:24] <headius> our search path in jnr-ffi works to find the dylib files but it can't negotiate DYLD_LIBRARY_PATH for us
+[19:30:30] <headius> huzzah, I got it to work
+[19:30:54] <headius> basshelal: I'm not sure how intellij starts that up but it may be another script, and in any case it does not twiddle lib paths
+[19:31:23] <headius> yeah this is working fine now
+[19:31:33] <headius> DYLD_FALLBACK_LIBRARY_PATH=`pwd`/src/main/resources java -cp
+[19:31:33] <headius> /Users/headius/.m2/repository/com/github/jnr/jnr-ffi/2.2.11/jnr-ffi-2.2.11.jar:/Users/headius/.m2/repository/com/github/jnr/jffi/1.3.9/jffi-1.3.9.jar:/Users/headius/.m2/repository/com/github/jnr/jffi/1.3.9/jffi-1.3.9-native.jar:/Users/headius/.m2/repository/org/ow2/asm/asm/9.2/asm-9.2.jar:/Users/headius/.m2/repository/org/ow2/asm/asm-commons/9.2/asm-commons-9.2.jar:/Users/headius/.m2/repository/org/ow2/asm/asm-analysis/9.2/asm-analysis-9.2.jar:/Use
+[19:31:33] <headius> rs/headius/.m2/repository/org/ow2/asm/asm-tree/9.2/asm-tree-9.2.jar:/Users/headius/.m2/repository/org/ow2/asm/asm-util/9.2/asm-util-9.2.jar:/Users/headius/.m2/repository/com/github/jnr/jnr-a64asm/1.0.0/jnr-a64asm-1.0.0.jar:/Users/headius/.m2/repository/com/github/jnr/jnr-x86asm/1.0.2/jnr-x86asm-1.0.2.jar:target/uapki-test-1.0-SNAPSHOT.jar ua.koval4uk.Main
+[19:31:36] <headius> boom
+[19:32:00] <headius> DYLD vars are not getting passed through maven or whatever other exec launchers are being used so we can't specify the path necessary
+[19:32:06] <basshelal[m]> niiiice
+[19:32:12] <headius> calling the java binary directly it works ok
+[19:32:23] <basshelal[m]> I'll try it now
+[19:32:53] <headius> I will comment
+[19:40:26] <headius> funny that it is insecure to allow env propagation of DYLD lib paths, but totally ok to include `.` in the default path 🙄
+[19:41:54] <headius> we may want to add env LD/DYLD variables to the error output
+[19:42:11] <headius> that would have cleared this up pretty quickly
+[19:43:55] *** Joins: rdubya[m] (~rdubyamat@2001:470:69fc:105::1:7649)
+[19:44:32] <headius> basshelal: I closed the issue since I think we have a pretty clear explanation now
+[19:44:48] <headius> gonna take an early lunch and do a Hades run to reward myself
+[19:45:04] <basshelal[m]> I still couldn't get it to work
+[19:45:17] <basshelal[m]> Because I'm an idiot not because you're wrong
+[19:45:34] <headius> oh yeah?
+[19:45:35] <headius> same error?
+[19:45:38] <basshelal[m]> Can't figure out how to start java from a terminal on macos 😂
+[19:46:11] <headius> fyi I used `mvn dependency:build-classpath` to get that part
+[19:46:29] <headius> just add target/uapkiwhatever.jar and main class and DYLD var and it should be fine
+[19:47:16] <headius> JVM installs should be in /Library/Java/JavaVirtualMachines ... we use a script called "pickjdk" to switch between them
+[19:47:40] <basshelal[m]> Cool, go have lunch I'll keep trying it and let you know
+[19:48:35] <headius> basshelal: https://gist.github.com/headius/11bde604ac2b63c7ade510a8860a0a8b
+[19:48:38] <headius> bbiab
+[20:06:34] <enebo[m]> yay https://gist.github.com/enebo/6484b07f9d01dcd22fc4ba8f6e5d3e59
+[20:18:07] <basshelal[m]> Nope, no luck, I'm doing something wrong :/
+[20:19:56] <basshelal[m]> `mvn package` to create the jar... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/d169fe4dfc48918f1dc9f5d7dda6a8a7f34e101f)
+[20:20:19] <basshelal[m]> s/=`/=$(/, s/`//)//
+[20:44:39] <basshelal[m]> Does `DYLD_FALLBACK_LIBRARY_PATH` appear in your `env`?
+[20:45:44] <headius> No semicolon
+[20:45:58] <headius> The env should be part of the Java command line
+[20:46:32] <basshelal[m]> Yeah still
+[20:46:49] <basshelal[m]> This is so annoying but it's bothering me to leave it, I want to win
+[20:53:07] <headius> Show me your session
+[21:04:25] <headius> 9.3 hung in some Signal.trap spec but the manual builds are working so it seems ok again
+[21:08:02] <basshelal[m]> https://gist.github.com/basshelal/0c1fa968ba99bf50b9c4d0d59e25bce3
+[21:08:27] <headius> what's the command line you are running now?
+[21:09:02] <basshelal[m]> default macOS terminal application, zshell
+[21:11:05] <basshelal[m]> `System.out.println(System.getenv("DYLD_LIBRARY_PATH"));
+[21:11:05] <basshelal[m]>         System.out.println(System.getenv("DYLD_FALLBACK_LIBRARY_PATH"));`
+[21:11:05] <basshelal[m]> These are both `null`
+[21:11:44] <basshelal[m]> From Main.java
+[21:11:54] <headius> I mean the java command line that is still failing
+[21:12:19] <basshelal[m]> `DYLD_FALLBACK_LIBRARY_PATH=$(pwd)/src/main/resources java -cp
+[21:12:19] <basshelal[m]> /Users/user/.m2/repository/com/github/jnr/jnr-ffi/2.2.11/jnr-ffi-2.2.11.jar:/Users/user/.m2/repository/com/github/jnr/jffi/1.3.9/jffi-1.3.9.jar:/Users/user/.m2/repository/com/github/jnr/jffi/1.3.9/jffi-1.3.9-native.jar:/Users/user/.m2/repository/org/ow2/asm/asm/9.2/asm-9.2.jar:/Users/user/.m2/repository/org/ow2/asm/asm-commons/9.2/asm-commons-9.2.jar:/Users/user/.m2/repository/org/ow2/asm/asm-analysis/9.2/asm-analysis-9.2.jar:/Users/user/.m2
+[21:12:19] <basshelal[m]> /repository/org/ow2/asm/asm-tree/9.2/asm-tree-9.2.jar:/Users/user/.m2/repository/org/ow2/asm/asm-util/9.2/asm-util-9.2.jar:/Users/headius/.m2/repository/com/github/jnr/jnr-a64asm/1.0.0/jnr-a64asm-1.0.0.jar:/Users/user/.m2/repository/com/github/jnr/jnr-x86asm/1.0.2/jnr-x86asm-1.0.2.jar:target/uapki-test-1.0-SNAPSHOT.jar ua.koval4uk.Main`
+[21:13:00] <headius> hmmm it looks fine
+[21:13:12] <basshelal[m]> I know right ughhhhh
+[21:13:23] <basshelal[m]> Is there a previous step I missed?
+[21:13:26] <headius> run `file \`which java\``
+[21:13:28] <headius> bleh
+[21:13:36] <headius> check if your java command is a shell script
+[21:14:26] <basshelal[m]> Dont think so
+[21:14:47] <basshelal[m]> `file $(which java)
+[21:14:47] <basshelal[m]> /usr/bin/java: Mach-O universal binary with 2 architectures: [x86_64:Mach-O 64-bit executable x86_64] [arm64e:Mach-O 64-bit executable arm64e]
+[21:14:47] <basshelal[m]> /usr/bin/java (for architecture x86_64):	Mach-O 64-bit executable x86_64
+[21:14:47] <basshelal[m]> /usr/bin/java (for architecture arm64e):	Mach-O 64-bit executable arm64e`
+[21:14:53] <basshelal[m]>  * `file $(which java) 
+[21:14:53] <basshelal[m]> /usr/bin/java: Mach-O universal binary with 2 architectures: [x86_64:Mach-O 64-bit executable x86_64] [arm64e:Mach-O 64-bit executable arm64e] /usr/bin/java (for architecture x86_64):	Mach-O 64-bit executable x86_64 /usr/bin/java (for architecture arm64e):	Mach-O 64-bit executable arm64e`
+[21:15:06] <basshelal[m]>  * `file $(which java)  /usr/bin/java: Mach-O universal binary with 2 architectures: [x86_64:Mach-O 64-bit executable x86_64] [arm64e:Mach-O 64-bit executable arm64e] /usr/bin/java (for architecture x86_64):	Mach-O 64-bit executable x86_64 /usr/bin/java (for architecture arm64e):	Mach-O 64-bit executable arm64e`
+[21:15:29] <headius> Aha
+[21:15:47] <headius> My son looked into this a little as well and found a page that says all Apple system binaries have this property
+[21:16:23] <headius> I wonder if this Java command in /use/bin qualifies
+[21:16:27] <headius> usr
+[21:16:39] <basshelal[m]> wait which property?
+[21:16:58] <basshelal[m]> what does yours look like then lol
+[21:17:01] <headius> That those environment variables are not passed from parent to child
+[21:17:28] <headius> $ which java
+[21:17:28] <headius> /Library/Java/JavaVirtualMachines/adoptopenjdk-11.jdk/Contents/Home/bin/java
+[21:17:28] <basshelal[m]> oh yeah that's what's been happening
+[21:17:55] <headius> the default java executable for the system will just choose whatever is the newest JVM installed and run that
+[21:18:03] <headius> but I think it probably qualifies as one of these protected system executables
+[21:18:16] <headius> so that is another lovely wrinkle with this
+[21:18:29] <headius> try one of the JavaVirtualMachines installs directly
+[21:19:08] <headius> enebo: we could possibly detect this in JRuby or jnr-ffi and warn or something
+[21:19:15] <headius> or include in errors when we fail to load libs
+[21:20:05] <headius> "DYLD environment variables are unset; JRuby may have been launched via a protected system executable? See http blah"
+[21:20:12] <headius> or something
+[21:21:17] <enebo[m]> wot
+[21:21:19] <headius> I wonder how macos JRuby users are doing this.. perhaps they are simply not loading a stack of interdependent dylibs
+[21:21:48] <basshelal[m]> ugh nothing
+[21:21:57] <enebo[m]> I just reread that twice...because the latest java is loaded through a protected launcher it is not allowing us to load from the actual java loaded?
+[21:21:57] <basshelal[m]> Calling my vm directly doesn't change this
+[21:22:01] <headius> enebo: Apple security protocols prevent passing LD/DYLD_LIBRARY_PATH like variables from parent to child process when the child is among a set of protected system executables
+[21:22:09] <enebo[m]> hahah
+[21:22:16] <headius> basshelal: you're killing me Smalls
+[21:22:23] <headius> ok
+[21:22:34] <headius> so this is on an M1 machine right?
+[21:22:41] <headius> let me crack mine open and try there
+[21:22:48] <enebo[m]> another path to take could be to have our launcher follow and launch the real java
+[21:22:48] <basshelal[m]> I'm on x86
+[21:22:49] <headius> if this is still broken there I want to know it
+[21:23:00] <enebo[m]> but only on M1 Macos
+[21:23:05] <headius> oh but I thought I saw something about arm in your comments or something
+[21:23:13] <enebo[m]> wot!
+[21:23:14] <enebo[m]> :)
+[21:23:31] <headius> enebo: this applies to x86, or at least I was able to reproduce the same error on x86
+[21:23:33] <basshelal[m]> nope, good ole intel
+[21:23:50] <headius> oh right I just saw the universal binary platforms
+[21:23:52] <headius> ok
+[21:23:56] <headius> well then I'm stumped
+[21:23:57] <enebo[m]> ok well same idea just on macos period I guess
+[21:24:00] <headius> what Java version?
+[21:24:12] <headius> enebo: yeah
+[21:24:12] <enebo[m]> assuming we can know the right java executable somehow
+[21:24:16] <headius> I don't know that this is a property of any other OS
+[21:24:19] <enebo[m]> your which worked I guess
+[21:24:38] <headius> yeah but regardless of executable we could add to error some text about how these DYLD properties don't seem to be present, maybe that's your problem
+[21:25:02] <headius> if those aren't there and we are failing to load a dylib it's probably likely related
+[21:25:02] <enebo[m]> I can see the logic in why they think this is a good idea but not for a generic runtime like java
+[21:25:14] <headius> or e.g. if you specify a search path and we don't see that in any DYLD vars
+[21:25:28] <enebo[m]> Apple is not putting /usr/bin/java though is it?
+[21:25:31] <headius> so custom search path for the file but no dl env to support it
+[21:25:36] <headius> well I'm not sure
+[21:25:49] <headius> that may not actually be the bug here
+[21:25:53] <headius> it was a good guess
+[21:26:05] <enebo[m]> If it is not Apple making this special launcher app then openjdk or whoever will move this away from a special directory
+[21:26:16] <headius> for whatever reason these env are not propagating into the program for basshelal 
+[21:26:35] <enebo[m]> ok whatever reason I guess is the issue atm
+[21:26:38] <headius> basshelal: what is `which java` now?
+[21:26:48] <enebo[m]> lunch
+[21:26:51] <headius> or what path are you using
+[21:26:59] <basshelal[m]> `/usr/bin/java`
+[21:27:16] <headius> sorry I mean the direct path to the install
+[21:27:19] <basshelal[m]> oh ok
+[21:27:54] <basshelal[m]> `/Users/user/Library/Java/JavaVirtualMachines/openjdk-17.0.2/Contents/Home/bin/java`
+[21:28:05] <headius> I'll try 17 also
+[21:28:30] <headius> fails
+[21:29:00] <headius> back to 11 and it works... so maybe this is java-related after all
+[21:30:16] <basshelal[m]> lemme try on an 11
+[21:30:39] <headius> reported was on 11 so if this is a 17 thing it wasn't the cause for them
+[21:31:17] <headius> it is indeed not picking up this env
+[21:31:26] <headius> they may have broken something
+[21:32:50] <headius> https://bugs.openjdk.java.net/browse/JDK-8267598
+[21:35:41] <basshelal[m]> 11 receives the `DYLD_LIBRARY_FALLBACK_PATH` in `System.getEnv()` but still fails to `dlopen`
+[21:36:36] <headius> latest openjdk 17 still seems to fail for me
+[21:36:43] <basshelal[m]> yep
+[21:36:54] <basshelal[m]> how did you get it work before then??
+[21:37:03] <headius> 11 works fine for me
+[21:37:13] <basshelal[m]> which jvm?
+[21:37:42] <headius> $ java -version
+[21:37:42] <headius> openjdk version "11.0.4" 2019-07-16
+[21:37:42] <headius> OpenJDK Runtime Environment AdoptOpenJDK (build 11.0.4+11)
+[21:37:42] <headius> OpenJDK 64-Bit Server VM AdoptOpenJDK (build 11.0.4+11, mixed mode)
+[21:38:03] <headius> 16 fails
+[21:38:21] <headius> 14 fails
+[21:40:43] <headius> 13 works
+[21:41:05] <headius> seems to have broken after 13
+[21:42:57] <headius> hah almost all my 11 installs worked but temurin failed
+[21:43:13] <headius> now I have to know if they are backporting this breakage
+[21:44:51] <basshelal[m]> !Thats the one Ive been using right now
+[21:45:19] <headius> latest zulu 11 also fails
+[21:45:23] <basshelal[m]> Trying to download openjdk but im so clumsy on macos and on this tiny macbook air
+[21:45:46] <headius> so they "broke" something and backported it all the way to 11
+[21:45:50] <basshelal[m]> honestly this just means there's inconsistencies
+[21:46:53] <headius> that issue I linked was just resolved last summer, I wonder if it is related after all
+[21:48:16] <basshelal[m]> i don't know what to do
+[21:52:06] <headius> AARGH
+[21:52:21] <headius> remove FALLBACK
+[21:53:30] <headius> that works on latest 17 for me as well
+[21:53:42] <headius> so this other variable is not propagating, seriously?
+[21:54:02] <headius> but you said it was in there?
+[21:54:10] <headius> what a frustrating mix of results
+[21:56:38] <basshelal[m]> ahhhhh
+[21:56:50] <basshelal[m]> yep without fallback 11 coretta works
+[21:57:25] <basshelal[m]> and temurin 11
+[21:57:43] <headius> I got that env from https://stackoverflow.com/a/3172515/152946
+[21:57:51] <headius> it sounded like a better choice for something like this
+[21:58:06] <basshelal[m]> And openjdk 17 as well
+[21:58:16] <basshelal[m]> damn
+[21:58:32] <basshelal[m]> thats good? 
+[22:00:14] <headius> https://www.unix.com/man-page/osx/1/dyld/
+[22:00:30] <headius> docs here make me wonder if it is better or not
+[22:00:59] <headius> beats me man
+[22:01:45] <basshelal[m]> why?
+[22:04:32] <basshelal[m]> This is annoying because when someone has to launch their application they have to pass in this environment before hand, I wonder if putting that whole command in a script will work?
+[22:04:54] <headius> Should be ok I think
+[22:05:27] <headius> Might be a way to set this from within JVM but we might have to bind the native setenv function to do it 😀
+[22:06:47] <basshelal[m]> wow
+[22:22:16] <basshelal[m]> Btw the issuer used the old version because our README had it hardcoded  into the copy-paste textbox so I made it more flexible here without having to update it every time
+[22:22:16] <basshelal[m]> https://github.com/jnr/jnr-ffi/pull/298
+[22:27:34] <headius> Ah yes

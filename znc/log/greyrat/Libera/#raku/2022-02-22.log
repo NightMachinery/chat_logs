@@ -1,0 +1,321 @@
+[00:33:12] *** Joins: curiosa (~curiosa@37.169.29.116)
+[00:35:20] <curiosa> Hi, I have a question. Let's say that you you have an object with many ro attributes. You want a method that return a new object with everything identical to the caller a part a few attributes. What would be the best way to write such a method in Raku?
+[00:36:01] <curiosa> one option is clearly to invoke new with all the arguments taken from the caller a part the few that are changed; this is quite bloated
+[00:36:53] <curiosa> another option is to make all attributes rw and then call copy and modify only what need to modify, this doesn't fell the Raku's way
+[00:36:58] <curiosa> what would you do?
+[00:45:05] *** Quits: discord-raku-bot (~RakuIRC@ip5f5ab74b.dynamic.kabel-deutschland.de) (Remote host closed the connection)
+[00:45:35] *** Joins: discord-raku-bot (~RakuIRC@ip5f5ab74b.dynamic.kabel-deutschland.de)
+[00:49:55] <Xliff> curiosa: Why would you want to do things that way?
+[00:50:41] <Xliff> If you want to selectively allow attributes to be rw, create methods for each attribute that allow you to customize the logic.
+[00:54:47] <tonyo> m: class AA { has $!o; has $!p; submethod BUILD(:$!o = 1, :$!p = 2) { }; method COPY(:$o = $!o, :$p = $!p) { return AA.new(:$o, :$p); }; method o {$!o}; method p{$!p}; }; my $a1 = AA.new(:o(2), :p(3)); my $a2 = $a1.COPY(:p(6)); dd [$a1.o, $a1.p]; dd [$a2.o, $a2.p];
+[00:54:48] <camelia> rakudo-moar 451ad0ea6: OUTPUT: «[2, 3]␤[2, 6]␤»
+[00:56:42] <Xliff> m: class A { has $!may-not-be-writeable; has %!attribute-writeable; method may-not-be-writeable is rw { Proxy.new( FETCH => $!may-not-be-writeable, STORE => -> $, \v { unless %!attribute-writeable{ &*ROUTINE.name } { say "Attribute is not currently writeable!' return }; $!may-not-be-writeable = v }; }; method set-rw { %!attribute-writeable{ '$!may-not-be-writeable' } = True; }; method set-ro { %!attribute-writeable{ 
+[00:56:42] <Xliff> '$!may-not-be-writeable' } = False }; };
+[00:56:43] <camelia> rakudo-moar 451ad0ea6: OUTPUT: «5===SORRY!5=== Error while compiling <tmp>␤Unable to parse expression in subscript; couldn't find final '}' (corresponding starter was at line 1)␤at <tmp>:1␤------> 3; method set-ro { %!attribute-writeable{7⏏5<EOL>␤    expecting any …»
+[00:56:56] <Xliff> Hmm... I will have to repl this. One sec.
+[00:57:10] <tonyo> curiosa: ^ that pattern will let you control what can be modified on copy
+[01:11:25] <curiosa> I prefer to do things in the most simple way
+[01:12:59] <curiosa> the thing is that I have
+[01:13:13] <curiosa> a language that i am parsing that specify types
+[01:13:46] <curiosa> and for each type there is an attribute that is number-of-bytes, let's say
+[01:14:00] <curiosa> then I have arrays
+[01:14:22] <curiosa> and arrays should multiply that attribute by the number-of-elements
+[01:15:54] <curiosa> and return also a type
+[01:16:37] <curiosa> all this is happening in the actions of a grammar, such that array-of gets the type of the element as a made argument
+[01:17:12] <tonyo> you can use some introspection to get that done in actions if you don't know what the attributes are at compile time,
+[01:22:43] <Xliff> https://replit.com/@Xliff/YellowgreenAdolescentBoards#main.raku
+[01:22:47] <Xliff> ^^ curiosa
+[01:27:56] <curiosa> that's nice
+[01:30:18] <tonyo> m: class A {has $!o = 6; method o { $!o }; }; my $a1= A.new; sub copy($of, %vals) { my $cp = $of.WHAT.new; for $cp.^attributes.grep(*.readonly) -> $attr { $attr.set_value($cp, (%vals{$attr.name} // $attr.get_value) );}; $cp }; dd [$a1.o, copy($a1, '$!o' => 12).o]
+[01:30:19] <camelia> rakudo-moar 451ad0ea6: OUTPUT: «[6, 12]␤»
+[01:31:53] <tonyo> generic way to do it if you don't know what the object is at compilation ^
+[01:34:13] *** Joins: slowtype- (~slowtyper@2a02:214c:840d:cd00:225:64ff:feb7:4668)
+[01:35:13] *** Quits: slowtyper (~slowtyper@user/slowtyper) (Read error: Connection reset by peer)
+[01:41:26] *** Quits: vrurg (~vrurg@45.74.95.181) (Remote host closed the connection)
+[01:42:46] *** Joins: vrurg (~vrurg@45.74.95.181)
+[01:49:22] *** Quits: vrurg (~vrurg@45.74.95.181) (Remote host closed the connection)
+[01:49:34] *** Joins: vrurg (~vrurg@45.74.95.181)
+[01:57:18] *** Joins: Altai-man (~koto@static-212-247-159-248.cust.tele2.se)
+[02:05:42] *** Quits: Altai-man (~koto@static-212-247-159-248.cust.tele2.se) (Quit: Leaving)
+[02:12:16] <japhb> Why not .clone?
+[02:12:44] <japhb> https://docs.raku.org/routine/clone
+[02:13:04] <curiosa> omg, clone is perfect!
+[02:16:04] <curiosa> does clone calls TWEAK ?
+[02:19:52] *** Quits: lgtaube (~lgt@45.86.202.80) (Ping timeout: 256 seconds)
+[02:21:10] <curiosa> damn, it doesn't
+[02:21:13] <curiosa> m: class a { has $.beer = 1; submethod TWEAK(:$beer) { $!beer = 2 * $!beer; }  }; my $b = a.new(:beer(3)); say $b; say $b.clone: :beer(4)
+[02:21:13] <camelia> rakudo-moar 451ad0ea6: OUTPUT: «a.new(beer => 6)␤a.new(beer => 4)␤»
+[02:21:19] <curiosa> isn't this a bug?
+[02:26:14] <japhb> Kinda feels like it, yeah.  File a Rakudo issue?
+[02:33:07] *** Joins: lgtaube (~lgt@194.169.217.31)
+[03:00:38] <tonyo> .clone doesn't let you control what gets copied
+[03:03:37] *** Quits: curiosa (~curiosa@37.169.29.116) (Quit: Client closed)
+[03:10:22] *** Joins: ocomport (~ocomport@103.91.172.100)
+[03:11:11] <gfldex> PWC#153 spoiler warning: https://gfldex.wordpress.com/2022/02/22/looplessly-simply/
+[03:29:50] <ugexe> if TWEAK was rerun on .clone the it could modify various internal state which isn't what .clone should do
+[03:31:02] <ugexe> the example shown only makes sense when its literally just tweaking the value you are cloning. it does not make sense for almost any other code TWEAK might run
+[03:37:48] *** Quits: reportable6 (rep-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[04:00:37] <japhb> ugexe: Not sure about that.  I use TWEAK in several cases to make sure that I cache some slow-to-compute values based on the public attributes at object creation time, to avoid any risk of concurrency races to compute it later.
+[04:00:57] <japhb> *compute them
+[04:02:20] <ugexe> thats fine, why would you want TWEAK called again?
+[04:02:43] <ugexe> .clone would be copying the attributes after that heavy lifting has been done, so i dont see why you would want TWEAK to do anything
+[04:03:48] <japhb> ugexe: If one of the changed public attributes affected that computation.
+[04:04:10] <ugexe> class Foo { has $.a; has $.b submethod TWEAK(:$!a, :$!b) { $!b = $!b * 100} }; Foo.new(a => 1).clone(a => 2)
+[04:04:10] <japhb> Meaning, if my internal cache had been invalidated by an attribute override.
+[04:04:18] <ugexe> .clone should not be affecting $.b
+[04:04:34] <ugexe> it should clone $.b over, not run TWEAK again
+[04:04:57] <ugexe> although if you did want it to do so then thats a case for writing a custom clone method
+[04:05:08] <ugexe> in general that does not seem ideal
+[04:05:17] <japhb> OIC.  You're merging BUILD and TWEAK, I think.
+[04:37:49] *** Quits: linkable6 (lin-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[04:37:49] *** Quits: evalable6 (eva-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[05:05:38] *** Joins: frost (~frost@user/frost)
+[05:38:41] *** Joins: evalable6 (eva-able@2001:41d0:2:5eb5::)
+[06:23:56] *** Quits: simcop2387 (~simcop238@perlbot/patrician/simcop2387) (Read error: Connection reset by peer)
+[06:23:58] *** Quits: perlbot (~perlbot@perlbot/bot/simcop2387/perlbot) (Read error: Connection reset by peer)
+[06:34:03] *** Joins: simcop2387 (~simcop238@perlbot/patrician/simcop2387)
+[06:39:56] *** Joins: reportable6 (rep-able@2001:41d0:2:5eb5::)
+[06:40:03] *** Joins: perlbot (~perlbot@perlbot/bot/simcop2387/perlbot)
+[07:38:03] <Xliff> How can I get a list of currently loaded compunits?
+[07:39:16] *** Joins: linkable6 (lin-able@2001:41d0:2:5eb5::)
+[08:14:28] <Geth> ¦ Raku-Steering-Council/main: d35d096a68 | (Geoffrey Broadwell)++ | minutes/20220219.md
+[08:14:28] <Geth> ¦ Raku-Steering-Council/main: Add RSC meeting minutes for 2022-02-19
+[08:14:28] <Geth> ¦ Raku-Steering-Council/main: review: https://github.com/Raku/Raku-Steering-Council/commit/d35d096a68
+[08:39:16] *** Quits: evalable6 (eva-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[08:39:17] *** Quits: linkable6 (lin-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[09:05:00] *** Quits: frost (~frost@user/frost) (Ping timeout: 240 seconds)
+[09:22:26] *** Quits: jrjsmrtn (~jrjsmrtn@ip-213-49-42-24.dsl.scarlet.be) (Ping timeout: 272 seconds)
+[09:26:18] *** Joins: jrjsmrtn (~jrjsmrtn@ip-83-134-41-224.dsl.scarlet.be)
+[09:39:05] *** Quits: reportable6 (rep-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[09:39:14] *** Joins: mexen (uid495612@user/mexen)
+[09:40:41] *** Joins: reportable6 (rep-able@2001:41d0:2:5eb5::)
+[09:44:00] *** Joins: abraxxa-home (~alex@2a01:100:2000:2500::22)
+[09:46:54] *** Quits: abraxxa-home (~alex@2a01:100:2000:2500::22) (Remote host closed the connection)
+[09:54:51] *** Joins: abraxxa-home (~alex@2a01:100:2000:2500::22)
+[10:38:02] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:602f:2025:c843:6cf4)
+[10:40:14] *** Joins: evalable6 (eva-able@2001:41d0:2:5eb5::)
+[10:40:29] *** Quits: tejr (~tejr@user/tejr) (Remote host closed the connection)
+[10:41:28] *** Joins: tejr (~tejr@user/tejr)
+[11:03:59] *** Joins: Altai-man (~koto@static-212-247-159-248.cust.tele2.se)
+[11:05:47] *** Quits: Altai-man (~koto@static-212-247-159-248.cust.tele2.se) (Remote host closed the connection)
+[11:52:23] *** Quits: Sgeo (~Sgeo@user/sgeo) (Read error: Connection reset by peer)
+[11:55:40] *** Quits: abraxxa-home (~alex@2a01:100:2000:2500::22) (Remote host closed the connection)
+[11:57:48] *** Joins: abraxxa (~ahartmai@smtp.hartmaier.priv.at)
+[11:57:55] *** Joins: ccntrq (~Thunderbi@imx92-1-78-204-187-6.fbx.proxad.net)
+[12:01:50] *** Quits: abraxxa (~ahartmai@smtp.hartmaier.priv.at) (Remote host closed the connection)
+[12:03:37] *** Joins: abraxxa (~ahartmai@smtp.hartmaier.priv.at)
+[12:07:33] *** Joins: frost (~frost@user/frost)
+[12:11:48] *** Quits: abraxxa (~ahartmai@smtp.hartmaier.priv.at) (Ping timeout: 240 seconds)
+[12:12:30] *** Joins: abraxxa (~ahartmai@tsa-tc-flod.t-systems.at)
+[12:40:49] *** Quits: tejr (~tejr@user/tejr) (Remote host closed the connection)
+[12:41:06] *** Joins: tejr (~tejr@user/tejr)
+[12:47:26] *** Joins: dakkar (~dakkar@home.thenautilus.net)
+[12:59:48] *** Quits: frost (~frost@user/frost) (Ping timeout: 240 seconds)
+[13:08:45] <CIAvash> Xliff: `$*REPO.repo-chain.map(|*.loaded).grep(&so)`?
+[13:34:47] <Geth> ¦ doc/updated-ecosystem-faq: 52606e4027 | (Elizabeth Mattijsen)++ | doc/Language/faq.pod6
+[13:34:47] <Geth> ¦ doc/updated-ecosystem-faq: Update the ecosystem FAQ
+[13:34:47] <Geth> ¦ doc/updated-ecosystem-faq: review: https://github.com/Raku/doc/commit/52606e4027
+[13:35:04] <Geth> ¦ doc: lizmat++ created pull request #4037: Update the ecosystem FAQ
+[13:35:04] <Geth> ¦ doc: review: https://github.com/Raku/doc/pull/4037
+[13:39:29] *** Joins: frost (~frost@user/frost)
+[13:50:38] *** Quits: lgtaube (~lgt@194.169.217.31) (Ping timeout: 256 seconds)
+[13:55:15] <Geth> ¦ doc/updated-modules-setup: 59eaa27b31 | (Elizabeth Mattijsen)++ | doc/Language/modules.pod6
+[13:55:15] <Geth> ¦ doc/updated-modules-setup: Update modules setup for zef | fez
+[13:55:15] <Geth> ¦ doc/updated-modules-setup: review: https://github.com/Raku/doc/commit/59eaa27b31
+[13:55:31] <Geth> ¦ doc: lizmat++ created pull request #4038: Update modules setup for zef | fez
+[13:55:31] <Geth> ¦ doc: review: https://github.com/Raku/doc/pull/4038
+[14:06:04] *** Joins: lgtaube (~lgt@45.86.202.80)
+[14:06:29] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:602f:2025:c843:6cf4) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[14:11:09] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:602f:2025:c843:6cf4)
+[14:15:05] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:602f:2025:c843:6cf4) (Client Quit)
+[14:26:08] <discord-raku-bot> <Nemokosch#9980> Offtopic but is there something like qqx in Perl?
+[14:28:25] *** Quits: discord-raku-bot (~RakuIRC@ip5f5ab74b.dynamic.kabel-deutschland.de) (Remote host closed the connection)
+[14:28:32] <CIAvash> As I mentioned in [problem-solving#317](https://github.com/Raku/problem-solving/issues/317) and other places, I don't understand why everyone wants to create and maintain their own project, when [problem-solving#158](https://github.com/Raku/problem-solving/issues/158) can solve and cover all those issues. It can be the main website, it can have a core blog, it can have an advent-blog, it can have an announcements section, it can have a community blog
+[14:28:32] <CIAvash> where members of the community or others with relevant content can post their articles, maybe this can also be the place you revive or store old blog posts? it can be home to weekly blogs as well, for even different Raku implementations. It probably can be home to Documentation too, but that's another matter. Anyway I created my own website, maybe that's what people like to do, create their own things 😀 
+[14:28:38] *** Joins: discord-raku-bot (~RakuIRC@ip5f5ab74b.dynamic.kabel-deutschland.de)
+[14:30:13] <lizmat> CIAvash: good points... I had quite forgotten about that....  but the demo is not working (anymore) ?
+[14:31:13] *** Joins: Altai-man (~koto@83-219-207-134.cust.bredband2.com)
+[14:31:54] <lizmat> also: I think more generally now that we can have a full Raku stack for websites, I have a slight preference for having the main website being a full stack Raku thing
+[14:32:05] <lizmat> dogfooding and all that :)
+[14:36:26] <El_Che> I think we miss oidc before we can speak of full stack
+[14:37:16] <CIAvash> Updated the demo link, either I forgot to change it or something happened to the redirection. https://www.raku-lang.ir/en/
+[14:41:46] <CIAvash> Nemokosch: don't backticks and `qx` do that in Perl? If you mean variable interpolation
+[14:44:05] <CIAvash> Right now Raku can't do everything, so in some places you end up using external tools or well, creating them. A simple example is Raku syntax highlighter, do we have one written in Raku?
+[14:47:50] <Altai-man> CIAvash, nope. It depends on having a Raku parser written in Raku, but rakudo guts are not to be touched, Perl6::Parser is not active anymore.
+[14:48:35] <Altai-man> There is a speculation the sitatuion can get better with introducing the RakuAST, as it opens a way to have something like "Parse the text and give me a stream of tokens" which then can be formatted and/or highlighted.
+[14:48:44] <Altai-man> *situation
+[14:51:18] *** Joins: ccntrq1 (~Thunderbi@2a01:e34:eccb:b060:8793:de70:3992:9c12)
+[14:52:18] <Geth> ¦ doc: 743f394c93 | (Elizabeth Mattijsen)++ (committed using GitHub Web editor) | doc/Language/faq.pod6
+[14:52:18] <Geth> ¦ doc: Update the ecosystem FAQ (#4037)
+[14:52:18] <Geth> ¦ doc: review: https://github.com/Raku/doc/commit/743f394c93
+[14:53:02] *** Quits: ccntrq (~Thunderbi@imx92-1-78-204-187-6.fbx.proxad.net) (Ping timeout: 272 seconds)
+[14:53:03] *** ccntrq1 is now known as ccntrq
+[15:37:27] *** Quits: reportable6 (rep-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[15:39:39] *** Joins: reportable6 (rep-able@2001:41d0:2:5eb5::)
+[15:48:21] <lizmat> yes, I'd expect a Raku syntax highlighter in Raku to become available after RakuAST lands
+[15:54:16] <CIAvash> But it won't highlight code of other languages used in POD; Chroma does 😀
+[16:30:43] *** Quits: discord-raku-bot (~RakuIRC@ip5f5ab74b.dynamic.kabel-deutschland.de) (Ping timeout: 256 seconds)
+[16:30:56] *** Joins: discord-raku-bot (~RakuIRC@ip5f5ab74b.dynamic.kabel-deutschland.de)
+[16:34:17] <Geth> ¦ problem-solving/sunsetting-p6c-cpan: 3de16a68c8 | (Elizabeth Mattijsen)++ | solutions/meta/sunsetting-p6c-cpan.md
+[16:34:17] <Geth> ¦ problem-solving/sunsetting-p6c-cpan: First stab at resolution document for #316
+[16:34:17] <Geth> ¦ problem-solving/sunsetting-p6c-cpan: review: https://github.com/Raku/problem-solving/commit/3de16a68c8
+[16:34:31] <Geth> ¦ problem-solving: lizmat++ created pull request #318: First stab at resolution document for #316
+[16:34:31] <Geth> ¦ problem-solving: review: https://github.com/Raku/problem-solving/pull/318
+[16:40:05] *** Joins: linkable6 (lin-able@2001:41d0:2:5eb5::)
+[16:45:07] *** Joins: jjido (~Denis@94.4.149.217)
+[17:09:56] *** Quits: frost (~frost@user/frost) (Ping timeout: 245 seconds)
+[17:38:09] *** Joins: morte_ (~user@190.104.116.153)
+[17:44:34] <Geth> ¦ doc: f68ed10ab1 | Coke++ | doc/Language/faq.pod6
+[17:44:34] <Geth> ¦ doc: whitespace
+[17:44:34] <Geth> ¦ doc: review: https://github.com/Raku/doc/commit/f68ed10ab1
+[17:44:34] <Geth> ¦ doc: 097fce4e4a | Coke++ | doc/Language/faq.pod6
+[17:44:34] <Geth> ¦ doc: typo
+[17:44:34] <Geth> ¦ doc: review: https://github.com/Raku/doc/commit/097fce4e4a
+[17:44:34] <Geth> ¦ doc: 5a4ac27425 | Coke++ | xt/pws/words.pws
+[17:44:36] <Geth> ¦ doc: new word
+[17:44:37] <linkable6> Link: https://docs.raku.org/language/faq
+[17:44:38] <Geth> ¦ doc: review: https://github.com/Raku/doc/commit/5a4ac27425
+[17:46:14] *** Joins: yo (~yo@ip68-97-38-234.ok.ok.cox.net)
+[17:47:21] *** Joins: ggoebel (~ggoebel@107-134-157-130.lightspeed.tukrga.sbcglobal.net)
+[17:48:34] *** yo is now known as ayu
+[17:48:38] <Geth> ¦ ecosystem: 5d6d128964 | (Elizabeth Mattijsen)++ | META.list
+[17:48:38] <Geth> ¦ ecosystem: Remove modules from p6c that now live in zef
+[17:48:38] <Geth> ¦ ecosystem: 
+[17:48:38] <Geth> ¦ ecosystem: Email::Simple, Net::IMAP, NET::SMTP, PSpec,
+[17:48:38] <Geth> ¦ ecosystem: Time::Duration::Parser, Web::Template
+[17:48:38] <Geth> ¦ ecosystem: review: https://github.com/Raku/ecosystem/commit/5d6d128964
+[17:53:08] *** Quits: ayu (~yo@ip68-97-38-234.ok.ok.cox.net) (Quit: Connection closed)
+[18:00:02] <ggoebel> is it possible to create or use interpolation to generate a regular expression character class? I.e. something like... @filter = <d .. z>; "abadaba" ~~ /^ <[a .. z] - [{@filter}]>+ $/
+[18:02:45] <MasterDuke> nope, not without using EVAL to create the regex
+[18:04:17] * lizmat clickbaits https://rakudoweekly.blog/2022/02/21/2022-08-grammarly-co-op/
+[18:06:07] <ggoebel> say I have an @dictionary and I'd like to filter out all words that match any letter in an array... what approach would you take? @filtered = @dict.grep({ ... }}?
+[18:08:00] <lizmat> ggoebel: probably would put the letters in a Set or a hash, and then grep on non-existence in that Set or hash ?
+[18:08:28] <lizmat>  s/non-//
+[18:11:02] <lizmat> my %s is Set = @letters; @filtered = @dict.grep: { .comb.first: { %s{$_} {
+[18:11:06] <lizmat> my %s is Set = @letters; @filtered = @dict.grep: { .comb.first: { %s{$_} }
+[18:11:16] <lizmat> of the top of my head :-)
+[18:12:27] <lizmat> or perhaps use Map::Match
+[18:14:26] <lizmat> my %m is Map::Match = @dictionary.map: * => 1;  @filtered = %m{@letters}.unique
+[18:14:33] <lizmat> also off the top of my head
+[18:14:54] <lizmat> my %m is Map::Match = @dictionary.map: * => 1;  @filtered = %m{@letters}:k.unique
+[18:15:07] <lizmat> you don't want just 1s
+[18:18:39] <ggoebel> m: my @filter = <e .. z>; say @filter.any ∉ "abadaba".comb.cache
+[18:18:40] <camelia> rakudo-moar 0dead3c6a: OUTPUT: «any(True, True, True)␤»
+[18:18:45] <ggoebel> my @filter = <d .. z>; say @filter.any ∉ "abadaba".comb.cache
+[18:18:46] <evalable6> ggoebel, rakudo-moar d53b3ee83: OUTPUT: «any(False, True, True)␤»
+[18:20:42] <ggoebel> lizmat: thank you
+[18:27:48] <ggoebel> m: my @filter = <d .. z>; if @filter.all ∉ "abadaba".comb.cache { "ok".say } else { "nok".say }
+[18:27:48] <camelia> rakudo-moar d53b3ee83: OUTPUT: «nok␤»
+[18:27:56] <ggoebel> m: my @filter = <e .. z>; if @filter.all ∉ "abadaba".comb.cache { "ok".say } else { "nok".say }
+[18:27:56] <camelia> rakudo-moar d53b3ee83: OUTPUT: «ok␤»
+[18:33:07] *** Quits: discord-raku-bot (~RakuIRC@ip5f5ab74b.dynamic.kabel-deutschland.de) (Ping timeout: 256 seconds)
+[18:33:19] *** Joins: discord-raku-bot (~RakuIRC@ip5f5ab74b.dynamic.kabel-deutschland.de)
+[18:34:45] <japhb> m: say <d .. z>
+[18:34:45] <camelia> rakudo-moar d53b3ee83: OUTPUT: «(d .. z)␤»
+[18:34:54] <japhb> m: say <d .. z>.elems
+[18:34:55] <camelia> rakudo-moar d53b3ee83: OUTPUT: «3␤»
+[18:35:08] <japhb> Yeah, I was pretty sure that wasn't a range
+[18:35:14] <japhb> The .. is being taken literally
+[18:35:51] <japhb> m: say ('d' .. 'z').elems  # I'm guessing this is what you were looking for?
+[18:35:52] <camelia> rakudo-moar d53b3ee83: OUTPUT: «23␤»
+[18:37:36] *** Quits: discord-raku-bot (~RakuIRC@ip5f5ab74b.dynamic.kabel-deutschland.de) (Remote host closed the connection)
+[18:37:49] *** Joins: discord-raku-bot (~RakuIRC@ip5f5ab74b.dynamic.kabel-deutschland.de)
+[18:53:22] <guifa> ggoebel perhaps you could tool this for you in some way:
+[18:55:46] <guifa> m: my token filter ($x) {.<?{~$¢ (elem) $x}>}; my @abc = 'a'..'z'; my @nope = 'm'..'z'; say 'b' ~~ /<filter: @abc (-) @nope>/; say 't' ~~ /<filter: @abc (-) @nope>/
+[18:55:47] <camelia> rakudo-moar d53b3ee83: OUTPUT: «｢b｣␤ filter => ｢b｣␤Nil␤»
+[18:56:40] <guifa> the token <filter: ... > takes either a list or a set, so you can piece things together with standard set operators
+[18:59:28] *** Joins: Sgeo (~Sgeo@user/sgeo)
+[19:09:29] *** Quits: Altai-man (~koto@83-219-207-134.cust.bredband2.com) (Quit: Leaving)
+[19:10:45] *** Quits: jjido (~Denis@94.4.149.217) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[19:28:21] <japhb> File::Directory::Tree tests chew RAM for anyone else?  I stopped it at 40 GB or so
+[19:30:43] <ggoebel> japhb: thanks
+[19:31:20] <ggoebel> guifa: will try to wrap my head around that. thanks!
+[19:31:46] <japhb> Not many places you see someone actually use $¢
+[19:33:37] *** Joins: clarjon1 (~clarjon1@user/clarjon1)
+[19:35:28] <guifa> japhb I legit think that's the long string of non-alpha characters I've written in Raku
+[19:36:53] <japhb> Use ∈ and you can make it even longer!  ;-)
+[19:37:01] <guifa> was litearlly already typing it out :-)
+[19:37:48] <guifa> my token filter($_){.<?{~$¢∈$_}>};
+[19:37:53] <guifa> :D :D :D :D
+[19:38:58] <japhb> Yep, hard to resist once you've gotten started, isn't it.  It's like you gave yourself a challenge and immediately accepted.  ;-)
+[19:41:17] <japhb> APL: "Seems legit."
+[19:41:26] <guifa> Perl: *yawn*
+[19:41:42] <MasterDuke> japhb: can repro F::D::T eating ram. it's not the recent mimalloc bump, i still see it even with a moarvm compiled with --no-mimalloc
+[19:42:36] <guifa> still, that works pretty nice as a runtime character class, esp since it lets you use all of the normal set operators (so technically, even, a bit more powerful).  Performance will be not as good though I'm sure, since I'd imagine character classes can optimize for ranges and this one can
+[19:46:50] <MasterDuke> it's spinning in mktree somehow
+[19:48:45] <MasterDuke> spinning in https://github.com/labster/p6-file-directory-tree/blob/master/lib/File/Directory/Tree.pm#L7-L10
+[19:51:53] <MasterDuke> guessing it's https://github.com/rakudo/rakudo/pull/4795
+[19:54:44] <japhb> Good thinking
+[20:22:12] *** Quits: [Coke] (~coke@172.58.225.33) (Quit: Lost terminal)
+[20:26:53] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:602f:2025:c843:6cf4)
+[20:28:00] *** Joins: [Coke] (~coke@172.58.225.33)
+[20:30:26] *** Quits: mexen (uid495612@user/mexen) (Quit: Connection closed for inactivity)
+[20:34:08] <discord-raku-bot> <Nemokosch#9980> Hyper can be used with mutable operations, right?
+[20:36:49] <moritz> yes
+[20:42:37] *** Joins: lichtkind (~lichtkind@p200300feb71c13939149d8079e739628.dip0.t-ipconnect.de)
+[20:43:16] <discord-raku-bot> <Nemokosch#9980> okay, thanks
+[20:44:35] *** Joins: Guest12 (~Guest12@109.144.20.60)
+[20:45:11] <Guest12> r: loop { await ^2 .map: { start { require ::("Test") } } }
+[20:45:12] <camelia> rakudo-jvm: OUTPUT: «Can't open perl script "/home/camelia/rakudo-j-inst/bin/eval-client.pl": No such file or directory␤»
+[20:45:12] <camelia> ..rakudo-moar d53b3ee83: OUTPUT: «An operation first awaited:␤  in block <unit> at <tmp> line 1␤␤Died with the exception:␤    Failed to seek in filehandle: 22␤      in block  at <tmp> line 1␤␤»
+[20:45:16] <discord-raku-bot> <Nemokosch#9980> one more: does the list assignment operator return the assigned list?
+[20:47:06] <guifa> Nemokosch: it does.
+[20:47:10] <Guest12> m: loop { await ^2 .map: { start { require ::("Test") } } }
+[20:47:10] <camelia> rakudo-moar d53b3ee83: OUTPUT: «An operation first awaited:␤  in block <unit> at <tmp> line 1␤␤Died with the exception:␤    Failed to seek in filehandle: 22␤      in block  at <tmp> line 1␤␤»
+[20:47:22] <guifa> m: my @a; say @a = 1,2,3;
+[20:47:22] <camelia> rakudo-moar d53b3ee83: OUTPUT: «[1 2 3]␤»
+[20:50:39] <discord-raku-bot> <Nemokosch#9980> cool, it seemed to work indeed
+[20:50:40] <discord-raku-bot> <Nemokosch#9980> however, every solved thing spawns a new question 😅
+[20:50:40] <discord-raku-bot> <Nemokosch#9980> > Potential difficulties:
+[20:50:40] <discord-raku-bot> <Nemokosch#9980> >     Useless use of >>[&eli-value-fallback]>> in sink context
+[20:50:40] <discord-raku-bot> <Nemokosch#9980> can I somehow silence this?
+[20:50:40] <discord-raku-bot> <Nemokosch#9980> like, I know it's sink context, I use it for mutation
+[20:52:43] <discord-raku-bot> <Nemokosch#9980> nvm, found it
+[20:52:48] <discord-raku-bot> <Nemokosch#9980> the sink prefix
+[20:53:25] *** Quits: abraxxa (~ahartmai@tsa-tc-flod.t-systems.at) (Remote host closed the connection)
+[20:57:02] <discord-raku-bot> <Nemokosch#9980> uh oh...
+[20:57:22] <discord-raku-bot> <Nemokosch#9980> the assignment returns the very same array, right? not a copy
+[20:58:56] <discord-raku-bot> <Nemokosch#9980> that's a problem with a state variable
+[21:00:07] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:602f:2025:c843:6cf4) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[21:08:32] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:602f:2025:c843:6cf4)
+[21:08:40] *** Quits: dakkar (~dakkar@home.thenautilus.net) (Ping timeout: 256 seconds)
+[21:09:38] <Geth> ¦ ecosystem: 795f2cd4d0 | (Elizabeth Mattijsen)++ | META.list
+[21:09:38] <Geth> ¦ ecosystem: Freeze File::Bundled
+[21:09:38] <Geth> ¦ ecosystem: 
+[21:09:38] <Geth> ¦ ecosystem: While we move it to the zef ecosystem
+[21:09:38] <Geth> ¦ ecosystem: review: https://github.com/Raku/ecosystem/commit/795f2cd4d0
+[21:14:57] *** Quits: morte_ (~user@190.104.116.153) (Ping timeout: 240 seconds)
+[21:18:14] *** Joins: morte_ (~user@190.104.116.153)
+[21:37:03] *** Quits: reportable6 (rep-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[21:38:15] *** Joins: reportable6 (rep-able@2001:41d0:2:5eb5::)
+[21:38:46] <tonyo> the zef eco grows stronger
+[21:46:09] *** Quits: Guest12 (~Guest12@109.144.20.60) (Quit: Connection closed)
+[21:50:30] <lizmat> :-)
+[22:09:00] <Geth> ¦ ecosystem: 0d74ac92e3 | (Elizabeth Mattijsen)++ | META.list
+[22:09:00] <Geth> ¦ ecosystem: Remove Find::Bundled from the ecosystem
+[22:09:00] <Geth> ¦ ecosystem: 
+[22:09:00] <Geth> ¦ ecosystem: The code still uses @*INC and as such has not functioned for at
+[22:09:00] <Geth> ¦ ecosystem: least 6 years.  The functionality it provided, is now standard in
+[22:09:00] <Geth> ¦ ecosystem: Raku with the %?RESOURCES interface.  So it is a wrong solution to
+[22:09:00] <Geth> ¦ ecosystem: a problem that no longer exists.
+[22:09:02] <Geth> ¦ ecosystem: 
+[22:09:04] <Geth> ¦ ecosystem: The repo in raku-community-modules has been archived.
+[22:09:06] <Geth> ¦ ecosystem: review: https://github.com/Raku/ecosystem/commit/0d74ac92e3
+[22:12:29] *** Quits: MasterDuke (~MasterDuk@94.0.188.131) (Remote host closed the connection)
+[22:26:23] <Geth> ¦ ecosystem: f85adfe926 | (Elizabeth Mattijsen)++ | META.list
+[22:26:23] <Geth> ¦ ecosystem: Freeze JSON::JWT
+[22:26:24] <Geth> ¦ ecosystem: 
+[22:26:24] <Geth> ¦ ecosystem: While we move it to the Raku ecosystem
+[22:26:24] <Geth> ¦ ecosystem: review: https://github.com/Raku/ecosystem/commit/f85adfe926
+[22:28:02] *** Quits: euandreh (~euandreh@2804:14c:33:9fe5:436f:e6b2:c8c4:a5a1) (Ping timeout: 240 seconds)
+[22:31:31] *** Joins: euandreh (~euandreh@2804:14c:33:9fe5:fb55:f4b:9349:d06d)
+[22:32:52] *** Joins: mexen (uid495612@user/mexen)
+[22:41:41] <[Coke]> when using --moar-option to rakudo configure, is it ok to use it multiple times?
+[22:42:33] *** Quits: morte_ (~user@190.104.116.153) (Ping timeout: 250 seconds)
+[22:42:43] <[Coke]> (apparently yes)
+[23:11:40] *** Joins: morte_ (~user@190.104.116.153)
+[23:14:02] *** Joins: Darkcoal (~user@user/Darkcoal)
+[23:21:17] *** Quits: Darkcoal (~user@user/Darkcoal) (Quit: Darkcoal)
+[23:24:57] *** Joins: dextercd (~dexter@2a02-a450-f25d-1-76d4-35ff-fefe-34c.fixed6.kpn.net)
+[23:31:48] *** Joins: MasterDuke (~MasterDuk@94.0.188.131)
+[23:56:20] <tonyo> zef db is cutting over, might be a few minutes of login/upload problems

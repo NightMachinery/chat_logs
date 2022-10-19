@@ -1,0 +1,94 @@
+[00:10:52] <headius> cool
+[00:24:00] <mattpatt[m]> `jruby -S rake test:mri:core:int` is running and has been for 5 minutes, so with luck it's working right (I guess pass/fail is orthogonal to work/not work at this point)
+[00:24:21] <headius> yeah just getting it running there will be a framework
+[00:25:13] <mattpatt[m]> the `windows-ci.yml` workflow does it
+[00:26:51] <mattpatt[m]> and that basic approach seems to work here too
+[00:27:24] <headius> great!
+[00:28:02] <headius> hmm
+[00:28:08] <headius> ARGF.gets reads the contents of the file with default encoding FAILED
+[00:28:08] <headius> Expected #<Encoding:ASCII-8BIT> == #<Encoding:US-ASCII>
+[00:28:15] <headius> that only fails in a full ARGF spec run
+[00:28:35] <headius> I tried mimicking the CRuby logic for argf_getline but it doesn't seem to help
+[00:28:46] <headius> I'll commit what I have and revisit this later
+[00:37:19] <mattpatt[m]> given the differences between Travis runners and the GHA runners, do we still need the memory / JVM opt stuff?
+[00:37:19] <mattpatt[m]> `-Xms60M -Xmx720M -XX:InitialCodeCacheSize=40M -XX:ReservedCodeCacheSize=120M -Djava.security.egd=file:/dev/./urandom`
+[00:37:46] <mattpatt[m]> I'm guessing the `java.security.egd` option is probably not needed anymore
+[00:38:53] <mattpatt[m]> but I don't understand if the memory options are for travis limitations or goosing the env for the Indy / JITy stuff that might take a while to warm up otherwise
+[00:49:32] <mattpatt[m]> Right, got a an actual run-to-completion (fail) for `rake test:mri:core:int` on JDK 11, and a mysterious 'operation cancelled' on JDK 8. Going to take that as a win and try with the additional JAVA_OPTS stuff in the morning, see if I can JDK 8 to fail too.
+[00:50:09] <mattpatt[m]> Ugh, had the PR set to rebase off master not 9.3, so that may account for some of the weirdness. Definitely one for the morning
+[01:43:21] *** Quits: sagax (~sagax_nb@user/sagax) (Quit: Konversation terminated!)
+[02:27:57] *** Joins: sagax (~sagax_nb@user/sagax)
+[03:11:05] <headius> yeah that is positive
+[03:11:27] <headius> yeah if you can edit it just switch it to base off 9.3, otherwise I can change it
+[03:54:51] *** Quits: fidothe (sid1130@uxbridge.irccloud.com) (Ping timeout: 268 seconds)
+[03:57:05] *** Quits: siasmj (sid6106@id-6106.lymington.irccloud.com) (Ping timeout: 264 seconds)
+[04:18:14] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[04:23:45] *** Joins: siasmj (sid6106@lymington.irccloud.com)
+[04:31:03] *** Joins: fidothe (sid1130@uxbridge.irccloud.com)
+[04:56:50] *** Joins: subbu (~subbu@user/subbu)
+[05:22:49] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[12:30:08] *** Quits: deividrodriguez[ (~deividrod@2001:470:69fc:105::1:16b9) (Quit: You have been kicked for being idle)
+[12:30:08] *** Quits: nelsnnelson[m] (~nelsnnels@2001:470:69fc:105::1:16eb) (Quit: You have been kicked for being idle)
+[15:44:53] <mattpatt[m]> @headius switching it to base off 9.3 fixed the mri:int failures. I added the Rubyspec spec:ruby:fast task and now it's now failing weirdly. Bumping to v2 of the setup-java action (which will do maven cache for you) has broken everything.
+[15:44:53] <mattpatt[m]> So, reasonable progress then... 🥳
+[15:45:05] <mattpatt[m]> * @headius: switching
+[15:59:26] <mattpatt[m]> oooh, not the v2 setup-java action, just attempting to 'unset' gem-related env vars.
+[16:15:35] <mattpatt[m]> If someone could take a quick look at the failed `spec:ruby:fast` job in https://github.com/fidothe/jruby/actions/runs/1448727436, I'd be interested if these failures are expected or (particularly the cancelled one) something seen before on Travis.
+[17:11:01] *** Quits: siasmj (sid6106@lymington.irccloud.com) (Ping timeout: 256 seconds)
+[17:11:16] *** Quits: fidothe (sid1130@uxbridge.irccloud.com) (Ping timeout: 268 seconds)
+[17:12:22] *** Joins: fidothe (sid1130@uxbridge.irccloud.com)
+[17:13:32] *** Joins: siasmj (sid6106@2a03:5180:f:2::17da)
+[17:47:42] *** Quits: fidothe (sid1130@uxbridge.irccloud.com) (Ping timeout: 260 seconds)
+[17:48:54] <enebo[m]> mattpatt: It is pretty likely the 5F,1E is ok.  I do see some failures locally in my FC env involving IPv6
+[17:49:32] *** Quits: siasmj (sid6106@2a03:5180:f:2::17da) (Ping timeout: 240 seconds)
+[18:03:47] *** Joins: siasmj (sid6106@lymington.irccloud.com)
+[18:14:30] *** Joins: fidothe (sid1130@uxbridge.irccloud.com)
+[18:34:23] <edipofederle[m]> <headius> "edipo.federle: are you still..." <- headius:  hi, yes, I plan to finish it this weekend, its ok ?
+[19:03:04] <enebo[m]> edipo.federle: it is fine
+[19:33:29] <mattpatt[m]> @enebo the Etc.getlogin failure is in a spec with Travis-specific code so I'm not mega surprised about that
+[19:34:05] <mattpatt[m]> enebo: the one that worries me is the 'cancelled' JDK 8 spec-ruby-fast job, because it cancelled itself
+[19:34:26] <mattpatt[m]> not sure if it did because the JDK 11 one failed
+[19:34:46] <mattpatt[m]> or because of something I caused
+[19:38:53] <mattpatt[m]> it seems to happen just after the Etc.getlogin failure
+[19:46:46] <enebo[m]> mattpatt: oh it cancelled itself...I thought you did somehow
+[19:47:29] <enebo[m]> I don't know that much about GHA and the times I have used it my stuff was all green to begin with
+[19:49:23] <enebo[m]> 5:46s for java 8 and a tiny bit less on Java 11 for those sections so it seemed like 8 was either done without output or very close
+[22:08:31] <mattpatt[m]> enebo: I think the main problem we'll have is that Travis' runners were very full-fat linux machines, and it looks like the GHA ones are much more stripped down, so there'll be a lot of stuff where the implicit dependencies on stuff will bite us because they vanished
+[22:09:16] <enebo[m]> but do you think it is possible we went over some resource limit?
+[22:09:43] <enebo[m]> that cancelled job was running like 20s longer than the other one
+[22:09:48] <mattpatt[m]> the machines have 7GB RAM, and the auto-kill timeouts are measured in hours
+[22:09:56] <enebo[m]> heh ok
+[22:10:02] <mattpatt[m]> it's weird
+[22:10:40] <enebo[m]> yeah so the other theory is that perhaps one job failing led to cancelling the other?  I have not seen that with the other GHA things we are running
+[22:10:55] <enebo[m]> Although it is possible the ones we fail on fail after the others all finish
+[22:11:37] <enebo[m]> I can refire your PR run right?  Let's just re-run and see if we get the same result
+[22:11:59] <mattpatt[m]> the other jobs explicitly list fail-fast: false in their strategy section
+[22:13:40] <enebo[m]> the theory one killed the other does still make the most sense to me since they are in their own matrix (says the guy who knows almost nothing about GHA)
+[22:14:05] <enebo[m]> Another test would be to not put those two jobs in the same matrix and see if they both then complete
+[22:14:30] <mattpatt[m]> Almost certainly unrelated: The Travis setup also had redis-server running. What needs that? A quick search in the code for redis turns nothing up
+[22:14:43] <enebo[m]> haha
+[22:15:11] <mattpatt[m]> There were some issues related to socket handling for redis, but I couldn't connect the dots
+[22:15:21] <enebo[m]> My only substantial experience with GHA was setting up 3 OS builds of the jruby-launcher rust port
+[22:15:46] <enebo[m]> I found myself cloning lots of crap in GHA recipeland until it all worked
+[22:16:08] <enebo[m]> so is that just because we pick an existing image?
+[22:16:21] <enebo[m]> ruby-build perhaps needs it for other things so they just include it
+[22:17:06] <enebo[m]> err I guess we don't use ruby-build although I suppose that makes sense since we are a java project
+[22:24:10] <enebo[m]> https://github.com/actions/virtual-environments/blob/main/images/linux/Ubuntu2004-README.md
+[22:24:26] <enebo[m]> No redis in default image which I think this page lists what should be in it
+[22:24:32] <mattpatt[m]> This was in Travis, not GHA - it's just listed as a service to install and run at the bottom of .travis.yml
+[22:24:47] <enebo[m]> oh
+[22:25:17] <enebo[m]> ok.  That might have been for -Ptest where I think we used to (or one job may have still) ran some app server and integration tests
+[22:25:59] <enebo[m]> Actually let me see what phase it was.  mkristian used to run lots of integration with stuff
+[22:26:59] <mattpatt[m]> jobs.<job_id>.strategy.fail-fast
+[22:26:59] <mattpatt[m]> When set to true, GitHub cancels all in-progress jobs if any matrix job fails. Default: true
+[22:27:00] <mattpatt[m]> aha, got the cancelled job thing:
+[22:28:10] <enebo[m]> nice!
+[22:28:50] <enebo[m]> mattpatt: so if that is out of the way I guess I can try and figure out why we fail some of these tests.  I get a few IPv6 errors locally so I guess I even have a starting point
+[22:29:12] <enebo[m]> fwiw I think we can probably just tag these out for now since it has been this way for at least a couple of years
+[22:29:17] <enebo[m]> Nothing new is broken
+[22:29:47] <enebo[m]> the getlogin error is new but that may just be a bad test assuming the env will act a particular way
+[22:29:53] <mattpatt[m]> If you like, I can move all the jobs over and then we can triage expected vs unexpected failures and take it from there
+[22:30:17] <mattpatt[m]> my main worry was if new and exciting things were failing
+[22:30:38] <mattpatt[m]> which would suggest bigger problems with the differences between the Travis and SHA stacks
+[22:30:45] <mattpatt[m]> s/SHA/GHA/
+[22:31:04] <enebo[m]> yeah so far I think travis vs GHA may just be some env differences and we will have to triage those

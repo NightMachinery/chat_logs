@@ -1,0 +1,228 @@
+[00:04:25] <gawenr> nektro indeed, thanks. I finally did `inline for (std.meta.declarations(c)) |decl| { _ = decl; }` and stumbled upon a panic: `TODO: float_init_bigfloat c_longdoublethread` (src/stage1/ir.cpp, 0.9.0). I will be patient 😇
+[00:05:12] <gawenr> `c` being a `@cImport({ @cInclude("lua.h"); })`, if that's of any interest
+[00:05:45] <nektro> yes because many of the decls in the cImport output are going to be xx = @compileError
+[00:06:01] <nektro> macros can do a lot more than zig is able to represent
+[00:06:23] <nektro> referencing every decl from a cImport is a really bad idea
+[00:07:16] <nektro> only reference what you need
+[00:07:36] <gawenr> alright will do
+[00:08:32] *** Quits: rgrinberg (~textual@2806:101e:7:2b:8582:352:d913:c6a5) (Ping timeout: 240 seconds)
+[00:08:56] <nektro> aside from that, std.testing.refAllDecls can do what your snippet did
+[00:15:12] <gawenr> oh neat
+[00:28:35] *** Joins: wootehfoot (~wootehfoo@user/wootehfoot)
+[00:29:54] *** Joins: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl)
+[00:37:28] *** Joins: livoreno (~livoreno@user/notzmv)
+[00:41:19] *** Joins: Daimanta (~Daimanta@86-85-205-212.fixed.kpn.net)
+[00:41:58] *** Quits: Daimanta (~Daimanta@86-85-205-212.fixed.kpn.net) (Client Quit)
+[00:43:24] *** Joins: Daimanta (~Daimanta@86-85-205-212.fixed.kpn.net)
+[00:43:37] <Daimanta> Hi, I have a question about structs.
+[00:46:38] <Daimanta> Imagine I want to create a struct datastructure where the presence of some fields is dependent on something like the system architecture. So, for example. If WORDSIZE = 64, foo: u64 else foo: u32. I think this is possible, can I do this without defining the entire struct in an if-else?
+[00:48:46] <Arnavion> Call std.meta.Int() to create the type
+[00:49:56] <Arnavion> Or if it's just u64 vs u32, you don't even need that, just an if
+[00:52:56] <Daimanta> It´s more complex than that. Real example (a bit of text so I avoided this for now): https://man7.org/linux/man-pages/man5/utmp.5.html 
+[00:53:02] <Arnavion> https://zig.godbolt.org/z/j3h1ETbov
+[00:53:33] <Daimanta> Some of the fields are conditional on the word size, I want to include the fields that actually exist
+[00:53:42] <Arnavion> Doesn't change what I said
+[00:54:05] *** Quits: gawenr (~textual@2a01:e0a:21c:99a0:75b2:e834:b654:c89) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[00:54:06] <Arnavion> It's the same as what I wrote in the godbolt link, except you have two fields and thus two Foo's
+[00:55:31] <Daimanta> Ah, I see. What if, for some reason there would be different fields depending on the architecture. Let´s say, either one u32 or two bools?
+[00:56:15] *** Quits: sheb (~sheb@31.223.228.71) (Quit: Leaving)
+[00:58:34] *** Joins: MajorBiscuit (~MajorBisc@86-88-79-148.fixed.kpn.net)
+[01:03:33] <Daimanta> In this case a big if-else is possible where the two different structs are defined separately is possible, but this is both code duplication and wouldn´t work in more complicated scenarios
+[01:10:19] <nektro> const Foo = switch (builtin.cpu.arch) struct {} else struct {}
+[01:12:59] <Daimanta> Yes, this was the first solution that came to mind. However, if there are 10 fields, and the second struct had one field extra it would mean some code duplication. I was wondering if there is some inline option for those fields. A bit macro code-paste like but structured
+[01:19:21] *** Quits: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl) (Read error: Connection reset by peer)
+[01:44:51] *** Quits: fwg (~fwg@user/fwg) (Remote host closed the connection)
+[01:45:38] <Franciman> i really like zig tokenizer design
+[01:45:40] <Franciman> nice
+[01:49:26] <Arnavion> <Daimanta> Ah, I see. What if, for some reason there would be different fields depending on the architecture. Let´s say, either one u32 or two bools?   < You can build the struct with fields piece-by-piece using std.meta and std.builtin.TypeInfo
+[01:50:02] <Daimanta> Sounds interesting, are there some examples?
+[01:51:03] <Arnavion> No idea. You can read meta.zig and builtin.zig. They're very straightforward; it's just an AST with type information
+[01:52:16] <Arnavion> Only other building block you'll need is @TypeInfo() to go from `type` to `TypeInfo` and @Type() to go back
+[02:03:34] <Daimanta> Thanks, I think I understand things a bit better. Coreutils is coming along nicely :)
+[02:21:28] *** Quits: freshcoffee (~fresh@user/freshcoffee) (Quit: WeeChat 3.0.1)
+[02:23:37] *** Joins: ur5us (~ur5us@2406:e002:6d58:d101:9d9f:f6f8:55dd:d1e2)
+[02:27:17] *** Quits: Kingsquee (~Kingsquee@node-1w7jr9plitnry8gxlqfy2v4ms.ipv6.telus.net) ()
+[02:28:15] <andrewrk> hot code swapping (part 2) live coding stream in about 30 min: https://twitch.tv/andrewrok/
+[02:30:56] <nektro> Arnavion: that works if they're just making a record but not if they want the struct to have methods
+[02:31:33] <nektro> @Type doesn't support creating a container type with declarations (which functions/methods are)
+[02:33:54] <Arnavion> I don't see where Daimanta said that they needed that
+[02:36:00] <Daimanta> What I want to do is the following: On compile time, I want to decide which members I add to a struct. I want to see how far Zig can go and which approaches I can take.
+[02:42:52] *** Joins: okCiel (~okCiel@softbank126051111074.bbtec.net)
+[02:43:39] *** Quits: MajorBiscuit (~MajorBisc@86-88-79-148.fixed.kpn.net) (Ping timeout: 256 seconds)
+[02:46:57] *** Quits: ur5us (~ur5us@2406:e002:6d58:d101:9d9f:f6f8:55dd:d1e2) (Ping timeout: 240 seconds)
+[02:56:45] *** Quits: tane (~tane@user/tane) (Quit: Leaving)
+[03:19:10] *** Joins: notapenguin (~ryu@2804:14d:5685:96c7:8b7a:60f:54fc:4777)
+[03:41:17] *** Quits: frmdstryr (~jrm@172.58.206.185) (Ping timeout: 240 seconds)
+[03:54:40] *** Joins: gawenr (~textual@2a01:e0a:21c:99a0:acb8:882d:619e:5b89)
+[03:55:37] *** Quits: xackus (~xackus@185.15.0.3) (Ping timeout: 256 seconds)
+[04:01:49] *** Quits: bgs (~bgs@upc.si.94.140.92.241.dc.cable.static.telemach.net) (Ping timeout: 240 seconds)
+[04:08:44] *** Quits: hspak (~hspak@user/hspak) (Quit: Ping timeout (120 seconds))
+[04:09:09] *** Joins: hspak (~hspak@user/hspak)
+[04:13:46] <da_lorax> What does a pointer being 'aaaaaaa...' mean?
+[04:13:56] *** Joins: frmdstryr (~jrm@172.58.203.56)
+[04:14:18] <da_lorax> I somehow have gotten myself into a position where an allocator is (according to '{any}': `Allocator{ .ptr = anyopaque@aaaaaaaaaaaaaaaa, .vtable = Segmentation fault at address 0x0`
+[04:15:03] *** Quits: notapenguin (~ryu@2804:14d:5685:96c7:8b7a:60f:54fc:4777) (Quit: WeeChat 3.4)
+[04:16:46] <nektro> that means it's undefined
+[04:17:12] <nektro> would need more context to help fix
+[04:21:26] *** Quits: gawenr (~textual@2a01:e0a:21c:99a0:acb8:882d:619e:5b89) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[04:29:57] <winter> <andrewrk> this linker line looks like static clang + static lld + dynamic LLVM <-- would this be done by setting `-DZIG_STATIC_LLVM=on`? if so, i've already tried that with no luck :/.
+[04:30:12] <da_lorax> Here's the code, I have to step out for a bit, but I'll be back in a couple hours https://pastebin.com/nLnD8iFW
+[04:30:23] <da_lorax> I honestly have no idea if I'm doing async right
+[04:31:28] <da_lorax> cause the allocator seems normal in main() and then is broken in read_message, most of the time. I've seen it work like twice (out of probably 20-30 tries), I don't see how it could be becoming undefined, it's only assigned and never freed
+[04:37:15] <winter> yeah statically linking llvm doesn't work either :/
+[04:37:28] <winter> what the hell c++
+[04:40:45] *** Joins: Tekk__ (~tekk@86.106.121.191)
+[04:42:57] *** Quits: Tekk_ (~tekk@cpe-76-182-45-53.nc.res.rr.com) (Ping timeout: 240 seconds)
+[04:47:15] *** Joins: beta22 (~beta22@2409:8a5c:4c12:55d0:9036:3bcb:f8cb:6ce2)
+[04:47:38] *** Quits: beta22 (~beta22@2409:8a5c:4c12:55d0:9036:3bcb:f8cb:6ce2) (Client Quit)
+[04:53:53] <Arnavion> da_lorax: client.handle() is being called before client is set to the Client { } value
+[04:54:51] <Arnavion> So depending on how the value is blitted into the pointee, it might be that self.stream is valid and self.allocator isn't
+[05:00:02] *** Joins: penguino (~mrpenguin@user/mrpenguin)
+[05:21:09] <andrewrk> we got a hot code swapping PoC working on the stream today :)
+[05:22:13] <nektro> yoo nice!
+[05:22:40] <winter> nice
+[05:36:24] *** Quits: Swahili (~Swahili@a95-94-208-187.cpe.netcabo.pt) (Quit: Leaving...)
+[05:51:46] *** Quits: rv1sr (~rv1sr@user/rv1sr) ()
+[05:58:04] *** Quits: penguino (~mrpenguin@user/mrpenguin) (Quit: penguino)
+[05:58:17] *** Joins: rgrinberg (~textual@2806:101e:7:2b:bcc3:4b5c:4ace:b143)
+[06:25:08] *** Quits: Daimanta (~Daimanta@86-85-205-212.fixed.kpn.net) (Quit: Leaving)
+[06:28:33] *** Joins: penguino (~mrpenguin@user/mrpenguin)
+[06:29:22] *** Quits: thatcher (~thatcher@91.110.109.236) (Ping timeout: 256 seconds)
+[06:30:08] *** Joins: thatcher (~thatcher@91.110.109.236)
+[06:35:37] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Ping timeout: 240 seconds)
+[06:55:37] *** Quits: wootehfoot (~wootehfoo@user/wootehfoot) (Read error: Connection reset by peer)
+[07:08:02] *** Joins: dyeplexer (~dyeplexer@user/dyeplexer)
+[07:29:17] *** Quits: nyah (~nyah@94.6.71.219) (Ping timeout: 240 seconds)
+[07:30:04] *** Quits: arkurious (~arkurious@user/arkurious) (Quit: Leaving)
+[07:42:57] *** Quits: Earnestly (~earnest@user/earnestly) (Ping timeout: 240 seconds)
+[07:58:29] *** Joins: sdfjkl89023r (~dayim@50.233.164.150)
+[08:49:29] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 268 seconds)
+[08:52:29] *** Joins: Earnestly (~earnest@user/earnestly)
+[08:55:50] *** Joins: Gustavo6046 (~Gustavo60@user/gustavo6046)
+[09:00:15] *** Quits: okCiel (~okCiel@softbank126051111074.bbtec.net) (Quit: WeeChat 3.4)
+[09:11:15] *** Joins: okCiel (~okCiel@softbank126051111074.bbtec.net)
+[09:11:23] *** Quits: okCiel (~okCiel@softbank126051111074.bbtec.net) (Client Quit)
+[09:38:32] *** Quits: semarie (~semarie@user/semarie) (Ping timeout: 240 seconds)
+[09:45:08] *** Joins: semarie (~semarie@user/semarie)
+[10:23:49] *** Joins: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl)
+[10:43:33] *** Quits: rgrinberg (~textual@2806:101e:7:2b:bcc3:4b5c:4ace:b143) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[10:48:32] *** squeek502_ is now known as squeek502
+[10:58:06] *** Joins: notzmv (~zmv@user/notzmv)
+[11:03:34] *** Quits: Earnestly (~earnest@user/earnestly) (Ping timeout: 250 seconds)
+[11:42:44] *** Quits: dyeplexer (~dyeplexer@user/dyeplexer) (Ping timeout: 256 seconds)
+[11:52:58] <nektro> goodnight all o/
+[12:05:18] *** Quits: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl) (Read error: Connection reset by peer)
+[12:10:31] *** Joins: Kingsquee (~Kingsquee@node-1w7jr9plitnry8klyf4orwoi2.ipv6.telus.net)
+[12:11:27] *** Joins: dyeplexer (~dyeplexer@user/dyeplexer)
+[12:14:04] *** Quits: l1x (uid1954@id-1954.tinside.irccloud.com) (Quit: Connection closed for inactivity)
+[12:23:32] *** Quits: geranim0 (~geranim0@modemcable242.171-178-173.mc.videotron.ca) (Ping timeout: 240 seconds)
+[12:26:55] *** Joins: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl)
+[12:53:07] *** Quits: nektro (~meg@75-164-170-164.ptld.qwest.net) (Quit: WeeChat 3.1)
+[12:55:11] *** Joins: gawenr (~textual@2a01:e0a:21c:99a0:acb8:882d:619e:5b89)
+[13:22:57] *** Quits: gawenr (~textual@2a01:e0a:21c:99a0:acb8:882d:619e:5b89) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[13:25:41] <Franciman> hi, if I have a struct type like this `const S = struct { a: i32, b: i32 }`, and i define `var x: S = undefined`
+[13:25:52] <Franciman> is it correct to initialize it as follows:
+[13:26:03] <Franciman> `x.a = 12; x.b = 14;` before accessing it?
+[13:26:04] *** Quits: Kingsquee (~Kingsquee@node-1w7jr9plitnry8klyf4orwoi2.ipv6.telus.net) ()
+[13:26:27] <Franciman> or must i do, `x = .{ .a = 12, .b = 13 }` ?
+[13:37:24] *** Quits: dyeplexer (~dyeplexer@user/dyeplexer) (Ping timeout: 250 seconds)
+[13:41:56] *** Quits: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl) (Read error: Connection reset by peer)
+[13:42:44] *** Quits: Gustavo6046 (~Gustavo60@user/gustavo6046) (Quit: Leaving)
+[14:13:05] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:d502:6835:efc4:ea15)
+[14:31:28] <ofelas> either way should work, I think "= undefined" is basically a "memset" 0xaa, test "struct.S"... x=S{ .a = -1431655766, .b = -1431655766 }
+[14:33:01] *** Joins: Earnestly (~earnest@user/earnestly)
+[14:33:11] <Franciman> thanks
+[14:33:25] <Franciman> i was asking because i thought it was illegal to access an undefined piece of memory
+[14:33:32] <Franciman> but i guess it's only about reaing
+[14:33:34] <Franciman> reading*
+[14:37:28] <ofelas> the compiler may even optimize the undefined away in simple cases, https://pastebin.com/bfghfLJV
+[14:37:58] <Franciman> thanks ofelas 
+[14:51:14] *** Joins: rv1sr (~rv1sr@user/rv1sr)
+[14:55:53] <Arnavion> The standard way (as demonstrated by many examples in the language reference) of filling in arrays is   var array: [N]T = undefined; arr[0] = ...; arr[1] = ...;   which is conceptually similar to setting x.a and x.b instead of all of x, so it'd seem to be okay
+[15:08:24] *** Joins: wootehfoot (~wootehfoo@user/wootehfoot)
+[15:29:42] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:d502:6835:efc4:ea15) (Ping timeout: 268 seconds)
+[15:57:38] *** Joins: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl)
+[16:11:48] *** Quits: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl) (Read error: Connection reset by peer)
+[17:53:53] *** Joins: PMunch (~PMunch@user/pmunch)
+[17:55:44] <PMunch> Hello, I'm trying to build a little test project for Zig on an Arduino Uno. I cloned this project: https://github.com/SebastianZaha/avr-arduino-zig and after fixing some FileSource related issues I ran into this error: http://ix.io/3N89. I guess I'm using a newer version of Zig (0.9.0) than what this was built for but does anyone know how I might fix this?
+[17:57:10] <Franciman> hi PMunch 
+[17:57:15] <ugla> PMunch: you can do `_ = maybe_stack_trace;` to mark that parameter as unused,
+[17:57:22] <PMunch> Hello Franciman
+[17:57:26] <Franciman> yes
+[17:57:32] <PMunch> ugla, aha that's nice
+[18:01:07] <PMunch> Is there some kind of release mode I should enable by the way?
+[18:01:18] <Franciman> there are 3 iirc
+[18:01:39] <Franciman> https://ziglang.org/documentation/0.9.0/#Build-Mode
+[18:01:54] <Franciman> Release{Fast,Safe,Small}
+[18:02:09] <Franciman> you can do
+[18:02:15] <Franciman> zig build -O ReleaseFast
+[18:02:17] <Franciman> for example
+[18:02:27] *** Joins: nyah (~nyah@94.6.71.219)
+[18:02:41] <PMunch> -O?
+[18:03:29] <Franciman> yes
+[18:03:40] <Franciman> uhm the docs say -D
+[18:03:42] <PMunch> Hmm, it didn't like that. Just says that -O is unrecognised
+[18:03:49] <Franciman> what about -D ReleaseFast
+[18:03:52] <Franciman> and also
+[18:03:53] <ikskuh> how are you building?
+[18:04:04] <ikskuh> "zig build -Drelease-fast" is a normal interface to build.zig
+[18:04:15] <ikskuh> "zig build" has a different api from "zig build-exe"
+[18:04:39] <PMunch> Invalid option: -Drelease-fast
+[18:04:41] <Franciman>     exe.setBuildMode(b.standardReleaseOptions()); <- you are required to put this in the build.zig
+[18:04:47] <PMunch> Aha
+[18:04:58] <Franciman> but does it make sense, in this case, ikskuh?
+[18:05:41] <ikskuh> i scrolled up
+[18:05:41] <ikskuh> https://github.com/SebastianZaha/avr-arduino-zig/blob/master/build.zig#L26
+[18:05:46] <ikskuh> release mode is fixed in that project
+[18:05:58] <Franciman> oh boy
+[18:06:02] <Franciman> totally missed it
+[18:06:03] <Franciman> :)
+[18:06:09] <PMunch> I found a exe.setBuildMode(.ReleaseSafe); option in the build.zig file
+[18:06:43] <PMunch> Tried changing that to ReleaseSmall and ReleaseFast and got some interesting results
+[18:13:17] <PMunch> Hmm, Zig seems to be a pretty nice little language. Haven't really tried it myself before.
+[18:17:42] *** Quits: livoreno (~livoreno@user/notzmv) (Ping timeout: 256 seconds)
+[18:30:52] *** Joins: arkurious (~arkurious@user/arkurious)
+[19:07:11] *** Joins: noeontheend (~noeonthee@207.237.194.194)
+[19:36:08] *** Joins: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4)
+[19:40:19] *** Tekk__ is now known as Tekk
+[19:41:33] *** Joins: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl)
+[19:47:02] *** Quits: frmdstryr (~jrm@172.58.203.56) (Ping timeout: 250 seconds)
+[20:04:03] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[20:08:44] *** Quits: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl) (Read error: Connection reset by peer)
+[20:11:51] *** Quits: Earnestly (~earnest@user/earnestly) (Quit: WeeChat 3.4)
+[20:13:43] *** Joins: Earnestly (~earnest@user/earnestly)
+[20:29:50] *** Quits: penguino (~mrpenguin@user/mrpenguin) (Quit: penguino)
+[20:31:23] <Nulo> Anyone know what happened to nrdmn?  https://github.com/nrdmn/awesome-zig They haven't touched GitHub for over a year and I forked their awesome-zig list https://github.com/catdevnull/awesome-zig
+[20:37:55] *** Quits: McKael (~mikael@82-64-95-224.subs.proxad.net) (Quit: leaving)
+[21:08:43] *** Joins: geranim0 (~geranim0@modemcable242.171-178-173.mc.videotron.ca)
+[21:11:16] *** Joins: McKael (~mikael@82-64-95-224.subs.proxad.net)
+[21:21:54] *** Joins: cgar (~cgar@072-187-006-075.res.spectrum.com)
+[21:24:45] *** Joins: rgrinberg (~textual@2806:101e:7:2b:bcc3:4b5c:4ace:b143)
+[21:26:22] *** Joins: gawenr (~textual@2a01:e0a:21c:99a0:acb8:882d:619e:5b89)
+[21:26:29] *** Quits: noracodes_ (~quassel@2604:a880:2:d0::2299:a001) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[21:27:13] *** Joins: noracodes (~quassel@2604:a880:2:d0::2299:a001)
+[21:32:08] *** Quits: factor (~factor@c-73-68-120-166.hsd1.ma.comcast.net) (Read error: Connection reset by peer)
+[21:32:58] *** Quits: sdfjkl89023r (~dayim@50.233.164.150) (Quit: WeeChat 2.8)
+[21:40:18] *** Joins: frmdstryr (~jrm@172.58.203.202)
+[21:45:59] *** Joins: pkap (~pkap@185.209.196.147)
+[21:51:21] *** Quits: wootehfoot (~wootehfoo@user/wootehfoot) (Ping timeout: 256 seconds)
+[21:54:17] *** Quits: noeontheend (~noeonthee@207.237.194.194) (Ping timeout: 240 seconds)
+[22:02:49] *** Joins: supakeen (~user@python/site-packages/supakeen)
+[22:06:16] *** Joins: factor (~factor@c-73-68-120-166.hsd1.ma.comcast.net)
+[22:06:52] *** Quits: factor (~factor@c-73-68-120-166.hsd1.ma.comcast.net) (Read error: Connection reset by peer)
+[22:12:27] *** Joins: factor (~factor@c-73-68-120-166.hsd1.ma.comcast.net)
+[22:13:04] *** Joins: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl)
+[22:19:29] *** Quits: gawenr (~textual@2a01:e0a:21c:99a0:acb8:882d:619e:5b89) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[22:33:28] *** Joins: noeontheend (~noeonthee@207.237.194.194)
+[22:39:16] *** Joins: wootehfoot (~wootehfoo@user/wootehfoot)
+[22:47:35] *** Joins: freshcoffee (~fresh@user/freshcoffee)
+[22:50:55] *** Joins: xackus (~xackus@185.15.0.3)
+[22:52:36] *** Quits: factor (~factor@c-73-68-120-166.hsd1.ma.comcast.net) (Quit: The Lounge - https://thelounge.chat)
+[22:53:07] *** Joins: factor (~factor@c-73-68-120-166.hsd1.ma.comcast.net)
+[23:06:54] *** Joins: tane (~tane@dslb-002-201-234-223.002.201.pools.vodafone-ip.de)
+[23:06:54] *** Quits: tane (~tane@dslb-002-201-234-223.002.201.pools.vodafone-ip.de) (Changing host)
+[23:06:54] *** Joins: tane (~tane@user/tane)
+[23:20:08] *** Quits: rgrinberg (~textual@2806:101e:7:2b:bcc3:4b5c:4ace:b143) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[23:26:13] *** Joins: penguino (~mrpenguin@user/mrpenguin)
+[23:54:47] *** Quits: tsmanner (~tsmanner@pool-100-40-199-193.pghkny.fios.verizon.net) (Quit: tsmanner)
+[23:55:03] *** Joins: tsmanner (~tsmanner@pool-100-40-199-193.pghkny.fios.verizon.net)

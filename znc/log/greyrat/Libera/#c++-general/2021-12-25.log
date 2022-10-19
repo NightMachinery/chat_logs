@@ -1,0 +1,681 @@
+[00:00:36] <ville> but i am guessing whatever you're stuffing in the next pointers is not valid
+[00:06:30] *** Quits: jwillikers (~jwilliker@ics141-1.icsincorporated.com) (Remote host closed the connection)
+[00:08:04] *** Joins: zmt00 (~zmt00@user/zmt00)
+[00:15:33] *** Parts: aniketgm (~Aniket@49.36.109.81) ()
+[00:20:36] <CarloWood> They wouldn't have complained. The problem was that `vulkan::DeviceCreateInfo` isn't a known type by the validator.
+[00:21:40] <CarloWood> Aka, the validator thinks that vk::PhysicalDeviceVulkan11Features does not extend vulkan::DeviceCreateInfo, even though that is derived from vk::DeviceCreateInfo and it "extends" that.
+[00:21:55] <ville> of course you wouldn't have used that specific type, but rather VkDeviceCreateInfo
+[00:23:00] <CarloWood> I added a specialization of vk::StructExtends:
+[00:23:36] <CarloWood> namespace vk { template <typename T> struct StructExtends<T, vulkan::DeviceCreateInfo> { enum value = StructExtends<T, vk::DeviceCreateInfo>::value }; }; }
+[00:25:51] <ville> yeah i don't know about the c++ wrapper for the c api how their crap works
+[00:28:53] *** Quits: rajkosto (~rajkosto@109-93-246-215.dynamic.isp.telekom.rs) (Ping timeout: 256 seconds)
+[00:33:37] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Ping timeout: 240 seconds)
+[00:49:38] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 260 seconds)
+[00:51:25] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[00:51:56] *** Joins: andreasbuhr (~quassel@p549dbca1.dip0.t-ipconnect.de)
+[00:54:16] *** Quits: AmR (~AmREiSa@156.199.236.68) (Quit: Konversation terminated!)
+[00:57:36] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 268 seconds)
+[01:10:23] *** Quits: spaceangel (~spaceange@ip-78-102-216-202.net.upcbroadband.cz) (Remote host closed the connection)
+[01:20:29] *** Joins: sparticus (~root@176-58-96-11.ip.linodeusercontent.com)
+[01:21:39] <sparticus> hello.  im exploring some threading/process models for a TCP service I'm building.  is there a performance cost for spinning up a new thread?  it seems like there is for spinning up forked processes as well.
+[01:22:57] *** Quits: pulse (~pulse@user/pulse) (Ping timeout: 240 seconds)
+[01:23:58] *** Quits: peeps[zen] (~peepsalot@openscad/peepsalot) (Read error: Connection reset by peer)
+[01:24:41] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[01:24:53] *** Joins: peeps[zen] (~peepsalot@openscad/peepsalot)
+[01:24:59] <ville> yes there is cost for creating threads and processes. a fairly common idea is to pool your workers
+[01:25:44] <johnny> but, the cost isn't the same, especially on windows
+[01:26:13] <johnny> processes are more expensive on windows than unix
+[01:27:42] <ville> it's not exactly the same on linux either
+[01:27:55] *** Quits: andreasbuhr (~quassel@p549dbca1.dip0.t-ipconnect.de) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[01:29:37] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 240 seconds)
+[01:29:49] <sparticus> thanks.  this is on a linux target.  pooling does seem to be the way to go.  i was able to implement a dummy http responder with a single thread, single process and it got up to like 16k reqs/sec but have noticed that when i moved to using pthread_create() it stalled out around 6k/8k.
+[01:30:22] <sparticus> erm, pthread_create to launch a request handler method
+[01:30:31] <ville> creating thread per incoming connection is a terrible idea
+[01:31:05] <Friithian> how to easily denial of serrice yourself
+[01:31:42] <RandomReader> this page is old in the sense that you can find newer measurements and even some newer APIs, but the concepts are completely accurate: http://www.kegel.com/c10k.html
+[01:31:53] <sparticus> well if i go multiprocess, multithreaded even with prefork it is not well worked out how to manage concurrency as the processes cannot communicate well with each other to indicate availability (fifo or signal)
+[01:32:35] <ville> there's little reason to go multiprocess... or let's put it another way you should have really good reasons to do it
+[01:32:37] <RandomReader> it should give you a decent idea of approaches and tradeoffs for handling connection volume, especially for something request/response like http
+[01:33:04] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[01:33:18] <ville> not going multithreaded on the other hand could be fairly odd choice with today's hardware
+[01:34:18] <johnny> sparticus, do you have opinions on how other folks have done it?
+[01:34:37] <johnny> i dont' know whatyour protocol is like, but i doubt what you're doing is completely novel
+[01:34:51] <sparticus> johnny: i have lots of opinions and some of them are even educated but none of them that are would be about this
+[01:35:16] *** Quits: seninha (~seninha@user/seninha) (Remote host closed the connection)
+[01:35:16] <johnny> well i meant in regards to designing something to handle your requirements.
+[01:35:38] <johnny> i'm sure you've seen similiar software and hopefully have learned a little something in how they handle it gracefully
+[01:35:57] <sparticus> oh.  yeah i've noticed apache httpd project has done alot of this thinking.
+[01:36:05] <johnny> and nginx as well
+[01:36:25] <sparticus> ultimately what im building is a switch/broker type component for a new distributed message queue system
+[01:36:48] <sparticus> but plan on implementing an httpd server first and then gutting that and reusing the work
+[01:36:52] <johnny> so what's wrong with the connection handling design of the existing solutions in the space?
+[01:37:20] <RandomReader> yeah I was gonna ask, none of the existing webservers apply here? there have been quite a few designs over the years
+[01:37:23] <johnny> is there some some fundamental flaw in that aspect of theri design?
+[01:37:23] <sparticus> johnny: mostly complexity since im a noob with that kind of thing
+[01:37:25] <RandomReader> not just the pageservers but also the proxies
+[01:37:39] *** Joins: pulse (~pulse@user/pulse)
+[01:37:43] <johnny> sparticus, that complexity is perhaps important.  yo shuld probalby be reading more abou their designs before jumping in
+[01:37:52] <sparticus> i also have found that well established products like that tend to have a little bloat baked in
+[01:37:52] <johnny> then you'd know what to write, even if the approach is naive
+[01:38:02] *** Joins: kenanmarasli (~kenanmara@user/kenanmarasli)
+[01:38:09] <johnny> the fact that your' calling it bloat is probably your noobness showing
+[01:38:20] <sparticus> so implementing their model may be best while not introducing that bloat for features i do not want
+[01:38:33] <johnny> you should remove that word from your vocabulary
+[01:38:39] *** Joins: markong (~kvirc@213.146.188.203)
+[01:38:39] <RandomReader> not implementing it straight, just studying why they made the choices they did
+[01:38:42] <johnny> yes
+[01:38:46] <sparticus> RandomReader: yep
+[01:39:11] <RandomReader> (right, I was a bit behind on the conversation, sorry)
+[01:39:23] <johnny> please stop using the word bloat though. it's not a useful word in describing the problem.
+[01:39:42] <johnny> if you're so noob,how do you think you say that you don't need the features?
+[01:39:54] <johnny> are you really in a position to judge that?
+[01:40:00] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[01:40:10] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[01:40:10] *** ChanServ sets mode: +v npaperbot
+[01:40:16] <sparticus> yes im the designer, my will is universal wall
+[01:40:21] <sparticus> *will
+[01:40:28] <johnny> i'm not 100% saying that you do though . i just don't think you can say "i'm noob" and also "i know i don't need that"
+[01:40:39] <johnny> it's hard to take your opinion seriously when you do that
+[01:41:01] <RandomReader> I would also say, be prepared to revise things as you go .. one of the interesting things of this kind of project is that you will run into behavior you didn't expect once you use real loads
+[01:41:06] <sparticus> well you asked for my opinion, you didn't ask me to defend it :P
+[01:41:10] *** Quits: Roughy (~mdaw45ns@user/roughy) (Quit: Meadow Fresh milk)
+[01:41:11] <RandomReader> (so write the code with that in mind, you may end up rewriting part of it)
+[01:41:21] <johnny> sparticus, i'm asking you to introspect, not defend
+[01:41:50] <johnny> my point is, you're too noob to know if you need it or not
+[01:41:56] <RandomReader> there may also be significant differences between http and the messaging data flow patterns
+[01:42:15] <sparticus> RandomReader: yes i noticed that (re: unexpected behaviour) when i introduced any kind of threading to it
+[01:42:17] <johnny> but, it's also completely fair to say "that solution is a bit too complicated than i'm prepared to implement yet"
+[01:42:40] <RandomReader> e.g. independent request/response flow tends to have different caching and coherency behavior compared to tasks that communicate with each other
+[01:43:32] <johnny> sparticus, multithreading can be hard, even for programming experts, so it could just be that
+[01:45:04] <sparticus> one thing i am confused about when designing is, it seems like for maximum throughput i should have a battery of preforked processes that each manage a pool of threads, yet, there is no interprocess communication that seems well suited for the parent to gauge the state of any process in that battery to well manage which process should receive the work
+[01:45:58] <RandomReader> typically the opposite works well: single queue, workers pull as they free up
+[01:46:32] <RandomReader> OS schedulers tend to accommodate for this pattern
+[01:46:47] <johnny> i would really recommend taking a look at the design of nginx in particular for http
+[01:46:52] <sparticus> oh so the workers' loop would pull a queued request from a stack that is shared between, maybe serialized in a named pipe?
+[01:47:18] <johnny> that link that RandomReader sent inregards to the 10k connection problem is also relevant
+[01:47:29] <sparticus> yes im reading it now
+[01:48:59] <RandomReader> for multi-process, there are also other systems you can study, e.g. some databases .. postgresql might have its IPC info published in a useful form
+[01:49:20] <RandomReader> (but I would also prefer multi-thread until you have a specific reason to isolate)
+[01:49:39] <sparticus> ill add it to my list of stuff to google and hopefully i'll halfway understand it, much of this is admittedly far beyond my experience level w/ dev end of thing
+[01:49:55] <sparticus> *s
+[01:50:03] <RandomReader> postgresql manages a pool of worker processes with a central coordinator, for a little context there ... not directly applicable, but perhaps a useful tangent
+[01:50:09] <ville> sparticus: as i already said go with single process, multiple threads. stick a pool of worker threads in there. you can "scale" your work distributiong as you go.
+[01:51:16] <ville> sparticus: you can start with simple single shared work queue. then move to work queue per thread and finally add work stealing. you got plenty go wonder about even with just that
+[01:51:19] <sparticus> ville: how will that scale though exactly?  it seems like even with single-proc multi-thread i'll hit a limit and be forced to go multi-proc multi-thread
+[01:51:33] <RandomReader> what limit do you imagine hitting?
+[01:51:53] <ville> sparticus: "a limit" in what exactly? yes everything has a finite amount of "it" available. what ever "it" may be
+[01:52:09] <sparticus> well there seems to be a diminishing performance return on threads as the number of threads per process increases
+[01:52:20] <ville> sparticus: you won't know until you have a working implementation up
+[01:52:45] <RandomReader> oh, that's something you'll want to get out of your head first here: scaling up number of threads or processes
+[01:53:03] <RandomReader> and the earlier link should hint at that, once you get to its limit discussions
+[01:53:19] <RandomReader> but the short version is, the optimal efficiency for the system you're on would be all CPU cores at 100& utilization
+[01:53:19] <sparticus> well, ok, that's my cue to shut up and read
+[01:53:38] <RandomReader> if you have more threads or processes than you do cores, then it's going to be spending time switching between them, which has overhead
+[01:54:34] <RandomReader> so the design target is to find a balance of how you process the work and how you split it up, to get as efficient as you can
+[01:55:07] <RandomReader> (meaning there's going to be some N threads/processes that's actually relatively small, and you'll make other changes if that isn't good enough)
+[01:56:20] *** Joins: Ivii (~Ivyy@2001:a62:4c3:8e01:7d6f:92d:ca84:3ebd)
+[01:56:38] *** Quits: robod34 (Username@79.113.195.239) (Quit: Goe offline! ( http://marius.sucan.ro/ ))
+[01:59:57] *** Quits: KombuchaKip (~kip@192.252.230.5) (Remote host closed the connection)
+[02:02:10] *** Joins: KombuchaKip (~kip@192.252.230.5)
+[02:08:47] <sparticus> so i think from what ive read so far as i go through this that it would be an important consideration that i am gearing it for lightweight transactions that come in at a high frequency
+[02:10:24] <sparticus> it seems like some of the strategies outlined would be better for heavy transactions
+[02:10:55] <sparticus> e.g. large payloads or some kind of processing
+[02:11:00] <RandomReader> yep .. if they're lightweight meaning very little processing to be done, then a lot of the work to dispatch among threads or processes would actually be overhead and not helpful
+[02:11:12] <sparticus> making sense
+[02:12:38] <RandomReader> that may also mean a scaling strategy would be more brokers, with a division is on the connection/service level
+[02:13:13] <RandomReader> (that has a lot of assumptions baked in about what you can divide, but food for thought)
+[02:13:47] <sparticus> do you have reading about broker modeling
+[02:15:02] <RandomReader> hmm, I don't think I have anything bookmarked .. that's not an area I've spent much time in directly, just tried to keep my ear open for interesting bits
+[02:15:22] <sparticus> typically i think of a broker as a network service that is topologically distinct from a producer or consumer service (and even on diff hosts)
+[02:15:24] <RandomReader> pretty sure we've had at least one person in here dealing with some kind of message handing system though
+[02:16:36] *** Quits: scoobydoo (~scooby@user/scoobydoo) (Read error: Connection timed out)
+[02:18:08] *** Joins: scoobydoo (~scooby@user/scoobydoo)
+[02:21:11] *** Quits: RandomReader (~RandomRea@user/randomreader) (Quit: OS maintenance)
+[02:30:23] *** Joins: vdamewood (~vdamewood@fedora/vdamewood)
+[02:33:14] *** Joins: blackout69 (~blackout6@net-109-117-245-237.cust.vodafonedsl.it)
+[02:35:37] *** Quits: vdamewood (~vdamewood@fedora/vdamewood) (Ping timeout: 240 seconds)
+[02:38:36] *** Quits: teepee (~teepee@openscad/teepee) (Remote host closed the connection)
+[02:40:06] *** Quits: Ivii (~Ivyy@2001:a62:4c3:8e01:7d6f:92d:ca84:3ebd) (Remote host closed the connection)
+[02:41:03] *** Joins: teepee (~teepee@openscad/teepee)
+[02:43:30] *** Quits: sparticus (~root@176-58-96-11.ip.linodeusercontent.com) (K-Lined)
+[02:51:12] <TinoDidriksen> K-lined even.
+[02:52:17] *** Joins: Roughy (~mdaw45ns@user/roughy)
+[02:56:59] *** Parts: blackout69 (~blackout6@net-109-117-245-237.cust.vodafonedsl.it) ()
+[03:04:50] *** Joins: kvik_ (~kvik@93-142-246-187.adsl.net.t-com.hr)
+[03:07:33] *** Quits: kvik (~kvik@93-142-246-187.adsl.net.t-com.hr) (Ping timeout: 256 seconds)
+[03:10:29] *** Quits: kvik_ (~kvik@93-142-246-187.adsl.net.t-com.hr) (Remote host closed the connection)
+[03:12:20] *** Joins: kvik (~kvik@93-142-246-187.adsl.net.t-com.hr)
+[03:12:25] *** Quits: kvik (~kvik@93-142-246-187.adsl.net.t-com.hr) (Remote host closed the connection)
+[03:12:47] *** Joins: kvik (~kvik@93-142-246-187.adsl.net.t-com.hr)
+[03:13:06] *** Joins: vdamewood (~vdamewood@fedora/vdamewood)
+[03:14:46] *** Quits: Terminus (~null@user/terminus) (Quit: ZNC 1.8.2 - https://znc.in)
+[03:18:49] *** Joins: Terminus (~null@user/terminus)
+[03:19:29] *** Quits: kvik (~kvik@93-142-246-187.adsl.net.t-com.hr) (Remote host closed the connection)
+[03:21:18] *** Joins: kvik (~kvik@93-142-246-187.adsl.net.t-com.hr)
+[03:21:59] *** Quits: kvik (~kvik@93-142-246-187.adsl.net.t-com.hr) (Remote host closed the connection)
+[03:24:17] *** Joins: lh_mouse (~lh_mouse@mingw-w64/developer/lhmouse)
+[03:47:01] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[03:48:25] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 268 seconds)
+[04:01:23] *** Joins: RandomReader (~RandomRea@user/randomreader)
+[04:07:57] *** Quits: Burgundy (~yomon@79.115.213.171) (Ping timeout: 240 seconds)
+[04:14:55] *** Quits: imi (~imi@catv-89-132-115-236.catv.broadband.hu) (Ping timeout: 268 seconds)
+[04:15:00] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[04:19:37] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 240 seconds)
+[04:25:27] *** Quits: Jupp_S (~quassel@ip-88-153-154-129.hsi04.unitymediagroup.de) (Remote host closed the connection)
+[04:27:55] * Plazma slaps Guest64 around a bit with a large thaleichthys pacificus
+[04:28:02] *** Joins: imi (~imi@catv-89-132-115-236.catv.broadband.hu)
+[04:33:26] *** Quits: markong (~kvirc@213.146.188.203) (Ping timeout: 268 seconds)
+[04:33:37] *** Quits: n3rdy1 (~n3rdy1@2601:281:c780:a510:c82b:6078:8c93:1082) (Ping timeout: 240 seconds)
+[04:36:51] *** Joins: kaph_ (~kaph@net-2-45-51-147.cust.vodafonedsl.it)
+[04:38:09] *** Quits: kenanmarasli (~kenanmara@user/kenanmarasli) (Quit: Leaving)
+[04:39:17] *** Quits: kaph (~kaph@net-2-45-51-147.cust.vodafonedsl.it) (Ping timeout: 240 seconds)
+[04:41:52] *** Joins: sparticus2 (~root@172-105-49-127.ip.linodeusercontent.com)
+[04:43:28] *** Joins: magla (~gelignite@55d49e3c.access.ecotel.net)
+[04:49:12] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[04:54:10] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 260 seconds)
+[04:55:59] <Alipha> sparticus2: number of threads PER PROCESS doesn't matter at all for performance--it's all about the total number of threads. the only reason you'd have multiple processes would be if you wanted process isolation, which would give you better security and reliability (one process crashing won't affect bring down other processes, but one thread crashing can bring down all threads on that process). Having
+[04:56:01] <Alipha> more than one process will only decrease performance, not increase. just stick with multiple threads and a single process
+[04:56:08] * Plazma slaps Alipha around a bit with a large theragra chalcogramma
+[04:58:58] <sparticus2> thanks Alipha
+[05:03:31] <Alipha> sparticus2: and as RandomReader said, the optimal number of threads is the number of cores you have, ASSUMING each thread is running at 100% cpu usage. which, if you're doing one thread per connection, then each thread will probably spend most of its time waiting to receive data across the network. (plus you can only handle 8 connections at a time, or however many cpu cores you have.) and so, maybe you
+[05:03:32] <Alipha> have up to 100 threads or something, in order to keep all the cpus at 100%. of course, now you're introducing thread switching overhead. the ideal solution, from a performance standpoint, would be have 8 threads but have each thread manage many connections. however, that greatly complicates your code
+[05:04:25] *** Quits: magla (~gelignite@55d49e3c.access.ecotel.net) (Quit: Stay safe!)
+[05:05:53] <sparticus2> Alipha: arriving at similar conclusions.  plan is to move from using a request handler method in a new thread to handling multiple connections (accept loop) in preallocated threads and using the parent proc loop to manage thread count based on some kind of metric
+[05:06:57] *** Quits: Tokamak (~Tokamak@172.58.188.51) (Ping timeout: 240 seconds)
+[05:08:38] *** Joins: Tokamak (~Tokamak@172.58.188.51)
+[05:08:49] <sparticus2> could have on each iter in parent loop to check cpu loads and increase thread count until MAX if there are queued requests and decrease count until MIN if not at, say, 90%
+[05:09:12] <sparticus2> so each loop is incremental by THREAD_STEP
+[05:09:19] <sparticus2> or decremtnal by same
+[05:10:26] <sparticus2> wait isn't core allocaiton for a process tied ot the lifecycle of the process?
+[05:10:33] <sparticus2> *to
+[05:11:46] *** Quits: Roughy (~mdaw45ns@user/roughy) (Quit: Meadow Fresh milk)
+[05:16:01] *** Joins: Roughy (~mdaw45ns@user/roughy)
+[05:17:04] <RandomReader> as in will a process be permanently attached to a particular set of cores when it starts up? no, scheduling is dynamic
+[05:17:21] <sparticus2> ok, looks like i was operating on a bad assumption then
+[05:19:15] <RandomReader> OS scheduling is typically taking into account things like power states / energy load on CPU cores, cache locality, I/O interrupt routing, anything that may be asymmetric (on-die RAM controllers, big/little arrangements, MT vs independent, etc)
+[05:19:54] <RandomReader> and will stick or migrate threads as it sees fit, based on its priorities for system efficiency
+[05:21:32] <sparticus2> there is a second criteria for thread pool size i think: request_queue.size()
+[05:22:00] <sparticus2> if cpu load is low but request_queue.size() is like 10, then i dont want to increase thread pool size
+[05:23:06] <sparticus2> but if the system is not very strong w/ processing that could be a need to increase :/ hrm
+[05:24:07] <sparticus2> i mean not those exact values, just seems like i will want to grab some specs from the host to dynamically figure out MAX_POOL_SIZE, MIN_POOL_SIZE, and MAX_REQUEST_QUEUE_SIZE
+[05:24:10] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[05:24:30] <sparticus2> MAX_POOL_SIZE could easily be the num cores
+[05:25:33] *** Quits: Tokamak (~Tokamak@172.58.188.51) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[05:26:28] *** Quits: Colt (~Colt@user/colt) (Remote host closed the connection)
+[05:27:04] *** Joins: Colt (~Colt@user/colt)
+[05:27:07] *** Quits: vdamewood (~vdamewood@fedora/vdamewood) (Quit: My MacBook Pro has gone to sleep. ZZZzzz…)
+[05:29:33] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 268 seconds)
+[05:33:41] *** Quits: chozorho (~chozorho@2601:146:300:c30::a57) (Quit: brb)
+[05:36:01] *** Quits: imi (~imi@catv-89-132-115-236.catv.broadband.hu) (Ping timeout: 256 seconds)
+[05:36:54] <RandomReader> I wouldn't worry much about these things to start out, both because they're easy for a sysadmin to tune and because you can't practically do much about the bounds anyway
+[05:36:54] *** Quits: Kebianizao (~Kebianiza@188.127.160.11) (Read error: Connection reset by peer)
+[05:37:59] <RandomReader> with a config to choose how many threads, the sysadmin can set that based on the machine and expected load .. and realistically if the system starts approaching 100% load, then it can no longer absorb spikes, and solving that is at a higher level anyway: reduce traffic, multiple machines, etc
+[05:38:29] <RandomReader> the challenge for the code here is going to be in making the most of however many threads you do have
+[05:40:00] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[05:40:11] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[05:40:11] *** ChanServ sets mode: +v npaperbot
+[05:43:14] *** Quits: Tobbi (~Tobbi@2a02:8108:1240:48ec:9d07:c192:fe0:ec1f) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[05:45:05] *** Quits: scoobydoo (~scooby@user/scoobydoo) (Read error: Connection timed out)
+[05:45:14] *** Joins: Kebianizao (~Kebianiza@188.127.160.11)
+[05:46:18] *** Joins: scoobydoo (~scooby@user/scoobydoo)
+[05:47:08] *** Joins: ferdna (~ferdna@user/ferdna)
+[05:48:41] *** Joins: imi (~imi@catv-89-132-115-236.catv.broadband.hu)
+[05:49:04] <sparticus2> yeah might as well implement the logging and config file stuff anyway
+[05:50:59] *** Joins: Tokamak (~Tokamak@172.58.188.51)
+[05:52:10] *** Quits: Tokamak (~Tokamak@172.58.188.51) (Client Quit)
+[05:54:19] *** Joins: Tokamak_ (~Tokamak@172.58.188.51)
+[05:57:55] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[06:02:37] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 240 seconds)
+[06:07:41] *** Joins: NovumDXW (~NovumDXW@2409:8a28:3615:8900:1945:23e5:c97b:bf0c)
+[06:19:48] *** Quits: kapil (~kapil@o-k.website) (Quit: ZNC 1.7.5+deb4 - https://znc.in)
+[06:20:26] *** Joins: kapil (~kapil@o-k.website)
+[06:28:36] *** Quits: scoobydoo (~scooby@user/scoobydoo) (Read error: Connection timed out)
+[06:29:47] *** Joins: scoobydoo (~scooby@user/scoobydoo)
+[06:30:07] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[06:32:46] *** Quits: kapil (~kapil@o-k.website) (Quit: ZNC 1.7.5+deb4 - https://znc.in)
+[06:33:18] *** Joins: kapil (~kapil@o-k.website)
+[06:35:31] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 268 seconds)
+[06:38:12] *** Quits: Tokamak_ (~Tokamak@172.58.188.51) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[06:40:24] *** Quits: kapil (~kapil@o-k.website) (Quit: ZNC 1.7.5+deb4 - https://znc.in)
+[06:40:33] *** Joins: Tokamak (~Tokamak@172.58.188.51)
+[06:40:56] *** Joins: kapil (~kapil@2a01:4f9:c010:c9c3::1)
+[06:44:42] *** Quits: Tokamak (~Tokamak@172.58.188.51) (Client Quit)
+[06:56:18] *** Quits: kapil (~kapil@2a01:4f9:c010:c9c3::1) (Quit: ZNC 1.7.5+deb4 - https://znc.in)
+[06:57:02] *** Joins: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse)
+[07:05:49] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[07:10:04] *** Quits: pulse (~pulse@user/pulse) (Ping timeout: 268 seconds)
+[07:11:18] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 268 seconds)
+[07:11:29] *** Quits: Roughy (~mdaw45ns@user/roughy) (Quit: Meadow Fresh milk)
+[07:22:47] *** Joins: adeliktas5 (~adeliktas@i59F5F5F7.versanet.de)
+[07:24:49] *** Quits: adeliktas (~adeliktas@i59F52F0C.versanet.de) (Ping timeout: 256 seconds)
+[07:24:49] *** adeliktas5 is now known as adeliktas
+[07:27:43] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[07:38:12] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[07:41:03] <very_sneaky> johnny, sparticus2 to address a statement made earlier about looking into existing libraries that do this kind of message handling, I think that there's a lot of value in implementing this kind of thing yourself to really develop an appreciation and understanding of some of the design decisions existing libraries have made
+[07:43:06] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 260 seconds)
+[07:43:14] <very_sneaky> I'm working on something similar for a simulation engine, and I'm very interested in the idea of being able to scale both horizontally and vertically for different types of computational loads - I've realised that trying to plan a design for that has proved to be an enormous effort without having a good understanding of some of the technical considerations for implementing these systems, so
+[07:43:16] *** Joins: jwillikers (~jwilliker@ics141-1.icsincorporated.com)
+[07:43:16] <very_sneaky> atm I've resigned myself to implementing things iteratively and revising the design as my appreciation for the issues improves
+[07:44:18] <very_sneaky> having said that, I'm sure I could shoehorn everything into kafka or zmq or something if i wanted to, but yeah, hard for me to evaluate how well each actually serves my purposes atm
+[08:02:05] <very_sneaky> speaking of config files - what are peoples preferences for formats? I'm leaning towards yaml at the moment, but would be interested in hearing any other opinions
+[08:03:08] <Alipha> for my own project, i just did `key=value` because it was easy and i wrote it myself
+[08:03:45] <very_sneaky> fair enough, sounds like your config requirements were relatively trivial
+[08:03:54] <Alipha> yeah
+[08:04:44] <very_sneaky> one of the challenges that I have is that I'll need to create relationships between models in a simulation, i.e., A -> B -> C, D -> B -> E
+[08:04:46] <Alipha> admittedly, i'm rather prone to "not invented here", even at work :-/
+[08:05:04] <very_sneaky> as in, you like to do things from scratch yourself?
+[08:05:16] <Alipha> yeah, if it's simple enough
+[08:05:24] <kalven> yaml is too complex
+[08:05:59] *** Joins: chozorho (~chozorho@2601:146:300:c30::a0d0)
+[08:06:23] <very_sneaky> i like that approach for self education, but i think that it can pose a lot of problems in a production context
+[08:06:42] <very_sneaky> we have an issue at work where we have more projects to maintain than we have resources to maintain them
+[08:07:00] <very_sneaky> and a billion reinventions of the same math libraries
+[08:07:08] <very_sneaky> it's frustrating to see
+[08:07:23] <very_sneaky> kalven: what are some of the challenges you see with the additional complexity?
+[08:08:49] <kalven> it's got a bunch of built-in heuristics to (ostensibly) simplify things, but end up making things less regular
+[08:09:00] <kalven> https://noyaml.com/ some things here
+[08:09:38] <Alipha> sometimes i feel like if something is simple enough, involving a 3rd party library is more hassle than just writing it yourself *looks at you, leftpad*
+[08:11:40] <very_sneaky> Alipha: yeah, I feel that. I think that's a big problem for a lot of people - one of the reasons I'm trying to use conan more to really lower that threshold of complexity to using a 3rd party lib
+[08:11:54] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[08:12:03] <very_sneaky> there is obviously still some level of "simple enough" that would mean not bothering in that statement
+[08:12:26] <very_sneaky> kalven: thanks for the link, I'll have a read - do you have any alternative preferences?
+[08:13:24] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[08:13:58] <kalven> I don't know what your requirements are, but I'd probably .ini for simple things or .json for something more complex.. I use a lot of protobufs at work and it's pretty common to use its text format for config
+[08:14:27] <very_sneaky> ah interesting, hadn't considered protobufs
+[08:14:43] <very_sneaky> one of the things that I found attractive about yaml was that it's a strict superset of json
+[08:15:22] <kalven> I wouldn't pull in protobufs just for a config, but if I was already using it for something else in the project I might use it
+[08:15:38] <very_sneaky> serialization is certainly something I'll need to tackle at some stage
+[08:16:37] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 240 seconds)
+[08:21:32] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 240 seconds)
+[08:22:11] *** Joins: lh_cat (~lh_mouse@mingw-w64/developer/lhmouse)
+[08:23:43] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[08:25:27] *** Quits: lh_mouse (~lh_mouse@mingw-w64/developer/lhmouse) (Ping timeout: 256 seconds)
+[08:31:45] *** Quits: Juliu (~Juliu@2a02:810b:c640:3ec0:d4ba:d075:23a9:2f67) (Quit: Quit)
+[08:35:39] <very_sneaky> toml might be another alternative
+[08:38:44] *** Joins: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[08:41:19] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 256 seconds)
+[08:44:39] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[08:49:50] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 260 seconds)
+[08:52:22] *** Quits: scoobydoo (~scooby@user/scoobydoo) (Read error: Connection timed out)
+[08:54:02] *** Joins: scoobydoo (~scooby@user/scoobydoo)
+[08:57:12] *** Quits: jwillikers (~jwilliker@ics141-1.icsincorporated.com) (Remote host closed the connection)
+[09:04:49] *** Quits: great_taste (~great_tas@user/great-taste/x-5798414) (Quit: Client closed)
+[09:20:26] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[09:24:57] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 240 seconds)
+[09:29:58] *** Quits: imi (~imi@catv-89-132-115-236.catv.broadband.hu) (Ping timeout: 260 seconds)
+[09:37:50] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[09:40:01] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[09:40:10] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[09:40:10] *** ChanServ sets mode: +v npaperbot
+[09:40:31] *** Quits: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 268 seconds)
+[09:40:49] *** Quits: PJBoy (~PJBoy@user/pjboy) (Ping timeout: 256 seconds)
+[09:42:00] *** Joins: imi (~imi@catv-89-132-115-236.catv.broadband.hu)
+[09:45:30] <johnny> very_sneaky, generally i avoid yaml. because of the string parsing and quoting. it's too easy to have misparsed files, plus it's a superset of json
+[09:45:38] <johnny> generally it's hard to write a parser
+[09:45:42] *** Joins: Tobbi (~Tobbi@2a02:8108:1240:48ec:8458:4cc3:3d6b:b37c)
+[09:45:57] <johnny> toml is seeing a lot of use these days, although some poeple hate that too, but at least it's simpler to parse than json
+[09:46:31] <johnny> i still also disagree as to why one would one want go in without seeing the prior art in the area
+[09:46:51] <johnny> doesn't mean you have to use it, but at least one approach is a good starting point to understand what problems actually have to be solved
+[09:47:05] <johnny> personally, i don't ever code just to code. it's always to solve a problem
+[09:47:18] *** Quits: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse) (Ping timeout: 268 seconds)
+[09:48:13] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[09:49:21] *** Joins: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse)
+[09:49:57] *** Quits: Tobbi (~Tobbi@2a02:8108:1240:48ec:8458:4cc3:3d6b:b37c) (Ping timeout: 240 seconds)
+[09:50:45] <kalven> I wouldn't code my own parser for any of these
+[09:51:01] *** Quits: rayw (~ray@cpc83999-pool15-2-0-cust1.15-1.cable.virginm.net) (Ping timeout: 256 seconds)
+[09:51:26] <KombuchaKip> I am experiencing a very strange problem I've been looking with several hours of debugging. GDB is noting that one of my threads exits during a call to 'auto foo = new pqxx::connection(parameters)'. The call does not appear to be throwing a std::bad_alloc(), nor any other exception. The calling thread just dies upon that statement. I've tried setting breakpoints on pthread_exit, but its not tripping. Anyone have any suggestions to f
+[09:51:26] <KombuchaKip> igure out why a thread is exiting mysteriously?
+[09:52:44] <KombuchaKip> This is happening on ppc64el
+[09:53:05] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 252 seconds)
+[09:54:42] *** Joins: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[09:56:57] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 240 seconds)
+[10:00:20] *** Joins: p-i- (~Ohmu@2403:6200:8978:eb29:6901:831d:c87b:23e5)
+[10:05:49] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[10:08:01] *** Quits: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 256 seconds)
+[10:09:28] <kalven> hrm.. I remember there was some clang flag to have it warn that members could be rearranged to save space (and suggest the ordering), but I can't remember the name of it.. ?
+[10:18:47] <very_sneaky> johnny: yeah i'd be using an existing parser - i have no desire to mess around with that. looks like libyaml or yaml-cpp would both be reasonably comprehensive alternatives
+[10:19:09] <johnny> i'm sayin that it's unlikely they truly comply with the spec
+[10:20:31] <very_sneaky> johnny: yeah, don't get me wrong, I'm not advocating for not doing research. of course research forms a crucial part of it. I think implementing something is a good way to gain an appreciation for issues you otherwise might not understand though - sometimes that can be difficult to parse just by looking at anothers code, or reading their documentation that may or may not present the kind of
+[10:20:32] <very_sneaky> information you need to truly understand it
+[10:20:56] <very_sneaky> but as with everything, if it's not something you're not looking to gain expertise in then the education side of that holds little weight
+[10:21:24] <johnny> well most of the time when it comes to various techniques for server software, the techniques are often written down anyways. so you can read the code with that in mind
+[10:22:28] <very_sneaky> yeah, i don't find that to be the most effective way of learning it though. getting context and some appreciation for some issues, sure, but it's not the same as doing it yourself
+[10:22:51] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[10:24:47] <kalven> johnny: which spec?
+[10:24:54] <johnny> the yaml spec
+[10:25:05] <very_sneaky> johnny: wrt the current parsers for anything - nothing is perfect, but it looks like yaml-cpp has had pretty good uptake and is actively developed. The readme indicates they've matched the yaml 1.2 spec. If anything is missing though, i could always submit issues/pull requests - both of which are likely to be infinitely easier than implementing a parser myself from scratch
+[10:25:35] <johnny> i'm sure the basic stuff is fine. but even though the spec doesn't require it.. please quote your strings
+[10:25:46] <johnny> it'll save you trouble. and be careful with floating point numbers
+[10:26:17] <very_sneaky> yeah i've read about some of the issues with yaml. i'm not resolved to using it yet - still early days
+[10:28:18] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 260 seconds)
+[10:29:54] *** Joins: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[10:32:19] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 268 seconds)
+[10:47:57] *** Quits: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse) (Ping timeout: 240 seconds)
+[10:48:22] *** Joins: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse)
+[10:49:40] *** Joins: leduyquang753 (~leduyquan@user/leduyquang753)
+[10:52:29] <RandomReader> KombuchaKip - what is it showing about the exit itself?
+[10:52:33] <RandomReader> and what OS?
+[10:52:49] <KombuchaKip> RandomReader: It looks like it's actually a kernel bug, if you can believe it.
+[10:52:59] <KombuchaKip> RandomReader:  kernel: [28835.277591] BUG: Unable to handle kernel data access on write at 0x132b47d38499fd58
+[10:53:07] <KombuchaKip> RandomReader: kernel: [28835.277624] Faulting instruction address: 0xc0000000004d0434
+[10:55:46] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[10:56:58] <KombuchaKip> RandomReader: https://pastebin.com/kgcTV96L
+[10:57:17] *** Quits: segnior (segnior@user/segnior) (Ping timeout: 240 seconds)
+[11:00:44] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 252 seconds)
+[11:08:47] <RandomReader> ah, yeah, looks like it
+[11:13:20] <ville> kalven: stick -Weverything on for a testcase that you know would trigger it and the warning usually includes the flag?
+[11:23:49] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[11:24:43] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[11:26:35] *** Quits: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 268 seconds)
+[11:35:41] *** Quits: ravan (~ravan@user/ravan) (Remote host closed the connection)
+[11:36:56] *** Joins: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[11:39:15] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 256 seconds)
+[11:42:39] <kalven> it's just showing -Wpadded
+[11:47:05] *** Quits: scoobydoo (~scooby@user/scoobydoo) (Read error: Connection timed out)
+[11:48:37] *** Joins: scoobydoo (~scooby@user/scoobydoo)
+[11:50:31] <p-i-> https://bpa.st/NBMA Can anyone see a cleaner way to do this? btw I think that code won't work as is & I need to convert the `"..."` strings to `std::string("...")` so that I can `strA + strB` to concatenate.
+[11:55:30] <RandomReader> curl_slist_append requires C-strings, so appending like that won't work anyway
+[11:56:10] <RandomReader> maybe try something more like  std::string("API-KEY: ").append(key).c_str()
+[11:56:44] <ville> kalven: there's clang-reorder-fields tool if that's what you had in mind?
+[11:57:00] <RandomReader> (by "won't work" I mean just using operator + will get you a std::string, but that function can't accept a std::string)
+[12:01:28] <kalven> ville: doesn't ring a bell. that seems to be something for actually doing the source transformation (to reorder fields)
+[12:02:39] <RandomReader> also you need to initialize that slist variable, and prefer not using the "struct" tag (that's a C-ism), so:    curl_slist* slist = nullptr;
+[12:02:51] <RandomReader> compiler should be warning about that already
+[12:03:16] <p-i-> Thanks RandomReader
+[12:04:03] <RandomReader> welcome
+[12:10:02] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[12:10:23] <ville> kalven: yes, but looked like it did include warnings about reordering breaking things. maybe it's a clang-tidy option or whatever other tool? quickly looking at clang options i couldn't find one
+[12:10:57] *** Quits: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 240 seconds)
+[12:11:52] <ville> also for your testcase if it's the case that -Wpadding is hit before the flag you had in  mind, perhaps redoing the testcase -Wno-padding will let it hit the one you had in mind?
+[12:14:43] <ville> also the correct answer of course is to use structs and no access specifiers. can't reorder then
+[12:16:10] <kalven> ville: -Wno-padding doesn't help. I may have hallucinated the whole thing.. Also I'm using clang via emscripten, so I don't actually have access to all the optional extra tools that clang has
+[12:16:38] *** Quits: skapata (~Skapata@user/skapata) (Remote host closed the connection)
+[12:17:30] <ville> got me then
+[12:17:31] <RandomReader> that sounds more like a clang-tidy sort of thing
+[12:18:18] <RandomReader> (I don't regularly use either and can't remember coming across such a thing, other than it sounds familiar in a general tool sense)
+[12:22:21] *** Joins: robod34 (Username@79.113.195.239)
+[12:29:28] <fiesh> yaml's a nightmare... whoever invented it probably also came up with SIP, udev, and Windows linebreaks
+[12:33:28] <RandomReader> lol
+[12:34:53] *** Quits: BurumaSerafuku (~sjw@69.206.48.64) (Remote host closed the connection)
+[12:36:05] *** Joins: BurumaSerafuku (~sjw@69.206.48.64)
+[12:40:42] <ville> udev's pretty alright i thought. the c interface to it anyways
+[12:41:15] <sparticus2> very_sneaky: json for data structures, ini for configuration
+[12:41:54] <ville> udev's user-facing rules and how they work is another matter
+[12:43:36] *** Quits: chozorho (~chozorho@2601:146:300:c30::a0d0) (Quit: good night and happy Christmas)
+[12:45:34] <LordKalma> YAML is fine
+[12:45:36] <LordKalma> merry xmas
+[12:46:27] *** Quits: Inline (~Inline@aftr-37-201-240-204.unity-media.net) (Quit: Leaving)
+[12:54:38] *** Joins: kenanmarasli (~kenanmara@user/kenanmarasli)
+[13:00:39] *** Joins: magla (~gelignite@55d48f64.access.ecotel.net)
+[13:06:19] *** Joins: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[13:08:17] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 240 seconds)
+[13:09:26] *** Quits: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Remote host closed the connection)
+[13:09:58] <RandomReader> Baker Island will join the Christmas festivities in 2.3 hours .. it's a little slow
+[13:11:09] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[13:12:56] *** Joins: rayw (~ray@cpc83999-pool15-2-0-cust1.15-1.cable.virginm.net)
+[13:14:02] <RandomReader> of course Christmas Island will have moved on to Dec 26 by then
+[13:14:26] <RandomReader> they're only 2100km apart, I like to think it's an ancient feud and the source of Atlantis tales
+[13:15:02] <p-i-> https://bpa.st/5O5A I think I'm segfaulting here because handle gets deallocated when blockscope exits, leaving std::vector of dead addresses.
+[13:15:13] <p-i-> What's a good way to fix?
+[13:15:54] <p-i-> I could use `handles[i]` everywhere, but that doesn't feel clean.
+[13:16:06] <RandomReader> that part seems safe, it's just a pointer
+[13:16:21] <p-i-> oh I see
+[13:16:22] <p-i-> tx
+[13:17:19] <RandomReader> on the other hand, the line that sets POSTFIELDS is apparently not ok: https://curl.se/libcurl/c/curl_easy_setopt.html
+[13:18:05] <RandomReader> payload basically has to live until you're entirely done with the curl handles, so that's a potential issue
+[13:20:53] *** Joins: blackout69 (~blackout6@net-109-117-245-237.cust.vodafonedsl.it)
+[13:30:53] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[13:32:07] *** Joins: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[13:34:17] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 240 seconds)
+[13:36:33] *** Joins: rajkosto (~rajkosto@109-92-198-239.dynamic.isp.telekom.rs)
+[13:38:00] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[13:39:25] *** Joins: Burgundy (~yomon@79.115.213.171)
+[13:40:01] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[13:40:11] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[13:40:11] *** ChanServ sets mode: +v npaperbot
+[13:40:19] *** Joins: DSpider (~DSpider@82.79.237.23)
+[13:45:17] *** Quits: rajkosto (~rajkosto@109-92-198-239.dynamic.isp.telekom.rs) (Ping timeout: 240 seconds)
+[13:58:25] *** Joins: rajkosto (~rajkosto@93-86-206-84.dynamic.isp.telekom.rs)
+[14:05:10] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[14:07:37] *** Quits: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 240 seconds)
+[14:13:23] *** Quits: kaph_ (~kaph@net-2-45-51-147.cust.vodafonedsl.it) (Ping timeout: 256 seconds)
+[14:15:05] *** Quits: imi (~imi@catv-89-132-115-236.catv.broadband.hu) (Ping timeout: 256 seconds)
+[14:27:37] *** Quits: rajkosto (~rajkosto@93-86-206-84.dynamic.isp.telekom.rs) (Ping timeout: 240 seconds)
+[14:28:10] *** Joins: imi (~imi@catv-89-132-115-236.catv.broadband.hu)
+[14:28:12] *** Joins: Inline (~Inline@aftr-37-201-240-204.unity-media.net)
+[14:30:17] *** Quits: blackout69 (~blackout6@net-109-117-245-237.cust.vodafonedsl.it) (Quit: Leaving.)
+[14:42:09] *** Joins: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[14:44:17] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 240 seconds)
+[14:50:55] *** Joins: rito_ (~rito_gh@45.112.243.69)
+[14:56:30] *** Joins: blackout69 (~blackout6@net-109-117-245-237.cust.vodafonedsl.it)
+[15:05:29] <p-i-> https://bpa.st/XYAA Can anyone see why this build is failing on Ubuntu? Same code builds on macOS fine...
+[15:05:55] <p-i-> I'm wondering if it might be some implicit 'sudo' issue, as ubuntu box requires sudo for many operations.
+[15:08:10] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[15:08:51] *** Joins: markong (~kvirc@213.146.188.203)
+[15:11:03] *** Quits: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 268 seconds)
+[15:12:12] <ville> stick a "RUNTIME DESTINATION bin" there or so?
+[15:14:53] <p-i-> I tried setting RUNTIME DESTINATION to my cwd of the build folder which didn't work
+[15:14:59] <p-i-> lemme try bin
+[15:15:42] <p-i-> Awesome, works
+[15:15:43] <p-i-> Thanks!
+[15:18:17] *** Quits: Burgundy (~yomon@79.115.213.171) (Ping timeout: 240 seconds)
+[15:22:39] <very_sneaky> I mean I haven't minded what i've done with yaml so far - it works fine for gitlab ci
+[15:22:55] <very_sneaky> works horribly for bamboo - i guess that's the difference between parsers
+[15:23:30] <very_sneaky> i like that you can anchor and extend directives, makes for good reusability of config
+[15:28:33] *** Joins: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[15:31:02] *** Quits: hfsoulz (~hfsoulz@user/hfsoulz) (Quit: leaving)
+[15:31:34] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Read error: Connection reset by peer)
+[15:33:26] *** Joins: AmR (~AmREiSa@156.199.236.68)
+[15:36:36] *** Joins: pulse (~pulse@user/pulse)
+[15:40:03] *** Joins: Roughy (~mdaw45ns@user/roughy)
+[15:41:13] *** Joins: hfsoulz (~hfsoulz@user/hfsoulz)
+[15:44:58] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[15:46:19] *** Quits: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 256 seconds)
+[15:49:05] *** Joins: frost (~frost@user/frost)
+[15:56:21] *** Joins: spaceangel (~spaceange@ip-78-102-216-202.net.upcbroadband.cz)
+[16:05:27] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[16:05:28] *** Joins: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[16:07:17] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 240 seconds)
+[16:07:20] *** Joins: aniketgm (~Aniket@49.36.109.81)
+[16:11:47] *** Quits: blackout69 (~blackout6@net-109-117-245-237.cust.vodafonedsl.it) (Quit: Leaving.)
+[16:19:37] *** Quits: Inline (~Inline@aftr-37-201-240-204.unity-media.net) (Quit: Leaving)
+[16:20:04] *** Joins: Inline (~Inline@aftr-37-201-240-204.unity-media.net)
+[16:21:58] *** Quits: leduyquang753 (~leduyquan@user/leduyquang753) (Ping timeout: 268 seconds)
+[16:22:47] <PJBoy> ok this wallops announcement thing is actually becoming spam now
+[16:23:10] <PJBoy> maybe freenode *was* the right choice
+[16:24:21] *** Joins: leduyquang753 (~leduyquan@user/leduyquang753)
+[16:26:41] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[16:27:37] *** Quits: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 240 seconds)
+[16:30:02] *** Joins: Tobbi (~Tobbi@2a02:8108:1240:48ec:5007:ea61:6bcd:719)
+[16:35:05] <johnny> huh?
+[16:35:11] <johnny> i only saw that one message
+[16:35:29] <johnny> i was watching the launch myself
+[16:37:11] <ville> PJBoy: configure your client
+[16:37:22] <PJBoy> yeah I guess
+[16:37:52] <PJBoy> -w right?
+[16:38:28] *** Quits: PJBoy (~PJBoy@user/pjboy) (Quit: Ping timeout: 252 seconds)
+[16:38:30] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[16:38:49] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[16:38:51] <ville> umm... i meant you can allow wallops through, but stick them in a window you never visit or at least so you don't get a ping/notification that there's new data in the window
+[16:39:58] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[16:40:10] <PJBoy> nah that would be even worse
+[16:40:19] <PJBoy> currently I don't get pinged or anything
+[16:40:21] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Client Quit)
+[16:40:41] <PJBoy> so doing would just mean I'd have to bear the burden of closing that tab
+[16:40:58] <PJBoy> my user mode is set now, so should be all good
+[16:41:01] <ville> that way you can still go read it if someone says there was something useful
+[16:41:11] <PJBoy> I doubt that will ever happen
+[16:41:19] <PJBoy> it never happened on freenode
+[16:41:27] <ville> can't remember the last time i've read a wallop
+[16:41:33] <PJBoy> and we're 0/2 on libera
+[16:41:45] <ville> on purpose because there was actual useful information there that is
+[16:41:46] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[16:43:37] <johnny> i saw one wallops message. how many did you see?
+[16:43:49] <PJBoy> just the one
+[16:44:14] <PJBoy> but the last one I saw, which was yesterday or the day before, was also spam
+[16:44:47] <johnny> that's some incredibly low tolerance for spam.. the last wallops i saw was for switching servers around or some such
+[16:45:15] *** Quits: imi (~imi@catv-89-132-115-236.catv.broadband.hu) (Ping timeout: 256 seconds)
+[16:45:49] <PJBoy> last one was shilling the libera blog
+[16:46:02] <PJBoy> and the one just then was talking about space
+[16:46:46] *** Quits: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse) (Read error: Connection reset by peer)
+[16:47:16] <PJBoy> that's some spammy shit
+[16:47:34] <PJBoy> if they were actually in this channel, I'd hit them with !news
+[16:47:55] <PJBoy> but then they'd probably interpret it non-ironically
+[16:49:37] <very_sneaky> yeesh. agree that's a pretty spammy one
+[16:51:42] *** Joins: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[16:53:57] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 240 seconds)
+[16:54:23] *** Joins: skapata (~Skapata@2804:14c:87b0:a6f9:c16:575f:60a6:c562)
+[16:54:23] *** Quits: skapata (~Skapata@2804:14c:87b0:a6f9:c16:575f:60a6:c562) (Changing host)
+[16:54:23] *** Joins: skapata (~Skapata@user/skapata)
+[16:58:11] *** Joins: imi (~imi@catv-89-132-115-236.catv.broadband.hu)
+[17:04:19] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[17:04:40] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[17:05:57] *** Quits: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 240 seconds)
+[17:08:50] *** Quits: p-i- (~Ohmu@2403:6200:8978:eb29:6901:831d:c87b:23e5) (Remote host closed the connection)
+[17:10:13] *** Quits: NovumDXW (~NovumDXW@2409:8a28:3615:8900:1945:23e5:c97b:bf0c) (Quit: Leaving)
+[17:13:18] *** Joins: andreasbuhr (~quassel@p5dcf96c3.dip0.t-ipconnect.de)
+[17:13:43] *** Joins: seninha (~seninha@user/seninha)
+[17:24:06] *** Joins: RoKenn (~RoKenn@2001:a61:3432:ab01:e706:c583:d457:d1af)
+[17:24:06] *** Quits: RoKenn (~RoKenn@2001:a61:3432:ab01:e706:c583:d457:d1af) (Changing host)
+[17:24:06] *** Joins: RoKenn (~RoKenn@user/rokenn)
+[17:25:25] *** Quits: frost (~frost@user/frost) (Ping timeout: 240 seconds)
+[17:29:13] *** Joins: ethrl (uid524335@user/doforlove33)
+[17:35:27] *** Joins: allyouneedislove (~ethereal@user/doforlove33)
+[17:40:02] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[17:40:12] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[17:40:12] *** ChanServ sets mode: +v npaperbot
+[17:45:13] *** Quits: rito_ (~rito_gh@45.112.243.69) (Quit: Leaving)
+[17:50:57] *** Quits: magla (~gelignite@55d48f64.access.ecotel.net) (Quit: Stay safe!)
+[17:54:57] *** Quits: HvszrStykp (~X@81.171.62.82) (Ping timeout: 256 seconds)
+[17:58:11] *** Joins: jsbach (~jsbach@2a01:c23:5d2c:c300:4ab0:3a06:97eb:897f)
+[18:00:58] *** Quits: jsbach (~jsbach@2a01:c23:5d2c:c300:4ab0:3a06:97eb:897f) (Client Quit)
+[18:01:43] *** Joins: jsbach_ (~jsbach@2a01:c23:5d2c:c300:4ab0:3a06:97eb:897f)
+[18:01:53] *** Quits: aniketgm (~Aniket@49.36.109.81) (Read error: No route to host)
+[18:06:17] *** Joins: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[18:06:26] <Alipha> Okay, yeah, I didn't see why you had issue with the blog message a while back--I thought it was a reasonable announcement--but this one about the space telescope? Are we going to get announcements about every world news event that is of interest to Festive_Drsgon?
+[18:08:11] *** Joins: cart_man (~rynot@2a00:23c4:2b81:5401:cc14:844e:e1a:117f)
+[18:08:33] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 256 seconds)
+[18:09:17] <PJBoy> yeah I overreacted to that first one because I didn't realise it came from a different channel
+[18:11:29] *** Joins: jehelset (~jeh@130.51-175-95.customer.lyse.net)
+[18:13:12] <cart_man> Hey this code doesnt compile but its the gist of it. I a having this issue where the volatile char is literally 0 in that piece of ram but it never returns TRUE. ALways false and I cant see why. Is there some trick to mmaps or something -> https://wandbox.org/permlink/KqfqcZMNrilFfzK6
+[18:22:40] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[18:24:54] *** Quits: allyouneedislove (~ethereal@user/doforlove33) (Quit: WeeChat 2.8)
+[18:24:59] *** Quits: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 256 seconds)
+[18:25:14] *** Quits: leduyquang753 (~leduyquan@user/leduyquang753) (Quit: Gotta go, see you guys later.)
+[18:25:17] <jsbach_> cart_man, did you check the compiler error messages? he doesn't know what message_buffer_size and inst is.
+[18:27:41] <cart_man> jsbach_: No thats not the complete code. I will take the afternoon to get a compileable piece of code from the base
+[18:29:06] *** Joins: blackout69 (~blackout6@net-109-117-245-237.cust.vodafonedsl.it)
+[18:33:34] *** Joins: john99 (~johnny@138.62.221.87.dynamic.jazztel.es)
+[18:34:42] <ville> cart_man: as an unrelated question why a pointer-to-std-function?
+[18:35:21] <cart_man> ville: in the mem_ files? I was just messing around with things
+[18:35:47] <cart_man> I mean ipc files
+[18:35:55] <ville> seems somewhat unusual choice to have a pointer, sort of like having a pointer-to-std::vector
+[18:36:27] <cart_man> ville: I was trying to pass a function to a  class via pointer. Like a callback function
+[18:37:37] <ville> i guess it saves you a potential dynamic allocation. just odd to see a pointer associated with that type
+[18:39:17] <ville> at least my default would be to hold std::function by value if i am using it to store some kind of callbacks
+[18:39:44] *** Quits: jsbach_ (~jsbach@2a01:c23:5d2c:c300:4ab0:3a06:97eb:897f) (Quit: Leaving)
+[18:40:20] <ville> but who is to say the real situation doesn't have something that requires the pointer
+[18:41:06] <cart_man> ville: I have been seeing it in the functinal approach sometimes
+[18:49:04] *** Quits: spaceangel (~spaceange@ip-78-102-216-202.net.upcbroadband.cz) (Remote host closed the connection)
+[18:50:18] *** Joins: jsbach (~jsbach@2a01:c23:5d2c:c300:4ab0:3a06:97eb:897f)
+[18:54:55] *** Joins: spaceangel (~spaceange@ip-78-102-216-202.net.upcbroadband.cz)
+[18:58:15] *** Quits: spaceangel (~spaceange@ip-78-102-216-202.net.upcbroadband.cz) (Remote host closed the connection)
+[18:58:19] <cart_man> ville: I figured out what happens. So the pre config writes a char 0 into the ram instead of an actual 0. So its actually 48 dec
+[18:58:24] <cart_man> ville: Thanks for the help!
+[18:58:28] <cart_man> jsbach: ^^
+[18:58:57] *** Quits: cart_man (~rynot@2a00:23c4:2b81:5401:cc14:844e:e1a:117f) (Quit: Konversation terminated!)
+[18:59:36] *** Joins: spaceangel (~spaceange@ip-78-102-216-202.net.upcbroadband.cz)
+[19:02:45] *** Joins: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[19:05:13] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 256 seconds)
+[19:08:48] *** Quits: john99 (~johnny@138.62.221.87.dynamic.jazztel.es) (Remote host closed the connection)
+[19:09:09] *** Quits: jsbach (~jsbach@2a01:c23:5d2c:c300:4ab0:3a06:97eb:897f) (Quit: Leaving)
+[19:14:58] *** Quits: Inline (~Inline@aftr-37-201-240-204.unity-media.net) (Read error: Connection reset by peer)
+[19:15:13] *** Joins: Inline (~Inline@aftr-37-201-240-204.unity-media.net)
+[19:18:20] *** Quits: spaceangel (~spaceange@ip-78-102-216-202.net.upcbroadband.cz) (Remote host closed the connection)
+[19:19:36] *** Joins: spaceangel (~spaceange@ip-78-102-216-202.net.upcbroadband.cz)
+[19:28:55] *** Joins: aniketgm (~Aniket@49.36.109.81)
+[19:30:24] *** Quits: thad_the_man (~tlophd_be@2600:1700:3051:4370:21d:9ff:fe33:51f4) (Remote host closed the connection)
+[19:39:57] *** Quits: smallvil_ (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 240 seconds)
+[19:40:11] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[19:42:04] *** Joins: john99 (~johnny@138.62.221.87.dynamic.jazztel.es)
+[19:45:15] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) ()
+[19:45:46] *** Joins: jsbach_ (~jsbach@2a01:c23:5d2c:c300:4ab0:3a06:97eb:897f)
+[19:48:21] *** Quits: jsbach_ (~jsbach@2a01:c23:5d2c:c300:4ab0:3a06:97eb:897f) (Client Quit)
+[19:48:41] *** Joins: jsbach (~jsbach@2a01:c23:5d2c:c300:4ab0:3a06:97eb:897f)
+[19:56:11] *** Quits: ethrl (uid524335@user/doforlove33) (Quit: Connection closed for inactivity)
+[19:57:03] *** Quits: lh_cat (~lh_mouse@mingw-w64/developer/lhmouse) (Read error: Connection reset by peer)
+[19:59:30] *** Joins: proller (~p@178.34.150.67)
+[20:23:18] *** Quits: jsbach (~jsbach@2a01:c23:5d2c:c300:4ab0:3a06:97eb:897f) (Quit: Leaving)
+[20:24:12] *** leonardus is now known as tyle
+[20:29:06] *** Joins: jsbach (~jsbach@2a01:c23:5d2c:c300:3a3b:aa9e:18c9:2d61)
+[20:33:20] *** Quits: jsbach (~jsbach@2a01:c23:5d2c:c300:3a3b:aa9e:18c9:2d61) (Remote host closed the connection)
+[20:34:15] *** Quits: Inline (~Inline@aftr-37-201-240-204.unity-media.net) (Remote host closed the connection)
+[20:34:34] *** Joins: jsbach (~jsbach@2a01:c23:5d2c:c300:99e4:68da:4c56:42f4)
+[20:41:33] *** Quits: jsbach (~jsbach@2a01:c23:5d2c:c300:99e4:68da:4c56:42f4) (Remote host closed the connection)
+[20:47:33] *** Quits: aniketgm (~Aniket@49.36.109.81) (Read error: Connection reset by peer)
+[20:54:01] *** Joins: aniketgm (~Aniket@49.36.109.81)
+[21:10:54] *** Joins: great_taste (~great_tas@user/great-taste/x-5798414)
+[21:37:43] *** Parts: blackout69 (~blackout6@net-109-117-245-237.cust.vodafonedsl.it) ()
+[21:40:02] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[21:40:12] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[21:40:12] *** ChanServ sets mode: +v npaperbot
+[21:50:58] *** Joins: scoobydoo_ (~scooby@user/scoobydoo)
+[21:53:07] *** Quits: scoobydoo (~scooby@user/scoobydoo) (Ping timeout: 268 seconds)
+[21:53:13] *** scoobydoo_ is now known as scoobydoo
+[21:53:56] *** Joins: Juliu (~Juliu@2a02:810b:c640:3ec0:b9a7:a535:b350:2b5f)
+[22:08:16] *** Joins: pingpongball (~pingpongb@user/pingpongball)
+[22:08:22] <pingpongball> Hi there
+[22:08:49] <pingpongball> I see like newer language , like rust tells *Gaurenteed Memory saftey*    specifically targeting to *c++*
+[22:09:31] <malinus> pingpongball: is this a question?
+[22:09:48] <pingpongball> Would you give me example , what is memory safe, how c++ fails?
+[22:09:59] <pingpongball> in begineer friendly small code example,
+[22:10:00] <ville> pingpongball: int
+[22:10:21] <pingpongball> :/  int... ?
+[22:10:47] <pingpongball> cant we just use auto?
+[22:10:51] <ville> pingpongball: int* x; { int y = 0; x = &y; } if(x == x) {} // ub
+[22:11:24] <ville> pingpongball: as funny as it seems it's undefined whether that x == x evaluates to true or not
+[22:13:18] <pingpongball> memory_safe.cpp:1:9: error: expected unqualified-id before ‘{’ token1 | int* x; { int y = 0; x = &y; } if(x == x) {} // ub
+[22:13:50] <ville> you can't just have that at namespace scope.
+[22:14:51] <pingpongball> tell me whats that code doing, i know int* x is creating a pointer of x, &y giving a memory refrence
+[22:15:21] <ville> int* x is not "creating pointer of x". x is a pointer-to-int
+[22:15:46] *** Joins: CoderCharmander (~CoderChar@20014C4C12563000BCCDBFC417CDB7F0.catv.pool.telekom.hu)
+[22:16:14] <pingpongball> ok.
+[22:16:33] <ville> if you wish to use the term creating pointer of something then &y would be: "creating pointer to y"
+[22:17:01] <ville> but "getting the address of y" perhaps a more used phrase
+[22:18:02] <pingpongball> `int* x; { int y = 0; x = &y; } if(x == x) {} // ub`
+[22:18:02] <pingpongball> ville, tell me in coding  , i mean technical language whole detail in one sentence, i'm saving and will graps it more on future .
+[22:19:00] <pingpongball> like explaining to a new year grad student who had just learned c++
+[22:21:53] <pingpongball> fine i'll do myself :)
+[22:21:56] <ville> i don't understan what you are asking
+[22:22:17] <ville> that's ~5 lines of code. what needs explaining?
+[22:22:30] <pingpongball> yes ok fine. :)
+[22:23:19] *** Joins: Burgundy (~yomon@79.115.213.171)
+[22:25:01] *** Quits: pingpongball (~pingpongb@user/pingpongball) (Quit: Client closed)
+[22:47:02] *** Quits: markong (~kvirc@213.146.188.203) (Ping timeout: 240 seconds)
+[22:48:09] <Stryyker> Is that actually undefined behaviour?
+[22:48:43] <ville> yes
+[22:50:29] <ville> it's the pointer lifetime-end zap. pointers' values become undefined when the object they point at dies
+[22:51:32] <Stryyker> oh yeah, missed that
+[22:53:55] <ville> http://www.eelis.net/c++draft/basic.stc#general-4.sentence-1
+[22:54:33] <ville> aha.. not ub! it's implementation defined?
+[22:54:50] *** Joins: Inline (~Inline@aftr-37-201-240-204.unity-media.net)
+[22:57:58] <ville> but i can't find the defined behaviour in gcc's manual. anyone know if it's supposed to be there
+[23:05:50] *** Joins: Miyu (~hackkitte@94.31.103.136)
+[23:07:30] *** Quits: hackkitten (~hackkitte@94.31.103.136) (Killed (NickServ (GHOST command used by Miyu)))
+[23:07:34] *** Miyu is now known as hackkitten
+[23:07:48] <ville> good catch. not ub
+[23:10:19] <Stryyker> I had no clue
+[23:16:01] *** Joins: AbleBacon (~AbleBacon@user/AbleBacon)
+[23:19:23] *** Quits: RPNX (RPNX@gateway/vpn/protonvpn/rpnx) (Quit: Quit)
+[23:20:22] *** Joins: RPNX-Mobile (RPNX-Mobil@gateway/vpn/protonvpn/rpnx)
+[23:32:09] *** Quits: RPNX-Mobile (RPNX-Mobil@gateway/vpn/protonvpn/rpnx) (Quit: Quit)
+[23:32:17] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Ping timeout: 240 seconds)
+[23:32:33] *** Joins: magla (~gelignite@55d48f64.access.ecotel.net)
+[23:32:36] *** Joins: rpnx-phone (rpnx-phone@gateway/vpn/protonvpn/rpnx)
+[23:32:46] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[23:33:03] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[23:38:55] *** Quits: Inline (~Inline@aftr-37-201-240-204.unity-media.net) (Remote host closed the connection)
+[23:39:27] *** Joins: Inline (~Inline@aftr-37-201-240-204.unity-media.net)
+[23:45:22] *** Quits: imi (~imi@catv-89-132-115-236.catv.broadband.hu) (Ping timeout: 260 seconds)
+[23:52:22] *** Quits: proller (~p@178.34.150.67) (Ping timeout: 260 seconds)
+[23:57:59] *** Joins: imi (~imi@catv-89-132-115-236.catv.broadband.hu)

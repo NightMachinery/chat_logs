@@ -1,0 +1,140 @@
+[00:11:08] <vandusen> [eggs repo (r40970, by Idiomdrottning)] Tabs work now, maybe something was fixed upstream
+[00:12:11] <vandusen> [eggs] xj version 1.24 (for CHICKEN 5) has been released
+[00:36:26] *** Quits: skapata (~Skapata@user/skapata) (Ping timeout: 268 seconds)
+[00:38:16] <Zipheir> wasamasa: The SRFI 4 read syntax stuff is easy to adapt, but I'm not sure how we can support #u8"..." without breaking SRFI 4 #u8(...) syntax.
+[00:39:38] <Zipheir> You've got to read the 'u8 tag, but, at that point, the port is passed where the SRFI 4 read-hook expects to be to read a u8vector.
+[00:43:21] <Bunny351> why can't you just override ##sys#user-read-hook?
+[00:43:53] <Bunny351> take what's in srfi-4.scm and extend it to detect (...) vs "..." and do the proper thing?
+[00:46:15] <Zipheir> I am overriding ##sys#user-read-hook.  Do you mean to import srfi-4 and dispatch to list->u8vector if (...) is read?
+[00:46:23] <Zipheir> That sounds plausible.
+[00:46:44] <Bunny351> yes, that's what I meant. you don't need to access any srfi-4 internals
+[00:47:02] *** Joins: ente (~daemon@inferno.barfooze.de)
+[00:47:08] <Zipheir> Kind of gross to duplicate part of SRFI 4's reader hook, but then, hijacking the reader is kind of dirty work.
+[00:47:26] <Zipheir> Bunny351: Thanks.
+[00:47:42] <Bunny351> it's not that much code. one only has to make sure the new read-hook is always installed after the old one
+[00:47:51] <Bunny351> sure, yw
+[00:51:23] *** Joins: skapata (~Skapata@2804:14c:87b0:a6f9:1cb3:a1b7:6fb3:1939)
+[00:51:23] *** Quits: skapata (~Skapata@2804:14c:87b0:a6f9:1cb3:a1b7:6fb3:1939) (Changing host)
+[00:51:23] *** Joins: skapata (~Skapata@user/skapata)
+[01:03:15] *** Joins: cjb (~cjb@user/cjb)
+[01:12:12] <vandusen> [eggs] xj version 1.25 (for CHICKEN 5) has been released
+[01:54:07] <Zipheir> Bunny351: How can you make sure of that?
+[01:54:19] *** Joins: ZombieChicken (~weechat@user/zombiechicken)
+[01:54:52] <Zipheir> The read hook works, but, yes, if someone imports srfi-4 after srfi-207, it breaks.
+[01:55:08] <Bunny351> just ensure srfi-4 is loaded/initialized before your read hook (by importing it in the very same file)
+[01:55:31] <Bunny351> since you need srfi-4 for a working reader anyway
+[01:55:38] <Zipheir> OK, let's try that.
+[02:00:07] <Zipheir> It works in csi, but not in compiled code or when running tests. (u8vector) bad argument type - not a list: "foo"
+[02:00:41] <Zipheir> The relevant file: http://ix.io/3ITe
+[02:02:36] <Zipheir> Clearly the srfi-4 read hook is being reinstated; I'm not sure how to prevent that.
+[02:04:54] <wasamasa> did you load your code at compile time with -X ?
+[02:04:56] <Bunny351> works for me woth this file. can you run the compiled code you use for testing with "-:d"?
+[02:05:07] <Bunny351> with
+[02:05:21] <Bunny351> oh, are you using the syntax at compile time?
+[02:07:01] <Bunny351> it should show where and when libraries are loaded
+[02:07:18] <Zipheir> OK, testing.
+[02:08:03] <Zipheir> Ah, loading it with -X works.
+[02:08:23] <Bunny351> so you are using it literal position in compiled code?
+[02:08:52] <Bunny351> the compiler of course knows nothing about read-hooks it currently compiles
+[02:09:59] <Zipheir> I think I get it.
+[02:10:52] <Zipheir> Compiling with -X srfi-207.so works, and the bytestring literals are displayed correctly.
+[02:13:57] <Zipheir> It still breaks with tests, for some reason.
+[02:14:20] <wasamasa> might need to add -X srfi-207 to the egg csc options then
+[02:17:30] <Zipheir> Hmm, no luck.
+[02:18:19] <Zipheir> It's especially odd because the tests file explicitly imports srfi-207 after srfi-4.
+[02:18:33] <Zipheir> And yet it's still using the old hook.
+[02:18:44] <Bunny351> srfi-207 needs to import srfi-4
+[02:19:36] <Zipheir> It does.
+[02:20:06] <Zipheir> The tests file does as well, because srfi-207 doesn't export anything from srfi-4, of course.
+[02:20:59] <Bunny351> the first import will load the runtime-code, including the read-hook, so importing 207 should be sufficient
+[02:21:18] <Bunny351> at least if the file is interpreted or doesn't use u8" syntax directly
+[02:22:26] <Zipheir> So the tests file shouldn't use the #u8"" read syntax?
+[02:22:45] <Zipheir> Interestingly, running the tests directly with csi works just fine.
+[02:23:19] <Zipheir> Maybe it's the include...
+[02:23:51] <Bunny351> the test files are interpreted, I guess, so that should work
+[02:24:00] <Zipheir> Running srfi-207-test.scm with csi: fine.  Running run.scm containing the single line (include "srfi-207-test.scm"):  invalid sharp-sign read syntax: #\u
+[02:24:27] <wasamasa> does run.scm have the necessary imports?
+[02:24:30] <Bunny351> the include reads the whole file before evaluating it
+[02:24:36] <Zipheir> Aha.
+[02:24:48] <Bunny351> so the read hook is not installed before u8" appears
+[02:24:56] <Zipheir> That makes perfect sense.
+[02:25:12] <wasamasa> I always stick to the pattern of the included file having no imports
+[02:25:16] <Zipheir> So I just have to rewire the way the tests are called slightly.
+[02:25:24] <Bunny351> or use load
+[02:25:38] <Zipheir> Oh, that's even easier.
+[02:26:00] <Zipheir> Indeed, that works.
+[02:26:16] <Zipheir> Bunny351, wasamasa: Thanks!
+[02:26:47] <Bunny351> not sure if this detail of include is documented well enough...
+[03:27:52] *** Joins: emanuele6 (~emanuele6@user/emanuele6)
+[03:30:29] *** Joins: s-liao (~s-liao@101.86.96.21)
+[03:54:21] *** Techcable_ is now known as Techcable
+[04:51:44] *** Quits: ente (~daemon@inferno.barfooze.de) (Ping timeout: 256 seconds)
+[05:27:39] *** Joins: ente (~daemon@inferno.barfooze.de)
+[05:28:27] *** Quits: s-liao (~s-liao@101.86.96.21) (Ping timeout: 256 seconds)
+[05:38:03] *** Quits: ZombieChicken (~weechat@user/zombiechicken) (Quit: WeeChat 3.3)
+[05:39:41] *** Joins: ZombieChicken (~weechat@user/zombiechicken)
+[05:58:34] *** Joins: s-liao (~s-liao@101.86.96.21)
+[06:06:36] *** Quits: s-liao (~s-liao@101.86.96.21) (Quit: Ping timeout (120 seconds))
+[06:06:45] *** Joins: s-liao (~s-liao@101.86.96.21)
+[07:04:16] *** Quits: skapata (~Skapata@user/skapata) (Remote host closed the connection)
+[07:26:30] *** Quits: klovett (~klovett@107.127.24.145) (Quit: ZZZzzz…)
+[07:28:37] *** Joins: klovett (~klovett@107.127.24.145)
+[07:54:36] *** Quits: cjb (~cjb@user/cjb) (Quit: rcirc on GNU Emacs 29.0.50)
+[08:12:07] <vandusen> [eggs] srfi-207 version 0.3 (for CHICKEN 5) has been released
+[08:18:38] <vandusen> [eggs repo (r40971, by Zipheir)] Version 0.3 changes (reader support, types).
+[08:20:57] <vandusen> [eggs repo (r40972, by Zipheir)] Update test dependencies.
+[08:24:14] <Zipheir> s-liao: You were the one asking about SRFI 207 bytestring notation, right?  I've just added support for them to the egg, thanks to wasamasa and Bunny351's help.
+[08:25:30] <s-liao> Thanks. I can check in http://eggs.call-cc.org/5/?
+[08:27:49] <Zipheir> https://wiki.call-cc.org/eggref/5/srfi-207
+[08:28:03] <Zipheir> Let me know if it breaks!
+[08:28:35] <s-liao> Sure.
+[10:10:13] *** Joins: fantazo (~fantazo@192-164-154-92.hdsl.highway.telekom.at)
+[10:15:03] *** Quits: ublx (~ublx@user/ublx) (Quit: ublx)
+[10:22:24] *** Quits: ZombieChicken (~weechat@user/zombiechicken) (Remote host closed the connection)
+[10:34:22] *** Joins: ZombieChicken (~weechat@user/zombiechicken)
+[11:02:51] *** Quits: sjamaan (~sjamaan@chicken/developer/sjamaan) (Quit: brb)
+[11:03:56] *** Joins: sjamaan (~sjamaan@chicken/developer/sjamaan)
+[11:05:35] *** Quits: s-liao (~s-liao@101.86.96.21) (Quit: Client closed)
+[11:11:22] <vandusen> [eggs] Error fetching CHICKEN 4 .release-info file for the following eggs: ugarit-backend-s3
+[11:16:33] *** Quits: klovett (~klovett@107.127.24.145) (Quit: ZZZzzz…)
+[11:23:19] *** Parts: emanuele6 (~emanuele6@user/emanuele6) (WeeChat 3.3)
+[11:28:53] *** Joins: s-liao (~s-liao@101.86.96.21)
+[11:36:35] *** Quits: s-liao (~s-liao@101.86.96.21) (Quit: Client closed)
+[12:08:55] <vandusen> SPAM! SPAM! SPAM! by freee
+[12:36:18] *** Parts: cratuki (~Craig@buster.default.cturner.bv.iomart.io) ()
+[12:56:46] *** Joins: JudgeChicken (~weechat@user/zombiechicken)
+[12:57:51] *** Quits: ZombieChicken (~weechat@user/zombiechicken) (Ping timeout: 276 seconds)
+[12:59:44] *** JudgeChicken is now known as ZombieChicken
+[13:05:15] *** Quits: fantazo (~fantazo@192-164-154-92.hdsl.highway.telekom.at) (Quit: leaving)
+[13:29:22] *** Joins: s-liao (~s-liao@101.86.96.21)
+[13:51:39] *** Quits: s-liao (~s-liao@101.86.96.21) (Ping timeout: 256 seconds)
+[13:55:57] *** Quits: ente (~daemon@inferno.barfooze.de) (Remote host closed the connection)
+[13:58:45] *** Joins: ente (~daemon@inferno.barfooze.de)
+[14:00:22] *** Joins: simonwo (~simonwo@cpc160097-nmal26-2-0-cust8.19-2.cable.virginm.net)
+[14:02:30] *** Joins: skapata (~Skapata@2804:14c:87b0:a6f9:2898:525a:5805:3485)
+[14:02:30] *** Quits: skapata (~Skapata@2804:14c:87b0:a6f9:2898:525a:5805:3485) (Changing host)
+[14:02:30] *** Joins: skapata (~Skapata@user/skapata)
+[14:09:12] *** Joins: s-liao (~s-liao@101.86.96.21)
+[14:33:26] *** Joins: simonwo_ (~simonwo@cpc160097-nmal26-2-0-cust8.19-2.cable.virginm.net)
+[14:36:57] *** Quits: simonwo (~simonwo@cpc160097-nmal26-2-0-cust8.19-2.cable.virginm.net) (Ping timeout: 240 seconds)
+[15:58:38] <vandusen> SPAM! SPAM! SPAM! by акууу
+[16:02:39] <wasamasa> so much better when vandusen prints just one short line, rather than vandusen and judybot doing their back and forth bickering
+[16:04:46] <mario-goulart> BTW, I was thinking about changing the captcha to request people to type the name of an egg.
+[16:04:52] <wasamasa> wow, you
+[16:05:09] <wasamasa> what you gonna do, teach the spammer scheme?
+[16:05:21] <wasamasa> but yeah, seems reasonable
+[16:07:30] <wasamasa> I wanted to change the code so that it reads a list of regular expressions
+[16:07:40] <wasamasa> otherwise the url one won't match
+[16:07:45] <mario-goulart> I actually have the code here.  I've modified pastiche a bit -- now it has an "API" for captchas.  I'll wait for C-Keen to handle the current PR I opened some days ago (as my modifications are on top of that).  Also I don't want to overwhelm C-Keen around Christmas.
+[16:13:29] <wasamasa> once your code is merged, yes
+[16:14:08] <mario-goulart> It wouldn't be wise to bother a Christian around Christmas.
+[16:16:16] <sjamaan> XD
+[16:59:19] *** Quits: s-liao (~s-liao@101.86.96.21) (Quit: Client closed)
+[17:20:03] *** Joins: s-liao (~s-liao@101.86.96.21)
+[17:48:25] *** Quits: s-liao (~s-liao@101.86.96.21) (Quit: Client closed)
+[17:48:57] *** Joins: s-liao (~s-liao@101.86.96.21)
+[17:58:37] *** Joins: klovett (~klovett@107.127.24.145)
+[18:17:16] *** Quits: s-liao (~s-liao@101.86.96.21) (Quit: Client closed)
+[22:31:57] *** Joins: ublx (~ublx@user/ublx)
+[22:57:57] *** Quits: Kooda (~kooda@natsu.upyum.com) (Ping timeout: 240 seconds)
+[23:01:00] *** Joins: Kooda (~kooda@natsu.upyum.com)

@@ -1,0 +1,1386 @@
+[00:00:50] *** Quits: mikoto-chan (~mikoto-ch@213.177.151.239) (Ping timeout: 250 seconds)
+[00:05:53] *** Joins: mikoto-chan (~mikoto-ch@213.177.151.239)
+[00:06:45] *** Joins: gensyst (gensyst@user/gensyst)
+[00:06:56] *** Joins: notzmv (~zmv@user/notzmv)
+[00:07:02] <gensyst> Are there cases where parallelism is doomed to fail no matter what?
+[00:07:22] <segfaultfizzbuzz> what does doomed to fail mean
+[00:07:23] <gensyst> I think I came across one case: where each "operation" is cheap but call many times enough to be a major bottleneck.
+[00:07:46] *** Joins: jgeerds (~jgeerds@55d4548e.access.ecotel.net)
+[00:07:48] <segfaultfizzbuzz> some computations have an intrinsic amount of serialization
+[00:07:50] <gensyst> I mean, I've tried parallelizing directly. I've also tried first chunking up and parallelizing chunks.
+[00:07:56] <gensyst> No avail.
+[00:08:23] <segfaultfizzbuzz> some things are hard to parallelize. what are you trying to compute?
+[00:09:13] <gensyst> In my case these are just ByteStrings from a database
+[00:09:16] <segfaultfizzbuzz> not uncommonly fast serial computations will beat slow parallel computations in both time and effort
+[00:09:43] <segfaultfizzbuzz> "bytestring from a database" isn't a computation
+[00:09:46] <gensyst> yeah, but why? the profiling shows that the deserialization is taking 70% of the time
+[00:09:53] <gensyst> so it perplexes me that parallizing doesn't help
+[00:12:36] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Ping timeout: 252 seconds)
+[00:14:35] *** Quits: romesrf (~romes@44.190.189.46.rev.vodafone.pt) (Ping timeout: 256 seconds)
+[00:15:37] *** Quits: Raito_Bezarius (~Raito@wireguard/tunneler/raito-bezarius) (Ping timeout: 240 seconds)
+[00:16:25] <tomsmeding> Logging is "popular" https://tomsmeding.com/vang/pVguG6/Screenshot_20220319-214450.jpg
+[00:17:02] *** Quits: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl) (Ping timeout: 240 seconds)
+[00:17:28] <monochrom> haha congrats
+[00:19:31] *** Joins: acidjnk (~acidjnk@p200300d0c7049f16088a78429da1bd3c.dip0.t-ipconnect.de)
+[00:19:39] *** Quits: DNH (~DNH@2a02:8108:1100:16d8:dc77:d173:a9b9:d810) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[00:23:07] *** Quits: jstolarek (~jstolarek@staticline-31-183-185-185.toya.net.pl) (Ping timeout: 250 seconds)
+[00:25:00] <gensyst> I mean, this must be a known phenomena right? You computer science guys in here. Is there no "principle" about this? For example: If a simple computation is being called frequently enough to be a significant percentage of the computing time of your program, no amount of parallelism will help.
+[00:25:22] *** Joins: pavonia (~user@user/siracusa)
+[00:26:49] *** Quits: zincy_ (~zincy@host86-160-236-152.range86-160.btcentralplus.com) (Remote host closed the connection)
+[00:27:04] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[00:28:58] *** Joins: Raito_Bezarius (~Raito@wireguard/tunneler/raito-bezarius)
+[00:30:44] *** Quits: segfaultfizzbuzz (~segfaultf@2602:306:cd3c:9350:698a:c772:fe08:7b1d) (Ping timeout: 252 seconds)
+[00:31:20] <geekosaur> for that function, no. but typically you can't parallelize the entire program: at some point the results of the parallelism are output or processed, and maybe the inputs as well.
+[00:31:58] <geekosaur> and in your example, consider that the database may well be serializing queries if they're compatible enough to be parallelizeable
+[00:32:05] *** Quits: Raito_Bezarius (~Raito@wireguard/tunneler/raito-bezarius) (Max SendQ exceeded)
+[00:32:32] *** Joins: agrosant (~agrosant@79.103.63.74.dsl.dyn.forthnet.gr)
+[00:33:16] <geekosaur> (and also that you may see profiling showing time in deserialization may mean it's forcing the database query, and you'll have to force it yourself to verify whether it's the real bottleneck or not)
+[00:34:55] *** Joins: Raito_Bezarius (~Raito@wireguard/tunneler/raito-bezarius)
+[00:36:55] <dolio> It's not clear what your actual problem is. You might be talking about Amdahl's law. Or you might be noticing that parallelism doesn't help when the overhead of setting up the parallelism is larger than the cost of the individual computations that are running in parallel. But it's impossible to know from a vague complaint.
+[00:38:10] *** Parts: agrosant (~agrosant@79.103.63.74.dsl.dyn.forthnet.gr) ()
+[00:38:10] *** Joins: agrosant (~agrosant@79.103.63.74.dsl.dyn.forthnet.gr)
+[00:38:17] *** Quits: Raito_Bezarius (~Raito@wireguard/tunneler/raito-bezarius) (Max SendQ exceeded)
+[00:38:58] <sclv> parallelization of deserialization can work, but it requires some care to set up to work well
+[00:39:49] <sclv> (source: i've worked on parallel deserialization of proto3 from kafka streams for a work project where it can be a significant bottleneck)
+[00:40:57] *** Joins: Raito_Bezarius (~Raito@wireguard/tunneler/raito-bezarius)
+[00:40:58] <dolio> I don't think the latter problem has a name, but it was a problem people ran into trying to parallelize Haskell automatically. I would guess it's too obvious to have a name.
+[00:41:11] <sclv> its just called like "picking a chunk size"
+[00:41:17] <sclv> or perhaps "tuning"
+[00:41:54] <sclv> a _lot_ of work in the 80s went into trying to figure out how to do it automatically and well, and it mainly fell flat, although i think nested vectorization came out of it is a worthwhile approach.
+[00:42:27] <dolio> I certainly wouldn't want "dolio's law" to be, "forking a thread to add two machine words doesn't increase performance."
+[00:42:32] <sclv> picking nested chunk sizes is Even Harder so if you rewrite the program so you only need one notion of a tuned size you can arguably figure it out once and forall for a computational architecture
+[00:45:57] *** Joins: DNH (~DNH@2a02:8108:1100:16d8:dc77:d173:a9b9:d810)
+[00:48:18] *** Joins: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl)
+[00:51:35] *** Joins: coot (~coot@213.134.190.95)
+[00:53:16] *** Quits: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl) (Ping timeout: 250 seconds)
+[00:56:39] *** Quits: takuan (~takuan@178-116-218-225.access.telenet.be) (Remote host closed the connection)
+[00:58:15] *** Quits: simendsjo (~user@84.211.91.241) (Ping timeout: 252 seconds)
+[00:58:47] *** Joins: segfaultfizzbuzz (~segfaultf@2602:306:cd3c:9350:698a:c772:fe08:7b1d)
+[00:59:12] *** Joins: faAsade (~faAsade@047-227-183-103.res.spectrum.com)
+[01:00:33] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:03:09] *** Quits: DNH (~DNH@2a02:8108:1100:16d8:dc77:d173:a9b9:d810) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[01:10:02] *** Quits: mikoto-chan (~mikoto-ch@213.177.151.239) (Ping timeout: 240 seconds)
+[01:10:04] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:10:38] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:10:53] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:11:00] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:11:08] *** Joins: azimut (~azimut@gateway/tor-sasl/azimut)
+[01:11:14] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:11:22] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:11:33] *** Quits: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net) (Remote host closed the connection)
+[01:11:37] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:11:45] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:12:01] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:12:08] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:12:21] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:12:29] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:12:35] *** Quits: wyrd (~wyrd@gateway/tor-sasl/wyrd) (Ping timeout: 240 seconds)
+[01:12:38] *** Quits: Codaraxis_ (~Codaraxis@user/codaraxis) (Quit: Leaving)
+[01:12:47] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:12:54] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:13:08] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:13:16] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:13:17] *** Joins: boxscape_ (~boxscape_@p4ff0b60b.dip0.t-ipconnect.de)
+[01:13:30] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:13:37] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:13:45] *** Joins: __xor (~xor@dsl-50-5-233-169.fuse.net)
+[01:13:53] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:14:00] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:14:15] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:14:23] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:14:39] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:14:47] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:15:00] *** Quits: _xor (~xor@dsl-50-5-233-169.fuse.net) (Ping timeout: 240 seconds)
+[01:15:03] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:15:10] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:15:26] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:15:33] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:15:47] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:15:55] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:16:10] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:16:17] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:16:32] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:16:39] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:16:55] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:17:02] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:17:16] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:17:23] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:17:37] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:17:45] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:17:53] *** Joins: DNH (~DNH@2a02:8108:1100:16d8:dc77:d173:a9b9:d810)
+[01:17:58] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:18:06] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:18:20] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:18:28] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:18:42] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:18:50] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:19:04] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:19:11] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:19:25] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:19:33] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[01:19:44] *** Joins: wyrd (~wyrd@gateway/tor-sasl/wyrd)
+[01:28:54] *** Joins: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net)
+[01:29:03] *** Quits: bontaq (~user@ool-45779fe5.dyn.optonline.net) (Ping timeout: 252 seconds)
+[01:29:27] *** Joins: deadmarshal_ (~deadmarsh@95.38.231.226)
+[01:30:51] <gensyst> dolio, in my case it's just deserialization with the Haskell store library.
+[01:31:24] <gensyst> I tried doing "par" for a bunch (around 10) decode operations, which are called many times
+[01:31:30] <gensyst> but the program actually becomes slower.
+[01:32:24] <gensyst> granted, each decode is very small (the deserialization of a single int or double) so maybe that explains this slowdown
+[01:32:50] *** Joins: yuvi (~uv125@pool-71-244-139-81.bltmmd.fios.verizon.net)
+[01:33:03] *** Quits: yuvi (~uv125@pool-71-244-139-81.bltmmd.fios.verizon.net) (Client Quit)
+[01:33:47] *** Joins: yuvi (~uv125@user/yuvi)
+[01:34:00] *** Quits: deadmarshal_ (~deadmarsh@95.38.231.226) (Ping timeout: 252 seconds)
+[01:34:05] <geekosaur> yes, that'sgoing to be poorly parallelizable
+[01:34:28] <gensyst> geekosaur, any insights on why?
+[01:34:32] <gensyst> it's pity lol
+[01:34:51] <geekosaur> more overhead to set it up than to actually do it?
+[01:34:55] *** Quits: coot (~coot@213.134.190.95) (Quit: coot)
+[01:35:06] <yuvi> hi all, if i have a quickCheck test that is finding an infinite loop, how can i see what the failing case is?
+[01:35:29] <gensyst> yeah, but a part of me though, how expensive can chunking up into a list/sequence and then dechunking really be? turns out, unfortunately, expensive enough.
+[01:35:32] <gensyst> very pity!
+[01:35:40] <gensyst> but hey, that's life ain't it?
+[01:35:49] <gensyst> s/though/thought
+[01:40:15] *** Quits: weekOldRoadkill (~weekOldRo@pool-108-50-225-254.nwrknj.fios.verizon.net) (Quit: Leaving)
+[01:40:32] *** Joins: weekOldRoadkill (~weekOldRo@pool-108-50-225-254.nwrknj.fios.verizon.net)
+[01:43:00] *** Joins: son0p (~ff@181.136.122.143)
+[01:44:57] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[01:45:00] <dolio> Threads aren't free. Decoding an int from a bytestring is like a few machine instructions. So even 10 of them is like a microsecond worth of work.
+[01:45:39] <gensyst> dolio, okay but you're saying that chunking/dechunking are *more* machine instructions?
+[01:45:44] *** Joins: coot (~coot@213.134.190.95)
+[01:45:46] <dolio> So if it takes longer than a microsecond to set up the parallel execution, it's a net loss.
+[01:46:01] <gensyst> hmm ok
+[01:50:21] *** Quits: foul_owl (~kerry@23.82.193.87) (Ping timeout: 256 seconds)
+[01:50:47] <dolio> Or not just the setup, but all the incremental overhead by having one additional parallel thing going on.
+[01:51:13] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Quit: WeeChat 3.4.1)
+[01:51:34] <gensyst> dolio, yeah
+[01:51:39] <gensyst> Well, this is great to know!
+[01:51:45] <gensyst> Thanks my friends for the input!
+[01:53:48] *** Quits: gensyst (gensyst@user/gensyst) (Quit: Leaving)
+[01:56:40] *** Quits: __xor (~xor@dsl-50-5-233-169.fuse.net) (Read error: Connection reset by peer)
+[01:59:59] *** Quits: nexus (~nexus@94-21-55-122.pool.digikabel.hu) (Ping timeout: 256 seconds)
+[02:01:18] *** Joins: nexus (~nexus@178-164-235-232.pool.digikabel.hu)
+[02:01:30] *** Joins: __xor (~xor@dsl-50-5-233-169.fuse.net)
+[02:02:13] *** Quits: jushur (~human@user/jushur) (Quit:  ¯\_(ツ)_/¯)
+[02:04:01] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[02:04:49] *** Joins: slaydr (~slaydr@193.19.109.229)
+[02:06:18] *** Joins: foul_owl (~kerry@174-21-69-110.tukw.qwest.net)
+[02:09:30] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[02:09:33] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[02:10:05] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[02:12:10] *** Joins: vorpuni (~pvorp@2001:861:3881:c690:1ee8:abee:55c7:d30)
+[02:14:17] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Ping timeout: 240 seconds)
+[02:15:17] *** Quits: geranim0 (~geranim0@modemcable242.171-178-173.mc.videotron.ca) (Ping timeout: 240 seconds)
+[02:20:33] *** Quits: Jeanne-Kamikaze (~Jeanne-Ka@static-198-54-134-121.cust.tzulo.com) (Quit: Leaving)
+[02:21:32] *** Quits: acidjnk (~acidjnk@p200300d0c7049f16088a78429da1bd3c.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[02:32:35] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Ping timeout: 240 seconds)
+[02:33:26] *** __xor is now known as _xor
+[02:33:51] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[02:34:10] *** Quits: DNH (~DNH@2a02:8108:1100:16d8:dc77:d173:a9b9:d810) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[02:34:35] *** Quits: michalz (~michalz@185.246.204.37) (Remote host closed the connection)
+[02:34:39] <dsal> yuvi: Is it erroring with a loop, or just not returning?
+[02:34:47] <dsal> And is it failing in the test or in shrinking?
+[02:35:09] <dsal> You can time out the test, but I've found bad shrinks often cause things to take a while.  You can test that by just disabling shrinking real quick.
+[02:38:35] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Ping timeout: 240 seconds)
+[02:39:02] *** Joins: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net)
+[02:39:16] *** Quits: wootehfoot (~wootehfoo@user/wootehfoot) (Quit: Leaving)
+[02:41:45] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[02:42:47] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[02:43:18] *** Quits: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net) (Ping timeout: 252 seconds)
+[02:43:54] *** Joins: DNH (~DNH@2a02:8108:1100:16d8:dc77:d173:a9b9:d810)
+[02:49:19] *** Joins: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl)
+[02:52:37] *** Quits: segfaultfizzbuzz (~segfaultf@2602:306:cd3c:9350:698a:c772:fe08:7b1d) (Ping timeout: 240 seconds)
+[02:57:10] *** Quits: Major_Biscuit (~MajorBisc@c-001-024-004.client.tudelft.eduvpn.nl) (Ping timeout: 260 seconds)
+[03:01:11] *** Quits: foul_owl (~kerry@174-21-69-110.tukw.qwest.net) (Ping timeout: 256 seconds)
+[03:02:11] *** Quits: coot (~coot@213.134.190.95) (Quit: coot)
+[03:02:34] *** Joins: x_kuru (~xkuru@user/xkuru)
+[03:04:21] *** Quits: machinedgod (~machinedg@24.105.81.50) (Ping timeout: 256 seconds)
+[03:04:48] *** Quits: weekOldRoadkill (~weekOldRo@pool-108-50-225-254.nwrknj.fios.verizon.net) (Quit: Leaving)
+[03:05:05] *** Joins: weekOldRoadkill (~weekOldRo@pool-108-50-225-254.nwrknj.fios.verizon.net)
+[03:05:07] *** Quits: weekOldRoadkill (~weekOldRo@pool-108-50-225-254.nwrknj.fios.verizon.net) (Remote host closed the connection)
+[03:05:32] *** Quits: xkuru (~xkuru@user/xkuru) (Ping timeout: 240 seconds)
+[03:07:43] <dsal> Where do I need to look to understand why my code doesn't compile under ghc 9.0?
+[03:07:54] *** Quits: `2jt (~jtomas@210.red-88-24-179.staticip.rima-tde.net) (Remote host closed the connection)
+[03:08:25] <geekosaur> release notes?
+[03:08:34] <monochrom> and it did under 8.10? Then probably in the release notes about changes to rank-n polymorphism.
+[03:08:45] <geekosaur> if there isn't an obvious syntactic cause, the likely culprit is simplified subsumption
+[03:08:56] <monochrom> Yeah, that.
+[03:09:40] <dsal> Couldn't match type: (MonadMask m, Monad m) => String -> m () with String -> m ()   -- I've heard of some stuff around this, but I don't understand it well enough to know how to proceed.
+[03:09:43] *** Joins: chexum (~quassel@gateway/tor-sasl/chexum)
+[03:11:35] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Ping timeout: 240 seconds)
+[03:14:06] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Ping timeout: 250 seconds)
+[03:16:52] <dsal> OK, how do I convince ghc that these ms are the same?   I've got a `data Env m = { logAction  :: (MonadMask m, Monad m) => String -> m () }` and I'm trying to `gets` that `logAction` and log to it, but it's mad at me.
+[03:16:52] *** Joins: foul_owl (~kerry@23.82.193.89)
+[03:17:32] *** Quits: jgeerds (~jgeerds@55d4548e.access.ecotel.net) (Ping timeout: 240 seconds)
+[03:17:41] <dsal> The line it's angry at is:   `when (rsIterNumber r > 0) $ gets logAction >>= \f -> lift (f (retryMsg (rsIterNumber r)))`
+[03:19:25] <geekosaur> that data decl looks suspect to me. doesn't it need to be a GADT for the constraint to be provable?
+[03:19:48] <dsal> Maybe that's new?  It was fine before.  I guess I can try that.
+[03:20:33] <geekosaur> some canges did occur in which constraints that were silently permitted but were broken are now rejected, per the 9.0.1 release notes
+[03:20:55] <geekosaur> actually I'm not sure how you prove the constraint
+[03:21:19] <geekosaur> the "obvious" way doesn't work (ahoy "stupid theta")
+[03:21:56] *** Quits: vorpuni (~pvorp@2001:861:3881:c690:1ee8:abee:55c7:d30) (Remote host closed the connection)
+[03:22:03] <geekosaur> but applying the constraint inside the def of logAction seems wrong as well
+[03:22:05] *** Quits: x_kuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[03:22:23] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[03:23:24] *** Quits: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl) (Ping timeout: 240 seconds)
+[03:23:37] *** Joins: chenqisu1 (~chenqisu1@183.217.201.47)
+[03:25:25] <dsal> Hmm...  It seems obvious to *me* how this should work, but I have no idea where this confusion is coming from.
+[03:27:13] *** Joins: bontaq (~user@ool-45779fe5.dyn.optonline.net)
+[03:27:40] *** Quits: DNH (~DNH@2a02:8108:1100:16d8:dc77:d173:a9b9:d810) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[03:28:15] <dsal> Is there a better approach to pushing a monadic logging function into my state here?
+[03:28:32] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 240 seconds)
+[03:28:57] <dsal> I guess I could shove in a `String -> IO ()` since that's mostly what's going to actually happen.
+[03:29:22] <corisco[m]> generally constraints are in functions declarations, it's not so common to use constraint on data declaration... https://stackoverflow.com/a/40825913
+[03:30:28] *** Joins: Jeanne-Kamikaze (~Jeanne-Ka@static-198-54-134-105.cust.tzulo.com)
+[03:30:36] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[03:30:36] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[03:30:36] *** Joins: wroathe (~wroathe@user/wroathe)
+[03:31:05] <dsal> GADTs seems weird here since this is mostly just a record to hold some state.
+[03:31:28] <dsal> Making it `String -> IO ()` allows it to compile.  I wonder if I can actually *use* this.
+[03:32:48] <corisco[m]> you could make it existential (skolem) with forrall.... https://stackoverflow.com/a/40106335
+[03:33:54] <dsal> Hmm...   The parameter for the data was specifically for this one thing.  I might try that, though.
+[03:34:35] *** Quits: ChaiTRex (~ChaiTRex@user/chaitrex) (Ping timeout: 240 seconds)
+[03:34:40] *** Quits: faAsade (~faAsade@047-227-183-103.res.spectrum.com) (Quit: Client closed)
+[03:36:58] <corisco[m]> i'm not sure what you are trying to achieve here.... but ther's a lib called RIO that deals with what you are trying to do using a ReadT and a class for the log functionality... (https://www.fpcomplete.com/blog/2017/07/the-rio-monad/)
+[03:37:03] *** Joins: ChaiTRex (~ChaiTRex@user/chaitrex)
+[03:37:08] <Artem[m]> does anyone know: if my package got  < 0 on Stackage nightly because of dependency bound, will it suffice to revise metadata on Hackage to have it back? I vaguely remember that Stackage infrastructure is not keen of revisions.
+[03:39:06] <corisco[m]> * with what seems you are, * and a type class for
+[03:39:46] *** Joins: weekOldRoadkill (~weekOldRo@pool-108-50-225-254.nwrknj.fios.verizon.net)
+[03:40:17] <corisco[m]> * with what seems you are, * and a type class for, * functionality... (https://www.fpcomplete.com/blog/2017/06/readert-design-pattern/) or (https://www.fpcomplete.com/blog/2017/07/the-rio-monad/)
+[03:40:40] *** Joins: alp (~alp@user/alp)
+[03:40:44] <dsal> Yeah, I'm using MonadLogger in a few places.  I just want a user of this library to be able to pass in one little thing that can be used to emit a log on the other side.
+[03:41:34] <dsal> The annoying thing is that this is just one invocation that needs to be done one time when doing retries and stuff.
+[03:46:01] *** Quits: Jeanne-Kamikaze (~Jeanne-Ka@static-198-54-134-105.cust.tzulo.com) (Quit: Leaving)
+[03:47:06] <dsal> Yeah, doing this as an existential, I don't see how I can convince the compiler that `m` is related to the current `m`.
+[03:47:11] <corisco[m]> if u have a data type `data Env m = { logAction  :: (MonadMask m, Monad m) => String -> m () }`... either u pass this around everywhere, or you implicit pass the Env with an ReaderT....  in my opnion having a HasLog class that it's members have the MonadMask constraint seem the better approach here.... this is described on the articles i posted above....  otherwise you will have to pass that  around.
+[03:47:38] <dsal> I'm using StateT here.
+[03:48:08] <corisco[m]> indeed you can´t do that... because existential would mean your data type would have to be `data Env = { logAction  :: (MonadMask m, Monad m) => String -> m () }`
+[03:48:25] <corisco[m]> its an existential because m doesn't exists outside that context.....
+[03:49:00] *** Quits: nexus (~nexus@178-164-235-232.pool.digikabel.hu) (Ping timeout: 240 seconds)
+[03:49:16] <corisco[m]> https://en.wikipedia.org/wiki/Existential_quantification
+[03:50:17] <dsal> Heh.  I'm familiar with these things.  I'm just not very familiar with GHC 9.0 or how I can make code I've been using for a while happy under it.
+[03:50:49] <dsal> I have a program that's using MonadLogger to log and I have a library that's *not* using MonadLogger that… I guess should use MonadLogger just for this one thing..
+[03:51:00] *** Joins: nexus (~nexus@217-197-189-23.pool.digikabel.hu)
+[03:51:55] <corisco[m]> * logAction  :: forall m. (MonadMask m,
+[03:53:23] *** Quits: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net) (Remote host closed the connection)
+[03:53:41] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[03:54:13] <corisco[m]> and why can't you use MonadMask constraint on the function declaration of that library?... wouldn't that be esier?
+[03:55:10] *** Joins: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net)
+[03:55:18] *** Joins: machinedgod (~machinedg@24.105.81.50)
+[03:55:22] <corisco[m]> s/esier/easier/
+[03:55:35] <dsal> Yes, it's been easier for the last couple of years.  And now I'm trying to get it working with 9.0
+[03:56:44] <geekosaur> I still think trying to put the constraint on just the field accessor but not the constrained type itself has something fundamentally wrong with it
+[03:56:57] *** Quits: ph88 (~ph88@84-30-78-253.cable.dynamic.v4.ziggo.nl) (Ping timeout: 240 seconds)
+[03:57:21] <geekosaur> I'm imagining some headaches if you file this as a bug :)
+[03:58:54] <corisco[m]> but that still works XD....... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/c91920c96c350676f183e2417292d2549354d150)
+[03:59:55] <dsal> It sounds like you're describing my existing code.
+[03:59:59] <corisco[m]> you are trying to use the constraint inside the record, like geek said that is unusuall and can only be done with GADT´s as far as i know....
+[04:01:22] <dsal> Oh, you mean push the definition of the logging function outside?
+[04:02:04] <dsal> I think just requiring MonadLogger works OK here.  I got to move on to a different error anyway.
+[04:04:05] <corisco[m]> yes, i meant as a standalone function not inside the environment.... or you could mimic the env on the RIO lib, the articles i posted describe how it could be done... welll i hope i could help, sry for the confusion... im not very experienced in haskell
+[04:04:56] <dsal> Just using MonadLogger effectively means I get to delete a bit of code, so I guess that's not bad.  It's just pushing a constraint around a bit more.
+[04:05:14] <[itchyjunk]> :( i forgot everything. i want to divide 2 integers and get a float as a return. i know i need to somehow to some conversion from into to float but how..
+[04:06:11] <dsal> @hoogle Int -> Float
+[04:06:12] <lambdabot> GHC.Float int2Float :: Int -> Float
+[04:06:12] <lambdabot> GHC.Float.RealFracMethods int2Float :: Int -> Float
+[04:06:12] <lambdabot> Extra intToFloat :: Int -> Float
+[04:06:23] <dsal> I wouldn't use one of those.
+[04:06:26] <dsal> @hoogle Int -> Double
+[04:06:27] <lambdabot> GHC.Float int2Double :: Int -> Double
+[04:06:27] <lambdabot> GHC.Float.RealFracMethods int2Double :: Int -> Double
+[04:06:27] <lambdabot> Extra intToDouble :: Int -> Double
+[04:06:51] <dsal> I'm just demonstrating how unhelpful @hoogle is, I guess.
+[04:07:04] <[itchyjunk]> https://bpa.st/I7KA
+[04:07:09] <dsal> :t fromIntegral
+[04:07:10] <lambdabot> (Integral a, Num b) => a -> b
+[04:07:11] <[itchyjunk]> I wanted to take a list and compute it's mean :x
+[04:07:26] <dsal> What language is this?
+[04:07:46] <[itchyjunk]> oh ohh, its supposed to be haskell lol
+[04:07:58] <geekosaur> the naïve way to do that has a space leak, btw
+[04:08:21] <dsal> I'd use foldMap
+[04:08:31] <dsal> Or, I guess, foldMap'
+[04:09:27] <dsal> Oh, you're creating functions specifically for the bits.  Both of your total and sum are simple catamorphisms that are part of Data.Foldable, but I'd still consider not writing them twice.
+[04:11:06] <[itchyjunk]> I haven't coded in a while so i forgot everything and this was what i remembered :<
+[04:13:01] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Quit: ERC (IRC client for Emacs 27.1))
+[04:13:52] *** Joins: sonny (~sonny@bras-base-london1483w-grc-39-65-95-42-231.dsl.bell.ca)
+[04:26:01] <[itchyjunk]> This is what i ended up with
+[04:26:01] <[itchyjunk]> https://bpa.st/BHFA
+[04:26:11] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Ping timeout: 256 seconds)
+[04:30:35] <dsal> [itchyjunk]: You don't need  `:: Float` there.
+[04:31:00] <dsal> But at least use (or implement) foldr.  :)
+[04:32:11] <[itchyjunk]> yeah i need to refresh on functions again :x
+[04:33:15] <dsal> :t sum
+[04:33:16] <lambdabot> (Foldable t, Num a) => t a -> a
+[04:33:19] <[itchyjunk]> What is the :: Float supposed to do there?
+[04:33:25] *** Quits: vglfr (~vglfr@88.155.114.173) (Ping timeout: 240 seconds)
+[04:33:25] <[itchyjunk]> https://stackoverflow.com/questions/10303251/haskell-converting-int-to-float
+[04:33:33] <[itchyjunk]> I was mimicking this
+[04:34:04] <dsal> It says "this is a Float" which you already know because that's the only thing that can work there.
+[04:34:38] *** Joins: Codaraxis (~Codaraxis@user/codaraxis)
+[04:36:32] *** Quits: ProfSimm (~ProfSimm@87.227.196.109) (Remote host closed the connection)
+[04:40:21] *** Quits: sonny (~sonny@bras-base-london1483w-grc-39-65-95-42-231.dsl.bell.ca) (Ping timeout: 256 seconds)
+[04:41:11] *** Quits: albet70 (~xxx@2400:8902::f03c:92ff:fe60:98d8) (Remote host closed the connection)
+[04:47:18] *** Joins: albet70 (~xxx@2400:8902::f03c:92ff:fe60:98d8)
+[04:48:19] *** Quits: Tuplanolla (~Tuplanoll@91-159-69-98.elisa-laajakaista.fi) (Quit: Leaving.)
+[04:49:34] *** Joins: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net)
+[04:54:51] *** Quits: Midjak (~Midjak@82.66.147.146) (Quit: Leaving)
+[04:56:07] *** Quits: mmhat (~mmh@55d478bb.access.ecotel.net) (Quit: WeeChat 3.4.1)
+[04:56:12] *** Quits: weekOldRoadkill (~weekOldRo@pool-108-50-225-254.nwrknj.fios.verizon.net) (Quit: Leaving)
+[04:59:54] <[itchyjunk]> myFunctions (x:xs) = someOtherFunctions (x:xs)
+[05:00:01] <[itchyjunk]> This would work to pass the original list right?
+[05:00:21] <[itchyjunk]> I know there is some way to name the list so you can refer to it but i couldnt' remember that. but i think this should work :x
+[05:01:46] *** Joins: jinsun (~jinsun@user/jinsun)
+[05:03:38] *** Joins: razetime (~quassel@117.254.35.224)
+[05:04:15] *** Quits: jpds (~jpds@gateway/tor-sasl/jpds) (Ping timeout: 240 seconds)
+[05:04:39] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4.1)
+[05:05:02] *** Quits: machinedgod (~machinedg@24.105.81.50) (Ping timeout: 250 seconds)
+[05:05:02] *** Quits: jinsun__ (~jinsun@user/jinsun) (Ping timeout: 250 seconds)
+[05:05:28] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[05:17:06] *** Joins: sonny (~sonny@bras-base-london1483w-grc-39-65-95-42-231.dsl.bell.ca)
+[05:17:33] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4.1)
+[05:17:35] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Ping timeout: 240 seconds)
+[05:18:37] *** Quits: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470) (Ping timeout: 240 seconds)
+[05:18:49] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[05:19:32] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[05:19:37] *** Quits: chenqisu1 (~chenqisu1@183.217.201.47) (Ping timeout: 240 seconds)
+[05:19:53] *** Joins: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl)
+[05:23:17] *** Joins: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470)
+[05:25:35] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Ping timeout: 240 seconds)
+[05:26:57] *** Parts: sonny (~sonny@bras-base-london1483w-grc-39-65-95-42-231.dsl.bell.ca) ()
+[05:29:39] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[05:29:51] *** Joins: K4rMa (~K4rMa@h158.80.130.40.static.ip.windstream.net)
+[05:30:52] <dsal> [itchyjunk]:     a@(x:xs)
+[05:31:03] <[itchyjunk]> Ah
+[05:31:17] <[itchyjunk]> would fun (x:xs) = fun2 (x:xs) also work?
+[05:31:46] <dsal> Yeah, you're just building the list again.  I'm sure it's the same.
+[05:32:11] <dsal> But if `fun (x:xs) = fun2 (x:xs)` then  `fun = fun2`
+[05:33:11] <[itchyjunk]> Right
+[05:33:26] <[itchyjunk]> my code has turned into a mess..
+[05:33:26] <[itchyjunk]> https://bpa.st/R5CA
+[05:33:34] <[itchyjunk]> https://bpa.st/MW5A
+[05:33:41] <[itchyjunk]> first link is the error and the second the code
+[05:35:06] *** Quits: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it) (Read error: Connection reset by peer)
+[05:40:23] *** Joins: vysn (~vysn@user/vysn)
+[05:46:02] *** Quits: razetime (~quassel@117.254.35.224) (Ping timeout: 240 seconds)
+[05:46:58] *** Joins: koz (~koz@121.99.240.58)
+[05:48:42] *** Quits: Codaraxis (~Codaraxis@user/codaraxis) (Quit: Leaving)
+[05:49:54] *** Quits: Everything (~Everythin@37.115.210.35) (Quit: leaving)
+[05:52:59] *** Quits: koz (~koz@121.99.240.58) (Quit: ZNC 1.8.2 - https://znc.in)
+[05:53:57] *** Quits: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl) (Ping timeout: 240 seconds)
+[05:55:39] *** Quits: little_mac (~little_ma@2601:410:4300:3ce0::8b2c) (Remote host closed the connection)
+[05:55:54] *** Joins: razetime (~quassel@117.254.35.224)
+[05:56:01] *** Joins: little_mac (~little_ma@2601:410:4300:3ce0::8b2c)
+[05:56:41] *** Joins: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it)
+[05:57:43] <dsal> [itchyjunk]: I didn't bother reading the error, but I see you're trying to subtract a Float from an Int
+[05:58:07] <dsal> It might be easier if you just used the types you need instead of trying to deal with two different things.
+[06:00:15] *** Quits: nexus (~nexus@217-197-189-23.pool.digikabel.hu) (Ping timeout: 256 seconds)
+[06:01:32] *** Quits: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470) (Ping timeout: 240 seconds)
+[06:02:06] *** Joins: nexus (~nexus@78-131-74-115.pool.digikabel.hu)
+[06:02:40] *** Quits: aeka (~aeka@user/hiruji) (Ping timeout: 250 seconds)
+[06:04:40] *** Joins: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470)
+[06:05:31] *** Joins: aeka (~aeka@2606:6080:1001:11:60bc:461c:1305:bb4b)
+[06:06:04] *** Quits: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470) (Max SendQ exceeded)
+[06:06:22] *** Joins: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470)
+[06:10:26] *** Joins: koz (~koz@121.99.240.58)
+[06:16:55] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Ping timeout: 240 seconds)
+[06:17:50] *** Quits: yuvi (~uv125@user/yuvi) (Ping timeout: 250 seconds)
+[06:18:15] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[06:18:32] *** Quits: sciencentistguy (~sciencent@hacksoc/ordinary-member) (Ping timeout: 240 seconds)
+[06:19:02] *** Quits: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net) (Ping timeout: 240 seconds)
+[06:23:54] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[06:27:50] *** Quits: koz (~koz@121.99.240.58) (Quit: ZNC 1.8.2 - https://znc.in)
+[06:28:51] *** Quits: harveypwca (~harveypwc@2601:246:c180:a570:3828:d8:e523:3f67) (Quit: Leaving)
+[06:30:37] *** Joins: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net)
+[06:34:51] *** Quits: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net) (Ping timeout: 252 seconds)
+[06:36:02] *** Quits: aeka (~aeka@2606:6080:1001:11:60bc:461c:1305:bb4b) (Ping timeout: 250 seconds)
+[06:36:31] *** Joins: aeka (~aeka@user/hiruji)
+[06:37:46] *** Quits: razetime (~quassel@117.254.35.224) (Ping timeout: 250 seconds)
+[06:39:48] *** Quits: alp (~alp@user/alp) (Ping timeout: 252 seconds)
+[06:44:09] *** Joins: koz (~koz@121.99.240.58)
+[06:47:39] *** Joins: sebastiandb (~sebastian@pool-173-79-64-34.washdc.fios.verizon.net)
+[06:47:57] *** Quits: koz (~koz@121.99.240.58) (Client Quit)
+[06:49:19] *** Joins: koz (~koz@121.99.240.58)
+[06:50:08] <sebastiandb> This is a super beginner question, but I'm having trouble understanding why two expressions are not equivalent in this context for a simple block of code I wrote
+[06:50:34] <sebastiandb> Basically, there's a variable in a do block, where args <- getArgs
+[06:50:55] <sebastiandb> let a = read . head $ args -- This is fine
+[06:51:01] *** Quits: koz (~koz@121.99.240.58) (Client Quit)
+[06:51:19] <sebastiandb> let a = read (head args) -- this is ambiguous for type inference
+[06:51:23] <sebastiandb> Why is this the case?
+[06:52:30] *** Joins: koz (~koz@121.99.240.58)
+[06:54:55] *** Quits: lumberjack123 (~alMalsamo@gateway/tor-sasl/almalsamo) (Ping timeout: 240 seconds)
+[06:57:10] *** Joins: lumberjack123 (~alMalsamo@gateway/tor-sasl/almalsamo)
+[06:58:48] *** Parts: koz (~koz@121.99.240.58) (Leave.)
+[06:59:33] <sebastiandb> This is a link to the paste, btw: https://paste.tomsmeding.com/0xgoa6mO
+[07:00:59] <sebastiandb> However, it doesn't seem to work for "let c = (read . head) args", either
+[07:01:34] *** Joins: koz (~koz@121.99.240.58)
+[07:04:09] *** Joins: razetime (~quassel@117.254.35.224)
+[07:06:12] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Ping timeout: 240 seconds)
+[07:14:52] <boxscape_> sebastiandb I'm noticing that your comment says "a =", but the error says "c =". Could it be that you assigned it to the variable c without using that variable, thus ghc doesn't know what the type of c will have to be?
+[07:16:06] <boxscape_> (in most cases ghc will be able to figure out the type of unused variable, but not for functions like `read` with polymorphic return type)
+[07:16:51] <zzz> :t read
+[07:16:52] <lambdabot> Read a => String -> a
+[07:17:08] <zzz> ghc doesn't know what the type of a is
+[07:18:14] <sebastiandb> boxscape_ That is exactly it. It actually works fine if I don't bind it to an unused variable. Thanks for answering that really basic question.
+[07:18:29] <boxscape_> no problem
+[07:23:00] *** Quits: mzan (~quassel@mail.asterisell.com) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[07:25:21] *** Quits: Unicorn_Princess (~Unicorn_P@46-54-248-191.static.kate-wing.si) (Remote host closed the connection)
+[07:30:33] *** Joins: derelict_ (~derelict@user/derelict)
+[07:30:57] *** Quits: derelict (derelict@user/derelict) (Ping timeout: 240 seconds)
+[07:33:46] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[07:34:02] *** derelict_ is now known as derelict
+[07:50:34] *** Joins: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl)
+[07:54:09] *** Quits: aeka (~aeka@user/hiruji) (Ping timeout: 256 seconds)
+[07:55:34] *** Joins: aeka (~aeka@user/hiruji)
+[07:57:36] *** Quits: boxscape_ (~boxscape_@p4ff0b60b.dip0.t-ipconnect.de) (Quit: Connection closed)
+[08:00:39] *** Quits: sebastiandb (~sebastian@pool-173-79-64-34.washdc.fios.verizon.net) (Quit: Leaving)
+[08:04:02] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Ping timeout: 240 seconds)
+[08:04:44] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Quit: = "")
+[08:05:04] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[08:16:34] *** Quits: nexus (~nexus@78-131-74-115.pool.digikabel.hu) (Ping timeout: 250 seconds)
+[08:18:16] *** Joins: nexus (~nexus@fibhost-66-208-144.fibernet.hu)
+[08:20:42] *** Joins: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net)
+[08:24:45] *** Quits: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl) (Ping timeout: 256 seconds)
+[08:33:28] *** Joins: travv0 (sid293381@user/travv0)
+[08:35:00] *** Quits: boborygmy_ (~bob@pool-173-54-217-168.nwrknj.fios.verizon.net) (Ping timeout: 240 seconds)
+[08:37:04] *** Joins: komikat (~komikat@183.82.152.122)
+[08:41:49] *** Quits: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340) (Ping timeout: 240 seconds)
+[08:48:57] *** Quits: bontaq (~user@ool-45779fe5.dyn.optonline.net) (Ping timeout: 240 seconds)
+[08:49:18] *** Joins: vorpuni (~pvorp@2001:861:3881:c690:8ea1:f667:9c2c:b7bc)
+[08:59:37] *** Quits: K4rMa (~K4rMa@h158.80.130.40.static.ip.windstream.net) (Remote host closed the connection)
+[09:07:42] *** Quits: pooryorick (~pooryoric@87-119-174-173.tll.elisa.ee) (Ping timeout: 250 seconds)
+[09:08:48] *** Joins: pooryorick (~pooryoric@87-119-174-173.tll.elisa.ee)
+[09:32:41] *** Joins: dyeplexer (~dyeplexer@user/dyeplexer)
+[09:36:10] *** Quits: little_mac (~little_ma@2601:410:4300:3ce0::8b2c) (Quit: Leaving)
+[09:42:32] *** Quits: abhixec (~abhixec@c-67-169-139-16.hsd1.ca.comcast.net) (Ping timeout: 240 seconds)
+[09:43:31] *** Quits: jao (~jao@cpc103048-sgyl39-2-0-cust502.18-2.cable.virginm.net) (Ping timeout: 256 seconds)
+[09:43:38] *** Quits: zmt00 (~zmt00@user/zmt00) (Read error: Connection reset by peer)
+[09:44:41] *** Joins: rkrishnan (~user@2402:e280:215c:2cd:eac:8d9b:8e98:f1c5)
+[09:44:55] *** Joins: zmt00 (~zmt00@user/zmt00)
+[09:52:35] *** Quits: zebrag (~chris@user/zebrag) (Quit: Konversation terminated!)
+[09:55:25] *** Joins: chenqisu1 (~chenqisu1@183.217.201.47)
+[09:58:12] *** Quits: rkrishnan (~user@2402:e280:215c:2cd:eac:8d9b:8e98:f1c5) (Ping timeout: 240 seconds)
+[10:01:50] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[10:02:55] *** Joins: Pickchea (~private@user/pickchea)
+[10:05:02] *** Joins: takuan (~takuan@178-116-218-225.access.telenet.be)
+[10:07:19] *** Quits: nexus (~nexus@fibhost-66-208-144.fibernet.hu) (Ping timeout: 256 seconds)
+[10:07:21] *** Joins: neurocyte0917090 (~neurocyte@IP-045014190236.dynamic.medianet-world.de)
+[10:07:21] *** Quits: neurocyte0917090 (~neurocyte@IP-045014190236.dynamic.medianet-world.de) (Changing host)
+[10:07:21] *** Joins: neurocyte0917090 (~neurocyte@user/neurocyte)
+[10:08:54] *** Joins: nexus (~nexus@94-21-174-73.pool.digikabel.hu)
+[10:15:17] *** Quits: komikat (~komikat@183.82.152.122) (Remote host closed the connection)
+[10:15:32] *** Joins: nicbk (~nicbk@user/nicbk)
+[10:20:54] *** Quits: lagash (lagash@lagash.shelltalk.net) (Ping timeout: 252 seconds)
+[10:21:01] *** Joins: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl)
+[10:26:11] *** Quits: Sgeo (~Sgeo@user/sgeo) (Read error: Connection reset by peer)
+[10:26:55] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Ping timeout: 240 seconds)
+[10:28:03] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[10:32:08] *** Quits: acidsys (~LSD@2a03:4000:55:d20::3) (Excess Flood)
+[10:32:39] *** Joins: acidsys (~LSD@2a03:4000:55:d20::3)
+[10:33:42] *** Joins: coot (~coot@213.134.190.95)
+[10:34:31] *** Quits: nexus (~nexus@94-21-174-73.pool.digikabel.hu) (Ping timeout: 256 seconds)
+[10:36:11] *** Joins: nexus (~nexus@87-97-82-188.pool.digikabel.hu)
+[10:36:52] <tomsmeding> dsal: if you haven't solved it yet, 99% sure the fix is to eta-expand logAction, i.e. `gets (\x -> logAction x)`
+[10:37:41] <tomsmeding> In the vast majority of cases, code that stopped compiling with simplified subsumption is fixed by eta-expansion, because that's basically what ghc did for you earlier
+[10:38:53] <tomsmeding> iirc in the paper relevant to this stuff the authors write that they checked all of hackage and could fix almost all problems with eta-expansion, the ones they couldn't fix being precisely the ones where they didn't understand the code to begin with anyway
+[10:40:09] *** Quits: razetime (~quassel@117.254.35.224) (Ping timeout: 252 seconds)
+[10:44:20] *** Quits: metaverse (~metaverse@94.13.111.159) (Ping timeout: 250 seconds)
+[10:44:59] *** Joins: zmt01 (~zmt00@user/zmt00)
+[10:45:12] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Ping timeout: 250 seconds)
+[10:45:59] *** Joins: gehmehgeh (~user@user/gehmehgeh)
+[10:47:48] *** Quits: zmt00 (~zmt00@user/zmt00) (Ping timeout: 240 seconds)
+[10:48:34] *** Joins: metaversum (~metaverse@94.13.111.159)
+[10:50:34] *** Joins: acidjnk (~acidjnk@p200300d0c7049f09bdae9d6b2b815eae.dip0.t-ipconnect.de)
+[10:50:38] *** Joins: razetime (~quassel@117.254.35.109)
+[10:53:13] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[10:54:31] *** Parts: jakalx (~jakalx@base.jakalx.net) (Error from remote client)
+[10:55:03] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[10:55:03] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[10:55:03] *** Joins: wroathe (~wroathe@user/wroathe)
+[10:55:33] *** Quits: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl) (Ping timeout: 252 seconds)
+[11:05:25] *** Joins: lagash (lagash@lagash.shelltalk.net)
+[11:10:13] *** Quits: Pickchea (~private@user/pickchea) (Ping timeout: 256 seconds)
+[11:13:05] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[11:13:24] *** Joins: jakalx (~jakalx@base.jakalx.net)
+[11:14:16] *** Joins: mikoto-chan (~mikoto-ch@213.177.151.239)
+[11:17:32] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Read error: Connection reset by peer)
+[11:17:33] *** Joins: awschnap (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[11:19:04] *** Joins: vglfr (~vglfr@88.155.114.173)
+[11:20:45] <phma> lambdabot: (7::Word32)^((6-7)::Word32)
+[11:21:04] *** Quits: kmein (~weechat@user/kmein) (Quit: ciao kakao)
+[11:21:41] *** Joins: kmein (~weechat@user/kmein)
+[11:21:53] <phma> > (7::Word32)^((6-7)::Word32)
+[11:21:55] <lambdabot>  3067833783
+[11:22:50] <phma> can anyone explain this strange number? it's 136011104550 in base 7
+[11:22:52] *** Joins: Guest9170 (~Guest91@198.13.48.162)
+[11:22:55] *** Quits: nicbk (~nicbk@user/nicbk) (Ping timeout: 240 seconds)
+[11:25:54] <Guest9170> hi, I scratch my head on this function's syntax:
+[11:25:54] <Guest9170> partition p = foldr f ([],[]) where
+[11:25:55] <Guest9170>   f x ~(ys,ns) | p x = (x:ys,ns)
+[11:25:55] <Guest9170>   f x ~(ys,ns) = (ys, x:ns)
+[11:29:33] *** Joins: dudek (~dudek@185.150.236.127)
+[11:33:39] *** Quits: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net) (Remote host closed the connection)
+[11:35:15] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Ping timeout: 240 seconds)
+[11:37:31] *** Joins: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net)
+[11:37:34] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[11:42:31] *** Quits: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net) (Ping timeout: 256 seconds)
+[11:42:33] *** Quits: tzh (~tzh@c-24-21-73-154.hsd1.wa.comcast.net) (Quit: zzz)
+[11:44:36] *** Quits: awschnap (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Ping timeout: 240 seconds)
+[11:46:17] *** Quits: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net) (Remote host closed the connection)
+[11:50:58] <koz> Guest9170: Is it because of the ~s?
+[11:53:19] <Guest9170> no, I know ~ is use for lazy eval after google. But can't understand ‘|’
+[11:54:56] <koz> Guest9170: That's a guard.
+[11:56:09] <koz> https://www.haskell.org/onlinereport/haskell2010/haskellch3.html#x8-460003.13 <-- details
+[11:56:41] *** Joins: bahamas (~lucian@84.232.140.158)
+[12:02:33] <Guest9170> Thanks, but I think in 'partition' fiunction, there are guards not case. To my understanding, each guards compose by:  left-hand, = right-hand .
+[12:05:29] *** Joins: hughjfchen[m] (~hughjfche@2001:470:69fc:105::c29d)
+[12:05:41] *** Joins: nishant (~Nishant@49.37.242.151)
+[12:05:47] *** Parts: jakalx (~jakalx@base.jakalx.net) (Error from remote client)
+[12:12:01] <koz> Yeah, but guards are not case-statements.
+[12:12:29] <koz> Specifically, what you have there is a boolean guard.
+[12:16:02] *** Joins: jakalx (~jakalx@base.jakalx.net)
+[12:25:03] *** Joins: Midjak (~Midjak@82.66.147.146)
+[12:26:30] *** Joins: MajorBiscuit (~MajorBisc@c-001-023-015.client.tudelft.eduvpn.nl)
+[12:33:36] *** Joins: ntfls^ (~ntfls@50-243-220-243-static.hfc.comcastbusiness.net)
+[12:33:59] *** Quits: chenqisu1 (~chenqisu1@183.217.201.47) (Quit: Leaving)
+[12:36:03] *** Joins: chenqisu1 (~chenqisu1@183.217.201.47)
+[12:37:13] *** Joins: komikat (~komikat@183.82.152.122)
+[12:39:42] *** Joins: zincy_ (~zincy@2a00:23c8:970c:4801:6945:2980:3f53:dff8)
+[12:41:10] *** Joins: ksqsf[m] (~ksqsfmatr@2001:470:69fc:105::1:d8fa)
+[12:41:38] *** Quits: zaquest (~notzaques@5.130.79.72) (Remote host closed the connection)
+[12:42:19] *** Joins: mmhat (~mmh@55d4a453.access.ecotel.net)
+[12:43:26] *** Joins: thyriaen (~thyriaen@ip5f5af2d7.dynamic.kabel-deutschland.de)
+[12:44:05] *** Joins: jgeerds (~jgeerds@55d4548e.access.ecotel.net)
+[12:44:09] *** Joins: zaquest (~notzaques@5.130.79.72)
+[12:44:15] *** Joins: Tuplanolla (~Tuplanoll@91-159-69-98.elisa-laajakaista.fi)
+[12:44:31] *** Joins: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net)
+[12:45:32] *** Quits: bahamas (~lucian@84.232.140.158) (Ping timeout: 240 seconds)
+[12:45:55] *** Quits: lumberjack123 (~alMalsamo@gateway/tor-sasl/almalsamo) (Ping timeout: 240 seconds)
+[12:46:55] *** Joins: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net)
+[12:48:38] *** Joins: namkeleser (~namkelese@101.175.155.55)
+[12:51:00] *** Quits: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net) (Ping timeout: 240 seconds)
+[12:51:37] *** Joins: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl)
+[12:55:02] *** Quits: mikoto-chan (~mikoto-ch@213.177.151.239) (Ping timeout: 240 seconds)
+[12:55:56] *** Joins: jushur (~human@user/jushur)
+[12:56:57] *** Joins: mikoto-chan (~mikoto-ch@213.177.151.239)
+[12:58:02] *** Quits: jgeerds (~jgeerds@55d4548e.access.ecotel.net) (Ping timeout: 240 seconds)
+[12:58:32] *** Quits: ntfls^ (~ntfls@50-243-220-243-static.hfc.comcastbusiness.net) (Remote host closed the connection)
+[12:58:55] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Ping timeout: 240 seconds)
+[12:59:35] *** Quits: nexus (~nexus@87-97-82-188.pool.digikabel.hu) (Ping timeout: 256 seconds)
+[12:59:48] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[13:00:49] *** Quits: komikat (~komikat@183.82.152.122) (Remote host closed the connection)
+[13:01:26] *** Joins: nexus (~nexus@87-97-88-232.pool.digikabel.hu)
+[13:01:56] *** Joins: alp (~alp@user/alp)
+[13:02:19] *** Quits: vglfr (~vglfr@88.155.114.173) (Read error: Connection reset by peer)
+[13:02:30] *** Joins: komikat (~komikat@183.82.152.122)
+[13:02:32] *** Joins: vglfr (~vglfr@88.155.114.173)
+[13:04:34] *** Quits: komikat (~komikat@183.82.152.122) (Remote host closed the connection)
+[13:09:54] *** Quits: alp (~alp@user/alp) (Ping timeout: 268 seconds)
+[13:15:08] *** Joins: biberu\ (~biberu@user/biberu)
+[13:15:08] *** Quits: biberu (~biberu@user/biberu) (Ping timeout: 250 seconds)
+[13:16:06] *** biberu\ is now known as biberu
+[13:17:46] *** Quits: Guest9170 (~Guest91@198.13.48.162) (Quit: Client closed)
+[13:19:39] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[13:21:37] *** Quits: mixfix41 (~sdenynine@user/mixfix41) (Ping timeout: 240 seconds)
+[13:25:59] *** Quits: thyriaen (~thyriaen@ip5f5af2d7.dynamic.kabel-deutschland.de) (Ping timeout: 256 seconds)
+[13:28:02] *** Quits: acidjnk (~acidjnk@p200300d0c7049f09bdae9d6b2b815eae.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[13:33:05] *** Quits: econo (uid147250@user/econo) (Quit: Connection closed for inactivity)
+[13:34:16] *** Joins: fendor (~fendor@178.165.202.146.wireless.dyn.drei.com)
+[13:37:40] *** Quits: mvk (~mvk@2607:fea8:5cc3:7e00::45ee) (Ping timeout: 250 seconds)
+[13:37:55] *** Joins: fef (~thedawn@user/thedawn)
+[13:40:16] *** Joins: ph88 (~ph88@2001:1c05:2402:c600:599:4834:fca5:fb5a)
+[13:42:29] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[13:44:42] *** Quits: zincy_ (~zincy@2a00:23c8:970c:4801:6945:2980:3f53:dff8) (Remote host closed the connection)
+[13:45:02] *** Quits: ph88 (~ph88@2001:1c05:2402:c600:599:4834:fca5:fb5a) (Ping timeout: 240 seconds)
+[13:49:01] *** Joins: komikat (~komikat@183.82.152.122)
+[13:52:48] *** Quits: komikat (~komikat@183.82.152.122) (Remote host closed the connection)
+[13:55:07] *** Quits: troydm (~troydm@host-176-37-124-197.b025.la.net.ua) (Ping timeout: 256 seconds)
+[13:56:30] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 252 seconds)
+[13:57:36] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Quit: WeeChat 3.4.1)
+[13:58:44] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[13:59:13] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Client Quit)
+[14:00:09] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[14:02:19] *** Quits: namkeleser (~namkelese@101.175.155.55) (Quit: Client closed)
+[14:03:32] *** Quits: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl) (Ping timeout: 240 seconds)
+[14:03:48] *** Quits: coot (~coot@213.134.190.95) (Quit: coot)
+[14:08:57] *** Joins: komikat (~komikat@183.82.152.122)
+[14:16:07] *** Joins: cosimone (~user@93-44-187-176.ip98.fastwebnet.it)
+[14:16:37] *** Joins: Enrico63 (~Enrico63@81.109.143.226)
+[14:17:14] <Enrico63> Hello there
+[14:17:16] *** Joins: coot (~coot@213.134.190.95)
+[14:17:45] <Enrico63> I've found a bug in how the HLS refactors monadic code
+[14:17:59] <Enrico63> Not sure _where_ I have to post a bug report :/
+[14:18:33] *** Quits: m1dnight (~christoph@78-22-9-5.access.telenet.be) (Quit: WeeChat 3.4.1)
+[14:19:14] <Enrico63> I guess here? https://github.com/haskell/haskell-language-server
+[14:22:37] *** Quits: razetime (~quassel@117.254.35.109) (Ping timeout: 240 seconds)
+[14:23:13] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Ping timeout: 256 seconds)
+[14:29:02] <[exa]> I'd start there, in the worst case you'll get redirected. :D
+[14:30:12] *** Joins: m1dnight (~christoph@78-22-9-5.access.telenet.be)
+[14:31:00] *** Joins: DNH (~DNH@2a02:8108:1100:16d8:dc77:d173:a9b9:d810)
+[14:31:49] *** Joins: frost (~frost@user/frost)
+[14:32:05] *** Joins: razetime (~quassel@117.254.35.224)
+[14:32:44] *** Joins: acidjnk (~acidjnk@p200300d0c7049f0980df1267d4100519.dip0.t-ipconnect.de)
+[14:33:00] *** Quits: komikat (~komikat@183.82.152.122) (Remote host closed the connection)
+[14:33:46] *** Quits: vglfr (~vglfr@88.155.114.173) (Ping timeout: 268 seconds)
+[14:38:14] *** Joins: komikat (~komikat@183.82.152.122)
+[14:41:02] *** Quits: cheater (~Username@user/cheater) (Quit: (BitchX) We drink more beers than Norm on Cheers!)
+[14:41:46] *** Joins: cheater (~Username@user/cheater)
+[14:42:36] *** Quits: komikat (~komikat@183.82.152.122) (Ping timeout: 240 seconds)
+[14:43:35] *** Quits: fef (~thedawn@user/thedawn) (Remote host closed the connection)
+[14:44:02] *** Joins: fef (~thedawn@user/thedawn)
+[14:46:52] *** Joins: komikat (~komikat@183.82.152.122)
+[14:47:47] *** Quits: komikat (~komikat@183.82.152.122) (Remote host closed the connection)
+[14:48:42] *** Joins: vglfr (~vglfr@88.155.114.173)
+[14:50:00] *** Quits: ubert (~Thunderbi@p548c8d44.dip0.t-ipconnect.de) (Quit: ubert)
+[14:50:51] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[14:51:23] *** Joins: boborygmy_ (~bob@pool-173-54-217-168.nwrknj.fios.verizon.net)
+[14:57:08] *** Joins: komikat (~komikat@183.82.152.122)
+[14:59:40] *** Quits: mikoto-chan (~mikoto-ch@213.177.151.239) (Quit: mikoto-chan)
+[14:59:58] *** Joins: mikoto-chan (~mikoto-ch@213.177.151.239)
+[15:03:23] *** Quits: komikat (~komikat@183.82.152.122) (Read error: Connection reset by peer)
+[15:07:10] *** Joins: komikat (~komikat@183.82.152.122)
+[15:10:28] *** Quits: komikat (~komikat@183.82.152.122) (Remote host closed the connection)
+[15:12:20] *** Joins: namkeleser (~namkelese@101.175.155.55)
+[15:12:59] *** Quits: vorpuni (~pvorp@2001:861:3881:c690:8ea1:f667:9c2c:b7bc) (Read error: Connection reset by peer)
+[15:13:27] *** Joins: ProfSimm (~ProfSimm@87.227.196.109)
+[15:13:36] *** Joins: komikat (~komikat@183.82.152.122)
+[15:15:31] *** Joins: vorpuni (~pvorp@2001:861:3881:c690:1ebd:f5b8:59a1:8690)
+[15:16:52] *** Joins: notzmv (~zmv@user/notzmv)
+[15:17:04] *** Quits: komikat (~komikat@183.82.152.122) (Remote host closed the connection)
+[15:18:12] *** Quits: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net) (Remote host closed the connection)
+[15:19:00] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Ping timeout: 252 seconds)
+[15:20:14] *** Joins: zincy_ (~zincy@host86-160-236-152.range86-160.btcentralplus.com)
+[15:21:02] *** Quits: gehmehgeh (~user@user/gehmehgeh) (Quit: Leaving)
+[15:22:02] *** Quits: cyphase (~cyphase@user/cyphase) (Ping timeout: 240 seconds)
+[15:22:18] *** Quits: Enrico63 (~Enrico63@81.109.143.226) (Quit: Client closed)
+[15:23:01] *** Joins: komikat (~komikat@183.82.152.122)
+[15:24:05] *** Quits: komikat (~komikat@183.82.152.122) (Remote host closed the connection)
+[15:24:17] *** Joins: komikat (~komikat@183.82.152.122)
+[15:26:35] *** Quits: vorpuni (~pvorp@2001:861:3881:c690:1ebd:f5b8:59a1:8690) (Read error: Connection reset by peer)
+[15:26:44] *** Quits: mikoto-chan (~mikoto-ch@213.177.151.239) (Quit: mikoto-chan)
+[15:26:48] *** Joins: rkrishnan (~user@2402:e280:215c:2cd:bf22:45ac:82e5:4577)
+[15:26:59] *** Joins: mikoto-chan (~mikoto-ch@213.177.151.239)
+[15:27:20] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Quit: WeeChat 3.4.1)
+[15:28:04] *** Joins: vorpuni (~pvorp@2001:861:3881:c690:9ad1:5e5f:92a0:762c)
+[15:28:49] *** Joins: cyphase (~cyphase@user/cyphase)
+[15:29:53] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[15:32:23] *** Joins: romesrf (~romes@198.177.63.94.rev.vodafone.pt)
+[15:33:23] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[15:33:41] *** Quits: rkrishnan (~user@2402:e280:215c:2cd:bf22:45ac:82e5:4577) (Ping timeout: 245 seconds)
+[15:34:12] *** Joins: Vajb (~Vajb@2001:999:62:aa00:7f5a:4f10:c894:3813)
+[15:34:23] *** Quits: nexus (~nexus@87-97-88-232.pool.digikabel.hu) (Ping timeout: 252 seconds)
+[15:35:35] *** Quits: ChaiTRex (~ChaiTRex@user/chaitrex) (Remote host closed the connection)
+[15:35:51] *** Joins: nexus (~nexus@77-234-80-249.pool.digikabel.hu)
+[15:36:01] *** Joins: ChaiTRex (~ChaiTRex@user/chaitrex)
+[15:38:59] *** Joins: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net)
+[15:41:00] *** Quits: vglfr (~vglfr@88.155.114.173) (Ping timeout: 240 seconds)
+[15:41:24] *** Joins: alp (~alp@user/alp)
+[15:44:36] *** Quits: coot (~coot@213.134.190.95) (Quit: coot)
+[15:45:19] *** Quits: frost (~frost@user/frost) (Quit: Client closed)
+[15:47:29] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Remote host closed the connection)
+[15:48:01] *** Quits: komikat (~komikat@183.82.152.122) (Remote host closed the connection)
+[15:48:26] *** Joins: raym (~raym@user/raym)
+[15:52:16] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[15:53:17] *** Joins: komikat (~komikat@183.82.152.122)
+[15:53:49] *** Joins: troydm (~troydm@host-176-37-124-197.b025.la.net.ua)
+[15:53:53] *** Quits: komikat (~komikat@183.82.152.122) (Remote host closed the connection)
+[15:54:05] *** Joins: komikat (~komikat@183.82.152.122)
+[15:54:44] *** Quits: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net) (Remote host closed the connection)
+[15:55:20] *** Joins: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net)
+[15:56:36] *** Joins: rkrishnan (~user@2402:e280:215c:2cd:653d:647b:daf8:2b2b)
+[15:57:54] *** Joins: machinedgod (~machinedg@24.105.81.50)
+[15:59:10] *** Joins: gehmehgeh (~user@user/gehmehgeh)
+[16:00:12] *** Quits: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net) (Ping timeout: 240 seconds)
+[16:01:12] *** Quits: Vajb (~Vajb@2001:999:62:aa00:7f5a:4f10:c894:3813) (Read error: Connection reset by peer)
+[16:01:47] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[16:04:02] *** Quits: acidjnk (~acidjnk@p200300d0c7049f0980df1267d4100519.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[16:04:24] *** Parts: jakalx (~jakalx@base.jakalx.net) ()
+[16:04:27] *** Joins: ccntrq (~Thunderbi@2a01:c22:8dca:b800:627:fcfe:e945:4945)
+[16:04:34] *** Joins: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl)
+[16:06:20] *** Quits: ccntrq (~Thunderbi@2a01:c22:8dca:b800:627:fcfe:e945:4945) (Remote host closed the connection)
+[16:07:57] *** Joins: ubert (~Thunderbi@p200300ecdf158818c4a19710929e5265.dip0.t-ipconnect.de)
+[16:12:34] *** Quits: DNH (~DNH@2a02:8108:1100:16d8:dc77:d173:a9b9:d810) (Quit: Textual IRC Client: www.textualapp.com)
+[16:13:39] *** Joins: jakalx (~jakalx@base.jakalx.net)
+[16:21:35] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Ping timeout: 240 seconds)
+[16:26:30] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[16:30:23] *** Quits: dudek (~dudek@185.150.236.127) (Quit: Leaving)
+[16:32:33] *** Quits: chenqisu1 (~chenqisu1@183.217.201.47) (Quit: Leaving)
+[16:33:10] <absence> i'm trying to get an Eq1 instance for a type, using generic-data and DerivingVia. first attempt "data List a = Nil | Cons a (List a) deriving stock Generic1 deriving Eq1 via Generically1 List" gives me a long error "No instance for (Eq1 (GHC.Generics.D1 ......" with a suggestion to use a standalone "deriving instance".
+[16:33:15] *** Quits: vysn (~vysn@user/vysn) (Ping timeout: 252 seconds)
+[16:33:16] <absence> so i try "deriving instance Eq1 List via Generically1 List" on a separate line, and get "Expected kind âk0 -> ((* -> *) -> * -> *) -> (* -> *) -> Constraintâ, but âEq1 Listâ has kind âConstraintâ"
+[16:33:36] *** Quits: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl) (Ping timeout: 250 seconds)
+[16:33:59] *** Quits: namkeleser (~namkelese@101.175.155.55) (Quit: Client closed)
+[16:34:05] <absence> what am i doing wrong?
+[16:36:36] *** Quits: rkrishnan (~user@2402:e280:215c:2cd:653d:647b:daf8:2b2b) (Ping timeout: 240 seconds)
+[16:44:10] *** Quits: ubert (~Thunderbi@p200300ecdf158818c4a19710929e5265.dip0.t-ipconnect.de) (Quit: ubert)
+[16:45:39] *** Quits: pavonia (~user@user/siracusa) (Quit: Bye!)
+[16:46:35] *** Joins: boxscape_ (~boxscape_@p4ff0b60b.dip0.t-ipconnect.de)
+[16:46:37] *** Quits: alp (~alp@user/alp) (Ping timeout: 240 seconds)
+[16:46:41] *** Joins: __monty__ (~toonn@user/toonn)
+[16:47:33] <absence> oh, the syntax for standalong deriving via is completely different. with "deriving via Generically1 List instance Eq1 List" i get the same "No instance for (Eq1 (GHC.Generics.D1 ......" error as before
+[16:47:43] <absence> standalone*
+[16:50:33] *** Joins: Pickchea (~private@user/pickchea)
+[16:50:35] *** Joins: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net)
+[16:53:48] *** Quits: boxscape_ (~boxscape_@p4ff0b60b.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[16:53:51] *** Quits: komikat (~komikat@183.82.152.122) (Read error: Connection reset by peer)
+[16:55:19] *** Quits: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net) (Ping timeout: 256 seconds)
+[16:55:37] *** Joins: vysn (~vysn@user/vysn)
+[16:55:45] *** Joins: komikat (~komikat@183.82.152.122)
+[16:57:05] *** Joins: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net)
+[17:00:32] *** Quits: romesrf (~romes@198.177.63.94.rev.vodafone.pt) (Ping timeout: 240 seconds)
+[17:00:57] *** Quits: komikat (~komikat@183.82.152.122) (Ping timeout: 240 seconds)
+[17:01:22] *** Joins: jpds (~jpds@gateway/tor-sasl/jpds)
+[17:01:37] *** Joins: romesrf (~romes@198.177.63.94.rev.vodafone.pt)
+[17:07:03] <int-e> absence: Well the error is absolutely correct. There are no Eq1 instances at the Rep1 level that support that  (Generic1 f, Eq1 (Rep1 f)) => Eq1 (Generically1 f)  instance.
+[17:07:14] <int-e> (Same story for Ord1)
+[17:09:11] *** Quits: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net) (Remote host closed the connection)
+[17:09:44] *** Joins: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net)
+[17:10:38] <int-e> https://gitlab.haskell.org/ghc/ghc/-/commit/a4ca6caaa2f61d1ef62db824dd2116b753cf24ee ...Marge Bot committed this, shouldn't there be a corresponding PR then?
+[17:11:11] *** Joins: komikat (~komikat@183.82.152.122)
+[17:12:02] <int-e> Ah. Here, https://gitlab.haskell.org/ghc/ghc/-/merge_requests/5726 ...I wonder whether this was missed in the (well, rather light, it seems) review process...
+[17:13:48] *** Quits: vysn (~vysn@user/vysn) (Ping timeout: 240 seconds)
+[17:13:58] <geekosaur> "Project has too many branches to search" lol
+[17:14:30] *** Quits: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net) (Ping timeout: 252 seconds)
+[17:15:20] <int-e> gitlab does feel rather clunky and inefficient
+[17:16:39] <absence> int-e: i'm sure the error is correct, but what is the right way to do this?
+[17:16:42] *** Quits: euandreh (~euandreh@2804:14c:33:9fe5:e51b:ac6b:af96:5d6c) (Ping timeout: 252 seconds)
+[17:16:45] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[17:17:20] <int-e> absence: write a manual instance I suppose
+[17:18:05] * int-e isn't an expert on generics. (I've used them, but I have to wrap my head around the details every time I need them)
+[17:19:24] *** Quits: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470) (Ping timeout: 240 seconds)
+[17:19:28] <int-e> And I'm not in the mood for warping my brain right now to figure out whether you can even have the supporting Eq1 instances for M1, etc, all the ray to Rec1 (since your list type is recursive)
+[17:20:16] <int-e> But I know that they aren't there. That's something I can figure out from the documentation :P
+[17:23:33] *** Joins: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470)
+[17:25:04] <absence> int-e: hm, i get the same error without a recursive type. i even get the same error if i copy the example from the documentation, so i guess there's a bug somewhere
+[17:26:09] <int-e> absence: ...yeah, of course. There's *none* of those instances. (D1 = M1 D, so you need one for M1 to even start)
+[17:29:03] *** Joins: euandreh (~euandreh@2804:14c:33:9fe5:156d:4cd3:81cf:f50c)
+[17:29:39] *** Quits: boborygmy_ (~bob@pool-173-54-217-168.nwrknj.fios.verizon.net) (Ping timeout: 256 seconds)
+[17:30:52] <absence> doh, import Generic.Data.Orphans solves the problem.....
+[17:34:13] <int-e> from some third party package, brilliant.
+[17:34:28] *** Joins: Topsi (~Tobias@dyndsl-095-033-027-010.ewe-ip-backbone.de)
+[17:35:11] <int-e> liftEq (==.) (Rec1 r1) (Rec1 r2) = liftEq (==.) r1 r2 <-- apparently Rec1 doesn't cause any trouble
+[17:35:50] *** Joins: Guest9121 (~Guest91@198.13.48.162)
+[17:37:11] *** Joins: rond_ (~rond_@90.254.208.190)
+[17:41:32] *** Quits: romesrf (~romes@198.177.63.94.rev.vodafone.pt) (Ping timeout: 240 seconds)
+[17:45:47] *** Joins: romesrf (~romes@198.177.63.94.rev.vodafone.pt)
+[17:47:41] *** Joins: rkrishnan (~user@2402:e280:215c:2cd:3eab:c926:d07c:224d)
+[17:47:44] *** Joins: coot (~coot@213.134.190.95)
+[17:48:27] *** Quits: ProfSimm (~ProfSimm@87.227.196.109) (Remote host closed the connection)
+[17:52:04] *** Joins: boborygmy_ (~bob@pool-173-54-217-168.nwrknj.fios.verizon.net)
+[17:54:12] *** Quits: romesrf (~romes@198.177.63.94.rev.vodafone.pt) (Ping timeout: 250 seconds)
+[17:55:15] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Ping timeout: 240 seconds)
+[17:55:58] *** Joins: romesrf (~romes@198.177.63.94.rev.vodafone.pt)
+[17:56:58] *** Joins: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net)
+[17:57:05] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Ping timeout: 256 seconds)
+[17:57:50] *** Joins: Unicorn_Princess (~Unicorn_P@46-54-248-191.static.kate-wing.si)
+[17:59:52] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[18:00:29] *** Quits: romesrf (~romes@198.177.63.94.rev.vodafone.pt) (Ping timeout: 256 seconds)
+[18:01:37] *** Quits: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net) (Ping timeout: 256 seconds)
+[18:02:37] *** Quits: dcoutts__ (~duncan@host86-167-206-34.range86-167.btcentralplus.com) (Ping timeout: 240 seconds)
+[18:13:48] *** Quits: MajorBiscuit (~MajorBisc@c-001-023-015.client.tudelft.eduvpn.nl) (Ping timeout: 240 seconds)
+[18:16:47] *** Joins: geranim0 (~geranim0@modemcable242.171-178-173.mc.videotron.ca)
+[18:18:17] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 240 seconds)
+[18:20:30] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[18:20:30] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[18:20:30] *** Joins: wroathe (~wroathe@user/wroathe)
+[18:22:16] *** Joins: romesrf (~romes@198.177.63.94.rev.vodafone.pt)
+[18:24:05] *** Joins: brandonh (brandonh@gateway/vpn/protonvpn/brandonh)
+[18:27:36] *** Joins: Sgeo (~Sgeo@user/sgeo)
+[18:30:15] *** Joins: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl)
+[18:31:00] *** Joins: lumberjack123 (~alMalsamo@gateway/tor-sasl/almalsamo)
+[18:31:27] *** Joins: ph88 (~ph88@2001:1c05:2402:c600:599:4834:fca5:fb5a)
+[18:32:44] *** Quits: romesrf (~romes@198.177.63.94.rev.vodafone.pt) (Quit: WeeChat 3.4)
+[18:34:19] *** Joins: Guest394 (~Guest3@122.161.52.55)
+[18:34:19] <Guest394> hi
+[18:34:30] <Guest394> hi
+[18:34:36] <geekosaur> hi
+[18:34:43] <Guest394> new to haskell
+[18:34:46] <Guest394> and also irc
+[18:34:55] <Guest394> are you a bot?
+[18:34:56] *** Quits: nexus (~nexus@77-234-80-249.pool.digikabel.hu) (Ping timeout: 245 seconds)
+[18:35:08] <Guest394> i was tkinking of using haskell for animation
+[18:35:19] *** Joins: mzan (~quassel@mail.asterisell.com)
+[18:35:21] <Guest394> will that be better ? or will python or java do?
+[18:35:36] <Guest394> animations for math videos
+[18:35:48] *** Joins: tnahsin (~Nishant@49.37.242.151)
+[18:36:07] <geekosaur> depends on what you're doing, and what you're familiar with
+[18:36:19] *** Quits: tnahsin (~Nishant@49.37.242.151) (Read error: Connection reset by peer)
+[18:36:27] <Guest394> i am familiar with python and java
+[18:36:40] <Guest394>  but just for the thrill i want to use haskill for animation...
+[18:36:41] *** Joins: nexus (~nexus@92-249-179-42.pool.digikabel.hu)
+[18:37:00] <Guest394> will it be more effective?
+[18:37:22] *** Joins: urtie (~arthurvl@2001:984:275b:1:ba27:ebff:fea0:40b0)
+[18:37:34] *** Quits: nishant (~Nishant@49.37.242.151) (Read error: Connection reset by peer)
+[18:37:34] *** Quits: ph88 (~ph88@2001:1c05:2402:c600:599:4834:fca5:fb5a) (Ping timeout: 240 seconds)
+[18:37:51] *** Joins: srk- (~sorki@user/srk)
+[18:38:07] *** Joins: Alex_test_ (~al_test@94.233.240.162)
+[18:38:09] *** Joins: FragByte_ (~christian@user/fragbyte)
+[18:38:20] *** Joins: jushurr (~human@user/jushur)
+[18:38:29] <geekosaur> there are some libraries for animation, but I'd say you'd do better going through some courses before trying to take on a project like that
+[18:38:54] <Guest394> courses for what?
+[18:38:57] <Guest394> haskell?
+[18:39:02] *** Joins: dfordivam1 (~dfordivam@tk2-219-19469.vs.sakura.ne.jp)
+[18:39:11] *** Joins: Tuplanolla1 (~Tuplanoll@91-159-69-98.elisa-laajakaista.fi)
+[18:39:12] <geekosaur> @where cis194
+[18:39:12] <lambdabot> https://www.seas.upenn.edu/~cis194/spring13/lectures.html
+[18:39:16] *** Joins: hughjfchen[m]1 (~hughjfche@2001:470:69fc:105::c29d)
+[18:39:21] *** Joins: cocreatu1 (~moritz@2a03:b0c0:3:d0::c8:f001)
+[18:39:33] <geekosaur> haskell is very different from python and java
+[18:39:33] *** Joins: sus6 (zero@user/zeromomentum)
+[18:39:41] *** Joins: Clint_ (~Clint@user/clint)
+[18:39:52] *** Joins: acidsys_ (~LSD@2a03:4000:55:d20::3)
+[18:40:08] *** Joins: dobblego (~dibblego@122-199-1-30.ip4.superloop.com)
+[18:40:08] *** Quits: dobblego (~dibblego@122-199-1-30.ip4.superloop.com) (Changing host)
+[18:40:08] *** Joins: dobblego (~dibblego@haskell/developer/dibblego)
+[18:40:15] <geekosaur> both in syntax and in behavior (purity and laziness)
+[18:40:17] *** Joins: farn_ (~farn@2a03:4000:7:3cd:d4ab:85ff:feeb:f505)
+[18:40:19] *** Joins: machined1od (~machinedg@24.105.81.50)
+[18:40:23] *** Joins: piele_ (~piele@tbonesteak.creativeserver.net)
+[18:40:23] *** Joins: p_____ (~dyeplexer@user/dyeplexer)
+[18:40:31] *** Joins: w1gz_ (~do@159.89.11.133)
+[18:40:48] <Guest394> ok , how long have you been using haskell?
+[18:40:59] <geekosaur> and no, I'm not a bot;I'm a channel op and unofficial greeter of sorts
+[18:41:05] <geekosaur> since 2006
+[18:41:09] <Guest394> @lambdabot  what s that link for?
+[18:41:09] <lambdabot> Unknown command, try @list
+[18:41:24] <geekosaur> that's an online Haskell course
+[18:41:32] *** Joins: ladyfriday (~robert@what.i.hope.is.not.a.tabernaevagant.es)
+[18:41:42] <Guest394> oh oh i see , is it free?
+[18:41:51] *** Quits: p_____ (~dyeplexer@user/dyeplexer) (Client Quit)
+[18:41:55] <Guest394> oh wow since 2006 ... thats a long time
+[18:42:04] *** Quits: jushur (~human@user/jushur) (Ping timeout: 240 seconds)
+[18:42:04] *** Quits: Alex_test (~al_test@94.233.240.162) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: earthy (~arthurvl@deban2.xs4all.space) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: FragByte (~christian@user/fragbyte) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: Tuplanolla (~Tuplanoll@91-159-69-98.elisa-laajakaista.fi) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: dyeplexer (~dyeplexer@user/dyeplexer) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: mrmonday (~robert@what.i.hope.is.not.a.tabernaevagant.es) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: srk (~sorki@user/srk) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: dfordvm (~dfordivam@tk2-219-19469.vs.sakura.ne.jp) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: w1gz (~do@159.89.11.133) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: hughjfchen[m] (~hughjfche@2001:470:69fc:105::c29d) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: acidsys (~LSD@2a03:4000:55:d20::3) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: nulluint (uid547282@user/nulluint) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: sus (zero@user/zeromomentum) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: RSBach (~guygastin@137.184.131.156) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: cocreature (~moritz@2a03:b0c0:3:d0::c8:f001) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: AlexZenon (~alzenon@94.233.240.162) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: piele (~piele@tbonesteak.creativeserver.net) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: Clint (~Clint@user/clint) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: farn (~farn@2a03:4000:7:3cd:d4ab:85ff:feeb:f505) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: dibblego (~dibblego@haskell/developer/dibblego) (Excess Flood)
+[18:42:05] *** Quits: machinedgod (~machinedg@24.105.81.50) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: metaversum (~metaverse@94.13.111.159) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: iphy (sid67735@id-67735.lymington.irccloud.com) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: PHO` (~pho@akari.cielonegro.org) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: tadyshev (uid547048@id-547048.hampstead.irccloud.com) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: fryguybob (~fryguybob@cpe-74-67-169-145.rochester.res.rr.com) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: sabx_ (~sabbas@user/sabbas) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: carbolymer (~carbolyme@dropacid.net) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: exarkun (~exarkun@user/exarkun) (Ping timeout: 240 seconds)
+[18:42:06] *** Quits: eagleflo (~aku@163.172.137.34) (Ping timeout: 240 seconds)
+[18:42:06] *** srk- is now known as srk
+[18:42:06] *** sus6 is now known as sus
+[18:42:06] *** FragByte_ is now known as FragByte
+[18:42:09] *** Joins: nulluint_ (uid547282@id-547282.uxbridge.irccloud.com)
+[18:42:13] *** Joins: carbolymer_ (~carbolyme@dropacid.net)
+[18:42:19] *** Joins: iphy (sid67735@id-67735.lymington.irccloud.com)
+[18:42:22] *** Joins: PHO` (~pho@akari.cielonegro.org)
+[18:42:25] *** dobblego is now known as dibblego
+[18:42:25] *** Quits: mud (~mud@user/kadoban) (Remote host closed the connection)
+[18:42:33] *** Quits: TimWolla (~timwolla@2a01:4f8:150:6153:beef::6667) (Remote host closed the connection)
+[18:42:33] *** Joins: sabx (~sabbas@user/sabbas)
+[18:42:37] *** Joins: RMSBach (~guygastin@137.184.131.156)
+[18:42:43] *** Joins: TimWolla (~timwolla@2a01:4f8:150:6153:beef::6667)
+[18:42:52] *** Joins: mud (~mud@user/kadoban)
+[18:42:53] *** Joins: metaversum (~metaverse@94.13.111.159)
+[18:43:01] *** Joins: exarkun (~exarkun@user/exarkun)
+[18:43:08] *** Joins: fryguybob (~fryguybob@cpe-74-67-169-145.rochester.res.rr.com)
+[18:43:13] *** Joins: eagleflo (~aku@163.172.137.34)
+[18:43:23] *** Joins: tadyshev (uid547048@id-547048.hampstead.irccloud.com)
+[18:43:49] <geekosaur> it's free, yes
+[18:44:40] <geekosaur> and one of the better courses. there are also some free-online books you could go with, but that particular CIS194 works well for many people
+[18:45:00] <Guest394> ok thanks
+[18:45:21] <geekosaur> @where books
+[18:45:21] <lambdabot> https://www.extrema.is/articles/haskell-books, see also @where LYAH, RWH, YAHT, SOE, HR, PIH, TFwH, wikibook, PCPH, HPFFP, HTAC, TwT, FoP, PFAD, WYAH, non-haskell-books
+[18:45:30] *** Quits: rond_ (~rond_@90.254.208.190) (Quit: Client closed)
+[18:45:34] *** Joins: metaverse_ (~metaverse@94.13.111.159)
+[18:46:06] *** Joins: AlexZenon (~alzenon@94.233.240.162)
+[18:46:24] *** Quits: TimWolla (~timwolla@2a01:4f8:150:6153:beef::6667) (Excess Flood)
+[18:46:34] *** Joins: TimWolla (~timwolla@2a01:4f8:150:6153:beef::6667)
+[18:46:42] *** Quits: nulluint_ (uid547282@id-547282.uxbridge.irccloud.com) (Client Quit)
+[18:46:43] *** piele_ is now known as piele
+[18:47:05] *** Clint_ is now known as Clint
+[18:47:28] <Guest394> thanks alot i have booked marked them
+[18:48:19] *** Quits: metaversum (~metaverse@94.13.111.159) (Ping timeout: 240 seconds)
+[18:54:05] *** Joins: tcard__ (~tcard@p2878075-ipngn18701hodogaya.kanagawa.ocn.ne.jp)
+[18:54:08] *** Joins: metaversum (~metaverse@94.13.111.159)
+[18:54:25] *** Joins: theproffesor_ (~theproffe@2601:282:847f:8010::7f59)
+[18:54:27] *** Joins: mncheckm (~mncheck@193.224.205.254)
+[18:54:31] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[18:54:31] *** Quits: the_proffesor (~theproffe@2601:282:847f:8010::7f59) (Read error: Connection reset by peer)
+[18:54:32] *** Quits: tcard_ (~tcard@p2878075-ipngn18701hodogaya.kanagawa.ocn.ne.jp) (Read error: Connection reset by peer)
+[18:54:32] *** Quits: Kaiepi (~Kaiepi@156.34.47.253) (Read error: Connection reset by peer)
+[18:54:33] *** Quits: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it) (Read error: Connection reset by peer)
+[18:54:34] *** Quits: mncheck (~mncheck@193.224.205.254) (Read error: Connection reset by peer)
+[18:54:36] *** Joins: Kaipi (~Kaiepi@156.34.47.253)
+[18:54:44] *** Quits: EvanR (~EvanR@user/evanr) (Remote host closed the connection)
+[18:54:50] *** Joins: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it)
+[18:55:03] *** Joins: EvanR (~EvanR@user/evanr)
+[18:56:01] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[18:56:32] *** Joins: jinsun__ (~jinsun@user/jinsun)
+[18:56:41] *** Quits: incertia (~incertia@207.98.163.88) (Ping timeout: 250 seconds)
+[18:56:43] *** Quits: metaverse_ (~metaverse@94.13.111.159) (Ping timeout: 250 seconds)
+[18:56:43] *** Quits: sabx (~sabbas@user/sabbas) (Ping timeout: 250 seconds)
+[18:56:43] *** Quits: cheater (~Username@user/cheater) (Ping timeout: 250 seconds)
+[18:56:52] *** Joins: cheater (~Username@user/cheater)
+[18:56:52] *** Joins: ystael_ (~ystael@user/ystael)
+[18:57:01] *** Joins: YoungFrawg (~youngfrog@2a02:a03f:c21b:f900:d813:4914:1c90:9409)
+[18:57:28] *** Joins: incertia (~incertia@207.98.163.88)
+[18:57:32] *** Joins: sus7 (zero@user/zeromomentum)
+[18:57:33] *** Joins: drewolson0 (~drewolson@user/drewolson)
+[18:57:37] *** Quits: YoungFrog (~youngfrog@2a02:a03f:c21b:f900:1dce:7a96:eac5:305b) (Ping timeout: 250 seconds)
+[18:57:37] *** Quits: ystael (~ystael@user/ystael) (Ping timeout: 250 seconds)
+[18:57:37] *** Quits: riatre (~quassel@2001:310:6000:f::5198:1) (Ping timeout: 250 seconds)
+[18:57:38] *** Quits: jinsun (~jinsun@user/jinsun) (Ping timeout: 250 seconds)
+[18:57:38] *** Quits: nshepperd (nshepperd@2600:3c03::f03c:92ff:fe28:92c9) (Ping timeout: 250 seconds)
+[18:57:46] *** Quits: drewolson (~drewolson@user/drewolson) (Ping timeout: 250 seconds)
+[18:57:46] *** drewolson0 is now known as drewolson
+[18:57:54] *** Quits: shailangsa (~shailangs@host165-120-169-51.range165-120.btcentralplus.com) (Ping timeout: 250 seconds)
+[18:58:15] *** Joins: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net)
+[18:58:19] *** YoungFrawg is now known as YoungFrog
+[18:58:20] *** Quits: yahb (xsbot@user/mniip/bot/yahb) (Ping timeout: 250 seconds)
+[18:58:21] *** Joins: riatre (~quassel@2001:310:6000:f::5198:1)
+[18:58:34] *** Joins: Taneb0 (~Taneb@2001:41c8:51:10d:aaaa:0:aaaa:0)
+[18:58:35] *** Joins: jrm2 (~jrm@156.34.173.250)
+[18:58:40] *** Joins: sabx (~sabbas@user/sabbas)
+[18:58:42] *** Joins: defanor_ (~defanor@tart.uberspace.net)
+[18:58:55] *** Joins: ajb_ (~ajb@cupid.whatbox.ca)
+[18:58:58] *** Joins: bcoppens_ (~bartcopp@vpn2.bartcoppens.be)
+[18:59:26] *** Joins: meinside_ (uid24933@id-24933.helmsley.irccloud.com)
+[18:59:34] *** Joins: asivitz_ (uid178348@id-178348.tinside.irccloud.com)
+[18:59:34] *** Joins: arkeet` (~arkeet@moriya.ca)
+[18:59:35] *** Joins: kraftwerk28_ (~kraftwerk@178.62.210.83)
+[18:59:36] *** Joins: red-snail1 (~snail@static.151.210.203.116.clients.your-server.de)
+[18:59:40] *** Joins: martin02_ (~silas@141.84.69.76)
+[18:59:42] *** Joins: dobblego (~dibblego@122-199-1-30.ip4.superloop.com)
+[18:59:42] *** Quits: dobblego (~dibblego@122-199-1-30.ip4.superloop.com) (Changing host)
+[18:59:42] *** Joins: dobblego (~dibblego@haskell/developer/dibblego)
+[18:59:50] *** Joins: cosimone` (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[18:59:55] *** Joins: |beo| (1000@gabilgathol.bandrate.org)
+[19:00:09] *** Joins: takuan_dozo (~takuan@178-116-218-225.access.telenet.be)
+[19:00:19] *** Quits: bcoppens (~bartcopp@vpn2.bartcoppens.be) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: edr (~edr@user/edr) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: krjst (~krjst@2604:a880:800:c1::16b:8001) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: kraftwerk28 (~kraftwerk@178.62.210.83) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: cosimone (~user@93-44-187-176.ip98.fastwebnet.it) (Remote host closed the connection)
+[19:00:19] *** Quits: sus (zero@user/zeromomentum) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: takuan (~takuan@178-116-218-225.access.telenet.be) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: asivitz (uid178348@id-178348.tinside.irccloud.com) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: martin02 (~silas@141.84.69.76) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: jrm (~jrm@156.34.173.250) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: ajb (~ajb@cupid.whatbox.ca) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: Taneb (~Taneb@2001:41c8:51:10d:aaaa:0:aaaa:0) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: meinside (uid24933@id-24933.helmsley.irccloud.com) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: arkeet (arkeet@moriya.ca) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: systemfault (sid267009@id-267009.uxbridge.irccloud.com) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: defanor (~defanor@tart.uberspace.net) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: |beowulf| (1000@sourcemage/mage/beowulf) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: dibblego (~dibblego@haskell/developer/dibblego) (Excess Flood)
+[19:00:19] *** Quits: obfusk (~quassel@a82-161-150-56.adsl.xs4all.nl) (Remote host closed the connection)
+[19:00:19] *** Quits: robertm (robertm@lattice.rojoma.com) (Ping timeout: 250 seconds)
+[19:00:20] *** Quits: texasmynsted (~texasmyns@99.96.221.112) (Ping timeout: 250 seconds)
+[19:00:20] *** Quits: red-snail (~snail@static.151.210.203.116.clients.your-server.de) (Ping timeout: 250 seconds)
+[19:00:20] *** Quits: img (~img@user/img) (Quit: ZNC 1.8.2 - https://znc.in)
+[19:00:20] *** arkeet` is now known as arkeet
+[19:00:21] *** sus7 is now known as sus
+[19:00:21] *** asivitz_ is now known as asivitz
+[19:00:21] *** meinside_ is now known as meinside
+[19:00:22] *** jrm2 is now known as jrm
+[19:00:24] *** Joins: edro (~edr@enlo.co)
+[19:00:24] *** Quits: edro (~edr@enlo.co) (Changing host)
+[19:00:24] *** Joins: edro (~edr@user/edr)
+[19:00:27] *** Joins: notzmv- (~zmv@user/notzmv)
+[19:00:27] *** Joins: systemfault_ (sid267009@id-267009.uxbridge.irccloud.com)
+[19:00:36] *** Joins: kst (~krjst@2604:a880:800:c1::16b:8001)
+[19:00:39] *** Joins: obfusk (~quassel@a82-161-150-56.adsl.xs4all.nl)
+[19:00:46] *** dobblego is now known as dibblego
+[19:01:12] *** Joins: robertm (robertm@lattice.rojoma.com)
+[19:01:40] *** Joins: texasmynsted (~texasmyns@99.96.221.112)
+[19:02:23] *** Joins: yahb (xsbot@user/mniip/bot/yahb)
+[19:03:15] *** Joins: romesrf (~romes@198.177.63.94.rev.vodafone.pt)
+[19:03:54] *** Quits: Guest394 (~Guest3@122.161.52.55) (Quit: Client closed)
+[19:04:35] *** Quits: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl) (Ping timeout: 250 seconds)
+[19:06:10] *** Joins: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net)
+[19:07:50] <janus> @where non-haskell-books
+[19:07:50] <lambdabot> `SICP',`CTM',`TaPL',`AtTaPL',`APLD',`PLAI',`TAOCP',`SF',`CPDT',`TTFP',`PFPL',`SICM',`TTT',`EOPL',`AIMA',`PAIP',`AoP',`PLFA',`CTfP',`book-acronyms'
+[19:08:08] *** Joins: justsomeguy (~justsomeg@user/justsomeguy)
+[19:10:48] *** Quits: Guest9121 (~Guest91@198.13.48.162) (Quit: Client closed)
+[19:11:01] *** Quits: Pickchea (~private@user/pickchea) (Ping timeout: 240 seconds)
+[19:13:04] *** Joins: img (~img@user/img)
+[19:15:24] <hpc> is there a way to list the keys in the where db?
+[19:16:09] *** Quits: tafa (~tafa@user/tafa) (Quit: ZNC - https://znc.in)
+[19:16:59] *** Joins: tafa (~tafa@user/tafa)
+[19:17:32] *** Quits: coot (~coot@213.134.190.95) (Quit: coot)
+[19:22:10] <janus> oops i made it forgot SICP.. sorry. i didn't know that @where+ deletes
+[19:22:31] <janus> i thought it would be like a verbose version of 'where'
+[19:23:31] *** Joins: dcoutts__ (~duncan@host86-167-206-34.range86-167.btcentralplus.com)
+[19:28:55] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Ping timeout: 240 seconds)
+[19:30:15] *** Quits: mahene[m] (~mahenemat@2001:470:69fc:105::1:6a93) (Quit: You have been kicked for being idle)
+[19:31:34] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[19:32:44] *** Quits: brandonh (brandonh@gateway/vpn/protonvpn/brandonh) (Quit: brandonh)
+[19:33:43] *** Joins: brandonh (brandonh@gateway/vpn/protonvpn/brandonh)
+[19:35:19] *** Joins: _ht (~quassel@231-169-21-31.ftth.glasoperator.nl)
+[19:38:31] *** Quits: razetime (~quassel@117.254.35.224) (Ping timeout: 256 seconds)
+[19:39:41] *** Quits: brandonh (brandonh@gateway/vpn/protonvpn/brandonh) (Quit: brandonh)
+[19:40:32] *** Joins: brandonh (brandonh@gateway/vpn/protonvpn/brandonh)
+[19:41:06] *** Joins: boborygmy__ (~bob@pool-173-54-217-168.nwrknj.fios.verizon.net)
+[19:41:49] *** Alex_test_ is now known as Alex_test
+[19:43:17] *** Quits: boborygmy_ (~bob@pool-173-54-217-168.nwrknj.fios.verizon.net) (Ping timeout: 240 seconds)
+[19:44:52] *** Quits: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao) (Remote host closed the connection)
+[19:45:12] *** Quits: alx741 (~alx741@host-181-198-243-130.netlife.ec) (Quit: alx741)
+[19:47:32] *** Joins: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao)
+[19:49:26] *** Quits: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao) (Remote host closed the connection)
+[19:49:27] *** Joins: gdd (~gdd@129.199.146.230)
+[19:51:41] *** Joins: deadmarshal_ (~deadmarsh@5.116.250.131)
+[19:52:24] *** Quits: mmaruseacph2 (~mihai@198.199.100.72) (Quit: The past is dead and buried.)
+[19:52:28] *** Joins: shailangsa (~shailangs@host165-120-169-51.range165-120.btcentralplus.com)
+[19:52:37] *** Quits: rkrishnan (~user@2402:e280:215c:2cd:3eab:c926:d07c:224d) (Ping timeout: 240 seconds)
+[19:54:02] *** Joins: mmaruseacph2 (~mihai@198.199.100.72)
+[19:54:35] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[19:57:31] *** Quits: deadmarshal_ (~deadmarsh@5.116.250.131) (Ping timeout: 268 seconds)
+[20:03:44] *** Joins: Hemmo (~Hemmo@85-76-66-96-nat.elisa-mobile.fi)
+[20:08:35] *** Quits: lumberjack123 (~alMalsamo@gateway/tor-sasl/almalsamo) (Ping timeout: 240 seconds)
+[20:13:34] *** Joins: mohy (~mohy@85-207-122-4.static.bluetone.cz)
+[20:14:34] *** Quits: romesrf (~romes@198.177.63.94.rev.vodafone.pt) (Ping timeout: 260 seconds)
+[20:14:56] *** Joins: ubert (~Thunderbi@p200300ecdf158818b8e18cff0ef2784d.dip0.t-ipconnect.de)
+[20:15:19] *** Joins: tzh (~tzh@c-24-21-73-154.hsd1.wa.comcast.net)
+[20:15:20] *** Quits: mohy (~mohy@85-207-122-4.static.bluetone.cz) (Client Quit)
+[20:16:36] *** Quits: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net) (Ping timeout: 240 seconds)
+[20:16:57] *** Joins: bahamas (~lucian@84.232.140.158)
+[20:17:30] *** Parts: agrosant (~agrosant@79.103.63.74.dsl.dyn.forthnet.gr) ()
+[20:17:30] *** Joins: agrosant (~agrosant@79.103.63.74.dsl.dyn.forthnet.gr)
+[20:17:57] *** Quits: haritz (~hrtz@user/haritz) (Remote host closed the connection)
+[20:18:40] *** Joins: raehik (~raehik@82.21.176.157)
+[20:19:56] <Hemmo> Hello! I can't figure out how to check if X*Y is already in the list in list comprehension. Can it be done?? 
+[20:19:56] <Hemmo> multiplyAdjacent xs = [x*y | x <- xs, y <- drop 1 xs, x /= y]
+[20:20:18] <Hemmo> Also I figure there's a way better way to multiply adjacent elements, but this is what I've come up with lol.
+[20:21:04] <Hemmo> So is there a way to do something like; X*Y `notElem` (the list I am constructing with list comprehension)
+[20:21:06] <int-e> > let adjacents xs = zip xs (tail xs) in adjacents [1,4,2,5]
+[20:21:07] <lambdabot>  [(1,4),(4,2),(2,5)]
+[20:21:49] <Hemmo> Oh my bad I actually didn't mean adjacents!
+[20:21:51] <Hemmo> I mean
+[20:21:58] <int-e> > let pairs xs = [(x, y) | x:ys <- tails xs, y <- ys] in pairs [1,4,2,5]
+[20:22:00] <lambdabot>  [(1,4),(1,2),(1,5),(4,2),(4,5),(2,5)]
+[20:22:09] <Hemmo> If I have [2,3,4] I need to do 2*3 and 2*4 and then 3*4
+[20:22:21] <Hemmo> So not adjacents, but a product of each two numbers in the list
+[20:22:23] <int-e> one of those is likely what you want... the drop 1 thing isn't natural
+[20:22:52] *** Parts: agrosant (~agrosant@79.103.63.74.dsl.dyn.forthnet.gr) ()
+[20:22:52] *** Joins: agrosant (~agrosant@79.103.63.74.dsl.dyn.forthnet.gr)
+[20:22:53] <Hemmo> So the end list would be (6, 8  and 12)
+[20:23:41] *** Joins: dextaa_ (~dextaa@user/dextaa)
+[20:24:36] <Hemmo> So my drop 1 xs is an attempt to always drop the first one of the second list as I have iterated through the first, but I suppose it doesn't work that way.
+[20:25:11] <Hemmo> Hence I would like to check if X*Y is already in the list so I won't add it again.
+[20:25:16] *** Joins: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net)
+[20:25:31] *** Quits: agrosant (~agrosant@79.103.63.74.dsl.dyn.forthnet.gr) (K-Lined)
+[20:29:49] *** Quits: machined1od (~machinedg@24.105.81.50) (Ping timeout: 240 seconds)
+[20:29:58] *** Quits: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net) (Ping timeout: 260 seconds)
+[20:30:47] <mmaruseacph2> but 3*8 and 4*6 give the same answer
+[20:31:02] <mmaruseacph2> so if you'd check that you'd give wrong answer for [1,2,3,4,5,6,7,8]
+[20:31:40] <Hemmo> Uh good point.
+[20:31:47] <int-e> Do you care about the order of the answers?
+[20:31:47] <dsal> tomsmeding: Ah.  I should'e tried that.  I'd heard of some bits of this, but my brain does automatic eta-reduction so they seem to be the equivalent to me.
+[20:32:23] <Hemmo> Order is not important for me. I'm trying to think of a recursive function now if that's possible.
+[20:32:31] <int-e> > S.fromList . S.toList $ [a*b | a:bs <- tails [3,4,6,8], b <- bs]
+[20:32:33] <lambdabot>  error:
+[20:32:33] <lambdabot>      • Couldn't match expected type ‘S.Set a’ with actual type ‘[a0]’
+[20:32:33] <lambdabot>      • In the second argument of ‘($)’, namely
+[20:32:43] <int-e> ... from, then to.
+[20:32:49] <int-e> > S.toList . S.fromList $ [a*b | a:bs <- tails [3,4,6,8], b <- bs]
+[20:32:51] <lambdabot>  [12,18,24,32,48]
+[20:33:35] <int-e> (There's `nub` but that's less efficient. There's also  map head . group . sort  which may actually be faster unless there are many duplicates)
+[20:34:41] <Hemmo> Oh I can only use Prelude as well 
+[20:34:43] <int-e> Hemmo: Anyway, there's many variations here... you need to come up with a precise specification of what you need.
+[20:35:10] <int-e> ...yuck.
+[20:35:14] *** Quits: brandonh (brandonh@gateway/vpn/protonvpn/brandonh) (Ping timeout: 252 seconds)
+[20:35:17] <Hemmo> ;D
+[20:35:38] <Hemmo> A course I am running to get a grip on Haskell ;p
+[20:35:57] <Hemmo> I'm actually trying to solve another problem with this
+[20:36:03] <Hemmo> A function charsProductOf :: [Int] -> [Char] that, given a list of numbers ns, returns all the characters that have a number that is a product of any two numbers in ns.
+[20:36:21] <Hemmo> And my code so far is: charsProductOf xs  = [a | (a,b) <- zip ['a'..'z'] [1..26], b `elem` LIST]
+[20:36:23] <int-e> > foldr (\x xs -> x : filter (/= x) xs) [] [1,2,5,1,4,3]
+[20:36:25] <lambdabot>  [1,2,5,4,3]
+[20:36:28] <int-e> @src nub
+[20:36:28] <lambdabot> nub = nubBy (==)
+[20:36:28] <lambdabot> --OR
+[20:36:28] <lambdabot> nub l = go l []
+[20:36:28] <lambdabot>   where go []     _       = []
+[20:36:28] <lambdabot>         go (x:xs) ls
+[20:36:30] <lambdabot>             | x `elem` ls = go xs ls
+[20:36:32] <lambdabot>             | otherwise   = x : go xs (x:ls)
+[20:36:58] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Ping timeout: 260 seconds)
+[20:38:07] <Hemmo> And yeah each character corresponds to a number so a == 1, b == 2 etc.
+[20:38:31] <int-e> Hemmo: well if that's your code, then duplicates in LIST won't hurt
+[20:38:41] *** Quits: mikoto-chan (~mikoto-ch@213.177.151.239) (Ping timeout: 245 seconds)
+[20:39:03] <int-e> (except maybe for performance... but eliminating duplicates won't be free either)
+[20:39:10] *** Joins: brandonh (~brandonh@93-34-129-43.ip49.fastwebnet.it)
+[20:39:59] *** Joins: mikoto-chan (~mikoto-ch@213.177.151.239)
+[20:40:25] *** Joins: romesrf (~romes@198.177.63.94.rev.vodafone.pt)
+[20:43:46] *** Quits: boborygmy__ (~bob@pool-173-54-217-168.nwrknj.fios.verizon.net) (Ping timeout: 268 seconds)
+[20:45:06] <Hemmo> int-e: thank you! I didn't realise that and my code works now =)
+[20:45:14] <Hemmo> charsProductOf xs  = [a | (a,b) <- zip ['a'..'z'] [1..26], b `elem` l]
+[20:45:14] <Hemmo>   where l = multiplyAll xs
+[20:45:43] *** Quits: romesrf (~romes@198.177.63.94.rev.vodafone.pt) (Ping timeout: 256 seconds)
+[20:47:07] <Hemmo> I still have a question about this, though. (x <- xs, y <- drop 1 xs) Does this work as such; takes the first element of XS and compares it to all the elements in drop 1 XS? and when done comparing it takes the second element of XS and compares that to drop 2 xs?
+[20:47:16] <Hemmo> Or does drop 1 xs only do it once for the whole list?
+[20:47:57] *** Quits: komikat (~komikat@183.82.152.122) (Remote host closed the connection)
+[20:48:11] *** Joins: komikat (~komikat@183.82.152.122)
+[20:48:23] *** Quits: komikat (~komikat@183.82.152.122) (Remote host closed the connection)
+[20:49:03] <int-e> Hemmo: it only does the drop 1 once
+[20:49:31] *** Joins: mohy (~mohy@85-207-122-4.static.bluetone.cz)
+[20:49:56] *** Joins: komikat (~komikat@183.82.152.122)
+[20:50:23] *** Quits: komikat (~komikat@183.82.152.122) (Remote host closed the connection)
+[20:50:55] *** Joins: komikat (~komikat@183.82.152.122)
+[20:51:20] <int-e> (Variables don't change value in Haskell once they've been bound.)
+[20:53:08] *** Joins: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340)
+[20:53:31] <Hemmo> Thanks
+[20:54:06] *** Quits: Hemmo (~Hemmo@85-76-66-96-nat.elisa-mobile.fi) (Remote host closed the connection)
+[20:54:27] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[20:54:38] *** Quits: wroathe (~wroathe@user/wroathe) (Quit: Lost terminal)
+[20:55:34] *** Quits: cosimone` (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Remote host closed the connection)
+[20:55:35] *** Quits: komikat (~komikat@183.82.152.122) (Ping timeout: 252 seconds)
+[20:55:50] *** Quits: slaydr (~slaydr@193.19.109.229) (Quit: leaving)
+[20:56:16] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[20:58:17] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[20:58:31] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[20:58:39] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[20:58:56] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[20:59:03] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[20:59:14] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[20:59:14] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[20:59:14] *** Joins: wroathe (~wroathe@user/wroathe)
+[20:59:18] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[20:59:25] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[20:59:39] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[20:59:43] *** Joins: boxscape_ (~boxscape_@p4ff0b60b.dip0.t-ipconnect.de)
+[20:59:47] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[20:59:52] *** Joins: wootehfoot (~wootehfoo@user/wootehfoot)
+[21:00:00] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[21:00:08] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[21:00:23] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[21:00:31] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[21:00:49] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[21:00:57] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[21:01:11] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[21:01:18] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[21:01:35] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[21:01:43] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[21:01:45] <mohy> Hello, I ask about writing a proposal for "google summer of code" but the recommended channel for asking is on freenode which is apparently dead and there is no #haskell-gsoc channel, what should I do?
+[21:01:56] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[21:02:04] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Remote host closed the connection)
+[21:02:52] *** Joins: Pickchea (~private@user/pickchea)
+[21:03:19] *** Joins: finley (~finley@129.72.2.108)
+[21:05:31] <maerwald> is there a way to tell cpphs not to expand some #ifdefs?
+[21:05:47] *** Joins: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl)
+[21:07:54] <jneira[m]> <mohy> "Hello, I ask about writing a..." <- maybe https://github.com/haskell-org/summer-of-haskell/?
+[21:08:00] *** Joins: romesrf (~romes@198.177.63.94.rev.vodafone.pt)
+[21:08:09] *** Joins: mohy_ (~mohy@85-207-122-4.static.bluetone.cz)
+[21:08:12] <jneira[m]> there are issues with proposals
+[21:08:50] <mohy> <jneira> Thanks
+[21:12:39] *** Quits: romesrf (~romes@198.177.63.94.rev.vodafone.pt) (Ping timeout: 250 seconds)
+[21:12:42] *** Quits: mohy_ (~mohy@85-207-122-4.static.bluetone.cz) (Client Quit)
+[21:13:05] *** Joins: romesrf (~romes@198.177.63.94.rev.vodafone.pt)
+[21:15:06] *** Quits: justsomeguy (~justsomeg@user/justsomeguy) (Quit: WeeChat 3.4)
+[21:17:52] *** Joins: Jeanne-Kamikaze (~Jeanne-Ka@static-198-54-134-89.cust.tzulo.com)
+[21:18:18] *** Quits: romesrf (~romes@198.177.63.94.rev.vodafone.pt) (Ping timeout: 268 seconds)
+[21:20:53] *** Quits: bahamas (~lucian@84.232.140.158) (Ping timeout: 252 seconds)
+[21:21:02] *** Joins: unit73e (~emanuel@2001:818:e8dd:7c00:32b5:c2ff:fe6b:5291)
+[21:24:45] *** Quits: brandonh (~brandonh@93-34-129-43.ip49.fastwebnet.it) (Quit: brandonh)
+[21:26:06] *** Joins: GuerrillaMonkey (~Jeanne-Ka@static-198-54-134-136.cust.tzulo.com)
+[21:28:41] *** Quits: Jeanne-Kamikaze (~Jeanne-Ka@static-198-54-134-89.cust.tzulo.com) (Ping timeout: 250 seconds)
+[21:29:16] *** Joins: Nahra (~user@static.161.95.99.88.clients.your-server.de)
+[21:29:29] *** Quits: GuerrillaMonkey (~Jeanne-Ka@static-198-54-134-136.cust.tzulo.com) (Client Quit)
+[21:29:39] *** Joins: Jeanne-Kamikaze (~Jeanne-Ka@static-198-54-134-136.cust.tzulo.com)
+[21:30:29] *** Quits: mohy (~mohy@85-207-122-4.static.bluetone.cz) (Ping timeout: 256 seconds)
+[21:32:22] *** Joins: nicbk (~nicbk@user/nicbk)
+[21:32:42] *** Joins: romesrf (~romes@198.177.63.94.rev.vodafone.pt)
+[21:32:47] *** Quits: pieguy128 (~pieguy128@bras-base-mtrlpq5031w-grc-35-70-24-248-224.dsl.bell.ca) (Quit: ZNC 1.8.2 - https://znc.in)
+[21:33:05] *** Joins: pieguy128 (~pieguy128@bras-base-mtrlpq5031w-grc-35-70-24-248-224.dsl.bell.ca)
+[21:33:29] *** Joins: Akiva (~Akiva@user/Akiva)
+[21:34:45] *** Quits: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl) (Ping timeout: 250 seconds)
+[21:37:38] *** Joins: brandonh (~brandonh@93-34-129-43.ip49.fastwebnet.it)
+[21:39:33] *** Joins: zebrag (~chris@user/zebrag)
+[21:44:00] *** Joins: lumberjack123 (~alMalsamo@gateway/tor-sasl/almalsamo)
+[21:44:45] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[21:45:31] *** Joins: boborygmy__ (~bob@pool-173-54-217-168.nwrknj.fios.verizon.net)
+[21:47:25] *** Quits: brandonh (~brandonh@93-34-129-43.ip49.fastwebnet.it) (Quit: brandonh)
+[21:48:44] *** Joins: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net)
+[21:49:49] *** Quits: nexus (~nexus@92-249-179-42.pool.digikabel.hu) (Ping timeout: 240 seconds)
+[21:51:45] *** Joins: nexus (~nexus@84-236-55-39.pool.digikabel.hu)
+[21:51:46] *** cocreatu1 is now known as cocreature
+[21:53:43] *** Quits: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net) (Ping timeout: 256 seconds)
+[21:54:06] *** Quits: unit73e (~emanuel@2001:818:e8dd:7c00:32b5:c2ff:fe6b:5291) (Quit: Leaving)
+[21:54:20] *** Joins: brandonh (~brandonh@93-34-129-43.ip49.fastwebnet.it)
+[21:54:21] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[21:54:30] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[21:56:36] *** Quits: notzmv- (~zmv@user/notzmv) (Ping timeout: 245 seconds)
+[21:57:02] *** Quits: Topsi (~Tobias@dyndsl-095-033-027-010.ewe-ip-backbone.de) (Ping timeout: 240 seconds)
+[21:57:54] *** Quits: Pickchea (~private@user/pickchea) (Quit: Leaving)
+[21:59:38] *** farn_ is now known as farn
+[22:00:02] *** Joins: econo (uid147250@user/econo)
+[22:00:27] *** Joins: alx741 (~alx741@host-181-198-243-130.netlife.ec)
+[22:00:58] *** zmt01 is now known as zmt00
+[22:01:23] *** Quits: zmt00 (~zmt00@user/zmt00) (Quit: Leaving)
+[22:02:04] *** systemfault_ is now known as systemfault
+[22:03:14] *** Quits: romesrf (~romes@198.177.63.94.rev.vodafone.pt) (Ping timeout: 252 seconds)
+[22:03:16] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Quit: WeeChat 3.4.1)
+[22:04:20] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[22:04:42] *** Quits: jushurr (~human@user/jushur) (Quit:  ¯\_(ツ)_/¯)
+[22:06:51] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[22:10:13] *** Joins: haritz (~hrtz@62.3.70.206)
+[22:10:13] *** Quits: haritz (~hrtz@62.3.70.206) (Changing host)
+[22:10:13] *** Joins: haritz (~hrtz@user/haritz)
+[22:11:30] *** Joins: mohy (~mohy@85-207-122-4.static.bluetone.cz)
+[22:13:09] *** Joins: alp (~alp@user/alp)
+[22:16:10] *** Quits: img (~img@user/img) (Quit: ZNC 1.8.2 - https://znc.in)
+[22:18:42] *** Joins: img (~img@user/img)
+[22:19:00] *** Quits: justAstache (~justache@user/justache) (Remote host closed the connection)
+[22:19:21] *** Quits: alx741 (~alx741@host-181-198-243-130.netlife.ec) (Ping timeout: 268 seconds)
+[22:19:58] *** Joins: justAstache (~justache@user/justache)
+[22:21:46] *** Joins: alx741 (~alx741@host-181-198-243-130.netlife.ec)
+[22:23:35] *** Joins: yauhsien (~yauhsien@61-231-22-192.dynamic-ip.hinet.net)
+[22:26:57] *** Quits: alx741 (~alx741@host-181-198-243-130.netlife.ec) (Ping timeout: 250 seconds)
+[22:28:34] *** Joins: coot (~coot@213.134.190.95)
+[22:29:44] *** Joins: alx741 (~alx741@host-181-198-243-130.netlife.ec)
+[22:30:28] *** Quits: haritz (~hrtz@user/haritz) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[22:31:31] *** Quits: alp (~alp@user/alp) (Ping timeout: 250 seconds)
+[22:34:34] *** Quits: alx741 (~alx741@host-181-198-243-130.netlife.ec) (Ping timeout: 260 seconds)
+[22:35:37] *** Quits: coot (~coot@213.134.190.95) (Quit: coot)
+[22:36:44] *** Joins: alx741 (~alx741@host-181-198-243-130.netlife.ec)
+[22:36:48] *** Joins: haritz (~hrtz@2a02:8010:65b5:0:6009:6384:e3cb:2220)
+[22:36:48] *** Quits: haritz (~hrtz@2a02:8010:65b5:0:6009:6384:e3cb:2220) (Changing host)
+[22:36:48] *** Joins: haritz (~hrtz@user/haritz)
+[22:37:20] *** Quits: raehik (~raehik@82.21.176.157) (Ping timeout: 252 seconds)
+[22:40:11] *** Joins: romesrf (~romes@44.190.189.46.rev.vodafone.pt)
+[22:40:23] *** Quits: brandonh (~brandonh@93-34-129-43.ip49.fastwebnet.it) (Quit: brandonh)
+[22:40:52] *** Joins: abhixec (~abhixec@c-67-169-139-16.hsd1.ca.comcast.net)
+[22:42:17] *** Quits: alx741 (~alx741@host-181-198-243-130.netlife.ec) (Ping timeout: 252 seconds)
+[22:43:19] *** Joins: jao (~jao@cpc103048-sgyl39-2-0-cust502.18-2.cable.virginm.net)
+[22:44:38] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Ping timeout: 268 seconds)
+[22:44:40] *** Joins: alx741 (~alx741@host-181-198-243-130.netlife.ec)
+[22:50:01] *** Joins: bahamas (~lucian@84.232.140.158)
+[22:52:32] *** Quits: mohy (~mohy@85-207-122-4.static.bluetone.cz) (Quit: Leaving)
+[22:53:36] <[itchyjunk]> dsal, yes i thought that was my issue too
+[22:53:53] <[itchyjunk]> but i went to ghci and tried `1 - 0.5` and got no error so i thought maybe that wasn't the issue
+[22:54:30] *** Quits: alx741 (~alx741@host-181-198-243-130.netlife.ec) (Ping timeout: 268 seconds)
+[22:55:48] <geekosaur> note that numeric literals (and only literals) can be any numeric type
+[22:55:50] <geekosaur> :t 1
+[22:55:51] <lambdabot> Num p => p
+[22:56:02] <geekosaur> > 1 - 0.5
+[22:56:04] <lambdabot>  0.5
+[22:56:21] *** Joins: alx741 (~alx741@host-181-198-243-130.netlife.ec)
+[22:56:23] <geekosaur> > (1 :: Integer) - 0.5
+[22:56:24] <lambdabot>  error:
+[22:56:24] <lambdabot>      • No instance for (Fractional Integer)
+[22:56:24] <lambdabot>          arising from the literal ‘0.5’
+[22:57:32] *** Joins: machinedgod (~machinedg@24.105.81.50)
+[22:58:56] <[itchyjunk]> oh it was because 1 was a Num but i can't do that with int? /o\
+[22:59:24] <geekosaur> Num is not a type
+[22:59:32] <geekosaur> all numeric types have Num instances
+[23:00:13] <geekosaur> :t (-)
+[23:00:13] <lambdabot> Num a => a -> a -> a
+[23:00:32] <geekosaur> has to be the same a throughout, you can't have one of them be Int and the other a Double
+[23:01:38] *** Quits: alx741 (~alx741@host-181-198-243-130.netlife.ec) (Ping timeout: 260 seconds)
+[23:04:33] *** Joins: alx741 (~alx741@host-181-198-243-130.netlife.ec)
+[23:07:37] <[itchyjunk]> ah
+[23:08:12] *** Quits: nahcetan (~nate@98.45.167.61) (Quit: WeeChat 2.9)
+[23:08:29] <geekosaur> there are a few operators that allow them to be different but most are the same way
+[23:08:34] <geekosaur> :t (^)
+[23:08:35] <lambdabot> (Integral b, Num a) => a -> b -> a
+[23:08:37] <geekosaur> but
+[23:08:41] <geekosaur> :t (/)
+[23:08:42] <lambdabot> Fractional a => a -> a -> a
+[23:09:04] <geekosaur> noteit requires Fractional instead of simply Num, but it still has to be the same a throughout
+[23:09:48] *** Quits: alx741 (~alx741@host-181-198-243-130.netlife.ec) (Ping timeout: 252 seconds)
+[23:11:44] *** Joins: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net)
+[23:12:33] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 252 seconds)
+[23:12:44] *** Joins: alx741 (~alx741@host-181-198-243-130.netlife.ec)
+[23:14:31] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[23:14:42] *** Joins: alp (~alp@user/alp)
+[23:15:39] *** Joins: vglfr (~vglfr@88.155.11.162)
+[23:16:02] *** Parts: jakalx (~jakalx@base.jakalx.net) (Error from remote client)
+[23:16:44] *** Joins: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net)
+[23:18:05] *** Quits: alx741 (~alx741@host-181-198-243-130.netlife.ec) (Ping timeout: 250 seconds)
+[23:19:47] *** Joins: ph88 (~ph88@2001:1c05:2402:c600:599:4834:fca5:fb5a)
+[23:20:42] *** Joins: alx741 (~alx741@host-181-198-243-130.netlife.ec)
+[23:20:44] <[itchyjunk]> I managed to fix my code. I realized i can just work with Float everywhere. Not sure why i want converting from Int to Float to begin with
+[23:21:07] *** Quits: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net) (Ping timeout: 250 seconds)
+[23:24:34] *** Joins: jakalx (~jakalx@base.jakalx.net)
+[23:25:51] *** Joins: yuvi (~uv125@pool-71-244-139-81.bltmmd.fios.verizon.net)
+[23:26:13] <geekosaur> you do realize that Float has limited precision, right? usually you want Double instead
+[23:26:17] *** Quits: alx741 (~alx741@host-181-198-243-130.netlife.ec) (Ping timeout: 252 seconds)
+[23:26:47] *** Quits: wootehfoot (~wootehfoo@user/wootehfoot) (Read error: Connection reset by peer)
+[23:27:46] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Remote host closed the connection)
+[23:28:40] *** Joins: alx741 (~alx741@host-181-198-243-130.netlife.ec)
+[23:29:54] <monochrom> The curse of meaningful names hence "I need a floating-point type, ah Float".
+[23:30:26] <monochrom> Made sense 60 years ago when single precision was really faster than double precision.
+[23:30:41] *** Quits: yuvi (~uv125@pool-71-244-139-81.bltmmd.fios.verizon.net) (Client Quit)
+[23:30:58] <geekosaur> yeh
+[23:31:06] <geekosaur> you beat me to the observation)
+[23:31:24] *** Joins: merijn (~merijn@c-001-001-001.client.esciencecenter.eduvpn.nl)
+[23:31:27] *** Joins: natto (~natto@140.238.230.155)
+[23:33:15] *** Quits: ubert (~Thunderbi@p200300ecdf158818b8e18cff0ef2784d.dip0.t-ipconnect.de) (Quit: ubert)
+[23:33:27] *** Quits: alx741 (~alx741@host-181-198-243-130.netlife.ec) (Ping timeout: 252 seconds)
+[23:33:27] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 252 seconds)
+[23:33:49] * geekosaur wonders how far a proposal to rename them Double->Float and Float->HalFloat would get
+[23:34:30] <monochrom> That would then cause friction with people coming from other languages.
+[23:34:30] <geekosaur> or Float->Half
+[23:34:35] *** Quits: alp (~alp@user/alp) (Ping timeout: 256 seconds)
+[23:34:50] *** Joins: alt-romes (~romes@44.190.189.46.rev.vodafone.pt)
+[23:34:56] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[23:34:56] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[23:34:56] *** Joins: wroathe (~wroathe@user/wroathe)
+[23:35:26] <geekosaur> like the rest of Haskell doesn't?
+[23:35:31] <monochrom> haha
+[23:35:39] *** Joins: alx741 (~alx741@host-181-198-243-130.netlife.ec)
+[23:35:39] <natto> Double->Sink
+[23:36:11] *** Quits: Lord_of_Life (~Lord@user/lord-of-life/x-2819915) (Ping timeout: 245 seconds)
+[23:36:15] *** Joins: Lord_of_Life_ (~Lord@user/lord-of-life/x-2819915)
+[23:36:20] <monochrom> HALFloat is when you do 1.0/10.0 and you get "Dave, I can't let you do that" :)
+[23:37:31] *** Lord_of_Life_ is now known as Lord_of_Life
+[23:37:50] *** Quits: romesrf (~romes@44.190.189.46.rev.vodafone.pt) (Ping timeout: 252 seconds)
+[23:38:16] *** Quits: bahamas (~lucian@84.232.140.158) (Ping timeout: 245 seconds)
+[23:40:03] *** Quits: machinedgod (~machinedg@24.105.81.50) (Ping timeout: 252 seconds)
+[23:40:05] <[itchyjunk]> ah double..
+[23:40:30] <[itchyjunk]> apparently the variance of [1..10] should be something other than 1.725. Maybe this is due to floats
+[23:40:36] * [itchyjunk] replaces float with Double
+[23:41:22] *** Quits: alx741 (~alx741@host-181-198-243-130.netlife.ec) (Ping timeout: 268 seconds)
+[23:41:32] <[itchyjunk]> ah nope, seems like i have logical error somewhere that i can't find yet
+[23:41:35] <monochrom> You can also use Rational.
+[23:43:21] *** Joins: alx741 (~alx741@host-181-198-243-130.netlife.ec)
+[23:44:27] <[itchyjunk]> hmm
+[23:44:45] <[exa]> 1.725 is way off even for quarter-floats
+[23:46:38] *** Quits: vglfr (~vglfr@88.155.11.162) (Ping timeout: 252 seconds)
+[23:47:49] *** Quits: lavaman (~lavaman@c-174-63-118-52.hsd1.ma.comcast.net) (Ping timeout: 240 seconds)
+[23:48:21] *** Joins: brandonh (~brandonh@93-34-129-43.ip49.fastwebnet.it)
+[23:48:23] <[exa]> monochrom: re "made sense 60 yrs ago"... on intrinsics guide I still read CPI throughput of doubles to be half of floats (per value), 2x required memory bandwidth doesn't help either, and I didn't even look at GPUs
+[23:48:46] *** Quits: alx741 (~alx741@host-181-198-243-130.netlife.ec) (Ping timeout: 260 seconds)
+[23:49:50] <[exa]> (...so kinda wondering what I'm missing :D )
+[23:49:58] <geekosaur> the interesting thing there is that these days a machine word is the size of a double, so I'd actually expect a bit of optimization there
+[23:50:25] <c_wraith> memory bandwidth is an important consideration when you are processing large numbers of them
+[23:50:35] <[exa]> machine word "of which part of the machine"
+[23:50:56] <c_wraith> But if you're just using one as an accumulator, memory bandwidth is pretty unimportant
+[23:51:25] *** Joins: alx741 (~alx741@host-181-198-243-130.netlife.ec)
+[23:51:26] <geekosaur> 60 years ago you were looking at 8/16/maybe 32 biut on the high end for machine words, so double precision floats were really expensive. and you didn't have GPUs, nor fancy caches
+[23:51:45] *** Joins: ProfSimm (~ProfSimm@87.227.196.109)
+[23:54:15] <[itchyjunk]> i did one of my functions wrong :D
+[23:54:22] <[itchyjunk]> i broke everything fixing it
+[23:54:27] * [itchyjunk] debug hat on
+[23:54:39] <[exa]> yeah like, 60y ago use of doubles was totally nuts given the hardware tbh (AFAIK everyone sensible was using fixed precision then)... but monochrom kinda implied that the difference doesn't exist now, while I think it does, so I want to get corrected :D
+[23:54:56] *** Quits: mikoto-chan (~mikoto-ch@213.177.151.239) (Ping timeout: 268 seconds)
+[23:55:31] <geekosaur> the difference is significantly lesser (note "really faster" — they cost a *lot* more than you'd expect back then)
+[23:56:36] *** Quits: alx741 (~alx741@host-181-198-243-130.netlife.ec) (Ping timeout: 245 seconds)
+[23:56:46] *** Quits: fef (~thedawn@user/thedawn) (Quit: Leaving)
+[23:56:51] *** Tuplanolla1 is now known as Tuplanolla
+[23:59:19] <geekosaur> in fact I don't see any implication about how expensive they are today, just that it's less expensive than it used to be
+[23:59:23] *** Joins: alx741 (~alx741@host-181-198-243-130.netlife.ec)
+[23:59:59] *** Joins: rond_ (~rond_@90.254.208.190)

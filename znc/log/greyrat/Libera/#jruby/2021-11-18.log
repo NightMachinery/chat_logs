@@ -1,0 +1,464 @@
+[00:06:09] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 265 seconds)
+[00:47:53] <headius> odd, my addrinfo fix did not seem to work on GHA
+[00:49:17] <headius> oh boo I targeted master
+[00:50:05] <headius> ok so test:mri:stdlib should be green then
+[00:51:00] <headius> enebo: I should have checked this before... some of the spec failures have "travis" tags
+[00:51:13] <headius> so they were failing on travis too but are not being masked on GHA
+[00:51:41] <headius> do any specs fail for you locally on fedora?
+[00:55:02] <headius> I'm doing a run locally under docker ubuntu 20.04 and will also inspect these other failures
+[00:57:34] *** Joins: subbu (~subbu@user/subbu)
+[01:00:39] <headius> some of these look like it's running ipv6 specs when ipv6 is not present... I see checks for this in the specs but we are probably defining all the constants all the time so it thinks they should work
+[01:31:47] <headius> https://stackoverflow.com/questions/51904345/ipv6-availability-in-java
+[01:31:48] <headius> there must be a better way, right?
+[01:41:00] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 256 seconds)
+[01:45:03] *** Joins: subbu (~subbu@user/subbu)
+[01:48:02] <headius> ok the ip6 things are only in my docker ubuntu which must not have ip6 set up
+[01:48:21] <headius> I will fix this constant but it probably won't help GHA
+[01:51:27] <headius> https://github.com/jruby/jruby/pull/6945
+[01:52:06] <headius> attn ahorek also... these constants are still "defined" on jnr-constants but ipv6 may not be available
+[01:52:19] <headius> the mkconstants.rb file in MRI ext/socket is difficult to follow
+[02:04:53] <headius> ok another of these specs fails because it tries to use a Socket as a server and we just don't support that
+[02:05:28] <headius> this one is probably not tagged because we have ignored when it fails locally
+[02:06:18] <headius> we have talked about trying to get the FFI socket library working but I wonder if just doing it for Socket would be sufficient
+[02:06:30] <headius> anyone using Socket directly wants the low-level behavior
+[02:20:43] <headius> 🤦‍♂️
+[02:20:44] <headius> yeah most of these socket failures in GHA also fail for me locally on MacOS with ipv6
+[02:20:44] <headius> so they are just broken ipv6 things that in some cases are already tagged for the ip4v versions
+[02:21:53] <headius> mattpatt: I think I have everything to make this green now
+[02:29:42] * headius sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/af7c3074d8f9b1d39e44579220eac63a8580c03c
+[02:30:23] <headius> so these are the "travis" tags right now, but I think only the getlogin one is showing up on GCA
+[02:30:23] <headius> GHA
+[03:16:03] <headius> https://github.com/jruby/jruby/actions/runs/1474150514
+[03:16:07] <headius> that should be it
+[03:17:24] <headius> I remarked the getlogin tag as "tty" and enable it by testing `$stdin.tty?` in jruby.mspec
+[03:17:24] <headius> the other travis tags I removed since they are passing on GHA
+[03:37:17] <headius> aha I see the problem in the regression spec... pushed a fix to find bin/jruby more reliably
+[03:37:50] <headius> enebo: there is a way to hook CI up to Matrix but we need a user for it. I'd like to register an account with a jruby.org email
+[03:39:28] <headius> https://docs.github.com/en/actions/learn-github-actions/usage-limits-billing-and-administration
+[03:39:48] <headius> looks like there's not much of a limit on total jobs we can run but free tier gets a max of 20 concurrent
+[03:40:28] <headius> aha wait I do see this in org settings: 2,000 Actions minutes/month 
+[04:07:48] <headius> that 2000 might only apply to private repos
+[04:12:27] <headius> hmmm upgrading to "Team" level of service bills $4/user
+[04:13:18] <headius> we would have to drastically cull our organization
+[04:38:58] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[05:04:16] <headius> ok all that failed in latest is the snapshot!
+[05:04:17] <headius> https://github.com/jruby/jruby/actions/runs/1474371370
+[05:04:23] <headius> there seems to be some intermittent failures we'll deal with as we see them
+[05:04:43] <headius> enebo: I'm going to merge this to master so we can get updated results there
+[10:40:17] <MattWelke[m]> <headius> "that 2000 might only apply to..." <- The limit only applies to private repos. Public repos within the org get unlimited minutes.
+[10:40:17] <MattWelke[m]> https://docs.github.com/en/billing/managing-billing-for-github-actions/about-billing-for-github-actions
+[10:41:03] <MattWelke[m]> Something that I didn't know till now though that stood out to me: "Jobs that run on Windows and macOS runners that GitHub hosts consume minutes at 2 and 10 times the rate that jobs on Linux runners consume."
+[13:58:48] <headius> Matt Welke: yeah I saw something about that... more expensive to license I guess
+[14:06:10] <headius> enebo: failure in sequel job on master seems to be due to improper handling of kwargs
+[14:06:16] <headius> only two failures but there may be more if these are fixed... both the same error in the same place
+[14:11:59] <headius> similar failures in concurrent-ruby
+[14:17:50] <headius> hmmm and the JI specs too... the rake/ant integration is breaking while passing kwargs
+[14:18:14] <headius> I guess we should prioritize that
+[14:43:18] <headius> drb needs a patch to avoid _id2ref, guess I should finally do that
+[15:15:31] <headius> weakmap supporting immediates is going to be problematic
+[15:16:02] <headius> the semantics are identity keys but we cannot guarantee identity for e.g. fixnum-ranged Integers
+[15:16:33] <headius> which is exactly the case needed to switch this logic to using WeakMap
+[15:16:40] <headius> bother
+[15:57:56] <headius> omg enebo you implemented Module#const_source_location already
+[15:58:01] <headius> I figured that would be gross and we might punt
+[16:00:41] <headius> master CI has improved a bit with some small fixes
+[16:00:56] <headius> lots of specs and MRI tests left failing though
+[16:48:54] <headius> the mri:stdlib hangs seem to be the same place that DRb patch hangs, so something is insufficient about my weak map version
+[16:58:04] <headius> oh boy drb is some ancient Ruby code
+[17:49:54] <mattpatt[m]> headius: hurrah, saw all the specs on 9.3 passing and only the snapshot failing
+[17:50:18] <mattpatt[m]> That definitely needs the sonatype username and password setting as secrets in Github
+[17:52:10] <mattpatt[m]> but now you've merged down to master, provided the SHA's are still legit you can test that manually now
+[17:59:09] <enebo[m]> heh I don't remember doing a bunch of things I did
+[18:02:39] <enebo[m]> these master runs on test:mri and spec:ruby:fast are pretty much what I was seeing locally
+[18:02:51] <headius> fever dream
+[18:03:16] <headius> you got at least half of the checkboxes, however it happened
+[18:03:27] <enebo[m]> about 100 on each will likely fall out just from fixing kwargs argument passing (in methods and blocks)
+[18:03:49] <headius> yes
+[18:04:02] <enebo[m]> It is probably not totally apparent but like that dup change is an example of how unobvious it can be
+[18:04:32] <headius> it is a hard break on kwargs handling and we are still doing the squishy version
+[18:04:42] <enebo[m]> ceil and floor on Time I think is another which fails a lot
+[18:04:49] <headius> not there yet
+[18:04:53] <headius> probably easy
+[18:05:05] <enebo[m]> I don't feel anything involving time or date is easy
+[18:05:25] <enebo[m]> though this is likely a straightish port
+[18:05:25] <headius> yeah, I don't enjoy working on temporal data types
+[18:05:44] <headius> it must ceil or floor to something, maybe configurable, but it's just rounding
+[18:05:57] <headius> so yeah kwargs
+[18:06:31] <enebo[m]> I have ruby2_keywords implemented but not properly used
+[18:06:51] <headius> so we will just flip some kwargs logic depending on which mode
+[18:06:58] <enebo[m]> but I took a break from reading semantics on kwargs passing
+[18:07:26] <enebo[m]> yeah ruby2_keywords is to fall back to what I think is passing kwargs purely as just another argument
+[18:07:31] <enebo[m]> which is how we do things now
+[18:07:54] <headius> right, with some allowances for strings and munging together positional and kwargs and all that
+[18:08:09] <enebo[m]> I need to re-read this all over again even though I read it about a week and a half ago
+[18:08:23] <enebo[m]> I made mistake of reading the entire multiple year discussion
+[18:08:24] <headius> probably for the best I never tried to do an optimized version of kwargs because with the old logic it was pretty gross
+[18:08:26] <headius> should be easier now
+[18:08:34] <headius> it's part of signature for real
+[18:08:51] <enebo[m]> yeah I mean it will be gross no matter what
+[18:09:18] <enebo[m]> Ruby I think to be clean at this point requires a total break from existing code and that will never happen
+[18:09:37] <enebo[m]> but I guess kwargs are probably better than they were
+[18:09:46] <enebo[m]> and I think we could use an enhancement for JRubyMethod
+[18:10:20] <headius> yes, splitting up kwargs targets would be simpler now
+[18:10:20] <enebo[m]> Not even a boil the ocean enhancement
+[18:10:31] <enebo[m]> Just provide a hash arg
+[18:10:41] <enebo[m]> later improvements can specify required or whatnot
+[18:10:44] <headius> oh a dedicated arg
+[18:10:56] <enebo[m]> Think about all that shit in RubyIO
+[18:11:18] <enebo[m]> We have some other kwarg complicated methods bu IO sticks out
+[18:11:19] <headius> yeah sure, anything you can specify in a Ruby signature could be represented in a JRubyMethod signature, it's just a matter of complexity in the generator
+[18:11:27] <enebo[m]> yep
+[18:11:43] <headius> but like now it could just fall back on hash versions
+[18:12:21] <headius> most core methods only take a couple simple kwargs
+[18:12:25] <enebo[m]> and in 3.0 we have some code path which needs to know if we are passing kwargs or not and whether we need to figure out if there is a kwargs but those two paths should merge back into whatever the populator will receive
+[18:12:53] <headius> one or two or three kwarg could be generated easily enough, mapping kwarg names to positional on Java stack, or whatevs
+[18:12:56] <enebo[m]> So I think it may be as simple as RubyHash kwargs as a first swipe
+[18:13:11] <enebo[m]> but this is why I am not trying to boil the ocean
+[18:13:18] <headius> yeah
+[18:13:43] <headius> just separating them 3.0 way vs 2.6 way would knock most of this out, we just have opportunities to improve later
+[18:13:44] <enebo[m]> the populator could be a month-long project but I think it would be cool if we just could get rid of all this is that last arg we got a RubyHash
+[18:15:01] <enebo[m]> And nothing prevents adding the specific keys later (optional = ["limit", "encoding"], required = ["foo"], etc...
+[18:15:46] <headius> @KeyArg("name") IRubyObject name
+[18:15:54] <enebo[m]> I don't know if you saw but Java 18 plans on all reflection to be indy based
+[18:16:18] <enebo[m]> ah yeah that is a nice syntax
+[18:16:34] <enebo[m]> it may need more params or just more anno names
+[18:17:11] <headius> it just gets dense beyond a couple kwargs
+[18:17:28] <enebo[m]> thankfully I think most core functions only have a couple
+[18:17:28] <headius> and more complicated fallback path to some hash based version
+[18:17:33] <headius> but yeah it's doable
+[18:17:58] <headius> right, just separating out exception: would cut a ton of alloc in basic IO now
+[18:18:00] <enebo[m]> but at this point since we know the degenerate case is a hash that seems like a good bang for the buck addition
+[18:18:27] <headius> if they don't use it we don't allocate, but anyone passing any options at all to IO are paying a big alloc
+[18:18:38] <enebo[m]> well not as degenerate as pre-3 handling
+[18:19:08] <headius> hah
+[18:20:36] <enebo[m]> https://github.com/jruby/jruby/runs/4252586092?check_suite_focus=true
+[18:20:46] <enebo[m]> You have seen this error before right?
+[18:21:05] <headius> it always makes me feel a little sad
+[18:21:35] <enebo[m]> yeah it seems to only happen on this job but it is something not lining up I am guessing startup mixed with full
+[18:21:51] <headius> at this point I run the tests verbose and note which one goes kaput
+[18:22:02] <headius> usually it is some messed up signal that nukes the test process, or something like that
+[18:22:32] <enebo[m]> This is not an issue with strftime so I will merge that
+[18:22:39] <enebo[m]> this was the only failure
+[18:22:48] <headius> ok
+[18:23:06] <headius> there may be some new timing issues on this env
+[18:23:16] <headius> opportunities
+[18:23:18] <headius> ahem
+[18:23:21] <enebo[m]> It is a big change to the impl of strftime for 9.3 but since we have hardly started I figure the risk is worth the reward
+[18:24:01] <headius> tis the season
+[18:24:03] <enebo[m]> there are also a lot of tests so if I broke something it will just expose a corner missing
+[18:24:59] <enebo[m]> I thought this morning about boiling the logger ocean and just detecting the standard format string and having a method which literally does it with no conditionals at all :)
+[18:25:04] <enebo[m]> Then I thought that is crazy
+[18:25:38] <headius> well there have to be gobs of single format strings out there
+[18:25:50] <enebo[m]> oh yeah there is that too
+[18:26:32] <enebo[m]> I did not look at strftime but I was looking a sprintf/format for the rewrite of that
+[18:26:41] <enebo[m]> we do almost 100 per request
+[18:26:58] <headius> yeah logging is great
+[18:27:00] <enebo[m]> so not super hot but it is destined to be IO of some kind
+[18:27:20] <enebo[m]> 9.4 also needs that tasty logger native impl
+[18:27:29] <headius> I suppose that is the argument though, this is the thing Rubyists use so it should just be good
+[18:27:31] <enebo[m]> MRI went from 200kish to 10Mish
+[18:27:43] <headius> I could whip out a logger
+[18:27:54] <headius> all loggers are the same
+[18:28:15] <enebo[m]> stdlib/logger is a surprising amount of code in Ruby
+[18:28:41] <enebo[m]> let me bring up this idea 
+[18:28:54] <enebo[m]> We ship gems to remain compatible with MRI
+[18:29:24] <headius> where is this native logger?
+[18:29:38] <headius> ruby/logger seems to be pure ruby still
+[18:29:42] <enebo[m]> I don't know if logger is one or not (and I suppose if it is this idea is just academic atm) but if we made our own logger gem we could ship and then this could go back to 9.3 as well as 9.4
+[18:29:53] <enebo[m]> hmm
+[18:29:59] <enebo[m]> really?
+[18:30:16] <enebo[m]> Ruby 3 perf is off the charts
+[18:30:31] <headius> just blindly cloning it I only see bin and lib
+[18:30:34] <enebo[m]> They for 2 orders of magnitude
+[18:30:39] <headius> but 3 might have shipped with an unreleased logger
+[18:30:41] <enebo[m]> s/for/got
+[18:31:04] <enebo[m]> never notices fr and gt are just off by one on the keyboard
+[18:31:44] <headius> 2 orders of magnitude on what
+[18:31:56] <headius> logger?
+[18:31:59] <enebo[m]> yeah
+[18:32:21] <enebo[m]> if I run Ruby 3 on the bench I attached (bench_strftime) it is waaaaay faster
+[18:32:57] <headius> beats me, master has no logger ext either
+[18:33:44] <enebo[m]> 3.0.1 source looks to have same add method we do on 9.3
+[18:34:38] <enebo[m]> https://gist.github.com/enebo/8bc4bd8fb11a963eb0bbd31a168d949e
+[18:34:57] <enebo[m]> headius: can you run that on 2.6 and 3.x and tell me whether you see a massive speedup?
+[18:35:26] <headius> ok
+[18:35:41] <enebo[m]> trying now since I never tried strftime by itself
+[18:36:43] <enebo[m]> I have 30 warmup and run for our warmup so you can probably cut it down
+[18:37:38] <headius> 3?
+[18:37:38] <enebo[m]> yay we are >2x faster than 3.0 on strftime
+[18:38:18] <enebo[m]> sorry 30s warmup and 30s run per item but MRI does not need as much as us to get the result
+[18:38:26] <enebo[m]>           Logger#add     10.732M (± 4.9%) i/s -    321.526M in  30.037837s
+[18:38:35] <enebo[m]> Perhaps there is a gem installed which is native?>
+[18:38:52] <headius> 3.0 slower than 2.6 for me
+[18:39:01] <headius> ah wait
+[18:39:08] <headius> slower on strftime but way way faster on the logger ones
+[18:39:35] <headius> https://gist.github.com/headius/01f49f450ce569657f5c5298135f1885
+[18:39:52] <enebo[m]> yeah so that is mysterious
+[18:40:58] <headius> maybe just a way better logger.rb?
+[18:42:06] <enebo[m]> that makes no sense
+[18:42:11] <headius> not really
+[18:42:26] <enebo[m]> Get this...the strftime I am running is what logger calls at some point
+[18:42:35] <enebo[m]> so it should not be faster than the strftime call
+[18:42:48] <enebo[m]> OR it is not calling that at all for some reason
+[18:42:54] <headius> memoizing?
+[18:43:06] <enebo[m]> the time?
+[18:43:15] <enebo[m]> I guess maybe once a minute :)
+[18:43:15] <headius> well not that
+[18:43:35] <enebo[m]> but the time is only 1M/s
+[18:43:47] <enebo[m]> err for MRI it is only half that
+[18:44:00] <enebo[m]> so for them to get 10M/s they cannot be doing that strftime per call
+[18:44:14] <enebo[m]> but if they don't then they are not getting time as much
+[18:44:36] <enebo[m]> I wonder if they optimize away calling it if it is not really logging
+[18:44:49] <enebo[m]> logger = Logger.new(File::NULL)
+[18:45:49] <headius> if they improved argument handling to avoid all alloc along this path that could explain it
+[18:46:06] <enebo[m]>     if logdev && logdev != File::NULL
+[18:46:06] <headius> it's a mess of varargs and kwargs and optional args and all of it
+[18:46:13] <headius> oh wat
+[18:46:26] <headius> too easy, can't be that
+[18:46:29] <enebo[m]> I mean it has to be slower than the strftime 
+[18:46:44] <enebo[m]> or it is not outputting a time
+[18:46:44] <headius> ok yeah
+[18:46:57] <enebo[m]> so yeah @logdev is nil on 3.0
+[18:46:58] <headius> so if it is actually using the strftime to do add it can't be faster than strftime
+[18:47:06] <headius> mystery ext please stand up
+[18:47:11] <enebo[m]> I am betting money it knows this and therefore is doing nothing at all
+[18:47:36] <enebo[m]>     if @logdev.nil? or severity < level
+[18:47:37] <enebo[m]>       return true
+[18:47:37] <enebo[m]>     end
+[18:47:39] <enebo[m]> boo
+[18:47:57] <enebo[m]> Ok mystery solved
+[18:48:10] <enebo[m]> 3.0 realizes people put log calls into their code but will disable the logger
+[18:48:18] <enebo[m]> by passing in a null logger
+[18:48:21] <headius> so you have to run this with some log level
+[18:48:21] <enebo[m]> so they opt for this
+[18:48:33] <enebo[m]> well you do and you also need a real log source
+[18:48:44] <enebo[m]> if you pass in null log source by bother to call strftime
+[18:48:51] <headius> I remembered why I don't like working with loggin libraries
+[18:49:17] <enebo[m]> I guess this makes sense.  Some people use logger but only turn it on when they have issues
+[18:49:54] <enebo[m]> severity is supposed to be the right mechanism for not logging but I guess enough people swap out the log source itself to make this an opt
+[18:51:11] <enebo[m]> This morning was first time running strftime on 3.0 but I should have realized the problem with the native ext theory 
+[18:51:27] <enebo[m]> So good news...one less thing to do for 3.0
+[18:51:31] <headius> we could do it anyway
+[18:51:41] <enebo[m]> oh for sure
+[18:51:48] <headius> 🧙
+[18:51:59] <headius> hottest piece of code in every app
+[18:52:07] <enebo[m]> we are like 260k i/s or something like that while strftime is 950k i/s
+[18:52:29] <enebo[m]> So we are spending a lot of work in logger itself
+[18:52:42] <enebo[m]> Time.now is being called over and over too
+[18:52:54] <enebo[m]> I looked at that and we have some tiny overhead in getting TZ
+[18:53:19] <enebo[m]> someone did opt that a bit by caching TZ RubyString but we store ENV as a caseinsenitive ruby hash
+[18:53:44] <enebo[m]> This decision maybe is worth thinking about more
+[18:54:21] <enebo[m]> I audited uses of it and we seem to locally look up TZ (we want a String) or process invoke we want a HashMap of Strings
+[18:54:51] <headius> this is quagmire code
+[18:54:53] <enebo[m]> in random ruby code someone may be constantly looking up an env in a hot loop but I question whether that is what we should opt for
+[18:55:11] <headius> I have dipped my toe a few times but it really needs a rework
+[18:55:27] <enebo[m]> This is another place where ENV#[] could be a special site
+[18:55:27] <headius> every time I touch anything in there something else breaks so I am gunshy
+[18:55:53] <enebo[m]> It wouldn't matter either way but of course env gets aliased to lvars and stuff by frameworks so they can test
+[18:56:21] <headius> we can do special call sites for anything
+[18:56:23] <enebo[m]> I did think we could leave it the way we have it and just acknowledge TZ can be a special field we write to whenever it changes
+[18:56:59] <enebo[m]> yeah I just mean env = ENV so people can pass around env makes doing a site less useful
+[18:57:01] <headius> just a matter of identifying a type or method quickly and making it a fast path or having a reasonable fallback, which could just be another specialized site
+[18:57:04] <headius> it all comes out in the wash
+[18:57:20] <headius> well, yeah
+[18:57:21] <enebo[m]> libraries tend to do this so they can test without needing to actively change ENV
+[18:57:53] <enebo[m]> so I callsite cache is only sometimes useful
+[18:58:02] <headius> env has its own methods so it could be specialized, but that gets specific per type
+[18:58:05] <headius> worth it for some I'm sure
+[18:58:13] <headius> it isn't really just a Hash
+[18:58:14] <enebo[m]> TZ though could eliminate a hash lookup by making it a writable field whenever ENV changes
+[18:58:53] <enebo[m]> In the end this was my main takeaway since it is an obviously heavily used field
+[18:59:05] <headius> hmm if indy binding logic could easily tree off different types and base methods, we could specialize a bunch of calls based on what they really do
+[18:59:12] <enebo[m]> and it does not force a big rethink although I think the second huge use of ENV is process execution
+[18:59:15] <headius> maybe nashorn does this
+[18:59:46] <headius> yeah there have been a few passes on this TZ code to cache things
+[19:00:04] <enebo[m]> ENV is mostly a read structure and when it is written it is either a) at beginning of program b) used in testing
+[19:00:32] <enebo[m]> yeah but TZ right now assumes grabbing it out of the RubyHash with a cached TZ Ruby String
+[19:00:52] <enebo[m]> The next opt is to just make TZ a String/ByteList on Ruby (somewhere) with no lookup at all
+[19:01:08] <enebo[m]> on ENV write we duplcaite
+[19:01:16] <headius> yeah and if it doesn't change that is it
+[19:01:29] <headius> alloc is the root of all evil
+[19:01:32] <enebo[m]> for real programs it won't
+[19:01:42] <enebo[m]> for tests it will but we don't care
+[19:02:03] <enebo[m]> for multiple threads if they are live mutating ENV[TZ] and expect it to work they have bigger issues
+[19:02:35] <enebo[m]> fwiw I doubt we are talking about a major gain here either
+[19:02:44] <enebo[m]> It is just some work that can be eliminated
+[19:02:49] <headius> make an IR instruction for TZ
+[19:02:56] <enebo[m]> HAHAH
+[19:03:14] <enebo[m]> strftime(LOGGER)
+[19:04:30] <enebo[m]> funny though...Logger uses 6N but we get 9N worth of values so in theory we could call Time.now less in a super heavy logging situation
+[19:06:03] <headius> gross
+[19:07:35] <enebo[m]> Current impl of strftime will write out 9 digits then adjust the length
+[19:07:57] <enebo[m]> This can be improved but my first simple attempt did not really change anything
+[19:08:23] <enebo[m]> once we site cache the parsed format string I will change this all anyways
+[19:08:29] <headius> are you profiling allocs with something?
+[19:08:42] <headius> it is annoying they keep taking away the built-in profilers
+[19:08:47] <enebo[m]> I did profile with allocs but it was also all really obvious
+[19:09:34] <enebo[m]> I saw the TZ stuff from allocs since we are making .bytes() on the result over and over
+[19:09:50] <headius> oh yeah
+[19:10:27] <enebo[m]> but I eliminated allocating token list,  the tokens themselves, Strings which became bytelists, then the bytelists themselves
+[19:10:51] <enebo[m]> We still create duplicated bytelists for padding when we cannot know the length before hand
+[19:11:49] <enebo[m]> Even in that case I got rid of the most common one by making a longLength method
+[19:12:03] <headius> 9.4 numbers are faster for me with latest merges
+[19:12:06] <headius> not by a lot but faster
+[19:12:15] <enebo[m]> oh for strftime?
+[19:12:36] <enebo[m]> or just in general?
+[19:13:27] <headius> refresh https://gist.github.com/headius/01f49f450ce569657f5c5298135f1885
+[19:16:21] <enebo[m]> ok but this is without my branch merged?
+[19:16:36] <headius> oh is it not merged on master?
+[19:16:54] <enebo[m]> nope and not even on 9.3
+[19:16:59] <enebo[m]> but it will be on both shortly
+[19:17:30] <enebo[m]> MACOS
+[19:17:30] <enebo[m]> Mysterious
+[19:17:32] <headius> LETS DO IT
+[19:19:26] <enebo[m]> HAHAHAH...OMG don't tell me this is from removing taint
+[19:19:39] <headius> that would be nice but unlikely
+[19:19:44] <headius> it's just a bit
+[19:20:04] <headius> a millibit
+[19:20:08] <enebo[m]> well it is a bit but it is also a bit hit by many objects
+[19:20:19] <enebo[m]> which is not to mean the bit set is the piece
+[19:20:29] <enebo[m]> It is very common in code paths
+[19:20:38] <headius> could be
+[19:20:49] <headius> taint was a bit we could never guarantee wouldn't change
+[19:21:08] <headius> useless
+[19:21:25] <enebo[m]> ok I am merging to master (a couple of small conflicts)
+[19:21:27] <headius> I untrust taint
+[19:22:06] <enebo[m]> I am trying to think of what else changed
+[19:22:18] <enebo[m]> I think I did some more changes for arity/signature 
+[19:22:19] <headius> more immutables in core
+[19:22:27] <enebo[m]> yeah more immutable values
+[19:23:06] <headius> more immutable strings, ranges, exotic types... not sure what would be a 
+[19:23:10] <headius> big win
+[19:23:13] <enebo[m]> of course 3.0 logger has same opt
+[19:23:23] <enebo[m]> but strftime is strftime
+[19:25:09] <headius> spiders webs and magic
+[19:26:28] <enebo[m]> https://gist.github.com/enebo/8efdb7448ab47525a555b26bc447abb1
+[19:26:46] <headius> chortle
+[19:27:33] <enebo[m]> so strftime is same speed and the null log opt looks to be much better with indy on
+[19:27:45] <enebo[m]> same speed == same speed after opt
+[19:28:12] <enebo[m]> It is a little noisy since I have other stuff running so it floats around a little bit 940-960ish
+[19:28:58] <enebo[m]> running with indy to see but it should be 1Mish
+[19:28:59] <headius> the rich get richer
+[19:29:34] <headius> did you put indy results somewhere>
+[19:29:49] <enebo[m]> running now
+[19:29:56] <enebo[m]> I will update
+[19:30:02] <headius> oh this is on 9.3
+[19:30:08] <headius> yeah?
+[19:30:14] <enebo[m]> no master
+[19:30:22] <headius> ok
+[19:32:04] <enebo[m]> updated 
+[19:32:29] <enebo[m]> So I was getting closer to 1M earlier so I am not sure if that is a little interference with having other stuff up
+[19:32:40] <headius> decent
+[19:32:55] <enebo[m]> The logger methods themselves no longer do anything so I guess that is only measuring bench/ips overhead
+[19:33:10] <enebo[m]> well they check to null logger and severity
+[19:33:48] <enebo[m]> It is funny how many things in MRI have slowed down since 3.0 came out
+[19:34:08] <headius> maybe 3.1
+[19:34:11] <enebo[m]> I should be seeing how yjit is doing ehre
+[19:34:28] <enebo[m]> 3.1 should show some gains in at least a few places
+[19:34:42] <enebo[m]> when it works out it will be noticeable
+[19:35:11] <headius> meh, JIT is irrelevant if they are allocating too much, so maybe they just figure that out
+[19:35:23] <enebo[m]> but I think the gains on something like rails was still pretty modest
+[19:36:06] <enebo[m]> yeah for something like strftime they are done
+[19:36:35] <enebo[m]> it is what it is since they are calling into C with a series of pointers and a buffer
+[19:37:17] <enebo[m]> and more generally it seems like numbers and things like that are already not subject to memory issues but math is just not a major perf point for most Ruby apps
+[19:37:38] <enebo[m]> specializing array access I think they do get gains
+[19:37:59] <enebo[m]> but I am not as interested in them until they start working on inlining
+[19:54:05] *** Quits: lopex[m] (~lopexm]@2001:470:69fc:105::3158) (K-Lined)
+[19:54:06] *** Quits: boc_tothefuture[ (~boctothef@2001:470:69fc:105::1:3558) (K-Lined)
+[19:54:06] *** Quits: MattWelke[m] (~mattwelke@2001:470:69fc:105::1:34bb) (K-Lined)
+[19:54:06] *** Quits: andrea[m] (~andreanit@2001:470:69fc:105::1:28a8) (K-Lined)
+[19:54:07] *** Quits: CharlesOliverNut (~gitterhea@2001:470:69fc:105::311e) (K-Lined)
+[19:54:07] *** Quits: 068AAB7IX (~gittertim@2001:470:69fc:105::314b) (K-Lined)
+[19:54:07] *** Quits: XavierNoriaGitte (~gitterfxn@2001:470:69fc:105::3111) (K-Lined)
+[19:54:07] *** Quits: JulesIvanicGitte (~gittergui@2001:470:69fc:105::3118) (K-Lined)
+[19:54:07] *** Quits: BlaneDabneyGitte (~gitterrae@2001:470:69fc:105::3140) (K-Lined)
+[19:54:07] *** Quits: annabackiyam[m] (~annabacki@2001:470:69fc:105::1:2349) (K-Lined)
+[19:54:07] *** Quits: RomainManni-Buca (~gitterrma@2001:470:69fc:105::3146) (K-Lined)
+[19:54:07] *** Quits: MarcinMielyskiGi (~gitterlop@2001:470:69fc:105::3134) (K-Lined)
+[19:54:07] *** Quits: UweKuboschGitter (~gitterdon@2001:470:69fc:105::3100) (K-Lined)
+[19:54:08] *** Quits: enebo[m] (~enebo@2001:470:69fc:105::e6) (K-Lined)
+[19:54:09] *** Quits: anewbhav[m] (~anewbhavm@2001:470:69fc:105::1:3467) (K-Lined)
+[19:54:10] *** Quits: Leonardomejiabus (~thebiglor@2001:470:69fc:105::1:3a2) (K-Lined)
+[19:54:10] *** Quits: kares[m] (~karesmatr@2001:470:69fc:105::30d1) (K-Lined)
+[19:54:10] *** Quits: jswenson[m] (~jswensonm@2001:470:69fc:105::fd45) (K-Lined)
+[19:54:10] *** Quits: klobuczek[m] (~klobuczek@2001:470:69fc:105::1:24c) (K-Lined)
+[19:54:10] *** Quits: MattPattersonGit (~gitterfid@2001:470:69fc:105::3105) (K-Lined)
+[19:54:10] *** Quits: ChrisSeatonGitte (~gitterchr@2001:470:69fc:105::30fb) (K-Lined)
+[19:54:11] *** Quits: MateuszFryc[m] (~lirimaery@2001:470:69fc:105::1:3640) (K-Lined)
+[19:54:14] *** Quits: JasonvanZyl[m] (~jasonvanz@2001:470:69fc:105::dbb4) (K-Lined)
+[19:54:16] *** Quits: edipofederle[m] (~edipofede@2001:470:69fc:105::30f1) (K-Lined)
+[19:54:16] *** Quits: nirvdrum[m] (~nirvdrumm@2001:470:69fc:105::1:2b86) (K-Lined)
+[19:54:16] *** Quits: danieljrubyquest (~danieljru@2001:470:69fc:105::d505) (K-Lined)
+[19:54:16] *** Quits: basshelal[m] (~basshelal@2001:470:69fc:105::30e7) (K-Lined)
+[19:54:17] *** Quits: kai[m] (~kaikdeorg@2001:470:69fc:105::c43) (K-Lined)
+[19:54:17] *** Quits: rcrews[m] (~rcrewsmat@2001:470:69fc:105::1:3583) (K-Lined)
+[19:54:18] *** Quits: OlleJonssonGitte (~gitteroll@2001:470:69fc:105::313b) (K-Lined)
+[19:54:18] *** Quits: KarolBucekGitter (~gitterkar@2001:470:69fc:105::3127) (K-Lined)
+[19:54:18] *** Quits: mattpatt[m] (~mattpattm@2001:470:69fc:105::315d) (K-Lined)
+[19:54:18] *** Quits: byteit101[m] (~byteit101@2001:470:69fc:105::30ec) (K-Lined)
+[19:54:20] *** Quits: akshsingh[m] (~akshsingh@2001:470:69fc:105::1:3519) (K-Lined)
+[19:54:21] *** Quits: puritylake[m] (~puritylak@2001:470:69fc:105::1:1904) (K-Lined)
+[19:54:21] *** Quits: rebelwarrior[m] (~rebelwarr@2001:470:69fc:105::beba) (K-Lined)
+[19:54:21] *** Quits: JesseChavezGitte (~gitterjes@2001:470:69fc:105::3122) (K-Lined)
+[19:54:21] *** Quits: liamwhiteGitter[ (~gitterlia@2001:470:69fc:105::312d) (K-Lined)
+[19:54:21] *** Quits: FlorianDoubletGi (~gitterflo@2001:470:69fc:105::310c) (K-Lined)
+[19:54:23] *** Quits: headius (~headius@2001:470:69fc:105::3027) (K-Lined)
+[19:54:23] *** Quits: AndyMaleh[m] (~andymaleh@2001:470:69fc:105::1:1a78) (K-Lined)
+[19:54:23] *** Quits: 074AACU6W (~gittertir@2001:470:69fc:105::314f) (K-Lined)
+[20:05:54] *** Joins: ahorek[m] (~ahorekmat@2001:470:69fc:105::30e2)
+[20:07:54] *** Joins: subbu (~subbu@user/subbu)
+[20:09:25] *** Quits: fidothe (sid1130@uxbridge.irccloud.com) (Read error: Connection reset by peer)
+[20:10:02] *** Quits: siasmj (sid6106@lymington.irccloud.com) (Read error: Connection reset by peer)
+[20:12:01] *** Joins: siasmj (sid6106@lymington.irccloud.com)
+[20:14:42] *** Joins: fidothe (sid1130@uxbridge.irccloud.com)
+[20:18:26] *** Joins: enebo[m] (~enebo@2001:470:69fc:105::e6)
+[20:18:26] *** Joins: kai[m] (~kaikdeorg@2001:470:69fc:105::c43)
+[20:18:26] *** Joins: lopex[m] (~lopexm]@2001:470:69fc:105::3158)
+[20:18:26] *** Joins: MatrixTravelerbo (~voyagert2@2001:470:69fc:105::22)
+[20:18:26] *** Joins: subbu[m] (~subbu@user/subbu)
+[20:18:27] *** Joins: nilsding (~nilsding@user/nilsding)
+[20:18:27] *** Joins: JasonvanZyl[m] (~jasonvanz@2001:470:69fc:105::dbb4)
+[20:18:27] *** Joins: andrea[m] (~andreanit@2001:470:69fc:105::1:28a8)
+[20:18:37] *** Joins: basshelal[m] (~basshelal@2001:470:69fc:105::30e7)
+[20:18:37] *** Joins: byteit101[m] (~byteit101@2001:470:69fc:105::30ec)
+[20:18:38] *** Joins: Leonardomejiabus (~thebiglor@2001:470:69fc:105::1:3a2)
+[20:18:38] *** Joins: UweKuboschGitter (~gitterdon@2001:470:69fc:105::3100)
+[20:18:38] *** Joins: CharlesOliverNut (~gitterhea@2001:470:69fc:105::311e)
+[20:18:38] *** Joins: JesseChavezGitte (~gitterjes@2001:470:69fc:105::3122)
+[20:18:38] *** Joins: rebelwarrior[m] (~rebelwarr@2001:470:69fc:105::beba)
+[20:18:38] *** Joins: puritylake[m] (~puritylak@2001:470:69fc:105::1:1904)
+[20:18:38] *** Joins: FlorianDoubletGi (~gitterflo@2001:470:69fc:105::310c)
+[20:18:38] *** Joins: XavierNoriaGitte (~gitterfxn@2001:470:69fc:105::3111)
+[20:18:38] *** Joins: MattPattersonGit (~gitterfid@2001:470:69fc:105::3105)
+[20:18:38] *** Joins: ChrisSeatonGitte (~gitterchr@2001:470:69fc:105::30fb)
+[20:18:38] *** Joins: JulesIvanicGitte (~gittergui@2001:470:69fc:105::3118)
+[20:18:38] *** Joins: anewbhav[m] (~anewbhavm@2001:470:69fc:105::1:3467)
+[20:18:38] *** Joins: klobuczek[m] (~klobuczek@2001:470:69fc:105::1:24c)
+[20:18:38] *** Joins: MattWelke[m] (~mattwelke@2001:470:69fc:105::1:34bb)
+[20:18:38] *** Joins: BlaneDabneyGitte (~gitterrae@2001:470:69fc:105::3140)
+[20:18:38] *** Joins: OlleJonssonGitte (~gitteroll@2001:470:69fc:105::313b)
+[20:18:38] *** Joins: kares[m] (~karesmatr@2001:470:69fc:105::30d1)
+[20:18:38] *** Joins: RomainManni-Buca (~gitterrma@2001:470:69fc:105::3146)
+[20:18:38] *** Joins: boc_tothefuture[ (~boctothef@2001:470:69fc:105::1:3558)
+[20:18:38] *** Joins: TimGitter[m]1 (~gittertim@2001:470:69fc:105::314b)
+[20:18:38] *** Joins: akshsingh[m] (~akshsingh@2001:470:69fc:105::1:3519)
+[20:18:38] *** Joins: TimGitter[m] (~gittertir@2001:470:69fc:105::314f)
+[20:18:39] *** Joins: liamwhiteGitter[ (~gitterlia@2001:470:69fc:105::312d)
+[20:18:39] *** Joins: MarcinMielyskiGi (~gitterlop@2001:470:69fc:105::3134)
+[20:18:39] *** Joins: rcrews[m] (~rcrewsmat@2001:470:69fc:105::1:3583)
+[20:18:39] *** Joins: KarolBucekGitter (~gitterkar@2001:470:69fc:105::3127)
+[20:18:39] *** Joins: jswenson[m] (~jswensonm@2001:470:69fc:105::fd45)
+[20:18:39] *** Joins: MateuszFryc[m] (~lirimaery@2001:470:69fc:105::1:3640)
+[20:18:39] *** Joins: edipofederle[m] (~edipofede@2001:470:69fc:105::30f1)
+[20:18:39] *** Joins: danieljrubyquest (~danieljru@2001:470:69fc:105::d505)
+[20:18:39] *** Joins: nirvdrum[m] (~nirvdrumm@2001:470:69fc:105::1:2b86)
+[20:18:39] *** Joins: AndyMaleh[m] (~andymaleh@2001:470:69fc:105::1:1a78)
+[20:18:39] *** Joins: annabackiyam[m] (~annabacki@2001:470:69fc:105::1:2349)
+[20:18:40] *** Joins: mattpatt[m] (~mattpattm@2001:470:69fc:105::315d)
+[20:18:40] *** Joins: headius (~headius@2001:470:69fc:105::3027)
+[20:29:27] *** Quits: MatrixTravelerbo (~voyagert2@2001:470:69fc:105::22) (Quit: Client limit exceeded: 20000)
+[20:30:45] *** Quits: subbu[m] (~subbu@user/subbu) (Quit: Client limit exceeded: 20000)
+[20:31:33] *** Quits: ahorek[m] (~ahorekmat@2001:470:69fc:105::30e2) (Quit: Client limit exceeded: 20000)
+[20:31:52] *** Quits: nilsding (~nilsding@user/nilsding) (Quit: Client limit exceeded: 20000)
+[22:59:56] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 246 seconds)
+[23:18:56] *** Joins: subbu (~subbu@user/subbu)

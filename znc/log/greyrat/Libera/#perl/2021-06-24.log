@@ -1,0 +1,1138 @@
+[00:01:16] *** Quits: Joel (~jjshoe@user/joel) (Quit: ZNC 1.7.5+deb4 - https://znc.in)
+[00:08:23] *** Joins: JoelJoel (~jjshoe@user/joel)
+[00:10:42] *** JoelJoel is now known as Joel
+[00:12:44] <mjgardner> If I do something like `*foo = \&bar;`, is there any way in `bar` that I can tell I was actually called with `foo`? `(caller 0)[3]` seems to always contain `main::bar`.
+[00:13:59] <Grinnz> no
+[00:14:18] <Grinnz> that assignment is an alias - they are the same subroutine
+[00:14:47] <mjgardner> Is there a better way than doing that assignment that will tell me which I was called as?
+[00:15:07] <Grinnz> only by making it a wrapper, which will introduce another stack frame
+[00:15:23] <Grinnz> sub foo { bar @_ }
+[00:15:56] <Grinnz> i suspect there's a better option depending what your end goal is
+[00:16:02] <choroba> McAfee dead?
+[00:16:34] <nirnam> just read about it
+[00:16:43] *** Quits: LuksNuke (~LuksNuke@94.242.245.63) (Remote host closed the connection)
+[00:16:43] <nirnam> found dead in prison cell after Spanish court approved the extradition
+[00:18:10] <mjgardner> Grinnz: The end goal is that I have a private subroutine _foo that I want to now make public foo, and I want to warn that calling it as _foo is deprecated.
+[00:18:10] <Grinnz> mjgardner: for example, if you just want the subroutine to act differently when called a different way, a common mechanism is to write a wrapper which uses local to locally set some (private) state while the subroutine runs
+[00:18:32] <Grinnz> ah, so yes just make _foo a wrapper which does the deprecation warning then calls foo
+[00:18:54] <simcop2387> maybe doing a replacement after the first warning too
+[00:19:46] <Grinnz> you can write it like: sub _foo { warn 'deprecated blah blah; goto &foo; } to remove the extra stack frame
+[00:20:10] <Grinnz> it's slower than a normal wrapper, but since it's deprecated i doubt that's a concern
+[00:20:32] <Grinnz> (don't worry, that's not a real goto)
+[00:20:44] *** Quits: akaWolf (~akaWolf@akawolf.org) (Ping timeout: 250 seconds)
+[00:21:50] *** Joins: SincereFox (uid337158@user/sincerefox)
+[00:22:35] <simcop2387> sub _foo {warn 'deprecated!'; no warnings 'redefined'; *_foo = \&foo; goto &foo}; if you don't mind only a single warning, that'll get rid of the future cost on any other calls but make it a bit more difficult to find them from the warnings themselves
+[00:24:34] <mst> sub foo { state $warned = do { warn 'deprecated' }; <original body of foo }
+[00:25:07] <Grinnz> ^ for _foo, but cute
+[00:25:41] <mst> well, that would be in a case where I can edit the code
+[00:25:43] *** Quits: kensanata (~user@user/kensanata) (Ping timeout: 244 seconds)
+[00:25:49] <mst> I was riffing on the 'warn once with basically no overhead'
+[00:25:52] <Grinnz> yes, but he only wants to deprecated _foo not foo
+[00:25:58] <Grinnz> -d
+[00:26:01] <mst> oh, right, misread that bit
+[00:26:56] <mst> curdlesnoot: 5.12 was when keywords showed up in the hopes of killing Devel::Declare - 5.16 or so was when they reached the point of actually being capable of doing so
+[00:27:30] <mst> it still amuses me that the basic way that came about was 'I tricked zefram into looking at the Devel::Declare source code'
+[00:27:42] <xenu> fortunately no one has to care about pre-5.16 perls
+[00:27:56] <xenu> apart from retrocomputing enthusiasts 
+[00:28:09] <mst> and red hat users, probably
+[00:28:09] <xenu> (they even have a channel on irc.perl.org - #toolchain)
+[00:28:37] <perlbot> mgardner pasted a new file at https://l.perl.bot/p/q55d1s - Deprecate private to public
+[00:29:07] <xenu> centos 6, which had 5.10, has been eol for a few months now
+[00:29:08] *** Quits: Guest9 (~Guest9@43.241.144.49) (Quit: Connection closed)
+[00:29:23] <mjgardner> I know `exists` is a stupid name since it's a keyword.
+[00:31:06] <Grinnz> mjgardner: instead of the caller thing, you can just Carp::carp to include the caller location
+[00:31:52] <Grinnz> (which will include the line too, importantly)
+[00:32:07] <mjgardner> Cool
+[00:33:01] *** Joins: kitsunenokenja (~kitsunech@68.91.220.96)
+[00:33:45] <mst> Grinnz: note I use that trick for 'require' quite a bit
+[00:33:49] <perlbot> mgardner pasted a new file at https://l.perl.bot/p/ung3ds - Deprecate private with carp
+[00:34:10] <mst> since it's measurably faster than a no-op require
+[00:34:51] <Grinnz> mst: weird, maybe there's something to be optimized in no-op require?
+[00:36:29] *** Joins: akaWolf (~akaWolf@akawolf.org)
+[00:36:59] *** Joins: slu (uid501941@id-501941.brockwell.irccloud.com)
+[00:37:27] <Grinnz> i guess pad variable existence is just faster to determine than global hash lookup somehow?
+[00:39:08] <gordonfish> <wtfrant> Holy hell, why is it so hard to find if an SSD is [STMQP]LC ??! I don't even see this info on most maker's web-sites, but end up having to scour review sites. WTH is so hard to provide three effing letters. Three. Most say if it's 3D Nand, just put it next to that, you sadistic bungholes. </wtfrant>
+[00:40:07] *** Joins: jetchisel (~jetchisel@user/jetchisel)
+[00:44:27] *** Quits: clf59 (~clf59@user/clf59) (Quit: Textual IRC Client: www.textualapp.com)
+[00:46:45] <mst> Grinnz: I didn't dig in, but for situations where the function is either never called or called -lots- (or where I'm doing it to break a require loop) it's been very much worth it
+[00:48:55] *** Quits: yzhernand (~yzhernand@2607:fb90:7adf:9ceb:48dd:afff:fe87:1b6) (Ping timeout: 250 seconds)
+[00:50:19] <simcop2387> so in off topic news, John McAfee apparently committed suicide in spanish jail after the ruling that he could be extradited
+[00:55:51] <gordonfish> Didn't he go insane?
+[00:56:04] <simcop2387> roughly anyway
+[00:58:37] <mst> he'd been nuts for a long time
+[00:58:41] <kirch> he apparently defrauded a lot of people https://en.wikipedia.org/wiki/John_McAfee#Legal_issues
+[00:58:45] <Paperbot> Link title(s): [ John McAfee - Wikipedia ]
+[00:59:06] <mst> the world will be a less interesting place without him, though also a better one
+[00:59:33] <xenu> if you're into conspiracy theories: https://twitter.com/officialmcafee/status/1200864283766251521
+[00:59:34] <Paperbot> John McAfee (@officialmcafee) 1y206d ago: Getting subtle messages from U.S. officials saying, in effect: "We're coming for you McAfee! We're going to kill yourself". I got a tattoo today just in case. If I suicide myself, I didn't. I was whackd. Check my right arm.  $WHACKD available only on https://mcafeedex.com/:)
+[01:00:19] <xenu> come to think of it, those subtle messages could be subpoenas
+[01:01:12] <mst> kirch: also, the belize police are sufficiently corrupt that that's not necessarily dispositive
+[01:01:18] <simcop2387> xenu: and his wife's tweet on sunday, https://twitter.com/theemrsmcafee/status/1406568631249551362
+[01:01:19] <Paperbot> Janice McAfee (@theemrsmcafee) 3d9h ago: Happy Father's Day @officialmcafee. Though you are spending the day in prison know that you are loved and appreciated.  #FreeJohnMcAfee #FreeMcAfee
+[01:01:26] <simcop2387> see the attached pictures
+[01:01:29] <mst> kirch: he was an awful human being and I'm not troubled by him being dead
+[01:01:39] *** Quits: WinterStar (~IceLight@user/icelight) (Quit: WeeChat 3.2)
+[01:02:03] <kirch> indeed
+[01:02:03] <mst> kirch: but that doesn't mean he was guilty of the specific things he was accused of rather than a bunch of other things instead ;)
+[01:02:10] <kirch> also true
+[01:02:24] <simcop2387> mst: i'm troubled by it because it means that we'll probably never uncover the skeletons that he had hidden away and get proper justice/closure for those wronged.
+[01:02:41] <kirch> he had the Ocean Madness
+[01:03:08] *** Joins: khosruw (~khosruw@vps-6df5f188.vps.ovh.net)
+[01:03:16] <mst> simcop2387: I sincerely doubt that was ever on the cards
+[01:03:50] <simcop2387> as long as he was alive it was possible, likely or probable is a different question
+[01:04:10] <khosruw> hey mst, what's up? it's been a long time I didn't chat with you.. just greeting :-)
+[01:04:29] <mst> simcop2387: in theory, certainly
+[01:04:40] <mst> kirch: yo
+[01:04:41] <mst> bah
+[01:04:43] <mst> khosruw: yo
+[01:06:04] <lopid> word
+[01:06:35] <mst> khosruw: welcome to our new home now we've escaped from rasenistan
+[01:07:04] *** Joins: feriman (~feriman@188.163.113.127)
+[01:07:10] <khosruw> mst thx :-)
+[01:07:38] *** Quits: tcohen (~tcohen@192.141.149.57) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[01:09:23] <simcop2387> in rasenistan news apparently they lost yet another staffer
+[01:10:08] <mst> lol
+[01:10:19] <khosruw> what's/who's rasenistan?
+[01:10:26] * gordonfish really hopes those "#FreeJohnMcAfee #FreeMcAfee" tags don't become #ResurrectJohnMcAfee #ResurrectMcAfee
+[01:10:53] <khosruw> oh dear McAfee
+[01:10:55] <mst> khosruw: rasenstan is the nick of the asshole who hijacked and destroy freenode
+[01:11:04] <mst> khosruw: rasenistan is my insulting name for what's left
+[01:11:13] <xenu> rasengan*
+[01:11:17] <mst> sorry, yes
+[01:11:25] <mst> simcop2387: rasenistan is running short of rasen-stans :D
+[01:11:37] *** Joins: RandalSchwartz (~Adium@c-73-221-215-233.hsd1.wa.comcast.net)
+[01:11:42] <khosruw> oh i got it
+[01:12:34] <gordonfish> ++mst # rasenistan
+[01:12:45] <Grinnz> perlbot: freenode
+[01:12:45] <perlbot> Grinnz: A former glorious empire that changed names, with its past name marred by a mad king with a cocaine habbit.
+[01:12:55] <Grinnz> perlbot: freenode is also https://www.kline.sh/
+[01:12:55] <perlbot> Grinnz: Stored freenode is A former glorious empire that changed names, with its past name marred by a mad king with a cocaine habbit. | https://www.kline.sh/
+[01:12:55] <Paperbot> Link title(s): [ freenode now belongs to Andrew Lee, and I'm leaving for a new network. ]
+[01:13:12] <Grinnz> perlbot: freenode is also https://www.devever.net/~hl/freenode_suicide
+[01:13:12] <Paperbot> Link title(s): [ Freenode commits suicide, is no longer a serious IRC network ]
+[01:13:12] <perlbot> Grinnz: Stored freenode is A former glorious empire that changed names, with its past name marred by a mad king with a cocaine habbit. | https://www.kline.sh/ | https://www.devever.net/~hl/freenode_suicide
+[01:13:34] <khosruw> RIP FreeNode
+[01:13:46] <khosruw> Long Life Libera
+[01:13:54] <khosruw> <3
+[01:13:59] <simcop2387> yea was about to mention the devever blog links for that factoid when you added kline
+[01:13:59] <Adura> https://netsplit.de/networks/top10.php.php From the most popular to the second most.
+[01:14:00] <Paperbot> Link title(s): [ IRC Networks - Top 10 in the annual comparison ]
+[01:14:39] <Grinnz> surprised it's keeping ircnet numbers after what they did
+[01:14:49] <mst> Adura: and I expect that to go down as people notice their idle bouncers
+[01:14:52] <simcop2387> Adura: that drop looks like a great roller coaster.  also i wonder if the numbers are actually being reported by them accurately
+[01:15:12] <Grinnz> no reason to believe they aren't, but also no reason to believe they are
+[01:15:17] <Adura> Yeah, might not be a good indication of activity.
+[01:15:28] <mst> since most of the most active channels got destroyed
+[01:15:32] <mst> anyway
+[01:15:34] * mst -> pub
+[01:17:12] *** Quits: Linux77 (~kvirc@186.235.105.168) (Ping timeout: 268 seconds)
+[01:17:39] <khosruw> iSH is so cool
+[01:19:24] <mjgardner> Slow though
+[01:22:58] <khosruw> exit
+[01:23:03] <khosruw> :)))))
+[01:23:07] <khosruw> exit()
+[01:23:11] <khosruw> F
+[01:23:17] *** Quits: khosruw (~khosruw@vps-6df5f188.vps.ovh.net) (Quit: leaving)
+[01:26:42] * GumbyPAN CPAN Upload: Archive-Libarchive-Extract-0.03 by PLICEASE https://metacpan.org/release/PLICEASE/Archive-Libarchive-Extract-0.03
+[01:26:43] * GumbyPAN CPAN Upload: Slovo-2021.06.16 by BEROV https://metacpan.org/release/BEROV/Slovo-2021.06.16
+[01:33:50] *** Quits: furrymcgee (~devuan@31.179.186.66) (Quit: leaving)
+[01:35:27] *** Quits: feriman (~feriman@188.163.113.127) (Quit: WeeChat 3.2)
+[01:38:33] *** Joins: metasintactic (~thunder@185.163.110.100)
+[01:38:42] *** Quits: metasintactic (~thunder@185.163.110.100) (Changing host)
+[01:38:42] *** Joins: metasintactic (~thunder@user/thunder)
+[01:40:34] *** Joins: yzhernand (~yzhernand@2607:fb90:7adf:9ceb:1469:e4ff:fe32:fa9)
+[01:40:46] *** Quits: thunder (~thunder@user/thunder) (Ping timeout: 265 seconds)
+[01:44:54] *** Joins: ghenry (~ghenry@ghenry.plus.com)
+[01:49:56] *** metasintactic is now known as thunder
+[01:49:58] *** ghenry is now known as gavinhenry
+[01:51:28] *** gavinhenry is now known as ghenry
+[01:51:59] *** Quits: tg (~tg@rockylinux/infra/tg) (Quit: tg)
+[01:57:02] *** NODE is now known as Guest4652
+[01:58:04] *** Guest4652 is now known as NODE
+[01:59:30] *** Quits: nirnam (~nirnam@1.47.74.246) (Quit: Lost terminal)
+[02:02:08] *** NODE is now known as Guest9705
+[02:03:04] *** Guest9705 is now known as ChanSaver
+[02:05:10] *** Quits: yzhernand (~yzhernand@2607:fb90:7adf:9ceb:1469:e4ff:fe32:fa9) (Ping timeout: 250 seconds)
+[02:07:24] *** Joins: yzhernand (~yzhernand@128.84.95.235)
+[02:08:04] *** ChanSaver is now known as NODE
+[02:08:28] *** Joins: bmeneg_ (~Bruno@2001:1284:f013:96c9:a901:d800:9045:c7c5)
+[02:11:38] *** Quits: bmeneg (~Bruno@2001:1284:f016:80b:dc9:61a6:3fee:5334) (Ping timeout: 252 seconds)
+[02:11:47] * GumbyPAN CPAN Upload: Net-FullAuto-1.0000600 by REEDFISH https://metacpan.org/release/REEDFISH/Net-FullAuto-1.0000600
+[02:12:19] *** Quits: NODE (~NODE@2a03:4000:1a:7aa::2) (Killed (NickServ (GHOST command used by [ic]!~iczero@hellomouse/dev/iczero)))
+[02:12:33] *** Joins: xenial-user5 (~androirc@3EC97C6F.catv.pool.telekom.hu)
+[02:18:25] *** Joins: whynot (~whynot@37.73.56.157)
+[02:20:25] *** Quits: pj (~pj@ghettoforge/pj) (Ping timeout: 244 seconds)
+[02:24:19] *** Quits: gizmomathboy (~gizmomath@206.127.53.107) (Quit: Leaving)
+[02:30:09] *** acidsys is now known as LSD
+[02:30:32] *** Joins: whynot_ (~whynot@88.155.58.86)
+[02:31:10] *** Quits: kitsunenokenja (~kitsunech@68.91.220.96) (Ping timeout: 250 seconds)
+[02:31:23] *** Quits: whynot (~whynot@37.73.56.157) (Killed (NickServ (GHOST command used by whynot_!~whynot@88.155.58.86)))
+[02:31:27] *** whynot_ is now known as whynot
+[02:31:49] * GumbyPAN CPAN Upload: Alien-Build-Plugin-Extract-Libarchive-0.01 by PLICEASE https://metacpan.org/release/PLICEASE/Alien-Build-Plugin-Extract-Libarchive-0.01
+[02:33:17] *** Joins: pj (~pj@ghettoforge/pj)
+[02:33:52] *** Quits: xenial-user5 (~androirc@3EC97C6F.catv.pool.telekom.hu) (Ping timeout: 246 seconds)
+[02:36:42] *** Quits: haj (~haj@ip5f5beb42.dynamic.kabel-deutschland.de) (Quit: Leaving.)
+[02:52:42] *** Joins: yates (~user@fv-nc-f7af8b91e1-234237-1.tingfiber.com)
+[02:53:30] <yates> in trying to install LaTeXML (from git source) i'm getting: Can't locate ExtUtils/MakeMaker.pm in @INC (you may need to install the ExtUtils::MakeMaker module) (@INC contains: /usr/local/lib64/perl5/5.32 /usr/local/share/perl5/5.32 /usr/lib64/perl5/vendor_perl /usr/share/perl5/vendor_perl /usr/lib64/perl5 /usr/share/perl5) at Makefile.PL line 6.
+[02:54:02] <yates> how do i install ExtUtils::MakeMaker module?
+[02:54:52] <Adura> Assuming it'd not be on your system perl, cpan
+[02:55:26] <simcop2387> This is so wondefully stupid.  https://news.ycombinator.com/item?id=27579759
+[02:55:27] <Paperbot> Link title(s): [ PNG files can be animated via network latency | Hacker News ]
+[02:55:52] <yates> Adura: how do i see if it's "on my system perl", and what is cpan?
+[02:55:59] <yates> i'm a perl virgin...
+[02:56:21] <simcop2387> perlbot: core ExtUtils::MakeMaker
+[02:56:23] <perlbot> simcop2387: ExtUtils::MakeMaker Added to perl core as of 5
+[02:56:56] <simcop2387> yates, it's part of perl.  If it's not thrre than your perl is incomplete or broken.  How did you install it?
+[02:56:57] <Adura> That'd certainly suggest you only have system perl.
+[02:58:36] <Grinnz> yates: what distribution?
+[02:58:37] <yates> Adura: then how do i install it?
+[02:58:39] <Grinnz> (of linux)
+[02:58:44] <yates> Grinnz: fedora 33
+[02:58:47] <Grinnz> dnf install perl
+[02:59:08] <Grinnz> (the parts that come built-in are not quite a complete perl core)
+[02:59:28] <Grinnz> you may also need gcc and perl-devel
+[02:59:31] <yates> Grinnz: do i need to uninstall what is currently on my system first?
+[02:59:34] <Grinnz> no
+[03:01:31] <yates> ok that got me going - thanks
+[03:01:52] * GumbyPAN CPAN Upload: Dist-Zilla-PluginBundle-Author-Plicease-2.66 by PLICEASE https://metacpan.org/release/PLICEASE/Dist-Zilla-PluginBundle-Author-Plicease-2.66
+[03:02:34] *** Quits: yzhernand (~yzhernand@128.84.95.235) (Ping timeout: 246 seconds)
+[03:02:52] <Grinnz> once you have those, it will be easier to install LaTeXML from CPAN than git
+[03:03:10] *** Joins: yzhernand (~yzhernand@2607:fb90:7adf:9ceb:e48a:f4ff:fe6a:eb7d)
+[03:03:14] <yates> i'm building it from source
+[03:03:28] <yates> actually it's already built - i'm running the tests now
+[03:03:30] <Grinnz> ah, well, you will need to install its dependencies first
+[03:04:09] <Grinnz> if you install perl-App-cpanminus with dnf, you should be able to do `cpanm --installdeps .` in the source dir
+[03:05:17] <yates> Grinnz: well the first two steps (including make) appeared to complete without error: https://paste.centos.org/view/5100abe9
+[03:05:18] <Paperbot> Link title(s): [ UNTITLED - Pastebin Service ]
+[03:05:20] <Grinnz> or, you can look in the Makefile.PL and find the dnf package supplying each dependency
+[03:05:28] <yates> i'm going by this guide: https://dlmf.nist.gov/LaTeXML/get.html
+[03:05:29] <Paperbot> Link title(s): [ Get LaTeXML‣ LaTeXML A LaTeX to XML/HTML/MathML Converter ]
+[03:05:30] <Grinnz> with dnf whatprovides 'perl(XML::LibXML)' for example
+[03:06:07] <Grinnz> Image::Size and Pod::Parser are not installed, as it warned about
+[03:06:47] <Grinnz> those instructions don't mention dependencies, unfortunately
+[03:07:34] *** Quits: yzhernand (~yzhernand@2607:fb90:7adf:9ceb:e48a:f4ff:fe6a:eb7d) (Ping timeout: 250 seconds)
+[03:07:49] <yates> Grinnz: are you saying 'cpanm --installdeps .' somehow automatically looks at the install files and grabs the necessary dependencies?
+[03:07:55] <Grinnz> yes
+[03:08:00] <Grinnz> that's what cpan clients do
+[03:08:03] <yates> ok let me do that
+[03:08:05] *** Joins: yzhernand (~yzhernand@2607:fb90:7adf:9ceb:c066:87ff:fea4:a821)
+[03:08:22] *** Joins: tcohen (~tcohen@192.141.149.65)
+[03:08:31] <Grinnz> it will install them to your local::lib in your homedir, which you will need to activate if you haven't already
+[03:08:35] <Grinnz> (cpanm will warn about this if so)
+[03:08:44] *** Quits: choroba (~E_Choroba@89-101-243-80.cust.centrio.cz) (Quit: Leaving)
+[03:09:01] <yates> ok the plot thickens..
+[03:11:01] <yates> it looks like it installed stuff to /home/yates/perl5
+[03:11:06] <yates> is that ok?
+[03:11:23] <yates> https://paste.centos.org/view/6d9d16b6
+[03:11:25] <Paperbot> Link title(s): [ UNTITLED - Pastebin Service ]
+[03:12:12] <yates> should i run the command as root so it's installed to the system directories?
+[03:12:20] *** Quits: yzhernand (~yzhernand@2607:fb90:7adf:9ceb:c066:87ff:fea4:a821) (Ping timeout: 250 seconds)
+[03:12:28] *** Joins: brtastic (~Thunderbi@185.24.91.138)
+[03:12:28] <Grinnz> yep that's your local::lib
+[03:12:43] *** Quits: tcohen (~tcohen@192.141.149.65) (Ping timeout: 246 seconds)
+[03:12:44] <Grinnz> no, installing with cpan clients to system perl is usually a bad idea
+[03:13:26] <yates> ok i'm still getting Warning: prerequisite Image::Size 0 not found.
+[03:13:26] <Grinnz> to enable your local::lib, see the "from a .bash_profile or.." https://metacpan.org/pod/local::lib
+[03:13:26] <Paperbot> Link title(s): [ local::lib - create and use a local lib/ for perl modules with PERL5LIB - metacpan.org ]
+[03:13:31] *** Joins: yzhernand (~yzhernand@2607:fb90:7adf:9ceb:4cc3:baff:fe91:5136)
+[03:13:41] <Grinnz> and then either run that command within your current session, or restart your shell session
+[03:15:38] <yates> what command?
+[03:15:52] <yates> oh ok
+[03:15:53] <yates> i see
+[03:15:58] <Grinnz> the eval command in that synopsis, which should be put in your bash config
+[03:15:59] *** Quits: gast0n (~g4570n@user/gast0n) (Ping timeout: 265 seconds)
+[03:16:51] *** Quits: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net) (Quit: leaving)
+[03:16:56] *** Joins: gast0n (~g4570n@user/gast0n)
+[03:17:58] *** Quits: yzhernand (~yzhernand@2607:fb90:7adf:9ceb:4cc3:baff:fe91:5136) (Ping timeout: 250 seconds)
+[03:18:09] *** Joins: yzhernand (~yzhernand@2607:fb90:7adf:9ceb:d82c:aff:feeb:28f5)
+[03:18:10] <Grinnz> also that local::lib isn't managed by the package manager, so it'll be invalid if you upgrade fedora and it upgrades the perl version
+[03:18:21] <Grinnz> just keep that in mind
+[03:18:29] <yates> this is really a freaking pain then. 
+[03:18:33] <yates> not very maintainable
+[03:18:48] <Grinnz> well, it depends what sort of maintainable you need
+[03:19:02] <yates> i want my shit to just work after i installed it.
+[03:19:11] <Grinnz> going off the system perl, the easiest futureproof method is if you can get the dependencies from dnf
+[03:19:24] <yates> now you tell me
+[03:19:37] <Grinnz> i did mention that :P
+[03:19:49] <yates> step 4a subparaph i?
+[03:20:02] <Adura> I just have perlbrew build my own perl.
+[03:20:05] <yates> no really, this was confusing.
+[03:20:42] <yates> actually, doh!
+[03:20:53] <yates> i should have just tried reinstalled latexml from dnf
+[03:20:57] <Grinnz> `dnf install 'perl(XML::LibXML)'` (for each dependency) should work, i believe
+[03:21:15] <Grinnz> well yes, you insisted you wanted to install it from source though :P
+[03:21:17] <yates> i just recently upgraded from f32 to f33 - maybe the problem i'm seeing there was fixed.
+[03:21:29] <Grinnz> mm... unlikely, it hasn't had a release yet
+[03:21:41] <Grinnz> well, it couldbe, if it was fixed in the november release
+[03:21:41] <yates> what hasn't?
+[03:21:46] <Grinnz> LaTeXML
+[03:21:49] <yates> latexml?
+[03:21:52] <yates> do you use it too?
+[03:22:01] *** Joins: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net)
+[03:22:06] <Grinnz> no, but CPAN releases have this sort of info
+[03:22:09] <Grinnz> https://metacpan.org/dist/LaTeXML/changes
+[03:22:09] <Paperbot> Link title(s): [ Changes - metacpan.org ]
+[03:22:12] <yates> it's a most wonderful tool
+[03:22:18] *** Quits: yzhernand (~yzhernand@2607:fb90:7adf:9ceb:d82c:aff:feeb:28f5) (Ping timeout: 250 seconds)
+[03:22:27] <Grinnz> see if the fix you need is mentioned there
+[03:22:28] <yates> for us stodgy old luddite LaTeX users.
+[03:22:33] <yates> ok
+[03:22:59] <Grinnz> the modules in dnf will follow the versions released on CPAN
+[03:23:20] *** Quits: brtastic (~Thunderbi@185.24.91.138) (Ping timeout: 252 seconds)
+[03:23:32] *** Joins: yzhernand (~yzhernand@38-73-255-174.starry-inc.net)
+[03:24:49] *** Joins: Linux77 (~kvirc@186.235.105.168)
+[03:25:16] *** Quits: Linux77 (~kvirc@186.235.105.168) (Client Quit)
+[03:26:08] *** Joins: independent56_ (~independe@2.26.38.198)
+[03:27:22] *** Joins: NODE (~NODE@2a03:4000:1a:7aa::2)
+[03:28:38] <Adura> Wondered what you were dnf-ing about, like... Did Not Finish?
+[03:29:06] <yates> Adura: HEY!
+[03:29:11] <yates> stop it!
+[03:29:24] <yates> dnf is a wonderful tool
+[03:29:30] <yates> most of the time
+[03:29:36] <yates> on Saturdays.
+[03:31:09] *** Joins: Juggernaut (~Juggernau@2603-7080-c940-1f00-0000-0000-0000-0022.res6.spectrum.com)
+[03:31:16] <yates> ok gotta reboot
+[03:31:20] <yates> thanks everyone
+[03:31:22] *** Quits: yates (~user@fv-nc-f7af8b91e1-234237-1.tingfiber.com) (Quit: rcirc on GNU Emacs 27.2)
+[03:35:57] <Grinnz> dnf is pretty great. just turned out, the renaming was kind of stupid and they should have just left it called yum 4
+[03:36:02] *** Quits: magla (~gelignite@55d434ed.access.ecotel.net) (Quit: Stay safe!)
+[03:36:17] *** Joins: brtastic (~Thunderbi@185.24.91.138)
+[03:36:24] <Grinnz> the opposite of the perl 6 problem
+[03:36:59] <Grinnz> yum and dnf don't coexist anywhere, and dnf provides a yum shim that mostly works
+[03:37:15] <Grinnz> also most of the commands are just, already the same
+[03:37:27] <Grinnz> though they did move repoquery to a subcommand
+[03:37:49] *** Joins: aquanight (~aquanight@174-126-159-166.cpe.sparklight.net)
+[03:39:02] <Grinnz> i suppose there was a yum plugin system that benefited from the name change to make it clear those plugins dont work at all anymore
+[04:00:26] *** Quits: Pali (~pali@user/pali) (Ping timeout: 250 seconds)
+[04:01:18] *** Quits: brtastic (~Thunderbi@185.24.91.138) (Ping timeout: 250 seconds)
+[04:07:01] *** Quits: EvanCarroll (~ecarroll@c-73-32-86-244.hsd1.tx.comcast.net) (Ping timeout: 258 seconds)
+[04:12:00] * GumbyPAN CPAN Upload: XXX-0.38 by INGY https://metacpan.org/release/INGY/XXX-0.38
+[04:12:47] <mst> Grinnz: the egcs effect
+[04:13:08] <mst> Adura: reminds me of my attempts at using aptitude
+[04:15:11] <Grinnz> mst: TIL
+[04:15:57] <Grinnz> modern gcc is actually a fork of gcc 2.8, i guess
+[04:20:00] <mst> basically
+[04:24:25] *** Joins: whynot_ (~whynot@37.73.35.67)
+[04:25:02] *** Quits: whynot (~whynot@88.155.58.86) (Ping timeout: 258 seconds)
+[04:25:16] *** whynot_ is now known as whynot
+[04:26:25] *** Joins: travaldo (~travaldo@159.203.88.148)
+[04:26:27] *** Quits: slu (uid501941@id-501941.brockwell.irccloud.com) (Quit: Connection closed for inactivity)
+[04:26:38] *** Quits: travaldo (~travaldo@159.203.88.148) (Client Quit)
+[04:26:52] *** Joins: travaldo (~travaldo@159.203.88.148)
+[04:28:33] *** Joins: m6502 (~6502@2600:8805:d800:b3e::2a2)
+[04:30:00] *** Quits: jdrab (~jdrab@user/jdrab) (Quit: jdrab)
+[04:30:35] *** Joins: jdrab (~jdrab@2a03:4000:48:1a8:44c5:2fff:fe15:f20d)
+[04:30:35] *** Quits: jdrab (~jdrab@2a03:4000:48:1a8:44c5:2fff:fe15:f20d) (Changing host)
+[04:30:35] *** Joins: jdrab (~jdrab@user/jdrab)
+[04:33:55] *** Joins: EvanCarroll (~ecarroll@198-0-91-126-static.hfc.comcastbusiness.net)
+[04:38:44] *** Joins: kitsunenokenja (~kitsunech@68.91.220.96)
+[04:39:00] *** Joins: neshpion (~neshpion@gateway/tor-sasl/neshpion)
+[04:42:49] *** Quits: m6502 (~6502@2600:8805:d800:b3e::2a2) (Quit: Leaving)
+[04:52:12] *** Quits: Juggernaut (~Juggernau@2603-7080-c940-1f00-0000-0000-0000-0022.res6.spectrum.com) (Quit: Leaving.)
+[04:52:43] <pragma-> "dandified" is a very strange name
+[04:52:47] *** Quits: zeus (~user@user/kamyl) (Ping timeout: 252 seconds)
+[04:53:01] *** LSD is now known as acidsys
+[04:53:41] *** Joins: zeus (~user@user/kamyl)
+[04:53:53] <mst> pragma-: it's an en_UK-ism but means basically 'made better and shinier'
+[04:54:03] <pragma-> oh
+[04:57:33] <Grinnz> perlbot: spell dandified
+[04:57:34] <perlbot> Grinnz: No factoid found. Did you mean one of these: [speak-danish] [spelling] [spellbook] [spelunky] [speak-dutch] [speak-thai] [speak-italian] [speak-turkish] [sparta] [sparts]
+[04:57:38] <Grinnz> perlbot: spell dandified en_GB
+[04:57:38] <perlbot> Grinnz: No factoid found. Did you mean one of these: [speak-danish] [spelling] [spellbook] [spelunky] [speak-dutch] [speak-thai] [speak-italian] [speak-turkish] [sparta] [sparts]
+[04:57:45] <Grinnz> helps to use the right bot
+[04:57:52] <Grinnz> Paperbot: spell dandified
+[04:57:53] <Paperbot> Grinnz: dandified is a word.
+[04:58:13] <mst> pragma-: https://en.wikipedia.org/wiki/Dandy is what it's referencing
+[04:58:13] <Paperbot> Link title(s): [ Dandy - Wikipedia ]
+[04:58:42] <mst> it's both somewhat self-deprecating and also a clear reference to dnf's attempts to be pleasant to interact with linguistically
+[05:02:02] <Grinnz> also it definitely was named *after* dnf, not the other way around
+[05:02:05] * GumbyPAN CPAN Upload: NewsExtractor-v0.42.0 by GUGOD https://metacpan.org/release/GUGOD/NewsExtractor-v0.42.0
+[05:06:23] *** Quits: torbjorn_ (~torbjorn@88.81-166-205.customer.lyse.net) (Ping timeout: 272 seconds)
+[05:12:22] *** Quits: johnjay (~pi@38.120.10.99) (Ping timeout: 250 seconds)
+[05:14:21] *** Joins: johnjay (~pi@38.120.10.99)
+[05:18:04] *** Joins: torbjorn_ (~torbjorn@88.81-166-205.customer.lyse.net)
+[05:18:05] *** Quits: whynot (~whynot@37.73.35.67) (Quit: leaving)
+[05:24:18] *** Quits: SincereFox (uid337158@user/sincerefox) (Quit: Connection closed for inactivity)
+[05:26:40] *** Quits: jetchisel (~jetchisel@user/jetchisel) (Ping timeout: 250 seconds)
+[05:27:02] *** Joins: Dreadnaught (Kulrak@n122-109-226-190.rdl2.qld.optusnet.com.au)
+[05:28:49] *** Quits: toretto (~0xe3b7@45.15.16.60) (Read error: Connection reset by peer)
+[05:30:02] *** Quits: Kulrak (Kulrak@n122-109-33-182.rdl1.qld.optusnet.com.au) (Ping timeout: 268 seconds)
+[05:32:42] *** Joins: toretto (~0xe3b7@45.15.16.60)
+[05:33:36] *** Quits: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net) (Ping timeout: 250 seconds)
+[05:35:45] *** Joins: jetchisel (~jetchisel@user/jetchisel)
+[05:37:34] *** Joins: deadmarshal (~deadmarsh@95.38.114.168)
+[05:41:56] *** Quits: deadmarshal (~deadmarsh@95.38.114.168) (Ping timeout: 252 seconds)
+[05:43:40] <genio> Perl's still C89, so I have to            size_t foo = 0;    printf("%llu", (unsigned long long)foo);     right? I can't yet use %z
+[05:44:55] <genio> %llu or %lld and cast
+[05:45:30] *** plicease_ is now known as plicease
+[05:50:33] <mst> genio: you're patching core?
+[05:50:34] *** Quits: yzhernand (~yzhernand@38-73-255-174.starry-inc.net) (Ping timeout: 246 seconds)
+[05:50:46] *** Joins: yzhernand (~yzhernand@2607:fb90:7b08:742a:f42a:75ff:feb8:d959)
+[05:51:05] <genio> almost worse... XS module take over
+[05:51:51] <xenu> LeoNerd recently started using C11 in his modules
+[05:52:03] <xenu> anyway core almost certainly will adopt c99 in this release cycle
+[05:52:08] <xenu> don't bother supporting c89
+[05:52:20] <tm604> if it's XS you can switch to C++17 and no one important will even notice
+[05:52:32] *** Joins: Su-Shee_ (~Susanne@p4ff4954b.dip0.t-ipconnect.de)
+[05:53:23] <xenu> true, 99,9% of users are using either gcc or clang
+[05:53:26] <xenu> both in relatively recent versions
+[05:54:00] <xenu> even msvc is virtually unused, let alone more exotic compilers
+[05:54:02] <mst> genio: yeah, then I really wouldn't worry
+[05:54:16] <mst> genio: instead of caring, add a comment immediately above the code saying 'patches welcome'
+[05:54:41] <xenu> add a comment saying "c89 portability patches are not welcome"
+[05:55:04] <mst> genio: I'd point out that https://shadow.cat/blog/matt-s-trout/on-perl-five-six/ as a policy hasn't got me any anger, only "thanks for being willing to apply those patches"
+[05:55:04] <Paperbot> Link title(s): [ On Perl 5.6 ]
+[05:55:27] <xenu> the whole point of switching to c99 is to make the code more maintainable
+[05:55:41] *** Joins: monkey_ (~user@190.104.116.134)
+[05:55:58] *** Quits: Su-Shee (~Susanne@p4ff494ec.dip0.t-ipconnect.de) (Ping timeout: 265 seconds)
+[05:58:59] <mst> xenu: and my point is this is a compromise that lets me not care ;)
+[06:00:27] <zgu> does msvc have any decent support for newer C (not C++) versions yet?
+[06:01:22] <xenu> visual c++ 2013 introduced decent support for c99, the latest updates to 2019 gave it full c11 support
+[06:01:36] <xenu> at least they claim so
+[06:02:11] <xenu> https://devblogs.microsoft.com/cppblog/c11-and-c17-standard-support-arriving-in-msvc/
+[06:02:14] <Paperbot> Link title(s): [ C11 and C17 Standard Support Arriving in MSVC | C++ Team Blog ]
+[06:03:27] <zgu> so only roughly a decade behind
+[06:05:54] *** Joins: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net)
+[06:06:58] *** Quits: yzhernand (~yzhernand@2607:fb90:7b08:742a:f42a:75ff:feb8:d959) (Ping timeout: 250 seconds)
+[06:08:11] *** Joins: yzhernand (~yzhernand@38-73-255-174.starry-inc.net)
+[06:08:14] <genio> 👍 so unless I'm working on a dual life module, I'm free to C11 it up
+[06:09:13] <mst> genio: and possibly document a willingness to let somebody else backconvert, depending on if you -are- willing, but yeah
+[06:10:34] <genio> Yep. I'll be willing to take C89 "fixes" if they've got a legit reason outside of just wanting to be C89 compliant
+[06:11:31] *** Quits: RandalSchwartz (~Adium@c-73-221-215-233.hsd1.wa.comcast.net) (Quit: Leaving.)
+[06:12:16] *** Quits: monkey_ (~user@190.104.116.134) (Ping timeout: 246 seconds)
+[06:14:58] *** Joins: SincereFox (uid337158@user/sincerefox)
+[06:15:06] *** Quits: Peppard (~quassel@2001:470:1f0b:751:88e2:f737:d26b:8269) (Remote host closed the connection)
+[06:16:15] *** Joins: Peppard (~quassel@2001:470:1f0b:751:7c0d:6fe1:50b4:9b21)
+[06:19:07] *** Joins: monkey_ (~user@190.104.116.134)
+[06:24:42] *** Quits: monkey_ (~user@190.104.116.134) (Remote host closed the connection)
+[06:25:40] *** Joins: monkey_ (~user@190.104.116.134)
+[06:37:15] * GumbyPAN CPAN Upload: Text-HumanComputerWords-0.04 by PLICEASE https://metacpan.org/release/PLICEASE/Text-HumanComputerWords-0.04
+[06:39:58] *** Quits: miojo (~u0_a236@189.40.101.17) (Ping timeout: 258 seconds)
+[06:41:38] *** Quits: EvanCarroll (~ecarroll@198-0-91-126-static.hfc.comcastbusiness.net) (Ping timeout: 250 seconds)
+[06:41:47] *** Joins: miojo (~u0_a236@191.253.158.67)
+[06:50:31] *** Quits: cornett (~ben@149.28.239.26) (Quit: leaving)
+[06:53:40] *** Joins: cornett (~ben@149.28.239.26)
+[07:01:40] *** Quits: monkey_ (~user@190.104.116.134) (Read error: Connection reset by peer)
+[07:03:09] *** Quits: Dorward (~dorward@daviddorward.plus.com) (Ping timeout: 265 seconds)
+[07:04:01] *** Joins: finn_elija (~finn_elij@user/finn-elija/x-0085643)
+[07:04:01] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Killed (lead.libera.chat (Nickname regained by services)))
+[07:04:01] *** finn_elija is now known as FinnElija
+[07:05:12] *** Quits: travaldo (~travaldo@159.203.88.148) (Read error: Connection reset by peer)
+[07:13:58] *** Quits: aquanight (~aquanight@174-126-159-166.cpe.sparklight.net) (Ping timeout: 252 seconds)
+[07:13:59] *** Joins: Dorward (~dorward@daviddorward.plus.com)
+[07:20:31] *** Quits: miojo (~u0_a236@191.253.158.67) (Ping timeout: 246 seconds)
+[07:21:22] *** Quits: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net) (Ping timeout: 258 seconds)
+[07:22:30] *** Joins: nirnam (~nirnam@1.47.74.246)
+[07:24:03] <nirnam> https://metacpan.org/pod/Acme::Pythonic
+[07:24:04] <Paperbot> Link title(s): [ Acme::Pythonic - Python whitespace conventions for Perl - metacpan.org ]
+[07:25:00] <nirnam> Acme have endless supply of why
+[07:33:38] *** Quits: Martchus (~martchus@2a01:c22:6e7b:7800:d250:99ff:fe49:3cce) (Ping timeout: 250 seconds)
+[07:34:19] *** Joins: Martchus (~martchus@2a01:c22:7aa0:4000:d250:99ff:fe49:3cce)
+[07:37:02] *** Quits: NODE (~NODE@2a03:4000:1a:7aa::2) (Quit: changing servers)
+[07:39:55] <mst> nirnam: Acme:: is for silliness and it's gorgeous
+[07:47:02] <nirnam> I was looking at Filter, thought it gonna like C preprocessor, but nah not at all turned out you can code perl in latin with this
+[07:47:08] *** Quits: kitsunenokenja (~kitsunech@68.91.220.96) (Ping timeout: 265 seconds)
+[07:55:47] <gordonfish> Acme to me reminds me of a company that makes the most unreliable products that always blow up in ones face, especially when in the persistent persuit of a road runner.
+[08:12:20] *** Joins: ericlee (~ericlee@2601:647:4681:3420::1)
+[08:17:06] <rindolf> gordonfish: https://en.wikipedia.org/wiki/Acme_Corporation
+[08:17:07] <Paperbot> Link title(s): [ Acme Corporation - Wikipedia ]
+[08:24:18] *** Quits: SincereFox (uid337158@user/sincerefox) (Quit: Connection closed for inactivity)
+[08:31:41] <mst> nirnam: there is Filter::CPP that literally runs your perl code through the C preprocessor ;)
+[08:32:04] *** Quits: jetchisel (~jetchisel@user/jetchisel) (Ping timeout: 252 seconds)
+[08:32:21] *** Joins: Martchus_ (~martchus@dynamic-095-117-034-041.95.117.pool.telefonica.de)
+[08:33:26] *** Quits: Martchus (~martchus@2a01:c22:7aa0:4000:d250:99ff:fe49:3cce) (Ping timeout: 250 seconds)
+[08:34:17] *** Joins: jetchisel (~jetchisel@user/jetchisel)
+[08:48:58] *** Quits: curdlesnoot (~curdlesno@2a03:1b20:1:f410::a17d) (Quit: = "")
+[08:50:29] <rindolf> mst: what's new?
+[09:02:34] *** Quits: gast0n (~g4570n@user/gast0n) (Quit: [TLS] Client upgrade)
+[09:03:17] *** Joins: gast0n (~g4570n@user/gast0n)
+[09:12:00] *** Quits: ericlee (~ericlee@2601:647:4681:3420::1) (Ping timeout: 250 seconds)
+[09:15:49] <nirnam> mst: that exactly what I wanted, but while I'm at Filter::Simple, just by loading it up the range up broke
+[09:16:09] <mst> nirnam: generally, just don't use source filters
+[09:16:30] <mst> nirnam: and I say that as somebody who's written more than one
+[09:16:59] <mst> nirnam: they're like watersports at an orgy, no matter how good an idea it seems at the time, in the end somebody's gonna get splashed unexpectedly
+[09:17:03] *** Joins: jplesnik (~jplesnik@83.240.60.17)
+[09:17:26] <nirnam> wasn't gonna use it, just notifying that range op break weirdly
+[09:17:38] <nirnam> only perl can parse perl that what I'm getting at
+[09:17:47] *** Quits: gast0n (~g4570n@user/gast0n) (Quit: Bye, see you soon! 👋)
+[09:18:29] *** Quits: jplesnik (~jplesnik@83.240.60.17) (Client Quit)
+[09:18:48] <mst> nirnam: right, that's why you use my module Babble, based on Damian Conway's PPR, which uses perl to parse perl :D
+[09:19:59] *** Joins: ericlee (~ericlee@2601:647:4681:3420::1)
+[09:24:36] *** Joins: jplesnik (~jplesnik@83.240.60.17)
+[09:27:27] *** Quits: diskin (~diskin@ec2-18-158-88-195.eu-central-1.compute.amazonaws.com) (Ping timeout: 268 seconds)
+[09:28:07] *** Joins: deadmarshal (~deadmarsh@95.38.114.168)
+[09:41:35] * GumbyPAN CPAN Upload: Net-FullAuto-1.0000601 by REEDFISH https://metacpan.org/release/REEDFISH/Net-FullAuto-1.0000601
+[09:47:32] *** Quits: willthechill (~willthech@2600:1700:8c61:3ed0:429:e85:3a3a:a405) (Ping timeout: 250 seconds)
+[09:49:23] *** Joins: kensanata (~user@user/kensanata)
+[09:59:18] *** Joins: Sauvin (~sauvin@about/linux/staff/sauvin)
+[10:03:18] *** Quits: mmlj4 (~mmlj4@ip68-230-228-233.no.no.cox.net) (Ping timeout: 264 seconds)
+[10:07:43] *** Joins: mmlj4 (~mmlj4@ip68-230-228-233.no.no.cox.net)
+[10:11:10] *** Quits: jmcgnh (~jmcgnh@c-98-229-233-252.hsd1.nh.comcast.net) (Ping timeout: 265 seconds)
+[10:12:01] *** Joins: mattil (~mattil@helsinki.portalify.com)
+[10:14:39] *** Joins: ufobat (~martin@dynamic-095-114-083-252.95.114.pool.telefonica.de)
+[10:15:48] *** Joins: jmcgnh (~jmcgnh@c-98-229-233-252.hsd1.nh.comcast.net)
+[10:21:41] *** Quits: mattil (~mattil@helsinki.portalify.com) (Remote host closed the connection)
+[10:22:14] *** Joins: mattil (~mattil@airio.portalify.com)
+[10:32:40] *** Quits: yzhernand (~yzhernand@38-73-255-174.starry-inc.net) (Ping timeout: 246 seconds)
+[10:38:04] *** Quits: Ovid (~Ovid@laubervilliers-659-1-13-124.w80-11.abo.wanadoo.fr) (Remote host closed the connection)
+[10:46:42] * GumbyPAN CPAN Upload: CallBackery-0.38.7 by OETIKER https://metacpan.org/release/OETIKER/CallBackery-0.38.7
+[11:00:40] *** Joins: WinterStar (~IceLight@user/icelight)
+[11:11:44] * GumbyPAN CPAN Upload: Pod-Simple-Words-0.07 by PLICEASE https://metacpan.org/release/PLICEASE/Pod-Simple-Words-0.07
+[11:14:47] *** Quits: KnoP (~KnoP@p57b1920f.dip0.t-ipconnect.de) (Quit: ChatZilla 0.9.94 [SeaMonkey 2.53.1/20200222231854])
+[11:17:33] *** Joins: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net)
+[11:18:25] *** Joins: Ovid (~Ovid@laubervilliers-659-1-13-124.w80-11.abo.wanadoo.fr)
+[11:21:45] * GumbyPAN CPAN Upload: Sub-Genius-0.314002 by OODLER https://metacpan.org/release/OODLER/Sub-Genius-0.314002
+[11:22:16] *** Joins: haj (~haj@95.91.235.66)
+[11:25:21] *** Joins: brtastic (~Thunderbi@185.24.91.138)
+[11:41:48] * GumbyPAN CPAN Upload: Devel-Deanonymize-0.1.0 by TOBIB https://metacpan.org/release/TOBIB/Devel-Deanonymize-0.1.0
+[11:46:03] *** Quits: slowButPresent (~slowButPr@user/slowbutpresent) (Quit: leaving)
+[11:47:37] *** Quits: tbcr (~tbcr@user/tbcr) (Read error: Connection reset by peer)
+[11:47:52] *** Joins: tbcr (~tbcr@75.183.195.9)
+[11:49:03] *** Quits: metabot (~metabot@perlbot/bot/metabot) (Quit: ZNC 1.8.2+deb2~bpo10+1 - https://znc.in)
+[11:49:03] *** Quits: perldoc (~perldoc@2603-6080-3108-088d-18fc-1230-0f1a-2f6b.res6.spectrum.com) (Quit: ZNC 1.8.2+deb2~bpo10+1 - https://znc.in)
+[11:49:18] *** Joins: metabot (~metabot@perlbot/bot/metabot)
+[11:49:31] *** Quits: perlbot (~perlbot@perlbot/bot/simcop2387/perlbot) (Remote host closed the connection)
+[11:50:09] *** Quits: meatbot (~meatbot@perlbot/bot/meatbot) (Quit: MEATBOT listens not to your cries for mercy. ZNC 1.8.2+deb2~bpo10+1 - https://znc.in)
+[11:50:09] *** Quits: simcop2387 (~simcop238@perlbot/patrician/simcop2387) (Remote host closed the connection)
+[11:54:09] *** Quits: tbcr (~tbcr@75.183.195.9) (Read error: Connection reset by peer)
+[11:54:25] *** Quits: metabot (~metabot@perlbot/bot/metabot) (Quit: ZNC 1.8.2+deb2~bpo10+1 - https://znc.in)
+[11:54:56] *** Quits: kaitlyn (~kaitlyn@user/kaitlyn) (Quit: Ping timeout (120 seconds))
+[11:56:16] *** Joins: tbcr (~tbcr@75.183.195.9)
+[11:59:01] *** Joins: The_Blode (~The_Blode@92.40.180.219.threembb.co.uk)
+[11:59:31] <The_Blode> Good morning. I had a question.
+[12:00:19] <The_Blode> In Perl, can I do an asynchronous event? Such as calling a function and before the function returns, go to the next line of code.
+[12:01:03] *** Joins: art1 (~romeyke@p200300ccdf06aa009095aae01b72a7e4.dip0.t-ipconnect.de)
+[12:01:05] <independent56_> https://dontasktoask.com/
+[12:01:05] <Paperbot> Link title(s): [ Don't ask to ask, just ask ]
+[12:02:04] <The_Blode> Got it. Thanks independent
+[12:02:10] *** Joins: simcop2387 (~simcop238@perlbot/patrician/simcop2387)
+[12:02:24] *** Joins: perldoc (~perldoc@71.76.76.1)
+[12:02:54] *** Joins: perlbot (~perlbot@perlbot/bot/simcop2387/perlbot)
+[12:02:54] *** ChanServ sets mode: +v perlbot
+[12:03:24] *** Joins: metabot (~metabot@perlbot/bot/metabot)
+[12:03:50] *** Quits: kixx (~kixx@user/kixx) (Quit: Leaving)
+[12:03:55] *** Joins: meatbot (~meatbot@perlbot/bot/meatbot)
+[12:04:09] *** Joins: kaitlyn (~kaitlyn@user/kaitlyn)
+[12:06:51] * GumbyPAN CPAN Upload: Devel-Deanonymize-0.1.1 by TOBIB https://metacpan.org/release/TOBIB/Devel-Deanonymize-0.1.1
+[12:09:20] <tm604> The_Blode: if you're using asynchronous code, then yes - what are the remaining steps in the function that should happen later?
+[12:09:29] <tm604> or can you pastebin an example of what you have already?
+[12:10:01] <The_Blode> I can't really paste the code since it's my work code.
+[12:10:22] <The_Blode> However, what I'm doing is, I am playing a sound and I want to also fire off a cURL command.
+[12:10:35] <The_Blode> and I want the cURL command to process while my sound is playing
+[12:10:42] <The_Blode> I have thought of doing a while loop
+[12:12:22] <tm604> okay, that's a good starting point - how are you playing the sound, is that with system() to run an external command?
+[12:13:01] <The_Blode> Actually, I'm using AGI Perl Module which interfaces with Asterisk
+[12:13:06] <The_Blode> A method called Stream File
+[12:14:17] <The_Blode> Also, side note, I would like to check if a file is being accessed or not. Currently, I'm using Linux lsof...but wondering if Perl has something native?
+[12:14:27] <The_Blode> So I can use this to determine if a file has finished playing or not.
+[12:17:25] <tm604> does the stream file method return when the file has finished playing? or does it return immediately?
+[12:18:11] <The_Blode> I'm not sure. That was another head scratcher. The module document tells me the method returns a value.
+[12:18:23] <The_Blode> But I'm not sure how to store that return.
+[12:18:50] <The_Blode> I'm using something like $return = $AGI->stream_file...but it doesn't help me.
+[12:19:03] <tm604> you can run curl in the background - see perldoc perlopentut or perldoc perlipc for details, https://perldoc.perl.org/perlopentut#Opening-a-pipe-for-reading
+[12:19:04] <Paperbot> Link title(s): [ perlopentut - simple recipes for opening files and pipes in Perl - Perldoc Browser ]
+[12:19:26] <The_Blode> Running cURL in the background would be an amazing thing
+[12:19:27] <tm604> maybe start by logging the value of `$return`, see when that happens?
+[12:19:42] <The_Blode> I have done that and it returns 0 which is expected
+[12:19:57] <tm604> background is basically: open my $curl_fh, '-|', qw(curl https://whatever) or die "curl failed - $!";
+[12:20:12] <tm604> the value of the return is less important than *when* it returns, I think
+[12:20:12] <The_Blode> I'm actually using backtricks for my cURL command
+[12:20:17] <The_Blode> Wasn't sure of the native Perl support
+[12:20:27] <tm604> backticks will wait for it to complete, unless you add the &
+[12:20:59] <tm604> but with open(), you can run as a subprocess in the background and if your script is stopped it'll cause SIGHUP on the curl process so that should stop it, rather than leaving it running in the background
+[12:21:27] <The_Blode> Is cURL a seperate module or is it built in to Perl?
+[12:21:47] <The_Blode> I mean the methods for it
+[12:21:57] <The_Blode> Maybe it's on CPAN let me see
+[12:22:40] *** Quits: Dorward (~dorward@daviddorward.plus.com) (Ping timeout: 250 seconds)
+[12:23:27] *** Joins: Dorward (~dorward@daviddorward.plus.com)
+[12:23:28] <tm604> curl is nothing to do with perl, just a system command like ls or sort
+[12:23:44] <tm604> i.e. separate executable installed as /usr/bin/curl that you can run
+[12:23:59] <The_Blode> Yep
+[12:24:10] <tm604> Perl does have HTTP clients, but they might not be a good fit for an Asterisk plugin
+[12:25:09] <The_Blode> Thank you so much for your help. Still learning about Perl
+[12:26:32] <tm604> you seem to be on the right track so far, good luck =)
+[12:26:34] *** Quits: The_Blode (~The_Blode@92.40.180.219.threembb.co.uk) (Changing host)
+[12:26:34] *** Joins: The_Blode (~The_Blode@user/the-blode/x-7164444)
+[12:27:29] <The_Blode> I actually prefer Perl over Python personally. Unpopular opinion but Perl seems to be able to do whatever Python can.
+[12:27:41] <The_Blode> And I like a bit of structure that Perl offers.
+[12:27:53] <The_Blode> Curly braces and brackets. That sort of thing.
+[12:28:37] <The_Blode> Also, my mind was blown the other day when I decode my first Base64 string
+[12:28:47] <tm604> Yes, python is widely used and tends to have up-to-date libraries for more things than Perl, but each language has its own strengths and weaknesses
+[12:28:51] <The_Blode> How could this massive text dump turn into a binary file...astonishing to me
+[12:29:27] <The_Blode> For Perl, I use it to parse HTML and it's superb at it. I believe Perl was the first language to use Regular Expressions that we all use today in other langs.
+[12:29:30] <The_Blode> I could be wrong though.
+[12:29:38] <The_Blode> Larry Wall did a remarkable thing.
+[12:29:50] <tm604> you might find https://metacpan.org/pod/Acme::Bleach of idle interest, it's a cute little toy
+[12:29:51] <Paperbot> Link title(s): [ Acme::Bleach - For really clean programs - metacpan.org ]
+[12:30:09] <The_Blode> Thanks checking
+[12:30:13] <tm604> perl does have strong regex support, might not be the first but they are quite core to many perl programs
+[12:31:04] *** Joins: Pali (~pali@user/pali)
+[12:31:07] <The_Blode> Wait so this module...removes all my print lines?
+[12:31:53] * GumbyPAN CPAN Upload: App-traveller-1.00_00 by SCHROEDER https://metacpan.org/release/SCHROEDER/App-traveller-1.00_00
+[12:32:20] <tm604> so base64 turns what looks like random garbage into readable text... this turns what looks like just a blank document into Perl
+[12:32:49] <tm604> not really much practical use, of course
+[12:34:18] *** Joins: choroba (~E.Choroba@89-101-243-80.cust.centrio.cz)
+[12:35:54] <The_Blode> It blows my mind still...it's just text and it can become an image or audio file
+[12:41:29] *** Quits: The_Blode (~The_Blode@user/the-blode/x-7164444) (Quit: Leaving)
+[12:41:42] *** Joins: The_Blode (~The_Blode@92.40.180.219.threembb.co.uk)
+[12:42:00] *** Quits: The_Blode (~The_Blode@92.40.180.219.threembb.co.uk) (Changing host)
+[12:42:00] *** Joins: The_Blode (~The_Blode@user/the-blode/x-7164444)
+[12:54:09] *** Quits: neshpion (~neshpion@gateway/tor-sasl/neshpion) (Quit: neshpion)
+[13:10:22] *** Quits: deadmarshal (~deadmarsh@95.38.114.168) (Ping timeout: 252 seconds)
+[13:11:58] * GumbyPAN CPAN Upload: App-traveller-1 by SCHROEDER https://metacpan.org/release/SCHROEDER/App-traveller-1
+[13:19:33] *** Quits: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[13:25:03] *** Quits: randir (~randir@95-25-113-192.broadband.corbina.ru) (Remote host closed the connection)
+[13:30:18] *** Quits: Pali (~pali@user/pali) (Ping timeout: 265 seconds)
+[13:32:08] *** Joins: khosruw (~khosruw@vps-6df5f188.vps.ovh.net)
+[13:32:22] <khosruw> RIP John McAfee
+[13:32:32] <khosruw> <3
+[13:35:58] *** Joins: randir (~randir@93.159.239.42)
+[13:36:14] *** Joins: zacts (~zak@user/zacts)
+[13:37:20] *** Quits: khosruw (~khosruw@vps-6df5f188.vps.ovh.net) (Quit: leaving)
+[13:38:47] <Altreus> was that a troll? I can't tell
+[13:39:11] <huf> what, he really did get epsteined
+[13:39:16] <solitario> Altreus: McAfee died, it is in the news.
+[13:40:32] *** Joins: koo6 (~koo6@89-24-13-235.customers.tmcz.cz)
+[13:40:42] <Altreus> yeah but is he really a <3 figure
+[13:42:19] <tm604> yes, he's >5 but <3
+[13:43:11] <tm604> https://www.youtube.com/watch?v=bKgf5PaBzyg # clearly went past DGAF some time ago and kept accelerating
+[13:43:11] <Paperbot> YouTube video linked by tm604: How To Uninstall McAfee Antivirus - published by John Mcafee
+[13:43:12] <Paperbot> Link title(s): [ How To Uninstall McAfee Antivirus - YouTube ]
+[13:44:11] *** Joins: deadmarshal (~deadmarsh@95.38.114.168)
+[13:46:44] *** Parts: zacts (~zak@user/zacts) (brb)
+[13:48:36] *** Joins: MichaelOF (~michael@p200300eb8f076101b1c3642081b05a51.dip0.t-ipconnect.de)
+[13:50:51] <japh> https://www.youtube.com/watch?v=Cv7lwrZru1A
+[13:50:51] <Paperbot> YouTube video linked by japh: Everyone's on Cocaine - published by trapd00r
+[13:50:51] <Paperbot> Link title(s): [ Everyone's on Cocaine - YouTube ]
+[13:55:26] *** Quits: koo6 (~koo6@89-24-13-235.customers.tmcz.cz) (Ping timeout: 258 seconds)
+[14:01:03] *** Joins: horsepatat (~horsepata@212.3.197.141)
+[14:04:14] *** Joins: koo6 (~koo6@89-24-13-235.customers.tmcz.cz)
+[14:15:25] *** Joins: diskin (~diskin@87.117.54.131)
+[14:22:18] *** Walex is now known as Walex2
+[14:22:22] *** Walex2 is now known as Walex_
+[14:24:56] *** Quits: diskin (~diskin@87.117.54.131) (Killed (NickServ (GHOST command used by diskin_!~diskin@ec2-18-158-88-195.eu-central-1.compute.amazonaws.com)))
+[14:24:56] *** Joins: diskin_ (~diskin@ec2-18-158-88-195.eu-central-1.compute.amazonaws.com)
+[14:27:33] *** Joins: aquanight (~aquanight@174-126-159-166.cpe.sparklight.net)
+[14:31:08] *** Quits: horsepatat (~horsepata@212.3.197.141) (Read error: Connection reset by peer)
+[14:33:28] *** Quits: kensanata (~user@user/kensanata) (Ping timeout: 246 seconds)
+[14:33:58] *** Quits: MichaelOF (~michael@p200300eb8f076101b1c3642081b05a51.dip0.t-ipconnect.de) (Quit: Konversation terminated!)
+[14:35:59] *** Joins: miojo (~u0_a236@189.40.101.65)
+[14:46:50] *** Quits: diskin_ (~diskin@ec2-18-158-88-195.eu-central-1.compute.amazonaws.com) (Quit: Leaving)
+[14:47:05] *** Joins: diskin (~diskin@ec2-18-158-88-195.eu-central-1.compute.amazonaws.com)
+[14:48:59] *** Joins: yzhernand (~yzhernand@2607:fb90:7bc0:d1d:ac97:1aff:fe9b:61e3)
+[14:53:28] *** Quits: yzhernand (~yzhernand@2607:fb90:7bc0:d1d:ac97:1aff:fe9b:61e3) (Ping timeout: 250 seconds)
+[14:53:38] *** Joins: yzhernand (~yzhernand@38-73-255-174.starry-inc.net)
+[14:57:09] * GumbyPAN CPAN Upload: Catmandu-PICA-1.05 by VOJ https://metacpan.org/release/VOJ/Catmandu-PICA-1.05
+[15:12:00] *** Joins: miojo_ (~u0_a236@191.253.158.67)
+[15:15:46] *** Quits: miojo (~u0_a236@189.40.101.65) (Ping timeout: 252 seconds)
+[15:15:49] *** Quits: brtastic (~Thunderbi@185.24.91.138) (Ping timeout: 246 seconds)
+[15:16:07] *** Joins: brtastic (~Thunderbi@ec2-35-176-113-228.eu-west-2.compute.amazonaws.com)
+[15:16:09] *** Quits: aquanight (~aquanight@174-126-159-166.cpe.sparklight.net) (Ping timeout: 265 seconds)
+[15:17:11] * GumbyPAN CPAN Upload: Mojo-SMTP-Client-0.20_1 by OLEG https://metacpan.org/release/OLEG/Mojo-SMTP-Client-0.20_1
+[15:59:18] *** Dreadnaught is now known as Kulrak
+[16:00:46] *** Joins: szeliga (~szeliga@117.222.64.72)
+[16:01:41] *** Joins: mattil_ (~mattil@helsinki.portalify.com)
+[16:04:37] *** Quits: mattil (~mattil@airio.portalify.com) (Ping timeout: 258 seconds)
+[16:05:22] *** Quits: mattil_ (~mattil@helsinki.portalify.com) (Remote host closed the connection)
+[16:06:00] *** Joins: mattil (~mattil@airio.portalify.com)
+[16:08:22] *** Quits: szeliga (~szeliga@117.222.64.72) (Quit: leaving)
+[16:11:17] * GumbyPAN CPAN Upload: App-Rakubrew-17 by PATRICKB https://metacpan.org/release/PATRICKB/App-Rakubrew-17
+[16:12:09] *** Joins: valentinus (~valentinu@117.222.64.72)
+[16:12:31] *** Quits: valentinus (~valentinu@117.222.64.72) (Client Quit)
+[16:13:58] *** Joins: valentinus (~valentinu@117.222.64.72)
+[16:17:37] *** Joins: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net)
+[16:24:41] *** Quits: ufobat (~martin@dynamic-095-114-083-252.95.114.pool.telefonica.de) (Remote host closed the connection)
+[16:24:58] *** Joins: ufobat (~martin@dynamic-095-114-083-252.95.114.pool.telefonica.de)
+[16:32:13] *** Quits: valentinus (~valentinu@117.222.64.72) (Quit: leaving)
+[16:39:46] <simcop2387> perlbot: hi
+[16:39:48] <perlbot> simcop2387: hello
+[16:46:21] * GumbyPAN welcomes CYFUNG - FUNG Cheok Yin to CPAN!
+[16:47:23] *** Joins: Harzilein (harzi@harzilein.eu.org)
+[16:47:25] <Harzilein> hi
+[16:47:27] <Harzilein> :)
+[16:48:32] *** Quits: yano (~yano@ircpuzzles/staff/yano) (Quit: WeeChat, the better IRC client, https://weechat.org/)
+[16:49:57] *** Joins: tg (~tg@rockylinux/infra/tg)
+[16:50:51] *** Joins: yano (~yano@ircpuzzles/staff/yano)
+[16:58:48] *** Quits: finsternis (~X@23.226.237.192) (Remote host closed the connection)
+[17:05:52] *** Quits: deadmarshal (~deadmarsh@95.38.114.168) (Ping timeout: 265 seconds)
+[17:06:12] *** Joins: deadmarshal (~deadmarsh@95.38.114.168)
+[17:06:23] * GumbyPAN CPAN Upload: Mojolicious-Plugin-Qooxdoo-1.0.13 by OETIKER https://metacpan.org/release/OETIKER/Mojolicious-Plugin-Qooxdoo-1.0.13
+[17:10:51] *** Joins: treefrob (~robx@p57a969ef.dip0.t-ipconnect.de)
+[17:11:24] * GumbyPAN CPAN Upload: CallBackery-0.38.8 by OETIKER https://metacpan.org/release/OETIKER/CallBackery-0.38.8
+[17:14:28] *** Quits: yzhernand (~yzhernand@38-73-255-174.starry-inc.net) (Ping timeout: 246 seconds)
+[17:15:02] *** Joins: leitz (~LeamHall@cpe-173-172-58-72.tx.res.rr.com)
+[17:17:18] *** Joins: yzhernand (~yzhernand@2607:fb90:7bc6:8e80:9c8c:31ff:fe4c:64ae)
+[17:20:14] *** Joins: koo7 (~koo6@89-24-13-235.customers.tmcz.cz)
+[17:21:02] <Altreus> hi :)
+[17:23:16] *** Quits: koo6 (~koo6@89-24-13-235.customers.tmcz.cz) (Ping timeout: 265 seconds)
+[17:25:08] <leitz> Reading perlnewmod, "module-starter" is the way to go to build new modules for current Perl version?
+[17:25:24] <Altreus> it's a way to go. I use Dist::Zilla
+[17:26:53] <choroba> Module::Starter is OK if you don't have many modules you need to maintain
+[17:29:06] *** Joins: monkey_ (~user@190.104.116.134)
+[17:29:12] <leitz> One small family of modules. Not even sure if it should be more than one module, or one that has stuff in it.
+[17:29:41] <leitz> I've asked on module-authors, but folks may be enjoying the summer weather.
+[17:31:26] * GumbyPAN CPAN Upload: CallBackery-0.38.9 by OETIKER https://metacpan.org/release/OETIKER/CallBackery-0.38.9
+[17:34:06] <genio> leitz: While I prefer Dist::Zilla for authoring, you can _start_ a module any way you like. Copy-paste one and replace with your own code to get the structure right, etc. Whatever gets you working fastest
+[17:36:24] <leitz> genio, that sounds like good advice. There are a lot of things I need to figure out, along with my module.  :)
+[17:37:30] <genio> When you get the module working mostly, go back and get advice on how to best manage cutting releases with it. At that point, your structure may get picked apart, but you have your code done
+[17:39:55] *** Joins: gizmomathboy (~gizmomath@206.127.53.107)
+[17:41:31] *** Quits: choroba (~E.Choroba@89-101-243-80.cust.centrio.cz) (Quit: Leaving)
+[17:43:32] *** Quits: Masklin_Gurder (~joel@93.182.183.85) (Ping timeout: 252 seconds)
+[17:43:51] *** Quits: monkey_ (~user@190.104.116.134) (Remote host closed the connection)
+[17:47:26] *** Quits: latk (~latk@2001:470:69fc:105::255) (Quit: Client limit exceeded: 15000)
+[17:47:45] *** Joins: choroba (~E.Choroba@89-101-243-80.cust.centrio.cz)
+[17:49:55] *** Quits: mattil (~mattil@airio.portalify.com) (Remote host closed the connection)
+[17:50:42] *** Quits: yzhernand (~yzhernand@2607:fb90:7bc6:8e80:9c8c:31ff:fe4c:64ae) (Ping timeout: 250 seconds)
+[17:51:19] *** Joins: yzhernand (~yzhernand@2607:fb90:7bc6:8e80:80e4:b9ff:fed3:3c14)
+[17:52:33] *** Joins: Masklin_Gurder (~joel@93.182.183.85)
+[17:57:36] <Altreus> maintenance is why I start with dzil
+[17:57:56] *** Joins: latk (~latk@2001:470:69fc:105::255)
+[17:58:00] <Altreus> Module::Starter starts a module but Dist::Zilla is always useful
+[18:05:33] *** Joins: mattil (~mattil@d4p2-xxhbz1vm4tsvhy-4.rev.dnainternet.fi)
+[18:06:43] *** Quits: mattil (~mattil@d4p2-xxhbz1vm4tsvhy-4.rev.dnainternet.fi) (Remote host closed the connection)
+[18:07:16] *** Joins: mattil (~mattil@airio.portalify.com)
+[18:10:10] *** Joins: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net)
+[18:11:18] *** Quits: mattil (~mattil@airio.portalify.com) (Remote host closed the connection)
+[18:11:30] * GumbyPAN CPAN Upload: custom-failures-x-alias-0.01 by DJERIUS https://metacpan.org/release/DJERIUS/custom-failures-x-alias-0.01
+[18:17:08] *** Quits: yzhernand (~yzhernand@2607:fb90:7bc6:8e80:80e4:b9ff:fed3:3c14) (Ping timeout: 250 seconds)
+[18:17:39] *** Joins: yzhernand (~yzhernand@129.85.9.189)
+[18:18:22] *** Quits: jetchisel (~jetchisel@user/jetchisel) (Ping timeout: 265 seconds)
+[18:19:14] *** Joins: mattil (~mattil@d4p2-xxhbz1vm4tsvhy-4.rev.dnainternet.fi)
+[18:19:23] *** Joins: RandalSchwartz (~Adium@c-73-221-215-233.hsd1.wa.comcast.net)
+[18:20:01] *** Quits: mattil (~mattil@d4p2-xxhbz1vm4tsvhy-4.rev.dnainternet.fi) (Remote host closed the connection)
+[18:20:33] *** Joins: mattil (~mattil@airio.portalify.com)
+[18:20:40] *** Joins: jetchisel (~jetchisel@user/jetchisel)
+[18:22:22] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Quit: FinnElija)
+[18:25:39] *** Joins: EvanCarroll (~ecarroll@c-73-32-86-244.hsd1.tx.comcast.net)
+[18:27:23] *** Joins: FinnElija (~finn_elij@user/finn-elija/x-0085643)
+[18:30:01] *** Joins: mattil_ (~mattil@d4p2-xxhbz1vm4tsvhy-4.rev.dnainternet.fi)
+[18:34:19] *** Quits: mattil (~mattil@airio.portalify.com) (Ping timeout: 265 seconds)
+[18:35:33] <simcop2387> rindolf: morning, we haven't fully figured out what we want to do regarding #perlcafe vs ##perlcafe but you're welcome in either and i've set you up with the ability to op in ##perlcafe since it's registered.  I've proposed we register a community here for #perlcafe as a perl mongers group so that we can properly register it and get everyone moved to one channel or the other again
+[18:36:35] <simcop2387> Altreus: just the ability to force myself to use perl critic and such during the author testing/minting of the dist makes a big difference for my own sanity/quality
+[18:36:47] <rindolf> simcop2387: hi, ok. thanks
+[18:37:16] <simcop2387> rindolf: this was my proposed description of it, https://gist.github.com/simcop2387/a4a3dc56ef123bb869ee650598c737c0
+[18:37:17] <Paperbot> Link title(s): [ Preliminary registration idea · GitHub ]
+[18:37:29] <leitz> simcop2387, is #perlcade the place for social stuff with other perl hackers?
+[18:37:30] <simcop2387> we're mostly just being lazy about it though
+[18:37:47] *** Quits: mattil_ (~mattil@d4p2-xxhbz1vm4tsvhy-4.rev.dnainternet.fi) (Remote host closed the connection)
+[18:38:10] <simcop2387> leitz: basically, but #perlcafe :) we got kinda split during the move between the old #perlcafe and ##perlcafe because we couldn't decide what to do about the network policy about single hash channels
+[18:38:43] <simcop2387> there's also #perl-cats that has a similar purpose and has had different users for some reason
+[18:38:49] <leitz> simcop2387, works for me, thanks!
+[18:39:46] <rindolf> simcop2387: nice
+[18:40:24] <rindolf> simcop2387: there is https://perl-begin.org/FAQs/freenode-perl/perlcafe/ too
+[18:40:24] <Paperbot> Link title(s): [ Freenode’s #perlcafe Channel - The Perl Beginners’ Site ]
+[18:41:34] * GumbyPAN CPAN Upload: Perl-Tidy-20210625 by SHANCOCK https://metacpan.org/release/SHANCOCK/Perl-Tidy-20210625
+[18:42:04] <simcop2387> rindolf: ah that would probably be good to put in the whole thing if we send it off.  but my main reason was to ask if you wanted to be part of what libera calls the "group contact" for the community, that'd basically give you the ability to get cloaks for people that'd look like @about/perlcafe/<user> and help register any #perlcafe-* channels but i don't see any channel registrations ever
+[18:42:10] <simcop2387> actually needing to be done.  no responsibilities with it just power
+[18:42:24] <simcop2387> but i'd willingly take on all the red tape to get it registered
+[18:43:31] <rindolf> simcop2387: ah, it's your call
+[18:43:33] <simcop2387> or of course you can obviously do it if you want
+[18:43:34] *** Joins: mattil (~mattil@helsinki.portalify.com)
+[18:44:14] *** Joins: sevvie (~sevvie@vps-6df5f188.vps.ovh.net)
+[18:46:46] <pragma-> why not call it #perl-cafe as part of the #perl community registration?
+[18:47:23] <pragma-> then you don't need to fill out and submit another community registration form
+[18:47:37] <pragma-> you can just freely add other #perl-xyz channels too.
+[18:48:57] <simcop2387> pragma-: inertia, tradition, and because for the last 17 years it hasn't been officially part of the #perl management directly.
+[18:49:10] *** Joins: mattil_ (~mattil@d4p2-xxhbz1vm4tsvhy-4.rev.dnainternet.fi)
+[18:49:39] <simcop2387> it was deliberately separated so that users chastized/banned in one place wouldn't be automatically unwelcome in the other
+[18:50:08] <pragma-> In any case, I think most of the current ex-freenode staff think the # vs ## channel namespacing thing was a mistake. They've reverted it here, and the new freenode has also removed that policy. I'd go with #perlcafe over ##perlcafe going forward.
+[18:50:27] <Altreus> I like perlcade more - it sounds like we have games
+[18:52:14] <simcop2387> Altreus: i'll probably setup something like that when i finish rewriting the core part of perlbot.  my whole purpose in doing so is going to be to get rid of the parts that i can't get anyone to claim ownership of and give me a license i can distribute it under, but also allow perlbot to fully control a channel and do more advanced plugins for things like zork, battleship, warewolf, uno, and many
+[18:52:17] <huf> but why cafe, why not pub?
+[18:52:20] <simcop2387> other games on irc or other messaging services.
+[18:52:26] <huf> pub > cafe AND it begins with a p
+[18:52:26] <pragma-> Actually, I am not 100% clear on what libera's policy for # and ## is. I recall they made the rules more lax, but maybe they didn't completely revert it as I originally claimed.
+[18:53:14] <pragma-> https://libera.chat/chanreg
+[18:53:14] <Paperbot> Link title(s): [ Channel registration | Libera Chat ]
+[18:53:32] *** Quits: mattil_ (~mattil@d4p2-xxhbz1vm4tsvhy-4.rev.dnainternet.fi) (Ping timeout: 250 seconds)
+[18:53:33] *** Quits: mattil (~mattil@helsinki.portalify.com) (Ping timeout: 268 seconds)
+[18:53:52] <simcop2387> pragma-: it's not completely reverted no, basically they made it easier for someone to claim one without a ## by making things like communities part of the policy.  before it was *ONLY* projects/official channels.  now groups like the people talking about regular expressions can get #regex without requiring an exception or being grandfathered in.
+[18:54:05] <pragma-> Yeah, they still use ## for informal channels, but you no longer need to have an official representative of a community or project to register # channels.
+[18:54:12] *** Joins: willthechill (~willthech@2600:1700:8c61:3ed0:429:e85:3a3a:a405)
+[18:54:23] <pragma-> But if an official representative DOES eventually show up, there could be some back-and-forth ... or something.
+[18:54:40] <simcop2387> yea that hasn't happened yet but it'd have to be solved by staff at the time
+[18:55:00] <huf> soooooo. does lee own #freenode then? :D
+[18:55:10] <simcop2387> lol
+[18:55:20] <huf> aww, i cant join that channel
+[18:55:21] <huf> why?
+[18:55:31] *** Parts: chronon (~chronon@user/chronon) ()
+[18:55:43] <simcop2387> they probably decided it'd be a cesspool and locked it
+[18:55:56] <simcop2387> from trolls and everything
+[18:56:04] <simcop2387> there is ##freenode though
+[18:56:11] <huf> we could've turned it into coders.hu
+[18:57:14] *** Quits: jetchisel (~jetchisel@user/jetchisel) (Ping timeout: 252 seconds)
+[18:57:19] *** Joins: mattil (~mattil@d4p2-xxhbz1vm4tsvhy-4.rev.dnainternet.fi)
+[18:57:29] <Altreus> uh you can't OWN freenode, man
+[18:57:36] <Altreus> It's an idea
+[18:57:49] <simcop2387> Altreus: Yes I can, but that's because I'm not a penny-less hippie
+[18:58:01] <huf> Altreus: huh?
+[18:58:06] <huf> how is that relevant?
+[18:58:25] <Altreus> cos you said "own #freenode" so
+[18:58:31] <Altreus> I got the hippie out
+[18:58:33] <huf> now i'm going to have what is known in some parts of the world as a cold beer
+[18:58:54] <Altreus> What is it known as there? Budweiser?
+[18:59:01] <pragma-> w-what is it known by in other parts of the world?
+[18:59:02] <huf> a cold beer
+[18:59:09] <huf> pragma-: i dunno, never been to those parts
+[18:59:15] <huf> but i havent been to too many places
+[18:59:17] * Altreus nods sagely
+[18:59:36] *** Joins: jetchisel (~jetchisel@user/jetchisel)
+[19:00:23] <simcop2387> Altreus: huf: https://morbotron.com/video/S02E19/XYQu1FjhvFZjkznk-b8dAuNUibw=.gif
+[19:00:53] <huf> there's nothing wrong with owning personal property
+[19:00:59] <huf> private property is where it gets problematic
+[19:01:06] <Altreus> ah a Futurama reference, excellent
+[19:01:22] <huf> i dunno, this would sound better with mr burns
+[19:01:43] <simcop2387> huf: please explain the difference between private and personal property
+[19:02:16] <simcop2387> huf: there might be something like that from burns but i'm not finding it at the moment.
+[19:02:19] <huf> simcop2387: personal property is like your house you live in and your clothes and stuff
+[19:02:32] <huf> private property is shit you own but dont use except to leech money from other people with
+[19:02:59] <huf> but this is much better explained by people with a better brain than me :)
+[19:03:04] *** Quits: mattil (~mattil@d4p2-xxhbz1vm4tsvhy-4.rev.dnainternet.fi) (Remote host closed the connection)
+[19:08:14] *** Joins: TweetiePooh (~richard@cpc75386-sotn16-2-0-cust456.15-1.cable.virginm.net)
+[19:10:16] *** Joins: Vicissitude (~Vicissitu@user/vicissitude)
+[19:15:27] *** Joins: gryphn (~gryphon@102.129.145.74)
+[19:18:33] *** Joins: mattil (~mattil@d4p2-xxhbz1vm4tsvhy-4.rev.dnainternet.fi)
+[19:19:43] <xenu> 16:27 < Altreus> It's an idea
+[19:19:48] <xenu> no, it's a sovereign state
+[19:20:00] <xenu> no sorry
+[19:20:05] <xenu> he's calling it autonomous zone nopw
+[19:20:07] <xenu> now*
+[19:20:17] <Altreus> a sovereign state of mind
+[19:21:38] * GumbyPAN welcomes SLITTL - Stuart Little to CPAN!
+[19:23:00] *** Quits: mattil (~mattil@d4p2-xxhbz1vm4tsvhy-4.rev.dnainternet.fi) (Ping timeout: 250 seconds)
+[19:23:49] <Altreus> oh hi stuart
+[19:25:48] *** Joins: Milencho (~milencho@k0r-bg.eu)
+[19:26:42] <Milencho> hi there i would like to replace a XML tag value with random digits (regex)
+[19:26:59] <Milencho> perl -p -0777 -e 's@<Personal_ID>.*?</Personal_ID>@test_tag>([0-9]{4})</test_tag>@sg'
+[19:27:19] <Milencho> something like that but unfortunatelly it prints test_tag>([0-9]{4})</test_tag
+[19:27:24] <Milencho> could you pls help me
+[19:27:27] <Altreus> you can't generate data with a regex
+[19:27:53] <Altreus> you will have to generate 4 random digits first and put them in
+[19:28:10] *** Joins: slowButPresent (~slowButPr@user/slowbutpresent)
+[19:28:10] <Altreus> well actually you can probably use /e and generate new ones for each bit
+[19:28:30] <huf> the second part of a s/// isnt a regex...
+[19:28:38] *** Quits: wesm (~wes@firewall.mitsi.com) (Ping timeout: 250 seconds)
+[19:28:46] <Milencho> Altreus, i'm far away from dev could you pls give me a hint
+[19:29:02] <Milencho> i mean i cannot do it with 1 row of code/command
+[19:29:07] <Milencho> it has to be some script ?
+[19:30:00] <Altreus> huf: well true but sometimes you have to take shortcuts so they know what you're referring to
+[19:31:52] <Altreus> Milencho: int((rand * 8999) + 1000) is a random 4-digit number
+[19:32:25] <Altreus> actually you can probably use 9000 instaed of 8999
+[19:34:06] <Milencho> Altreus, u mean to put this in the command instead ot the regex?
+[19:35:58] <Altreus> you can use it inside the substitution to generate a string, but you'll have to use /e, which means you have to quote the rest of it
+[19:36:20] <Altreus> so instead of test_tag>([0-9]{4})</test_tag>
+[19:36:49] <Altreus> You would have to make it like "test_tag>" . int((rand * 9000) + 1000) . "</test_tag>
+[19:36:54] <Altreus> also I think you meant <test_tag>
+[19:37:02] <Altreus> also I meant to end the "
+[19:39:42] <Milencho> thank you Altreus  got it
+[19:39:48] <Milencho> and sorry for disturb
+[19:40:06] <zgu> we're letting people parse xml with regexes now?
+[19:41:00] <Altreus> well first of all they're not parsing it
+[19:41:10] <Altreus> Second of all I'm sure it'll bite them in the arse at some point anyway
+[19:41:16] <Altreus> But yes, also
+[19:42:12] *** Joins: thrig (~thrig@65.113.153.50)
+[19:44:35] *** Joins: wesm (~wes@firewall.mitsi.com)
+[19:56:00] <leitz> Apologies for the hubris, but I'm not seeing a "How to Contribute to Perl 5" doc on the main Perl site or the github repo. Pointers?
+[19:56:27] *** Quits: brtastic (~Thunderbi@ec2-35-176-113-228.eu-west-2.compute.amazonaws.com) (Ping timeout: 268 seconds)
+[19:56:41] * GumbyPAN CPAN Upload: App-Rakubrew-18 by PATRICKB https://metacpan.org/release/PATRICKB/App-Rakubrew-18
+[19:56:47] <leitz> I have a couple of suggestions for one of the documents. Not sure if a fork-and-pr is the right path, or what.
+[19:57:38] *** Quits: jetchisel (~jetchisel@user/jetchisel) (Quit: Unfortunately time is always against us -- [Morpheus])
+[19:57:48] <Altreus> err there used to be a perl-doc-cats repo for helping out with docs specifically
+[19:58:21] <Altreus> I think an issue against the github repo would be fine though
+[19:59:14] <leitz> Altreus, happt to do an issue. Wasn't sure if they wanted fixes as well.
+[19:59:32] <leitz> Fixing a minor issue in a doc is something I can usually do.  :)
+[19:59:33] <Altreus> suggestions are usually valued, and fixes are valued more :D
+[20:00:12] *** Joins: nicolas (~nicolas@178.124.223.35.bc.googleusercontent.com)
+[20:00:21] *** nicolas is now known as nicomen
+[20:01:06] <nirnam> what happend to perltidy -kbb?
+[20:01:28] <Milencho> Altreus, actually i've did it (coppying some python script from google with python script plugin for notepad++)
+[20:01:40] <nirnam> it throwing error at me then I check, the author have updated it today
+[20:01:51] <Milencho> zgu, yea i know that parsing with regex is not the best option , but i need this once just to replace 50 k rows
+[20:03:14] *** Quits: deadmarshal (~deadmarsh@95.38.114.168) (Ping timeout: 252 seconds)
+[20:03:24] *** Joins: LuksNuke (~LuksNuke@94.242.245.63)
+[20:03:59] <leitz> Altreus, are there many people helping with perl docs?
+[20:04:17] *** Parts: Milencho (~milencho@k0r-bg.eu) (Leaving)
+[20:04:25] <nirnam> ah it working again, don't know what happened there
+[20:05:27] *** Quits: adherzog (uid387168@id-387168.tooting.irccloud.com) (*.net *.split)
+[20:05:27] *** Quits: Medlir (Medlir@c-68-55-218-49.hsd1.mi.comcast.net) (*.net *.split)
+[20:05:27] *** Quits: Maff (maff@user/maff) (*.net *.split)
+[20:05:27] *** Quits: zgu (~zgu@2603-7080-b744-4900-16ad-d120-de49-dc8b.res6.spectrum.com) (*.net *.split)
+[20:05:28] *** Quits: Smedles (~quassel@2403-5800-5100-f00-aaa1-59ff-fe53-1a69.ip6.aussiebb.net) (*.net *.split)
+[20:05:28] *** Quits: rbraun (qSQlehAY@user/rbraun) (*.net *.split)
+[20:05:28] *** Quits: xq (~xq@user/xq) (*.net *.split)
+[20:05:28] *** Quits: TrechNex (~TrechNex@user/trechnex) (*.net *.split)
+[20:05:28] *** Quits: plicease (quassel@2600:3c00::f03c:91ff:feea:c7bb) (*.net *.split)
+[20:05:28] *** Quits: PotatoGim (sid99505@id-99505.tooting.irccloud.com) (*.net *.split)
+[20:05:28] *** Quits: nshp (hi@my.domain.is.better.thanyours.com) (*.net *.split)
+[20:05:28] *** Quits: dustinm` (~dustinm@static.38.6.217.95.clients.your-server.de) (*.net *.split)
+[20:05:28] *** Quits: Getty (getty@stardestroyer.de) (*.net *.split)
+[20:05:28] *** Quits: sivoais (~zaki@199.19.225.239) (*.net *.split)
+[20:05:28] *** Quits: alh (~alh@hiddenrealms.org) (*.net *.split)
+[20:05:28] *** Quits: treefrob (~robx@p57a969ef.dip0.t-ipconnect.de) (*.net *.split)
+[20:05:28] *** Quits: hquirinosmith (~hquirinos@hqs.rocks) (*.net *.split)
+[20:05:28] *** Quits: LogicAside (~LogicAsid@user/logicaside) (*.net *.split)
+[20:05:28] *** Quits: nrr (sid20938@id-20938.tooting.irccloud.com) (*.net *.split)
+[20:05:28] *** Quits: saorge (~saorge@ns378138.ip-5-196-67.eu) (*.net *.split)
+[20:05:28] *** Quits: perigrin (sid218253@id-218253.tooting.irccloud.com) (*.net *.split)
+[20:05:28] *** Quits: genio (sid223130@id-223130.charlton.irccloud.com) (*.net *.split)
+[20:05:28] *** Quits: toddr (sid457681@id-457681.tinside.irccloud.com) (*.net *.split)
+[20:05:28] *** Quits: ilmari (~ilmari@user/ilmari) (*.net *.split)
+[20:05:28] *** Quits: mjh4386 (~mjh4386@165.22.53.231) (*.net *.split)
+[20:05:28] *** Quits: marcus (~marcus@mojo/viking/marcus) (*.net *.split)
+[20:05:28] *** Quits: batman (~batman@50.31.137.146) (*.net *.split)
+[20:05:28] *** Quits: surrounder (~surrounde@user/surrounder) (*.net *.split)
+[20:05:28] *** Quits: mweckbecker (~matthias@weckbecker.name) (*.net *.split)
+[20:05:29] *** Quits: El_Che (~nxadm@ssh2.ulyssis.student.kuleuven.be) (*.net *.split)
+[20:05:29] *** Quits: ramix (root@82-65-77-141.subs.proxad.net) (*.net *.split)
+[20:05:29] *** Quits: u4ia (~u4ia@86-80-55-199.fixed.kpn.net) (*.net *.split)
+[20:05:29] *** Quits: dilfridge (~quassel@gentoo/developer/dilfridge) (*.net *.split)
+[20:05:29] *** Quits: sdk_ (~x@shell.codevoid.de) (*.net *.split)
+[20:05:29] *** Quits: solarbunny (~sol@2001:778:200:302:20c:29ff:fe8a:4af7) (*.net *.split)
+[20:05:35] *** Joins: solarbunny_ (~sol@2001:778:200:302:20c:29ff:fe8a:4af7)
+[20:05:35] *** Joins: plicease_ (quassel@2600:3c00::f03c:91ff:feea:c7bb)
+[20:05:36] *** Joins: n_shp (~hi@my.domain.is.better.thanyours.com)
+[20:05:37] *** Joins: Getty (getty@stardestroyer.de)
+[20:05:37] *** Joins: ilmari__ (~ilmari@user/ilmari)
+[20:05:38] *** Joins: PotatoGim_ (sid99505@id-99505.tooting.irccloud.com)
+[20:05:39] *** Joins: sivoais (~zaki@199.19.225.239)
+[20:05:39] *** Joins: El_Che (~nxadm@ssh2.ulyssis.student.kuleuven.be)
+[20:05:39] *** Joins: saorge_ (~saorge@ns378138.ip-5-196-67.eu)
+[20:05:42] *** Joins: toddr (sid457681@id-457681.tinside.irccloud.com)
+[20:05:44] *** Joins: TrechNex_ (TrechNex@2a01:7e00::f03c:92ff:febe:4d66)
+[20:05:47] *** Joins: treefrob (~robx@p57a969ef.dip0.t-ipconnect.de)
+[20:05:47] *** Joins: mweckbecker (~matthias@weckbecker.name)
+[20:05:48] *** Joins: u4ia (~u4ia@86-80-55-199.fixed.kpn.net)
+[20:05:49] *** Joins: ramix (root@82-65-77-141.subs.proxad.net)
+[20:05:56] *** Joins: dilfridge (~quassel@gentoo/developer/dilfridge)
+[20:06:00] *** Joins: dustinm` (~dustinm@static.38.6.217.95.clients.your-server.de)
+[20:06:05] *** Joins: hquirinosmith (~hquirinos@hqs.rocks)
+[20:06:05] *** Joins: sdk (~x@shell.codevoid.de)
+[20:06:15] *** Joins: genio (sid223130@id-223130.charlton.irccloud.com)
+[20:06:16] *** Joins: adherzog (uid387168@id-387168.tooting.irccloud.com)
+[20:06:19] *** Joins: perigrin (sid218253@id-218253.tooting.irccloud.com)
+[20:06:24] <Altreus> leitz: no idea, but for a while it was certainly needed!
+[20:06:30] <Altreus> I think it's always helpful
+[20:06:32] *** Joins: Medlir (Medlir@c-68-55-218-49.hsd1.mi.comcast.net)
+[20:06:37] <Grinnz> leitz: https://perldoc.perl.org/perlhack
+[20:06:37] <Paperbot> Link title(s): [ perlhack - How to hack on Perl - Perldoc Browser ]
+[20:06:47] *** Joins: batman (~batman@50.31.137.146)
+[20:06:49] *** Joins: nrr (sid20938@id-20938.tooting.irccloud.com)
+[20:07:03] <leitz> Grinnz, thanks!
+[20:07:14] <Grinnz> leitz: PRs are the easiest process. let me know if you arent' sure where to find a particular doc
+[20:07:15] *** Joins: zgu (~zgu@2603-7080-b744-4900-16ad-d120-de49-dc8b.res6.spectrum.com)
+[20:07:27] *** Joins: marcus (~marcus@mojo/viking/marcus)
+[20:07:28] *** Joins: Maff (maff@user/maff)
+[20:07:43] *** TrechNex_ is now known as TrechNex
+[20:07:47] *** Joins: Smedles (~quassel@2403-5800-5100-f00-aaa1-59ff-fe53-1a69.ip6.aussiebb.net)
+[20:07:49] *** Joins: mjh4386 (~mjh4386@165.22.53.231)
+[20:07:51] *** Joins: LogicAside (~LogicAsid@user/logicaside)
+[20:07:57] *** Quits: TrechNex (TrechNex@2a01:7e00::f03c:92ff:febe:4d66) (Changing host)
+[20:07:57] *** Joins: TrechNex (TrechNex@user/trechnex)
+[20:09:16] <leitz> Grinnz, I'm reading the perlmod* docs to get better at building a module. Found a dead URL and an unclear header, which seems easy enough for me to figure out how to PR and fix.
+[20:09:32] *** ilmari__ is now known as ilmari
+[20:09:35] *** Joins: alh (~alh@hiddenrealms.org)
+[20:09:41] <leitz> Grinnz, I just have to wait until I'm off-the-clock, work wise.  :)
+[20:09:57] <Altreus> if work are using perl work can fund fixes ;)
+[20:10:06] <thrig> CLOCK_MONOTONY
+[20:10:10] <Grinnz> those docs will all be found in pod/
+[20:10:31] <leitz> Grinnz, yup. I already have the doc, and the forked code. 
+[20:10:45] <Grinnz> though perlmodlib is generated, so that one may need editing elsewhere
+[20:13:22] <leitz> Grinnz, I'm looking at perlnewmod.pod.
+[20:13:40] <Grinnz> that one's simple
+[20:13:59] <leitz> My kind of problem.  :P
+[20:16:43] * GumbyPAN CPAN Upload: App-Rakubrew-19 by PATRICKB https://metacpan.org/release/PATRICKB/App-Rakubrew-19
+[20:23:19] <zgu> is there some POE module that automates forking child processes and marshalling function calls/work units to them?
+[20:23:43] <Grinnz> https://metacpan.org/pod/POE::Wheel::Run
+[20:23:43] <Paperbot> Link title(s): [ POE::Wheel::Run - portably run blocking code and programs in subprocesses - metacpan.org ]
+[20:23:52] <Grinnz> also https://metacpan.org/pod/POE::Quickie
+[20:23:52] <Paperbot> Link title(s): [ POE::Quickie - A lazy way to wrap blocking code and programs - metacpan.org ]
+[20:24:00] <Grinnz> and if you aren't necessarily tied to POE,
+[20:24:11] <Grinnz> https://metacpan.org/pod/IO::Async::Function highly recommended
+[20:24:11] <Paperbot> Link title(s): [ IO::Async::Function - call a function asynchronously - metacpan.org ]
+[20:24:24] <Grinnz> this is more the "marshalling function calls" type of thing
+[20:28:57] <zgu> yeah IO::Async::Function looks like basically what i want to do
+[20:29:12] <zgu> how hard is it to run a http server in IO::Async?
+[20:29:51] <Grinnz> quite easy - https://metacpan.org/pod/Net::Async::HTTP::Server, or just make it a mojo app and use IO::Async::Loop::Mojo to bring in IO::Async::Function to it
+[20:29:52] <Paperbot> Link title(s): [ Net::Async::HTTP::Server - serve HTTP with IO::Async - metacpan.org ]
+[20:30:12] <Grinnz> i recommend the latter, so you don't have to reinvent a web framework
+[20:30:28] *** Quits: tbcr (~tbcr@75.183.195.9) (Ping timeout: 246 seconds)
+[20:31:12] *** Joins: xq (~xq@user/xq)
+[20:34:06] *** Quits: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com) (Ping timeout: 258 seconds)
+[20:40:22] *** Quits: The_Blode (~The_Blode@user/the-blode/x-7164444) (Quit: Leaving)
+[20:41:22] <vanfanel64> I wonder why in email the CC: fields are still used when there can be multiple To: fields, which seems to make CC: fields redunant? BCC: has a purpose, a CC: that is not shown to other recipients, but CC: does not seem to have a need?
+[20:42:21] <alh> To: A, B, CC: D, E often means "A and B: You should care specifically about this. D and E, you might be interested in this"
+[20:42:21] <Altreus> have you been watching Northernlion
+[20:42:30] <thrig> being in "To" gets a special flag in some MUA that "Cc" does not
+[20:42:31] <Altreus> yes basically that
+[20:42:36] <Grinnz> some mail clients rank importance based on being in to vs cc
+[20:42:39] <Altreus> It's not "To" you, you just received it
+[20:43:02] <zgu> yeah i think it's usually to signal to recipients whether you're supposed to be part of the conversation or just seeing a copy as a courtesy
+[20:44:07] <thrig> I could see ignorant users or bad software (Outlook) putting everything into To blindly
+[20:47:12] *** Joins: deadmarshal (~deadmarsh@95.38.114.168)
+[20:47:37] <zgu> sometimes i To: multiple people and Cc: a manager who i'm not expecting to respond directly so they can follow what's happening
+[20:49:14] <integral> a manager carefully chosen to incentivise the recipient to actually reply within 3-5 working days
+[20:51:38] *** Quits: deadmarshal (~deadmarsh@95.38.114.168) (Ping timeout: 252 seconds)
+[20:51:51] <vanfanel64> alh: fair enough
+[20:53:04] <Altreus> oh yeah managers
+[20:53:18] <Altreus> That means "Look what I've sent to this other person, who also needs to know that you know"
+[20:53:23] <Grinnz> and then someone does reply all and annoys all the ccs
+[20:53:59] <thrig> or someone does a reply all to a special exchange address and the mail goes to everyone in the company and then exchange falls over
+[20:54:19] *** Quits: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[20:54:27] <thrig> hypothetically, I mean
+[20:54:59] <integral> all the cloud ends up in a big puddle on the ground
+[20:55:36] *** Joins: rbraun (O2nq8xto@user/rbraun)
+[20:55:56] *** Quits: akaWolf (~akaWolf@akawolf.org) (Ping timeout: 265 seconds)
+[20:57:49] *** Joins: Pali (~pali@user/pali)
+[20:58:45] *** Joins: The_Blode (~Blode@user/the-blode/x-7164444)
+[21:02:50] *** Quits: jplesnik (~jplesnik@83.240.60.17) (Quit: Leaving)
+[21:04:29] *** Joins: mattil (~mattil@d4p2-xxhbz1vm4tsvhy-4.rev.dnainternet.fi)
+[21:05:18] *** Joins: akaWolf (~akaWolf@akawolf.org)
+[21:09:02] *** Quits: mattil (~mattil@d4p2-xxhbz1vm4tsvhy-4.rev.dnainternet.fi) (Ping timeout: 252 seconds)
+[21:09:37] *** Quits: nrr (sid20938@id-20938.tooting.irccloud.com) ()
+[21:09:50] *** Joins: nrr (sid20938@id-20938.tooting.irccloud.com)
+[21:10:19] *** Joins: dwho (~pi@lfbn-ncy-1-851-158.w90-101.abo.wanadoo.fr)
+[21:10:24] *** Joins: deadmarshal (~deadmarsh@95.38.114.168)
+[21:11:41] *** Quits: ufobat (~martin@dynamic-095-114-083-252.95.114.pool.telefonica.de) (Ping timeout: 268 seconds)
+[21:12:49] *** Quits: praxidyke (~praxidyke@107-219-53-104.lightspeed.lnngmi.sbcglobal.net) (Ping timeout: 258 seconds)
+[21:13:08] *** Joins: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net)
+[21:13:26] <dwho> hello , i am a newbie in prog , i want to learn  perl .>Have you an book in french for perl for beginner ?
+[21:13:43] *** n_shp is now known as nshp
+[21:19:51] *** Quits: gryphn (~gryphon@102.129.145.74) (Quit: kthxbye)
+[21:21:11] <leitz> dwho,    https://perl.mines-albi.fr/DocFr.html
+[21:21:12] <Paperbot> Link title(s): [ La documentation Perl en français ]
+[21:21:50] * GumbyPAN CPAN Upload: EventStore-Tiny-0.7 by MEMOWE https://metacpan.org/release/MEMOWE/EventStore-Tiny-0.7
+[21:22:30] *** Quits: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net) (Quit: Textual IRC Client: www.textualapp.com)
+[21:25:12] <leitz> Well, if anyone is a native French speaker, that "Perl in French" page targets Perl 5.10.0 and looks about ten years old. 
+[21:25:57] <leitz> It's the direct target of the "French" link on perl.org/docs.html.
+[21:28:19] *** Quits: randir (~randir@93.159.239.42) (Ping timeout: 265 seconds)
+[21:28:40] *** Quits: yzhernand (~yzhernand@129.85.9.189) (Ping timeout: 252 seconds)
+[21:29:30] <dwho> Thanks leitz
+[21:29:49] <The_Blode> A great introduction to Perl I've found is Coding 101 Perl mini series it's in English though https://www.youtube.com/watch?v=FEtI4BLzzp8
+[21:29:50] <Paperbot> YouTube video linked by The_Blode: Coding 101 21: Perl: Getting Started - published by Coding 101
+[21:29:50] <Paperbot> Link title(s): [ Coding 101 21: Perl: Getting Started - YouTube ]
+[21:30:09] *** Joins: magla (~gelignite@55d4555d.access.ecotel.net)
+[21:33:29] * leitz consults google translate:  dwho, vous êtes les bienvenus. 
+[21:33:40] *** Joins: yzhernand (~yzhernand@129.85.9.189)
+[21:34:01] <nirnam> The_Blode: that was 7 years ago, sadly not much other than the perl&raku conference in term of perl content on youtube
+[21:34:45] <leitz> Err...would I get shunned if I asked about the status of Perl 7?
+[21:34:46] <dwho> merci , thanks leitz
+[21:35:07] <nirnam> 5.34 almost become perl 7
+[21:35:14] <nirnam> well until sawyer, you know
+[21:35:45] <leitz> nirnam, that was my understanding. The concept of "fork and remove old old old stuff" seemed like a good idea.
+[21:35:54] <leitz> I haven't kept up with the community, though.
+[21:35:56] <thrig> Solaris also did some large version jump, at some point. More or less the same code.
+[21:36:11] <ether> sure if you think what happened to python in the 2->3 split was perfectly fine
+[21:36:39] <leitz> thrig; yeah, SunOS 2.4, 2.5, Solaris 6, IIRC.
+[21:37:28] <nirnam> leitz: ricardo signes said jokingly in perl conference 2016 that they gonna keep removing stuff until perl become python with sigils
+[21:37:31] <nirnam> it gonna be amazing
+[21:37:42] <mjgardner> as far as I know Perl 7 is still going to be a thing, and it will be safe to have it as /usr/bin/perl. Past that I don't think anything specific has been determined.
+[21:37:46] <leitz> ether, if I understand, the perl core maintainers have to spend a lot of energy maintaining very historical code. If Perl 7 allowed Perl 5 to continue for those that need it, it might help the core team.
+[21:37:54] <thrig> nirnam: how would they slow it down, though?
+[21:38:14] <leitz> thrig, make operators objects.
+[21:38:20] <thrig> sub sleep_to_be_as_slow_as_python { ... ?
+[21:38:24] <nirnam> raku
+[21:38:29] <nirnam> everything is an objects
+[21:38:47] *** Joins: tbcr (~tbcr@75.183.195.9)
+[21:38:49] <thrig> raku is hella slow. unlike python, I actually use it from time to time
+[21:38:56] <ether> "the perl core maintainers have to spend a lot of energy maintaining very historical code" -> that's the debate that led to sawyer resigning, so I don't care to relitigate it, but do be aware that this assertion is not as cut and dried as you think.
+[21:39:26] <nirnam> thrig: slowness aside, it is a better language
+[21:39:34] <leitz> ether, I happily accpet correction. I do not know, just going off what I heard.
+[21:39:38] <nirnam> that or I've been brain washes by bruce gray
+[21:39:42] <leitz> accpet/accept
+[21:39:44] <ether> much more of an issue, IMO, is that there aren't enough people available to make the changes that we want
+[21:39:47] *** Quits: tbcr (~tbcr@75.183.195.9) (Changing host)
+[21:39:47] *** Joins: tbcr (~tbcr@user/tbcr)
+[21:39:50] <thrig> no? on a 0.8 ghz system with a spinny metal disk I need speed
+[21:39:52] *** Joins: randir (~randir@93.159.239.42)
+[21:40:43] <leitz> ether, I can't yet help you. My C is rustier than my Perl. I'm lucky to maybe help with documentation.
+[21:41:05] <The_Blode>  Can Perl be used for machine learning or AI?
+[21:42:03] <nirnam> leitz: that's another design decision for raku, it core (almost) is also written in raku, because peoples who contribute to raku want to code in raku
+[21:42:40] *** Joins: gast0n (~g4570n@user/gast0n)
+[21:42:43] <simcop2387> The_Blode: there's no cuda, tensorflow, or other bindings that i'm aware of that would make it reasonable to do these days.  that said it's all just math so you *could* do it if you really wanted
+[21:42:51] <Grinnz> leitz: https://perl7faq.grinnz.com
+[21:42:51] <Paperbot> Link title(s): [ Perl 7 FAQ · GitHub <https://gist.github.com/Grinnz/be5db6b1d54b22d8e21c975d68d7a54f> ]
+[21:43:51] <nirnam> https://youtu.be/i3aY9-ns0PM ML in perl perl
+[21:43:51] <Paperbot> YouTube video linked by nirnam: Machine Learning In Pure Perl - William N. Braswell, Jr. - published by Conference in the Cloud! A Perl and Raku Conf
+[21:43:51] <Paperbot> Link title(s): [ Machine Learning In Pure Perl - William N. Braswell, Jr. - YouTube <https://www.youtube.com/watch?v=i3aY9-ns0PM&feature=youtu.be> ]
+[21:44:02] <nirnam> there was an attempt
+[21:44:55] <leitz> Grinnz, thanks! I had read one of your earlier (months ago) notes, but haven't kept up with it.
+[21:45:07] <simcop2387> nirnam: neat
+[21:46:47] <nirnam> various ML lib for python is written in C, technically C > perl at ML X(
+[21:50:18] *** Quits: rindolf (~rindolf@87.68.240.240.adsl.012.net.il) (Ping timeout: 252 seconds)
+[21:50:37] *** Quits: nperez (~nperez@86-93-223-59.fixed.kpn.net) (Ping timeout: 268 seconds)
+[21:50:41] *** Joins: domq (~domq@vpn-254-003.epfl.ch)
+[21:54:44] *** Joins: monkey_ (~user@190.104.116.134)
+[21:56:26] *** choroba is now known as choroba_
+[21:57:14] *** Joins: choroba (~E_Choroba@89-101-243-80.cust.centrio.cz)
+[21:57:24] *** Quits: choroba_ (~E.Choroba@89-101-243-80.cust.centrio.cz) (Quit: Leaving)
+[21:58:57] *** Quits: randir (~randir@93.159.239.42) (Remote host closed the connection)
+[22:02:09] *** Joins: nperez (~nperez@nickandperla.net)
+[22:05:41] *** Quits: LuksNuke (~LuksNuke@94.242.245.63) (Remote host closed the connection)
+[22:06:55] * GumbyPAN CPAN Upload: custom-failures-x-alias-0.02 by DJERIUS https://metacpan.org/release/DJERIUS/custom-failures-x-alias-0.02
+[22:08:53] *** Parts: art1 (~romeyke@p200300ccdf06aa009095aae01b72a7e4.dip0.t-ipconnect.de) ()
+[22:21:39] *** Quits: yzhernand (~yzhernand@129.85.9.189) (Read error: Connection reset by peer)
+[22:43:40] *** Quits: adherzog (uid387168@id-387168.tooting.irccloud.com) (Quit: Connection closed for inactivity)
+[22:44:50] *** Joins: ehuelsmann[m] (~ehuelsman@2001:470:69fc:105::169a)
+[22:49:38] *** Quits: Sauvin (~sauvin@about/linux/staff/sauvin) (Remote host closed the connection)
+[22:51:50] *** Joins: sverzel_ (~sverzel@h-155-4-128-136.na.cust.bahnhof.se)
+[22:54:33] *** Quits: Masklin_Gurder (~joel@93.182.183.85) (Quit: Konversation terminated!)
+[22:54:34] *** Joins: Masklin (~joel@93.182.183.85)
+[22:54:40] *** Quits: sverzel__ (~sverzel@h-155-4-128-136.NA.cust.bahnhof.se) (Ping timeout: 268 seconds)
+[23:02:29] *** Joins: randir (~randir@95-25-113-192.broadband.corbina.ru)
+[23:04:22] *** Quits: silverwhitefish (~hidden@47.202.102.10) (Ping timeout: 252 seconds)
+[23:06:55] *** Joins: Guest9 (~Guest9@43.242.116.62)
+[23:07:46] <leitz> The perlhack page has me doing a "./Configure ...", and then "make test", with no "make" inbetween. Is that correct?
+[23:07:51] <leitz> The tests are running...
+[23:09:36] <thrig> presumably the Makefile was written so that "make test" depends on "make"
+[23:10:06] <Grinnz> as you're just adjusting docs, you actually only need `make test_porting`
+[23:10:08] <leitz> makes sense.  :)
+[23:11:04] <leitz> Grinnz, likely so. But at the same time, this makes sure my box is set up for building.
+[23:13:01] <leitz> I want to move to an RPi as a desktop, and being able to compile is one of the things I need to do. Well, I'm currently on a third hand Dell, I think the RPi will be faster... 
+[23:19:53] *** Joins: furrymcgee (~devuan@31.179.186.66)
+[23:30:57] <zgu> which generation pi?
+[23:33:20] <pragma-> seems a bit redundant to show youtube api metadata and also youtube url titles for the same youtube link
+[23:34:26] <Grinnz> I have to rearchitecture a bit to fix that, the plugins currently have no idea they're both responding to it
+[23:34:35] <pragma-> fun stuff
+[23:35:10] *** Quits: Vicissitude (~Vicissitu@user/vicissitude) (Quit: Leaving)
+[23:36:18] <zgu> the best is when the title has a keyword that trigger a command in another bot
+[23:36:22] <pragma-> (probably want to disable the redirects for youtu.be too)
+[23:36:45] <Grinnz> nah, that's intentional
+[23:36:56] <pragma-> i know the redirects are intention, but even for youtu.be?
+[23:37:00] <pragma-> seems unnecessary
+[23:37:09] <mjgardner> They're giving me double embeds in IRCCloud.
+[23:37:10] <Grinnz> not really necessary, but consistent
+[23:37:15] <leitz> zgu, 4B. 
+[23:37:16] * pragma- nods
+[23:37:24] <Grinnz> anyway, once i fix the double responding thing, that won't be a part of youtube responses anyway
+[23:37:43] <pragma-> probably going to eventually want to be able to ignore certain redirects since they'll just be redundant (like youtu.be)
+[23:37:46] * pragma- shrugs
+[23:38:25] <leitz> Uh, not too much hubris to add myself to AUTHORS so   t/porting/pending-author.t   passes?
+[23:38:46] <Grinnz> leitz: nope, that's expected - the committer can also do it for you if you want
+[23:39:46] <leitz> Grinnz, I'd have to grump at myself if I gave them something with a failing test. I grump at everyone else who does it.
+[23:39:55] *** Joins: neshpion (~neshpion@gateway/tor-sasl/neshpion)
+[23:40:26] <Grinnz> sure, but the authors test isn't really the responsibility of individual committers (though many have been happy to fix it themselves)
+[23:45:33] *** Joins: horsepatat (~horsepata@212.3.197.141)
+[23:47:41] *** Joins: Zhmylove[m] (~zhmylovem@2001:470:69fc:105::483a)
+[23:47:42] <Zhmylove[m]> Hi all
+[23:48:05] <leitz> Anyone up for critiquing my first Perl PR?    https://github.com/LeamHall/perl5/commit/1dc0244f2bf4878474bb5805993759edcc9324ea
+[23:48:06] <Paperbot> Link title(s): [ Modifications to perlnewmod.pod · LeamHall/perl5@1dc0244 · GitHub ]
+[23:50:42] <Grinnz> leitz: 1. make your commit message something like 'perlnewmod - general description of the changes'
+[23:51:05] <Grinnz> 2. the C<> as its own paragraph would be better as a verbatim block (remove the C<>, and indent the line)
+[23:51:29] <Grinnz> might even be better as multiple lines
+[23:51:48] * leitz goes back to the code.
+[23:52:42] *** Joins: Su-Shee (~Susanne@p4ffc75c4.dip0.t-ipconnect.de)
+[23:52:59] *** Quits: domq (~domq@vpn-254-003.epfl.ch) (Ping timeout: 256 seconds)
+[23:54:07] <Grinnz> i didn't look at the context of that section, hence "might"
+[23:54:15] <Grinnz> up to you
+[23:54:42] *** Quits: Su-Shee_ (~Susanne@p4ff4954b.dip0.t-ipconnect.de) (Ping timeout: 250 seconds)
+[23:55:37] <simcop2387> Leitz++
+[23:55:46] <leitz> Grinnz, at the point the builder is there, the one-line version makes sense. Presumably they've actually done some testing prior, this is just a quick set of commands to build the tarball.
+[23:56:18] <Grinnz> sure
+[23:56:25] <Grinnz> what i would do though, is replace the ; with &&
+[23:56:31] <alh> For the commit message, something like: perlnewmod: Remove dead URL and reword a step for consistency / clarity
+[23:56:33] <Grinnz> so that e.g. failed tests stop the process
+[23:56:39] <alh> It should give you an idea of what's changed, and more importantly - why
+[23:57:13] <leitz> alh, what about:  Remove dead link and make a header line stand out more.
+[23:57:49] <leitz> the C<> line doesn't look like a header, when you read the file.
+[23:58:40] <alh> It does if you read it with perldoc (to me, anyway)
+[23:59:02] <alh> But I agree it doesn't really line up with the way that file is written so changing it seems good

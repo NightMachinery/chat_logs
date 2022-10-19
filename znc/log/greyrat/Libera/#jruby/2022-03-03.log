@@ -1,0 +1,198 @@
+[01:49:35] *** Joins: sagax (~sagax_nb@user/sagax)
+[02:07:38] <headius> Oliver pointed out that this is not a shell error, it's like this launcher script is being run by something else
+[02:09:27] <enebo[m]> That is still odd unless it exposed a bunch of things which never ran
+[02:23:37] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 240 seconds)
+[02:43:37] *** Joins: subbu (~subbu@user/subbu)
+[04:31:37] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 240 seconds)
+[04:55:29] *** Joins: subbu (~subbu@user/subbu)
+[05:38:46] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 272 seconds)
+[06:49:06] *** Joins: subbu (~subbu@user/subbu)
+[08:16:49] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 256 seconds)
+[14:34:00] <kares[m]> regarding the jruby-openssl "regression" - hacked the .rb parts to resemble 0.11 (before the refactoring) -> allows jossl to work-around the autoload bug under 9.2
+[14:34:38] <kares[m]> already pushed jruby-openssl 0.12.2 ... if there's a next 9.2 release than we should update the default gem
+[17:01:04] *** Quits: fidothe (sid1130@id-1130.uxbridge.irccloud.com) (*.net *.split)
+[17:01:04] *** Quits: yosafbridge (~yosafbrid@static.38.6.217.95.clients.your-server.de) (*.net *.split)
+[17:02:30] *** Joins: fidothe (sid1130@id-1130.uxbridge.irccloud.com)
+[17:02:30] *** Joins: yosafbridge (~yosafbrid@static.38.6.217.95.clients.your-server.de)
+[17:03:16] *** Quits: yosafbridge (~yosafbrid@static.38.6.217.95.clients.your-server.de) (Max SendQ exceeded)
+[17:04:46] *** Joins: yosafbridge (~yosafbrid@static.38.6.217.95.clients.your-server.de)
+[17:17:39] <headius> That's great that you found a workaround in the gem. You can update the jruby branches any time but not sure when we will put out a new 9.2
+[17:42:05] *** Joins: subbu (~subbu@user/subbu)
+[19:07:24] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[20:01:57] <kares[m]> okay - no rush on my end for anything 9.2
+[20:02:12] <kares[m]> how's the 9.4 progress, you guys seem super busy 😉
+[20:02:23] <kares[m]> s/,/?/
+[20:02:58] <headius> coming along well... need to start running real apps but the net-http ssl stuff is a bit of a blocker
+[20:03:06] <headius> ruby compat is good, most of the work I have been doing is in getting all the default gems working
+[20:13:21] <headius> enebo: can you reproduce any of these sh-related failures locally?
+[20:13:56] <headius> running spec/ruby/language/magic_comment_spec.rb might do it but a full rake-launched run may be necessary
+[20:15:08] <enebo[m]>   headius I will try
+[20:17:47] <enebo[m]> raw command-line is no issue
+[20:18:31] <enebo[m]> ok after the bisect my current dir is broken because it cannot find optparse
+[20:18:55] <enebo[m]> doing a clean build to make sure
+[20:18:58] <headius> should be coming from gem
+[20:19:19] <enebo[m]> yeah hopefully I see it install
+[20:20:09] <enebo[m]> I see it scroll by on build
+[20:20:09] <headius> the syntax errors we see in the CI run appear to indicate something is trying to run bin/jruby as Ruby code
+[20:20:33] <enebo[m]> so ruby_exe is somehow not really doing sh but ruby
+[20:20:38] <headius> /home/runner/work/jruby/jruby/bin/jruby:7: syntax error, unexpected string literal (SyntaxError)
+[20:20:38] <headius> if command -v "local" >/dev/null; then
+[20:20:38] <headius>               ^
+[20:20:50] <enebo[m]> heh...ok that is weird
+[20:20:50] <headius> before I added the quotes it was a similar error
+[20:21:05] <enebo[m]> but if you revert the sh commit does it work again?
+[20:21:16] <headius> I am wondering if the argument munging in those commits is somehow feeding the jruby script back to itself
+[20:22:04] <enebo[m]> I guess commiting with the show me everything option to sh will show something like that (and also create a lot of failing tests with extra stderr output)
+[20:22:32] <enebo[m]> At least I think it will show expanded values
+[20:22:40] <headius> yeah not sure what option to turn on to show this... I see no code in mspec to log the command output or the actual errors the subcommand dumps
+[20:22:50] <enebo[m]> I know it also can show ${foo} ${bar} and not the expansion
+[20:23:07] <headius> I have not tried to revert because I can't reproduce locally so far
+[20:23:27] <enebo[m]> I am trying full spec:ruby:fast locally
+[20:24:29] <headius> oh hey before that gets too far make sure bin/jruby and bin/jruby.sh are the same
+[20:24:46] <headius> I forget whether the copying always happens or if it skips it if bin/jruby is already there
+[20:24:57] <headius> I'm making sure here and will also try a rake run
+[20:25:17] <enebo[m]> they are the same
+[20:25:19] <headius> ok
+[20:26:24] <enebo[m]> I keep wondering if ci defines some of the env values in a significantly different way than how we have things defined in our envs
+[20:26:24] <enebo[m]> like absolute vs relative path
+[20:26:34] <enebo[m]> or extra env we do not have set which does something a tad differently which hits whatever is wrong
+[20:27:08] <enebo[m]> but what you say would make sense that it passes $0 as one of the last arguments which it interprets as a Ruby file
+[20:27:45] <enebo[m]> ruby file1 file2 sort of thing
+[20:27:46] <headius> yeah that is just a guess
+[20:27:46] <headius> but the sh script is definitely getting parsed by us somehow
+[20:28:01] <enebo[m]> Since it happens on the commit for an sh script and we see it trying to ruby interp the sh script I think it is an extremely solid guess :)
+[20:28:30] <enebo[m]> unless we set some variable which JRuby internally thinks is a ruby script
+[20:28:39] <enebo[m]> but that is just a variant of what you said
+[20:29:05] <headius> I do not seem to be getting the same errors locally
+[20:29:06] <enebo[m]> Magic comments in an -e argument must be the first token of the line FAILED
+[20:29:06] <enebo[m]> Expected "" == "UTF-8"
+[20:29:06] <enebo[m]> to be truthy but was false
+[20:29:10] <headius> you got it!
+[20:29:12] <enebo[m]> I do not remember these
+[20:29:26] <headius> are there some that say exit code 1 too?
+[20:29:34] <enebo[m]> Oh so I will not see error 1
+[20:29:48] <headius> I do not get any of those locally, which makes sense because they would have gotten tagged accidentally
+[20:30:23] <headius> that error you have just checks the output so it doesn't notice the process failed
+[20:30:23] <enebo[m]> I even got these from mspec directly
+[20:30:25] <headius> it just has no stdout
+[20:30:26] <enebo[m]> I will see what I can see
+[20:30:28] <headius> yeah ok
+[20:30:38] <enebo[m]> I like your theory so much I will prove it
+[20:31:18] <enebo[m]> Not the fastest tests to run but I suppose I can interrupt on first fail
+[20:31:18] <headius> you can force the script to dump environment every time it runs
+[20:31:30] <enebo[m]> I have to say this is very interesting...does the sh stuff get confused by '#'?
+[20:32:09] <headius> it shouldn't
+[20:32:09] <enebo[m]> how the hell is this even running this
+[20:32:10] <headius> what do you mean though
+[20:32:36] <headius> look for ruby_exe.rb in mspec for some of them
+[20:32:42] <headius> others just popen
+[20:34:02] <enebo[m]> @object.call('case_magic_comment.rb')
+[20:34:13] <headius> oh yeah the shared crap
+[20:34:23] <headius> the top part of that file just runs in each context in the lower part
+[20:34:34] <enebo[m]> I want to focus on this one since it is seemingly just executing the file
+[20:34:42] <headius> all they really do is change the magic_comment file it checks
+[20:35:31] * headius sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/a4f4d614005502566c6b552ab5345dc7af3a4c41
+[20:35:44] <headius> I threw this into mine to get the command line it tries
+[20:35:55] <headius> you might be able to repro with one of those command lines then
+[20:36:57] <enebo[m]> ok I can look there as I guess I should be able to see what is being passed
+[20:40:09] <enebo[m]>  /home/enebo/work/jruby/bin/jruby -Xbacktrace.style=mri -r/home/enebo/work/jruby/spec/ruby/language/fixtures/print_magic_comment_result_at_exit.rb < /home/enebo/work/jruby/spec/ruby/language/fixtures/case_magic_comment.rb
+[20:40:09] <enebo[m]> Big5
+[20:40:30] <enebo[m]> This is literally running this from the command-line which works
+[20:41:30] <enebo[m]> ./bin/jruby -e 'p `/home/enebo/work/jruby/bin/jruby -Xbacktrace.style=mri -r/home/enebo/work/jruby/spec/ruby/language/fixtures/print_magic_comment_result_at_exit.rb < /home/enebo/work/jruby/spec/ruby/language/fixtures/case_magic_comment.rb`'
+[20:42:05] <enebo[m]> This alsoworks (note: backquotes getting turned into markdown
+[20:42:28] <enebo[m]> So is there any persistent exports in this script?
+[20:42:41] <enebo[m]> are there...bad grammar day
+[20:42:47] <headius> Hmm not sure
+[20:43:10] <enebo[m]> because I see this problem runnning from mspec but I am ripping these out and they are fine
+[20:43:31] <enebo[m]> export would create a side-effect where the suite would behave differently (maybe)
+[20:43:55] <headius> Yeah it is possible
+[20:44:06] <enebo[m]>             export OPENJ9_JAVA_OPTIONS="-Xquickstart -Xshareclasses"
+[20:44:20] <enebo[m]> I mean I doubt it is this :)
+[20:44:39] <enebo[m]> but I only see one export but I am not sure I know if there are other ways to pollute
+[20:46:29] <enebo[m]> echoing $@ and $JRUBY_STATUS
+[20:47:45] <headius> It seems like it has to be sticking the scripts name into the command line somehow
+[20:47:54] <headius> I just don't see any other explanation
+[20:48:50] <headius> I wonder if this is like the previous issue where arguments passed the 9th started to loop around and pass the first argument again
+[20:49:00] <headius> Past the 9th
+[20:49:17] <enebo[m]> heh
+[20:49:33] <enebo[m]> I think /bin/sh was really really limited
+[20:49:35] <headius> Gonna get mrnoname in here
+[20:49:39] <enebo[m]> that makes sense as a theory
+[20:49:44] <headius> That is you just turned out to be a quoting problem with the loop variable
+[20:49:59] <enebo[m]> "/home/enebo/Applications/jdks/jdk8u242-b08/bin/java -Xss2048k -Djffi.boot.library.path=/home/enebo/work/jruby/lib/jni -Djruby.backtrace.style=mri -Djava.security.egd=file:/dev/urandom -Xbootclasspath/a:/home/enebo/work/jruby/lib/jruby.jar -classpath : -Djruby.home=/home/enebo/work/jruby -Djruby.home=/home/enebo/work/jruby -Djruby.lib=/home/enebo/work/jruby/lib -Djruby.script=jruby -Djruby.shell=/bin/sh org.jruby.Main
+[20:49:59] <enebo[m]> -r/home/enebo/work/jruby/spec/ruby/language/fixtures/print_magic_comment_result_at_exit.rb /home/enebo/work/jruby/spec/ruby/language/fixtures/magic_comment.rb
+[20:50:00] <headius> Oh come on voice recognition, issue not is you
+[20:50:11] <enebo[m]> So this does not have the script name in it at the bottom
+[20:50:20] <enebo[m]> I am the quoting problem
+[20:51:00] <enebo[m]> It returns 0 but also interesting I see this as full output:
+[20:51:09] <enebo[m]> "/home/enebo/Applications/jdks/jdk8u242-b08/bin/java -Xss2048k -Djffi.boot.library.path=/home/enebo/work/jruby/lib/jni -Djruby.backtrace.style=mri -Djava.security.egd=file:/dev/urandom -Xbootclasspath/a:/home/enebo/work/jruby/lib/jruby.jar -classpath : -Djruby.home=/home/enebo/work/jruby -Djruby.home=/home/enebo/work/jruby -Djruby.lib=/home/enebo/work/jruby/lib -Djruby.script=jruby -Djruby.shell=/bin/sh org.jruby.Main
+[20:51:09] <enebo[m]> -r/home/enebo/work/jruby/spec/ruby/language/fixtures/print_magic_comment_result_at_exit.rb /home/enebo/work/jruby/spec/ruby/language/fixtures/magic_comment.rb
+[20:51:09] <enebo[m]> Big5" == "Big5"
+[20:51:25] <headius> Yes some use an intermediate script and pipe the other script in and others just run it directly I think
+[20:51:33] <enebo[m]> This is interesting because when run from mspec without the echo it is "" == "Big5"
+[20:53:13] <enebo[m]> It follow use_exec path
+[20:53:40] <headius> Hmm
+[20:54:25] <enebo[m]> I realized I was not putting JRUBY_STATUS echo in right place and then it never printed
+[20:55:00] <enebo[m]> HEH...although now thatI comment that out I am seeing the same error
+[20:55:58] <headius> mrnoname is on his way
+[20:56:08] <enebo[m]> "Big50
+[20:56:09] <enebo[m]> " == "Big5"
+[20:56:28] <enebo[m]> So this is pretty weird to me.  I am not seeing return 1 but I am seeing full output if I output anything
+[20:56:29] <headius> Hah that definitely looks like the loop variable quoting
+[20:56:46] <enebo[m]> that 0 is me echoing at end of script
+[20:56:54] <enebo[m]> It is like it is flushing the output
+[20:56:59] <headius> Oh nevermind then
+[20:57:14] <enebo[m]> if no echo is there this becomes "" == "Big5"
+[20:57:18] <headius> Yeah that is pretty strange
+[20:58:34] <headius> I did recently change how some subprocess streams are handled but all I did was remove cloexec
+[20:58:38] <headius> And only for streams that were intended to be inherited in the child
+[20:58:47] <headius> Oh and that might not be merged yet anyway
+[20:58:51] <headius> Hmm
+[21:00:55] *** Joins: mrnoname1000[m] (~mrnoname1@2001:470:69fc:105::1:d0ae)
+[21:01:42] <enebo[m]> Seems like the exit 1 is from executing Ruby which is strange but I do not think that is happening in my env
+[21:02:50] <enebo[m]> So if I put a puts and output in ruby_exe I see the output and not "".  If I put an echo into the sh script I see the output plus that echo output
+[21:03:09] <headius>  enebo: sure mrnoname the commands you run to get fails
+[21:03:17] <headius> Show
+[21:04:15] <enebo[m]> https://gist.github.com/enebo/266c6653c059bbe778c086c6db42d893
+[21:04:51] <enebo[m]> At the top is code and opts and the result of those is COMMAND output.  That is how the sh script gets called
+[21:05:28] <enebo[m]> The bottom is me commenting out use_exec path and just outputting $@ along with echoing the resulting error status $JRUBY_STATUS/$?
+[21:07:02] <enebo[m]> I need to break for lunch in next 10 minutes
+[21:08:06] <enebo[m]> oh shit
+[21:08:50] <enebo[m]> https://gist.github.com/enebo/0716f665f46546c03c4e93e038874316
+[21:08:53] <enebo[m]> look at that!
+[21:09:26] <enebo[m]> The -e seems to have no quoting
+[21:09:38] <enebo[m]> This is a -e which contains newlines
+[21:09:48] <enebo[m]> Are newlines used as a delimeter for something?
+[21:09:58] <mrnoname1000[m]> Hmm
+[21:10:55] <enebo[m]> Let me run that again with the COMMAND output showing what ruby is passing to the script
+[21:11:21] <mrnoname1000[m]> Newlines should be escaped between single quotes but it could be an issue with eval-ing the array to get the values out
+[21:13:51] <enebo[m]> Ok I should end up with a golden command line to shwo this
+[21:19:29] <enebo[m]> I am confused now.  Somehow for some specs we are doing -e '{line1\nline2...}' but I am having a rough time seeing where it is really happening
+[21:19:47] <enebo[m]> I can see something in ruby_cmd which does it yet I cannot see it ever fire
+[21:20:59] <enebo[m]> In fact now that I remove the puts I just put in it stopped
+[21:21:18] <enebo[m]> It would appear it will -e if it is given code but the file for code does not exist
+[21:21:23] <mrnoname1000[m]> Something is definitely wrong, any newline in -e gets turned into a space
+[21:21:42] <enebo[m]>   if code and !File.exist?(code)
+[21:21:42] <enebo[m]>     body = "-e #{code.inspect}"
+[21:21:42] <enebo[m]>   end
+[21:21:53] <enebo[m]> This is highly questionable in Ruby to me
+[21:22:17] <enebo[m]> So I have to have lunch but I will leave with another idea
+[21:22:45] <enebo[m]> Somehow we are losing some pathing variable telling us where we are running which in turn maks the File.exist? check fail
+[21:23:04] <enebo[m]> That would end up triggering this which I half wonder if this works as expected
+[21:23:12] <enebo[m]> but I will be back in about 30 or so
+[21:29:58] <mrnoname1000[m]> Fixed the newline issue
+[21:30:06] <mrnoname1000[m]> I missed an extra layer of quoting
+[21:31:14] <mrnoname1000[m]> https://gist.github.com/mrnoname1000/a0a12188138b61d58b08dae64f298ce0
+[21:32:14] <mrnoname1000[m]> --environment looks pretty gross with literal newlines though
+[21:42:53] <mrnoname1000[m]> Figured out the other issue too
+[21:44:09] <mrnoname1000[m]> Apparently in dash, local doesn't make a new, empty variable but a copy of the external one if it exists
+[21:54:06] <mrnoname1000[m]> No wonder it was so hard to find
+[22:15:02] <enebo[m]> oh cool!
+[22:15:07] <enebo[m]> That lunch paid off
+[22:19:38] <enebo[m]> mrnoname1000: with the patch above I only have one failure now in magic_comment_spec.  I am pretty curious if we see this fix the CI issue since that behavior is seemingly different than my local fails
+[22:20:13] <enebo[m]> The one failure may actually be reasonable failure too...not sure if this is tagged or not
+[22:35:21] <mrnoname1000[m]> See if it still fails with these changes https://github.com/jruby/jruby/pull/7127
+[22:39:46] <enebo[m]> mrnoname1000: looks like a winner
+[22:40:14] <enebo[m]> We were 188-190 or so and we are again with no magic comment failures.
+[22:44:23] <mrnoname1000[m]> 🎉
+[22:45:39] <enebo[m]> It only someone could party explode my party explode

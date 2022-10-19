@@ -1,0 +1,488 @@
+[00:23:52] <basshelal[m]> Oh wow ok that kind of makes sense
+[00:24:09] <basshelal[m]> So we can't use the new engine because?
+[00:24:42] <basshelal[m]> So we have JUnit5 but on an older engine
+[00:25:45] <headius> so there are a couple issues
+[00:26:02] <headius> if you pull in junit5 and have junit4 tests, they will not be detected without the legacy engine
+[00:26:29] <headius> the jnr compile dep thing caused master to stop running our junit4 tests
+[00:28:29] <basshelal[m]> WHAT?
+[00:28:29] <basshelal[m]> So if I'm running JUnit5 but my dependencies are using 4 it won't work?
+[00:28:38] <basshelal[m]> I'm a little confused
+[00:29:29] <headius> if you pull in junit5 it will only autodetect junit5+ tests
+[00:29:31] <headius> if I'm reading these posts right
+[00:29:53] <headius> so in our case we ended up with junit bumping up to 5 to resolve the dependency conflict, but all our tests are 4
+[00:30:19] <headius> so the second issue then is that while we were not running these tests, something regressed in the JRubyEngineTest related stuff
+[00:30:32] <headius> when I pulled in the fixed jnr-ffi, that started failing and confused the heck out of me
+[00:31:07] <headius> I guess this at least shows our junit tests are important!
+[00:31:34] <headius> I think at this point I'm going to merge the jnr update to master and we will see if that test continues to fail in CI (it does not fail for either enebo or myself locally)
+[00:32:50] <basshelal[m]> I'm still a little confused but ok, do that and tell me how it goes. Not much I can do to help other than maybe just undo and go back to JUnit4? But I'm still very curious to know about this
+[00:32:50] <basshelal[m]> keep me posted
+[00:33:14] <headius> FYI this is the patch I did on master (with the junit5 compile dependency issue): https://gist.github.com/headius/c97a7556bc98fb3e7932faae23895480
+[00:33:20] <headius> that at least lets the junit4 tests run on master
+[00:33:40] <headius> the jnr update will fix the junit5 compile dependency but might start showing the regressed test... if it does I will just deal with it
+[00:34:04] <headius> the junit version update there probably does nothing because it will end up choosing junit5 anyway
+[00:34:13] <headius> there = my patch
+[00:34:24] <headius> it is confusing 🤪
+[00:37:06] <basshelal[m]> If I'm getting this correctly, the only long term fix would be to convert all of JRuby's test to JUnit5 and use the new engine assuming there's no other JUnit4 dependencies
+[00:37:28] <basshelal[m]> But it's all test scope so it shouldn't matter :/
+[00:37:35] <headius> we could also do it a test at a time if we run both the legacy and the jupiter engines
+[00:37:44] <headius> that is possible too
+[00:37:51] <headius> they will do separate runs but it should detect both junit4 and junit5 tests
+[00:38:15] <headius> I merged the JNR update... we'll see how it goes in CI
+[00:38:23] <basshelal[m]> ok let's see
+[00:40:02] <headius> enebo: fun stuff but I think I untangled the knot
+[00:40:19] <headius> if this fails on master then there's something odd about our JSR-223 engine very recently
+[00:40:28] <headius> or some interaction with JDK updates on GHA and Travis
+[00:45:03] <headius> same tests failed on master after merge... so something seems to have broken
+[00:46:20] <enebo[m]> headius: should I try it now on master?
+[00:46:35] <headius> yeah try it again with updated master
+[00:46:36] <headius> it still does not fail for me locally
+[00:47:57] <headius> the failures look like our engine is not getting registered correctly
+[00:49:07] <headius> ok wat, it is failing now that I merged
+[00:49:28] <headius> well at least I have something in hand I can investigate
+[00:51:09] <headius> I sure hope it fails for you too
+[00:53:08] <enebo[m]> [ERROR] org.jruby.embed.jsr223.JRubyEngineTest.testClearVariables  Time elapsed: 0.18 s  <<< ERROR!... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/83014ef89d00a1cbcc737a5b8ced01734cacab3e)
+[00:53:19] <enebo[m]> why is this not indenting...I am tabbing
+[00:53:32] <enebo[m]> 9 errors
+[00:53:38] <headius> 9?
+[00:53:49] <headius> I have 6
+[00:53:49] <enebo[m]> [ERROR] Tests run: 437, Failures: 0, Errors: 9, Skipped: 0
+[00:53:54] <headius> what in the what
+[00:54:02] <headius> gist the failures for me somewhere
+[00:54:13] * headius sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/f44a42972b498196ad6e1682da91a83f084a908f
+[00:54:19] <headius> that's all I have
+[00:54:28] <headius> some of these are a null instance, some are NPE when it tries to eval
+[00:54:31] <enebo[m]> [INFO] Results:... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/617c73f19de24b9ad6b4c636ef059e45da2a1876)
+[00:54:32] <headius> they make no sense
+[00:54:35] <enebo[m]> lol
+[00:54:43] <enebo[m]> so 3 scriptingcontainewrtest errors
+[00:54:50] <headius> yeah I have no idea about those
+[00:55:04] <headius> what Java version did you run on?
+[00:56:04] <enebo[m]> openjdk version "1.8.0_242"
+[00:56:14] <enebo[m]> well it is an internal error whilte calling eval
+[00:56:15] <headius> do you have any local changes?
+[00:56:18] <headius> yeah
+[00:56:22] <enebo[m]> It seems to be masking where it is happening
+[00:56:30] <enebo[m]> This is clean master
+[00:56:33] <headius> ScriptError does that
+[00:56:39] <headius> unfortunately
+[00:56:46] <enebo[m]> no cause field?
+[00:57:00] <ahorek[m]> https://github.com/jruby/jruby/pull/6815
+[00:57:02] <headius> I'm not sure, but it may be surefire not printing the cause properly
+[00:57:31] <enebo[m]> maybe we need debug/trace on or something
+[00:57:40] <headius> ahorek: 😳
+[00:57:52] <headius> did we change this recently?
+[00:58:19] <ahorek[m]> https://github.com/jruby/jruby/commits/master/core/src/main/java/org/jruby/embed/variable
+[00:59:19] <ahorek[m]> but travis died on... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/aed103804603fc207f309e0d49233839df9a7da5)
+[00:59:52] <enebo[m]> epic
+[01:00:31] <ahorek[m]> but travis died on :-(... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/65dc8e200d264638f816fbdd3c07af2eaddad87d)
+[01:00:45] <headius> that one has appeared and disappeared before
+[01:00:57] <headius> I have no explanation for it either
+[01:01:18] <enebo[m]> so this fix will just make ARGV if it is not already on stopself?
+[01:01:52] <enebo[m]> but isn't ::ARGV always there?   Maybe something is deleting it after a run?
+[01:02:38] <headius> yeah I want to know why this works
+[01:02:53] <enebo[m]> well ignore my description
+[01:02:59] <headius> most of what we updated in the last week was just Ruby dependencies and the CFG fixes
+[01:03:05] <enebo[m]> I just think this is weird
+[01:03:13] <headius> and the jnr juggling but that should be unrelated and minimal
+[01:03:56] <enebo[m]> getVariable is only called once containsVariable returns true
+[01:04:08] <headius> I'm testing if did_you_mean update caused something odd
+[01:04:21] <headius> that is the only updated gem that loads at boot
+[01:04:31] <enebo[m]> then the variable is accessed.  This code is correct but the implementation is broken somehow or there is concurrent testing or something like?
+[01:04:32] <headius> if not that, could be stdlib update, or CFG work
+[01:05:41] <headius> did_you_mean is off the hook
+[01:05:44] <enebo[m]> CFG changes will only change Ruby code and really only in a case where a constant value is propagated to create dead code
+[01:06:09] <headius> enebo: yeah but could it break some initialization that makes the engines fail?
+[01:06:29] <headius> like could it eliminate an ARGV = something
+[01:07:12] <enebo[m]> but ARGV is a ruby thing so I don't think removing code would remove ARGV
+[01:07:15] <ahorek[m]> org.jruby.embed.internal.BiVariableMap{ARGV=[Ljava.lang.String;@6fc6f68f}
+[01:07:15] <ahorek[m]> vars.getVariable(ARGV) => null
+[01:07:56] <headius> trying stdlib revert now
+[01:08:38] <headius> nope
+[01:09:34] <ahorek[m]> it's just a workaround, but it's worth more investigation
+[01:09:55] <headius> I'm going to spin a revert PR that backs off your changes enebo 
+[01:10:20] <enebo[m]> ok
+[01:10:49] <enebo[m]> I don't want to be the one who says it can't be that because it definitely could be but I am confused ARGV is set every container setup by Java code
+[01:11:22] <headius> yeah it doesn't make sense to me either
+[01:11:22] <enebo[m]> The 223 code in these classes seems to be settingh a new ARGV in Java
+[01:11:44] <enebo[m]> what is stranger to me is it is true for containsVar to make it in there so it really think ARGV is in there
+[01:11:54] <headius> https://github.com/jruby/jruby/pull/6816/checks?check_run_id=3549315717
+[01:12:16] <enebo[m]> Even ahorek hashrocket shows it things it is in there
+[01:12:26] <enebo[m]> the get itself is just returning null at that point
+[01:12:43] <headius> it will be interesting to see what is causing this b
+[01:12:49] <headius> because I have zero theories
+[01:13:01] <enebo[m]> It has to be that epic kares commit doesn't it?
+[01:13:21] <headius> the one that was in the variable dir ahorek linked to?
+[01:13:28] <enebo[m]> "has to" is another famous last phrase :)
+[01:13:49] <headius> which epic commit do you mean? I don't think there's any recent epic kares commits
+[01:14:18] <enebo[m]> headius: ok wait...when did this break?
+[01:14:34] <enebo[m]> I thought we don't know because of another commit which turned off testing
+[01:15:02] <headius> it broke sometime after the 1st
+[01:15:12] <headius> the jnr update on the 1st disabled the tests
+[01:15:19] <headius> before that this was running and passing
+[01:15:37] <enebo[m]> oh ok I thought that was going to be earlier
+[01:15:38] <headius> unfortunately since then we landed a bunch of library updates and your IR work
+[01:15:44] <enebo[m]> then kares may be off the hook :)
+[01:15:53] <headius> MAY
+[01:16:01] <headius> we can always blame kares if nothing else
+[01:16:13] <enebo[m]> I am just seeing if he wakes up or not
+[01:16:24] <enebo[m]> I thought that was a recent commit too :)
+[01:17:59] <headius> bad news enebo
+[01:18:08] <enebo[m]> I do always think there is a possibility dead code could kill live code by mistake but I find this baffling
+[01:18:17] <headius> revert is passing
+[01:18:47] <enebo[m]> It annoys me these tests pass through the debugger
+[01:19:28] <enebo[m]> I will trun the entire file
+[01:19:37] <enebo[m]> yay...repro'd
+[01:19:47] <headius> yeehaw
+[01:20:06] <headius> enebo: should I merge the revert and then you can give it another go, or just leave it and you'll fix it on master?
+[01:20:15] <enebo[m]> give me 5 before I decide that
+[01:20:22] <headius> ok
+[01:22:18] <enebo[m]> catch (Exception e) .... examine NPE stacktrace...literally the one given
+[01:22:34] <enebo[m]> as the cause of the ScriptException
+[01:26:13] <enebo[m]> well LocaloptimizationPass never replaces any branches with new instrs so that is mysterious
+[01:31:54] <enebo[m]> When it fails: if ( var != null && var.isReceiverIdentical(receiver) ) {
+[01:32:07] <enebo[m]> isReceiverIdentical is not identical
+[01:32:41] <enebo[m]> it uses == in Java to compare but it begs how "main" would be different.  
+[01:33:54] <enebo[m]> yeah two mains...hmm
+[01:36:56] <enebo[m]> Without testing this I think I see why it is broken but it makes more questions :)
+[01:37:35] <enebo[m]> I removed static field Nil.NIL in the operand and made it a per runtime field
+[01:37:45] <enebo[m]> I will just verify that is the problem quickly
+[01:42:38] <enebo[m]> Lesson learned...do not try and read the revert diff
+[01:43:08] <enebo[m]> but I made a classic mistake
+[01:43:46] <headius> classic enebo
+[01:43:46] <enebo[m]> I wanted to see Nil and thought it had no runtime reference within it...but I forgot it caches...so static fields makes multiple runtimes get confused
+[01:45:07] <enebo[m]> So to fix this I can revert how nil is used but now I need to pass something into simplifyBranch so it can find manager to get nil
+[01:45:08] <enebo[m]> My 3 additional errors still seem to be here but I can see it is something to do with not finding 'date'
+[01:45:11] <enebo[m]> I am willing to bet I have some environmental issue there for those 3
+[01:45:59] <enebo[m]> I should have a fix for this in a few minutes.  I will just push it.  It is just making it not static and getting an object there that simplify can access nil with
+[01:46:05] <headius> ohh I see
+[01:46:18] <headius> you made the instance field static, not the other way around
+[01:46:36] <enebo[m]> yeah I was reading the revert PR :)
+[01:47:06] <enebo[m]> believe me I was confused...I thought what the hell I made it an instance field...it should have made this better :)
+[01:47:19] <headius> haha
+[01:47:20] <headius> ok
+[01:47:31] <headius> well simple fix then
+[01:47:31] <headius> huzzah
+[02:02:59] <headius> enebo: I'm done for today... JNR stuff has landed and all that's left is the JI issue, I think
+[02:03:14] <headius> this release will be the first one with jruby-base in addition to jruby-core so that might be an adventure
+[02:03:32] <headius> Assuming the JI issue is not fixed before tomorrow, I'll start looking into that
+[02:03:38] <headius> ttfn
+[02:05:39] <enebo[m]> headius: ok cya
+[13:32:05] *** Quits: joast (~rick@cpe-98-146-112-4.natnow.res.rr.com) (Ping timeout: 260 seconds)
+[13:46:22] *** Joins: joast (~rick@cpe-98-146-112-4.natnow.res.rr.com)
+[18:02:05] <headius> good morning!
+[18:02:48] * mattpatt[m] waves]
+[18:03:07] <headius> let's try to wrap up that last issue today
+[19:16:12] <basshelal[m]> headius: I got some free time today, I want to work on https://github.com/jnr/jnr-ffi/issues/260
+[19:16:12] <basshelal[m]> Let me know about what other hacks you want to merge into JNR-FFI from the other JNR repos, I'll work on the FreeBSD version thing now, hopefully I can get a FreeBSD image running to test on
+[19:17:00] <headius> basshelal: cool! The two I know of are enxio and posix, but unixsocket might have something too to detect linux vs bsd
+[19:17:35] <headius> everyone that uses jnr-ffi comes up with their own platform detection garbage so we really need to centralize it
+[19:18:03] <basshelal[m]> headius: lol 😂 that's why I added the endianness thing a while back
+[19:18:49] <basshelal[m]> headius: Well link em to me in that issue and I'll see if I can something done for them, will probably do them in separate PRs just in case
+[19:36:49] <headius> ok will link what I know of
+[19:51:08] <headius> basshelal: FWIW I think it's incredibly stupid that updating to junit5 with existing junit4 tests just silently ignores those tests, so I don't blame you for the recent hassle
+[19:51:14] <headius> not sure who thought that was a good idea but they were wrong
+[19:52:39] <basshelal[m]> headius: Yeah I agree, should be a simple update with the ability to update gradually, sorry for causing a hassle
+[20:35:51] <headius> basshelal: updated
+[20:36:56] <headius> ok bit of overhead this morning but I am digging into the JI issue a bit byteit101 enebo 
+[20:40:53] <enebo[m]> headius: yeah I have looked a little bit at this
+[20:41:34] <enebo[m]> instanceSuper will just keep going down to Ruby Object but there is a reifiedClass in that class
+[20:43:37] <headius> I'm just starting to look so any tips would be great
+[20:43:50] <enebo[m]> so I am a bit confused on what is the right thing here ... should original module/class have java.lang.Object in it as a proxy or should we go...oh its reified lets search with that class
+[20:44:34] <enebo[m]> I was specifically looking at byteit101 case with Parent < java.lang.Object
+[20:45:42] <enebo[m]> derp...well I am silly I just fired up debugger again and superClass is Java::JavaLang::Object
+[20:46:26] <headius> so it is pointing at the right place
+[20:46:44] <headius> byteit101 said something about the method we get back from the search pointing at the wrong self class
+[20:46:55] <headius> so it ends up supering back into the one we were just in
+[20:47:07] <headius> so perhaps something wrong with the framing?
+[20:47:08] <enebo[m]> I can see it is searching on Java Proxy Object for a super which would be toString
+[20:49:16] <headius> aha
+[20:49:26] <enebo[m]> so it finds a method on java.lang.Object for toString and enters call on that method and that is what is looping
+[20:49:26] <headius> calling toString on Parent is fine
+[20:49:32] <headius> it only fails calling it from Child
+[20:49:48] <headius> so it is getting the current self class from the target of the call and not from the source of the method, or something
+[20:50:48] <enebo[m]> At the point in debugger I am at I am seeing Parent as definingModule so Child has class Parents version and the super in parent version is looking for java.lang.Object version and looping
+[20:50:59] <enebo[m]> hmm this is interesting
+[20:51:04] <enebo[m]> I did not go this far before
+[20:51:16] * headius sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/98147a533ee4ae4fdc8290e85e61875912895254
+[20:51:18] <enebo[m]> upwrapIfJavaProxy(self) in InstanceMethodInvoker
+[20:52:03] <enebo[m]> IDE debugger craps itself on generated classes
+[20:52:20] <headius> yeah I don't know what we're doing wrong on some of those
+[20:52:33] <headius> JIT code is fine in debugger other than having no source associated
+[20:53:14] <enebo[m]> ok so you a) found only dispatch down through child does it fail and I found b) once it is down to super from parent it must resolve back to parent for the invokeDirect
+[20:53:29] <headius> yeah
+[20:53:34] <enebo[m]> I cannot actually see that as values in b because the stuff is red in IDE
+[20:53:42] <headius> so it gets a method that pushes the child class as frame class and then it just keeps doing that
+[20:53:46] <headius> because it searches from child again
+[20:54:36] <enebo[m]> ok JavaMethod enters mightBeProxy in invokeDirect and does a tryProxyInvocation
+[20:56:02] <headius>  * ```... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/9f460eaf92ad319e560ee2dcf55e451fff5c651b)
+[20:56:23] <headius>  * ```... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/584876ed2297db440927dc0950c8270a6b413075)
+[20:56:38] <enebo[m]> Seems like it maybe should have did a invokeDirectSuperWithExceptionHandling but it passes that and does invokeDirectWithExceptionHandling
+[20:56:44] <headius> fixed my example above... I guess Class.new(SomeJavaExtension) does not work right
+[20:56:50] <headius> not sure if it ever did though
+[20:56:50] <enebo[m]> but I don't really follow this code too well
+[20:57:49] <headius> -Xcompile.dump does dump out the generated bits of byteit101 generated code
+[20:59:12] <enebo[m]> well I can see it bump back to a regular invoke on Parent toString
+[20:59:12] <enebo[m]> but of course we knew that already
+[20:59:26] <enebo[m]> headius: look at JavaMethod#tryProxyInvocation at 602
+[20:59:59] <headius> I think this is missing framing needed for super
+[21:00:02] <headius>     GETFIELD rubyobj/Parent.this$rubyObject : Lorg/jruby/java/proxies/ConcreteJavaProxy;
+[21:00:02] <headius>     LDC "toString"
+[21:00:02] <headius>     GETSTATIC org/jruby/runtime/builtin/IRubyObject.NULL_ARRAY : [Lorg/jruby/runtime/builtin/IRubyObject;
+[21:00:02] <headius>     INVOKEVIRTUAL org/jruby/java/proxies/ConcreteJavaProxy.callMethod (Ljava/lang/String;[Lorg/jruby/runtime/builtin/IRubyObject;)Lorg/jruby/runtime/builtin/IRubyObject;
+[21:00:33] <headius> it passes in the self object and the method name for the call but no frame class, because it does no framing
+[21:00:34] <enebo[m]> err 592
+[21:00:42] <headius> so it always will do the lookup from the self object's class
+[21:01:07] <headius> I suppose I should have noticed this in the original PR
+[21:01:18] <enebo[m]> It is not finding toString on proxyclass and then just moving on
+[21:01:27] <basshelal[m]> headius: I've added `String getVersion()` `int getVersionMajor()` methods to `Platform`, should I do a `int getVersionMinor()` as well?
+[21:01:29] <headius> that bytecode above is what's within the Parent.toString generated code
+[21:01:46] <enebo[m]> So could it be that it is looking at Child proxyclass and not finding the toString of Parent?
+[21:02:12] <headius> basshelal: probably? I mean, Solaris/SunOS had some weird-ass versioning for a while so I suspect we will want it
+[21:02:23] <enebo[m]> oh so it is doing this right but it is not loading the right thing from a missing frame
+[21:02:50] <headius> that'
+[21:02:55] <headius> that's my current theory
+[21:03:04] <headius> without frame it can't know where to super from so it is just searching from the bottom again
+[21:03:46] <headius> wait
+[21:03:49] <headius> I am not quite right
+[21:03:57] <headius> this code is what lives on the Java side of this thing
+[21:04:02] <headius> so this is ok
+[21:04:03] <enebo[m]> ok so in where I am at I can see that the jpc for the invoke in JavaMethod is Child and not Parent
+[21:04:13] <headius> I need to see the code running in the Ruby side that has the super
+[21:04:15] <enebo[m]> so it fails to see there is a super to invoke
+[21:06:19] <enebo[m]> headius: do you we still put all Java methods on all proxies or do we only put them on each proxy class where they are defined?
+[21:06:21] <headius> https://gist.github.com/headius/874a08ce0920285c04366b768d8a6420
+[21:06:25] <headius> that is it
+[21:06:26] <headius> but still no frame
+[21:07:23] <headius> it is generating IR that does not trigger a frame so the super has to search based on scope and gets it wrong
+[21:08:31] <headius>   0: %v_0 := load_implicit_closure... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/eb6498a62b512d26094becaa2c6a12921a7bf99d)
+[21:09:35] <headius> hmm
+[21:10:03] <headius> interestingly a normal "class Foo; def foo; super; end; end" also looks like this in IR
+[21:10:09] <headius> perhaps mod<0> is the wrong static scope module?
+[21:11:07] <enebo[m]> headius: do you we still put all Java methods on all proxies or do we only put them on each proxy class where they are defined?
+[21:12:04] <headius> if you mean in general I think we still do all on all, but we bind the parent's version if there is an override in the child
+[21:12:45] <enebo[m]> So in Child there is no toString and when we ask the proxy it says nope so we don't so super invoke in JavaMethod
+[21:13:26] <enebo[m]> I am not saying it is static scope or frame but the call has self of child.  has clazz of java.lang.Object and figured out Object location from Parent
+[21:13:43] <enebo[m]> but when we ask child .get("toString", param_types) it returns null
+[21:13:50] <headius> instance super does assume that the cref class is the one to super from
+[21:14:14] <headius> so that is likely where this is getting messed up... it is getting the wrong static scope passed into the toString call?
+[21:15:56] <enebo[m]> so what should jpc be in tryProxyInvocation?
+[21:16:09] <enebo[m]> should it be parent or child
+[21:16:23] <headius> tryProxyInvocation happening where?
+[21:16:33] <enebo[m]> The failing code snippet
+[21:16:40] <enebo[m]>         if ((jpm = jpc.getMethod(method.getName(), parameterTypes)) != null && jpm.hasSuperImplementation()) {... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/09f6ab4876095444aff70e34978e95fe89f968b5)
+[21:17:25] <enebo[m]> jpc when I run it is Child as it comes from javaInvokee which seems right to me but when we look to see if it has a super method to toString it returns null because it is not defined on Child
+[21:18:11] <enebo[m]> but if we are supposed to put all method defines down and Child has no toString then maybe we should have added Parents as an entry and I have no idea
+[21:18:18] <headius> what is javaInvokee in that case?
+[21:18:24] <enebo[m]> Child
+[21:18:46] <enebo[m]> If it was Parent it would work but javaInvokee seems to be self from the call
+[21:18:51] <headius> I think jpc should be the current class, not the current self class
+[21:19:03] <headius> which is what it is getting wrong from further up the call stack
+[21:19:26] <headius> if it is getting class from the static scope and it ends up being Child, then it has the wrong scope or that scope is resolved to the wrong cref module
+[21:20:41] <enebo[m]> instanceSuper in IRTuntimeHelpers which is where it would all start to go wrong is maybe a place to state what is there
+[21:20:44] <headius> I think this is entirely a problem with the super splitting logic in the new proxy stuff
+[21:21:16] <headius> isn't that what is happening here? Or was that only for initialize?
+[21:21:27] <enebo[m]> definingModule is Parent
+[21:21:40] <headius> when called against child?
+[21:22:01] <enebo[m]> The example byteit101 has no super in it at all
+[21:22:03] <enebo[m]> err no initialize
+[21:22:05] <enebo[m]> it has a super 
+[21:22:22] <headius> right ok you are more on the track then I think
+[21:22:31] <headius> so super goes into proxy super logic but it does not have the original class in hand and has to infer it from self
+[21:22:37] <enebo[m]> https://gist.github.com/enebo/460bae3b78c01aee9156334a46fde7d6
+[21:23:41] <headius> I need to get into the debugger
+[21:23:47] <enebo[m]> This is similar to monkstone's case with setSize (or whatever it is) but it lacks the complexity that there are overrides (Although I doubt that matters)
+[21:24:42] <enebo[m]> yeah so I see it find what I would think is all the right stuff at this point but when it goes to invoke it then asks Child whether it has a super version of toString and it says nope because Parent has it
+[21:25:03] <enebo[m]> that was why I asked the question about definitions
+[21:25:41] <enebo[m]> Maybe our reified classes don't do what JI proxies do and we are just not putting that info onto Child
+[21:27:15] <enebo[m]> I should add when it doesn't find it just assumes it can invoke toString on the child which then takes it back to the parent toString which then repeats until we are out of stack
+[21:27:43] <enebo[m]> My confusion is mostly not knowing how this is supposed to work in the first place
+[21:27:49] <headius> the super search does look ok so my earlier theory was wrong
+[21:27:59] <headius> I am stepping in
+[21:29:04] <headius> aha
+[21:30:03] <headius> I'm caught up with you now
+[21:30:58] <headius> so it just skips the super version of the call
+[21:31:10] <headius> because it doesn'
+[21:31:11] <enebo[m]> It doesn't think there is one
+[21:31:13] <headius> it doesn't see that the current self is the original proxy
+[21:31:35] <headius> or rather I think it sees that we are calling against Child and Child does not override this so it does a normal invocation
+[21:31:45] <headius> right
+[21:31:49] <enebo[m]> I think because the invoker is Child it gets jpc from that and not where we found the method
+[21:31:55] <headius> right
+[21:31:59] <headius> that is it
+[21:32:18] <enebo[m]> but should it be peeling out Parent somehow?
+[21:32:33] <enebo[m]> That is where I don't see how this all works
+[21:32:45] <enebo[m]> If we added all parent methods onto child this would just work I think
+[21:32:46] <headius> well this is problematic because we are far from where we had a reference to Parent now
+[21:32:57] <headius> so it has to infer it from the invokee and that is wrong
+[21:33:03] <enebo[m]> yeah
+[21:33:50] <headius> tryProxyInvocation should probably be getting the method's defining class to use as the current class for super lookups
+[21:34:07] <headius> I think InstanceMethodInvoker should be passing clazz through
+[21:34:17] <enebo[m]> well that also makes sense but we do not pass it into call
+[21:34:22] <headius> we do
+[21:34:27] <enebo[m]> although we do pass java.lang.Object
+[21:34:33] <headius> but we leave it behing
+[21:34:34] <headius> behind
+[21:34:59] <headius> it looks up the java.lang.Object toString just fine
+[21:35:04] <headius> passes java.lang.Object proxy in
+[21:35:07] <enebo[m]> oh yeah right it does
+[21:35:16] <headius> and then ignores it and proceeds on to the inferred super logic
+[21:35:39] <enebo[m]> unwrapIfJavaProxy target gets swapped in
+[21:35:46] <headius> so the fact is that this turns out to be a proxy so instead of calling the java.lang.Object version it redispatches against invokee
+[21:36:05] <enebo[m]> but yeah we drop clazz at that point
+[21:36:35] <headius> the method from findCallable seems correct too
+[21:37:05] <enebo[m]> yeah
+[21:37:36] <headius> public java.lang.String java.lang.Object.toString()
+[21:38:38] <enebo[m]> amusingly if invokeDirect did not see that javaInvokee was a proxy it would work
+[21:38:48] <headius> yeah it would
+[21:39:29] <headius> so possibilities here
+[21:39:39] <enebo[m]> so we still need javaInvokee as a sort of self but we also need to pass in where toString is defined
+[21:40:00] <headius> yeah h,mm
+[21:40:05] <headius> so there's two possible places that could be fixed
+[21:40:21] <headius> maybeProxy seems like the wrong place... Child is a proxy, it just doesn't override this method
+[21:40:46] <headius> so that seems to leave the test in tryInvocationDirect
+[21:40:46] <enebo[m]> yeah it definitely seems like it is being used for two purposes and in this case one is wrong 
+[21:41:47] <enebo[m]> so we need intent before that which does not call that (or conversely we move that further down somewhere)
+[21:42:18] <byteit101[m]> > -Xcompile.dump does dump out the generated bits of byteit101 generated code
+[21:42:18] <byteit101[m]> Oh, that would have been useful to know a year ago, I had just edited the code to dump to a folder :-)
+[21:42:41] <headius> byteit101: oh sorry! one of those hidden gems I seem to be the only one that uses
+[21:42:42] <byteit101[m]> >but I don't really follow this code too well
+[21:42:42] <byteit101[m]> Let me know if you need some help, and I'll also note it down in a wiki page or something too
+[21:43:07] <headius> enebo: might be helpful to step through the 9.2 version of this
+[21:43:19] <byteit101[m]> >it passes in the self object and the method name for the call but no frame class, because it does no framing
+[21:43:19] <byteit101[m]> Interesting possiblity
+[21:43:20] <headius> for whatever reason that one works and this one re-supers at the wrong place
+[21:43:36] <headius> byteit101: I think that was a red herring... will let you catch up though
+[21:43:59] <byteit101[m]> >I suppose I should have noticed this in the original PR
+[21:43:59] <byteit101[m]> I was honestly surprised you merged it as is given the number of questions about stuff like this I had
+[21:44:19] <byteit101[m]> >do you we still put all Java methods on all proxies or do we only put them on each proxy class where they are defined?
+[21:44:19] <byteit101[m]> configurable now
+[21:44:39] <byteit101[m]> >My confusion is mostly not knowing how this is supposed to work in the first place
+[21:44:39] <byteit101[m]> Let me know here I can help explain things
+[21:44:39] <headius> enebo: it occurs to me though, this logic was never built with supering from a proxy in mind so this is just a gap in the "new" JI logic as opposed to the JavaProxyClass monster that Kresten build
+[21:45:20] <headius> byteit101: you did a great job building this logic on top of the "new" JI, I think this just needs some extension to know how to do super properly
+[21:45:31] <enebo[m]> yeah makes sense based on walking through the stack through call
+[21:45:59] <byteit101[m]> I know the super work that exists was tricky with bridge methods and all, but that was a definite weak point, as can be plainly seen
+[21:46:08] <enebo[m]> quick lunch break
+[21:46:24] <headius> this is purely in how it invokes the target method it finds from super in a proxy subclass
+[21:46:54] <headius> it invokes it through logic that was primarily designed for direct normal invocation of a Java object and that logic does not know how to handle super class vs self class right
+[21:47:31] <headius> it wasn't really your mistake, this logic just should have been passing the calling method's class through to this super logic
+[21:47:34] <headius> not just the invokee
+[21:47:52] <headius> we should be invoking super as though we are in Parent, not as though we are in Child
+[21:48:36] <byteit101[m]> enebo: the default is still all java methods though: https://github.com/jruby/jruby/blob/master/core/src/main/java/org/jruby/javasupport/util/JavaClassConfiguration.java#L55
+[21:49:10] <headius> I'm not sure he meant normal Java objects or proxied subclasses but that is good to know too
+[21:49:20] <byteit101[m]> enebo: but you can configure just explicitly-defined methods instead: https://github.com/jruby/jruby/blob/master/lib/ruby/stdlib/jruby/core_ext/class.rb#L225
+[21:50:13] <headius> so tryProxyInvocation fails because jpc ends up looking for the Java method on the self proxy (Child) and does not find it, so it invokes normally
+[21:50:33] <headius> it should be looking for the Java method on the defining module (Parent)
+[21:50:42] <headius> since that is where we are
+[21:50:55] <headius> so I think if we can pass the Parent class through it will work
+[21:52:03] <byteit101[m]> > it wasn't really your mistake, this logic just should have been passing the calling method's **class** through to this super logic
+[21:52:03] <byteit101[m]> OH! that signature style I kept seeing in IRubyObject.call makes sense now. I saw the two "self" params, and in all my testing they were usually nearly similar, and never figured it out. That makes sense though
+[21:52:05] <headius> right you got it
+[21:52:14] <headius> the clazz passed in is intended to be used for things like super
+[21:52:36] <headius> see also DynamicMethod.call which passes clazz always
+[21:53:17] <headius> byteit101: if I have the Parent RubyModule in hand, will the reified class be the proxy I need for "jpc" in tryInvocationDirect?
+[21:53:43] <headius> I'm trying to figure out how to adapt this for your new reified logic
+[21:53:49] <headius> without breaking the rest of JI
+[21:54:24] <headius> or more specifically how do I get to the JavaProxyClass for a RubyClass subclass of a Java object
+[21:54:52] <headius> this uses ReifiedJavaProxy.___jruby$proxyClass()
+[21:55:37] <headius> but I won't have an instance because the instance is Child
+[21:57:04] <byteit101[m]> Oh, hmm
+[21:57:35] <byteit101[m]> I should open up the code :-D
+[21:58:57] <headius> yeah I am grabbing some lunch, have a look and I'll bbiab
+[22:00:01] *** Joins: meckispaghetti[m (~meckispag@2001:470:69fc:105::f2c5)
+[22:09:31] <byteit101[m]> well, I think getParent.getReifiedJavaClass.__jruby$proxyClass, would work, but there is probably a more direct way to get that
+[22:10:11] <headius> that isn't bad, I can try that
+[22:10:23] <byteit101[m]> (I don't remember if that method is static)
+[22:11:04] <byteit101[m]> not static: m = new SkinnyMethodAdapter(cw, ACC_SYNTHETIC | ACC_PUBLIC,
+[22:11:16] <headius> hmm
+[22:11:41] <headius> ok that maybe should be made static... I don't think I can get it from the class itself
+[22:11:52] <byteit101[m]> [ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.8.1:compile (default-compile) on project jruby-base: Compilation failure
+[22:11:52] <byteit101[m]> [ERROR] An exception has occurred in the compiler (1.8.0_201). Please file a bug against the Java compiler via the Java bug reporting page (http://bugreport.java.com) after checking the Bug Database (http://bugs.java.com) for duplicates. Include your program and the following diagnostic in your report. Thank you.
+[22:11:52] <byteit101[m]> [ERROR] java.lang.AssertionError: unknown annotation tag ''
+[22:11:52] <byteit101[m]> [ERROR] 	at com.sun.tools.javac.jvm.ClassReader.readAttributeValue(ClassReader.java:1658)
+[22:11:53] <byteit101[m]> Oh hmm
+[22:11:54] <headius> I only have the class
+[22:12:32] <headius> unsure though
+[22:12:58] <byteit101[m]> Once I can compile jruby again, I'll open the debugger
+[22:12:58] <headius> I could probably get the self object's java class and search for the defining module's java class in its hierarchy but that is super indirect
+[22:13:40] <byteit101[m]> to clarify: you have the parent self IRubyObject, and want the JavaProxyClass?
+[22:14:42] <headius> I have the parent RubyClass
+[22:15:26] <headius> self is an instance of Child (Child < Parent < j.l.Object) and I have the Parent class in hand and need its JavaProxyClass
+[22:15:49] <byteit101[m]> Ok, unrelated running things issues: Caused by: java.lang.ClassNotFoundException: com.headius.options.Option
+[22:16:03] <headius> ok something is weird in your end
+[22:16:09] <byteit101[m]> I last used this workspace several months ago
+[22:17:34] <byteit101[m]> "The type java.lang.Class cannot be resolved. It is indirectly referenced from required .class file"
+[22:17:35] <byteit101[m]> How???
+[22:18:50] <headius> what's the java -version output?
+[22:18:50] <byteit101[m]> java version "1.8.0_201"
+[22:18:50] <byteit101[m]> Java(TM) SE Runtime Environment (build 1.8.0_201-b09)
+[22:18:50] <byteit101[m]> Java HotSpot(TM) 64-Bit Server VM (build 25.201-b09, mixed mode)
+[22:18:51] <headius> something is really weird
+[22:19:05] <headius> gist the full build output, maybe I will see something
+[22:19:28] <headius> and double check you are on latest master
+[22:19:40] <byteit101[m]> The mvn build works now, but not eclipse
+[22:20:23] <headius> hmm ok
+[22:20:30] *** Parts: meckispaghetti[m (~meckispag@2001:470:69fc:105::f2c5) ()
+[22:20:30] <headius> .classpath messed up maybe?
+[22:20:57] <byteit101[m]> I don't know, but to answer your question: 
+[22:20:57] <byteit101[m]>         singleton.setInstanceVariable("@java_proxy_class", proxyClass);
+[22:21:13] <headius> singleton is the class object?
+[22:21:22] <byteit101[m]> See JPC.setProxyClassReified
+[22:21:33] <byteit101[m]> both on clazz and singleton
+[22:21:53] <headius> got it, so I should be able to retrieve from there then
+[22:22:07] <byteit101[m]> helper method JPC.getProxyClass
+[22:23:37] <byteit101[m]> Hmm, should I make ___jruby$proxyClass static? the variable is static...
+[22:23:39] <headius> cool
+[22:23:54] <headius> well you have it as an instance method so we can cast the interface
+[22:24:01] <headius> I wish static methods could have an interface
+[22:24:26] <byteit101[m]> Yes, I think that's why I did it that way. I could do both an interface and static method, given how trivial it is
+[22:24:26] <headius> it's fine for now if I can get it from the ivar
+[22:24:43] <headius> static method we'd have to invoke through a method handle or reflection method anyway
+[22:25:00] <byteit101[m]> The ivar always confused me (was like that before I made my changes)
+[22:25:03] <headius> yeah
+[22:28:56] <headius> hmm does not seem to be getting me the JPC
+[22:29:08] <headius> I will step into it and poke around the RubyClass's guts
+[22:30:22] <headius> oh hmm
+[22:30:28] <headius> the module in hand is already the java.lang.Object proxy
+[22:31:30] <headius> I wonder if this super logic is even needed anymore
+[22:31:39] <headius> we do the super logic from Ruby correctly now
+[22:32:45] <headius> it is not the right logic in any case because I am already calling Object.toString at this point, regardless of whether the original object was a proxy or not
+[23:16:00] <basshelal[m]> Is IBM i Unix or Unix-like?
+[23:16:21] <basshelal[m]> AIX is definitely Unix-like
+[23:16:29] <headius> hmm I assumed unix-like but I guess I don't know
+[23:16:40] <headius> it can't be too weird if people are using the JNR stack there
+[23:17:02] <basshelal[m]> Will need to update `Platform.isUnix()` if not
+[23:17:11] <basshelal[m]> Not a huge deal, just curious
+[23:30:46] <byteit101[m]> basshelal: A friend who works with IBM i says Unix-like
+[23:31:20] <basshelal[m]> Cheers! byteit101 
+[23:31:52] <basshelal[m]> Less work 😁
+[23:47:13] <headius> byteit101 this is not really your bug
+[23:47:30] <headius> It occurred to me now that there is no way to invoke the super method using reflection
+[23:48:02] <headius> There's not really any bug in this code, it just can't use reflection to make this call. I believe the old logic generated shim methods to dispatch super from within the generated class
+[23:48:42] <headius> There are a few ways to fix this but none of them are simple and we may punt to a update release
+[23:49:06] <byteit101[m]> I generate shim methods
+[23:49:43] <headius> For what exactly?
+[23:49:46] <byteit101[m]> RubyClass ConCreteJavaReifier.generateSuperBridges
+[23:50:02] <headius> In this case the method in hand is the one from object and not the shim
+[23:50:49] <headius> So we get the normal reflection toString and try to dispatch with that
+[23:51:03] <byteit101[m]> That's what that generates, I think
+[23:51:17] <headius> So since you are generating shims perhaps what we need to be doing is looking up the shim instead
+[23:51:27] <headius> When we know we need to call against a super class
+[23:51:31] <byteit101[m]> I tied those in with a register call
+[23:51:45] <headius> okay I am remembering that now
+[23:52:23] <headius> Because this uses the normal Ruby super logic it finds the normal method from the j.l.Object proxy
+[23:52:47] <headius> Then it proceeds to dispatch with regular reflection and just loops back on itself
+[23:53:32] <headius> Right so that happens in the getSuperMethod
+[23:54:28] <headius> So I think I may be coming back to us just needing to fix the test in this try method
+[23:54:49] <headius> We need to know we are calling the super class method but in a different way than this test does
+[23:54:54] <byteit101[m]> JavaProxyClass.initMethod() is called for each super overload
+[23:55:06] <byteit101[m]> ~line 2000 of RubyClass
+[23:55:39] <headius> Okay, I have to run an errand but maybe this won't be too bad. I need to step through the working case again
+[23:55:47] <byteit101[m]> gets the method in line 396 of JPC.java
+[23:56:03] <headius> It just needs to recognize that we are calling a super class in Java and it simply doesn't see that right now
+[23:56:19] <byteit101[m]> I had hoped that call would be enough, but clearly not :-)
+[23:56:21] <byteit101[m]> though without that call it doesn't support super at all
+[23:57:03] <headius> Yeah the problem is that the child doesn't override the method so when we go looking for the super method we find nothing at all
+[23:57:23] <headius> If we started from the parent like we should, it would just work
+[23:57:51] <headius> That's why I was trying to get the proper JPC
+[23:58:27] <headius> BRB

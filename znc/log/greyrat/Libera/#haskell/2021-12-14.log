@@ -1,0 +1,1540 @@
+[00:01:36] *** Quits: Morrow (~quassel@bzq-110-168-31-106.red.bezeqint.net) (Remote host closed the connection)
+[00:02:10] *** Quits: deadmarshal (~deadmarsh@95.38.114.19) (Ping timeout: 256 seconds)
+[00:06:29] *** Joins: briandaed (~root@185.234.208.208.r.toneticgroup.pl)
+[00:08:51] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f458:37c0:1547:7436) (Remote host closed the connection)
+[00:09:49] *** Joins: Akiva (~Akiva@user/Akiva)
+[00:09:50] *** Quits: alx741 (~alx741@181.199.42.79) (Read error: Connection reset by peer)
+[00:10:30] *** Joins: alx741 (~alx741@157.100.93.160)
+[00:12:19] <dminuoso> EvanR: By the way, I ended up just closing the file before zip opened it.
+[00:12:29] <dminuoso> Cant for my life figure out why GHC gives me these file is locked errors here.
+[00:13:19] <monochrom> Is this on Windows?
+[00:13:36] <dminuoso> No, this is on Linux
+[00:13:41] <monochrom> Ah yikes.
+[00:14:23] *** Quits: briandaed (~root@185.234.208.208.r.toneticgroup.pl) (Quit: Lost terminal)
+[00:14:52] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[00:19:03] <johnw> anyone else noticed that foldl' f z xs is morally equivalent to execState (mapM_ f xs) z, where f :: a -> State b ()?
+[00:19:15] <dminuoso> openTempFile "/tmp" "foo.ext" >>= \(path, handle) -> openFile path ReadMode
+[00:19:20] <dminuoso> This is a quick reproducer
+[00:19:41] <dminuoso> I suspect there's some strange interaction between the way openTempFile obtains a file handle and the RTS locking code on `openFile`
+[00:19:49] <johnw> (though I may need a strictified version of State for that to be true)
+[00:19:55] <dminuoso> It's definitely a bug, just not sure whether its a documentation bug or a behavioral bug
+[00:21:11] <dolio> That's essentially the same observation as mapAccumL/R being mapM.
+[00:22:08] *** Quits: fr33domlover (~fr33@2.55.171.43) (Ping timeout: 268 seconds)
+[00:22:39] <dolio> Just where the output isn't interesting.
+[00:23:05] <monochrom> johnw: Yes, it is also how Jeremy Gibbons generalizes APL to all of (Traversable t, Representable t).
+[00:23:47] <monochrom> https://link.springer.com/chapter/10.1007/978-3-662-54434-1_21
+[00:26:14] <dminuoso> let path = "./openfile.bug" in do { openFile path ReadWriteMode; openFile path ReadMode }
+[00:26:14] *** Quits: Jing (~hedgehog@2604:a840:3::10c8) (Remote host closed the connection)
+[00:26:18] <dminuoso> An even simpler reproducer
+[00:26:19] *** Joins: lavaman (~lavaman@98.38.249.169)
+[00:26:27] <monochrom> Err,  (Applicative t, Traversable t, Representable t)
+[00:27:23] *** Quits: dhouthoo (~dhouthoo@178-117-36-167.access.telenet.be) (Quit: WeeChat 3.3)
+[00:27:23] <dminuoso> The way I read 41.3.4 File locking, this should be permisseable
+[00:28:24] <dminuoso> Am I misreading the report?
+[00:29:39] <dolio> "there may either be many handles on the same file which manage input, or just one handle on the file which manages output"
+[00:29:51] <dolio> It sounds like one writer locks the file.
+[00:29:51] <dminuoso> That or is meant exclusively, I presume?
+[00:30:18] *** Joins: Jing (~hedgehog@2604:a840:3::10c8)
+[00:30:19] <dolio> I guess.
+[00:30:25] <geekosaur> yes
+[00:30:37] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 252 seconds)
+[00:30:38] <geekosaur> I read it the same way dolio does: the or is exclusive
+[00:30:56] <dolio> I mean, I might not read it that way, but that's clearly what GHC is doing.
+[00:31:15] <dolio> So, considering the actual behavior, that or is exclusive.
+[00:31:17] <dminuoso> "If any open or semi-closed handle is managing a file for output, no new handle can be allocated for that file"
+[00:31:23] <geekosaur> either … or is generally exclusive to me
+[00:31:34] *** Joins: alx741 (~alx741@157.100.93.160)
+[00:31:54] <dminuoso> Okay, I think I kept reading it with the expectation to allow simultaneous multiple reader and one writer handle..
+[00:32:21] *** Quits: smartin (~Thunderbi@88.135.18.171) (Remote host closed the connection)
+[00:32:40] *** Joins: smartin (~Thunderbi@88.135.18.171)
+[00:32:45] *** Quits: cosimone` (~user@93-47-228-207.ip115.fastwebnet.it) (Remote host closed the connection)
+[00:32:58] *** Joins: acidjnk (~acidjnk@p200300d0c7271e77ede7a7f9d267d612.dip0.t-ipconnect.de)
+[00:34:50] *** Joins: cosimone (~user@93-47-228-207.ip115.fastwebnet.it)
+[00:34:55] <dolio> That's also kind of a common concurrency pattern. Multiple readers at a time. Single writer at a time, and readers and writers block one another.
+[00:36:36] *** Quits: coot (~coot@2a02:a310:e03f:8500:933a:39ca:ef4e:37cb) (Quit: coot)
+[00:36:40] *** Quits: _ht (~quassel@82-169-194-8.biz.kpn.net) (Remote host closed the connection)
+[00:37:12] <geekosaur> problem is that behaves oddly with disk files as the writer may change what you just read or even delete it (see ftruncate)
+[00:37:34] <geekosaur> sockets and pipes are another story
+[00:38:47] <geekosaur> a reader may even have buffered data that no longer exists
+[00:38:47] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[00:40:07] *** Joins: Tuplanolla (~Tuplanoll@91-159-69-50.elisa-laajakaista.fi)
+[00:40:18] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[00:40:56] *** Quits: AkechiShiro (~licht@2a01:e0a:5f9:9681:1473:3dff:fe42:56a9) (Changing host)
+[00:40:56] *** Joins: AkechiShiro (~licht@user/akechishiro)
+[00:41:33] <dolio> Oh yeah, I guess with "either" in there I'd most likely read it as exclusive anyway.
+[00:45:48] *** Joins: slice (~slice@user/slice)
+[00:47:53] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f458:37c0:1547:7436)
+[00:51:14] *** Joins: Morrow (~quassel@bzq-110-168-31-106.red.bezeqint.net)
+[00:51:31] *** Quits: nosewings (~ngpc@2603-8081-3e05-e2d0-43bd-64a7-1221-490e.res6.spectrum.com) (Ping timeout: 252 seconds)
+[00:55:41] *** Joins: alx741 (~alx741@157.100.93.160)
+[00:56:36] *** Quits: Neuromancer (~Neuromanc@user/neuromancer) (Remote host closed the connection)
+[00:56:38] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[00:58:59] *** Quits: Morrow (~quassel@bzq-110-168-31-106.red.bezeqint.net) (Remote host closed the connection)
+[01:00:00] *** Joins: Morrow (~quassel@bzq-110-168-31-106.red.bezeqint.net)
+[01:00:48] *** Quits: nattiestnate (~nate@2001:448a:20a0:4134:25e:715f:d637:5263) (Quit: WeeChat 3.3)
+[01:07:20] *** Quits: Akiva (~Akiva@user/Akiva) (Ping timeout: 256 seconds)
+[01:09:28] *** Joins: Akiva (~Akiva@user/Akiva)
+[01:10:34] *** Joins: cjb (~cjb@user/cjb)
+[01:11:02] *** Quits: CiaoSen (~Jura@p200300c957347b002a3a4dfffe84dbd5.dip0.t-ipconnect.de) (Ping timeout: 260 seconds)
+[01:11:53] <dmj`> encodeStrict in aeson wouldn't be a bad idea
+[01:12:33] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[01:14:45] *** Joins: dmenz (~dmenz@2804:14d:5cd4:5e94::1)
+[01:17:36] *** Joins: pfurla (~pfurla@177.25.178.222)
+[01:18:25] *** Joins: jgeerds (~jgeerds@55d4ac73.access.ecotel.net)
+[01:18:46] *** Quits: zer0bitz (~zer0bitz@dsl-hkibng32-54fbfb-173.dhcp.inet.fi) (Read error: Connection reset by peer)
+[01:21:56] *** Joins: Kauto (~Kauto@wireless-student-pt10-182-232.lut.ac.uk)
+[01:22:09] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f458:37c0:1547:7436) (Remote host closed the connection)
+[01:23:38] *** Quits: Midjak (~Midjak@may53-1-78-226-116-92.fbx.proxad.net) (Quit: This computer has gone to sleep)
+[01:29:46] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f458:37c0:1547:7436)
+[01:30:16] *** Joins: alx741 (~alx741@181.199.42.79)
+[01:31:19] *** Joins: vicfred (~vicfred@user/vicfred)
+[01:32:54] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[01:33:28] *** Quits: takuan (~takuan@178-116-218-225.access.telenet.be) (Remote host closed the connection)
+[01:35:12] *** Quits: jgeerds (~jgeerds@55d4ac73.access.ecotel.net) (Remote host closed the connection)
+[01:35:24] *** Joins: jgeerds (~jgeerds@55d4ac73.access.ecotel.net)
+[01:40:09] *** Quits: alx741 (~alx741@181.199.42.79) (Read error: Connection reset by peer)
+[01:40:45] *** Joins: alx741 (~alx741@157.100.93.160)
+[01:41:44] *** Joins: pavonia (~user@user/siracusa)
+[01:41:58] *** Joins: madjestic (~madjestic@88-159-247-120.fixed.kpn.net)
+[01:42:11] *** Joins: azimut_ (~azimut@gateway/tor-sasl/azimut)
+[01:43:19] *** Joins: BrokenClutch (~pioneer@2804:d41:c2b2:be00:da32:623d:efa3:7121)
+[01:43:21] *** Quits: azimut (~azimut@gateway/tor-sasl/azimut) (Ping timeout: 276 seconds)
+[01:43:57] *** Joins: ees (~user@pool-108-18-30-46.washdc.fios.verizon.net)
+[01:44:20] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[01:45:14] *** Joins: InternetCitizen (~fuzzypixe@eth-west-pareq2-46-193-4-100.wb.wifirst.net)
+[01:46:09] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[01:46:10] *** Joins: epolanski (uid312403@id-312403.helmsley.irccloud.com)
+[01:46:25] <BrokenClutch> I know that this will sound dumb, but I developed a strong opinion about most haskell books (that I've read at least).
+[01:46:25] <BrokenClutch> They are holding hands too much, like "let's make a software together xoxo" (which is fine), I miss a little of cppreference on haskell, like:
+[01:46:25] <BrokenClutch> 1) Give definition of thing; 2) Give 4 to 6 examples in order from very simple/abstract things to very pratical and complex ones.
+[01:46:25] <BrokenClutch> Correct me if I'm wrong
+[01:46:53] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[01:48:47] <jackdk> BrokenClutch: I see what you're saying but I found when I was learning that the definitions are often just outside people's zones of proximal development. Also you can sometimes find that sort of stuff in haddocks rather than books.
+[01:49:12] <dmj`> BrokenClutch: hmm, which books are you referring to? I didn't see any xoxo in LYAH, but I might have overlooked that section ... I'd always go to the typeclassopedia instead of other books, unless its on RTS stuff
+[01:49:53] <jackdk> I think "xoxo" is referring to things like cute pictures (LYAH), goat jokes (HPFFP), etc.
+[01:50:35] <jackdk> For typeclasses in particular, I've had the most success with "here is a repeated pattern. here is a typeclass that captures the pattern. here are some operations you can write using only the typeclass. here is how those operations behave for each instance"
+[01:51:31] <BrokenClutch> jackdk: Me too
+[01:51:58] <jackdk> just pointing out that it's a an additional step before the cppreference-style stuff you were talking about
+[01:52:02] <dsal> BrokenClutch: haddock has all the definitions.  It's pretty much all I use anymore.
+[01:52:19] <Rembane> Hoogle is the best. 
+[01:52:42] <BrokenClutch> dmj: The best one was haskell in depth, it have those flaws that I've said but they've written good things about development
+[01:52:57] <dsal> Yeah, hoogle is great when you know what something looks like but don't know what it's called.
+[01:53:06] *** Quits: jpds (~jpds@gateway/tor-sasl/jpds) (Ping timeout: 276 seconds)
+[01:53:09] <BrokenClutch> dsal: Too little information, I'm not saying that's bad. I'm just missing cppreference.
+[01:53:45] <BrokenClutch> I'm doing a combo of GHCI + hoogle + lambdabot + haskell report
+[01:54:00] <dsal> @hoogle a -> Maybe b -> Either a b
+[01:54:01] <lambdabot> Data.Either.Combinators maybeToRight :: b -> Maybe a -> Either b a
+[01:54:01] <lambdabot> Rebase.Prelude maybeToRight :: () => b -> Maybe a -> Either b a
+[01:54:01] <lambdabot> Network.Haskoin.Util maybeToEither :: b -> Maybe a -> Either b a
+[01:55:05] <dsal> I don't miss cppreference.  There's a part of learning anything new that is disorienting.
+[01:55:06] <dmj`> BrokenClutch: Interesting, yea hackage might be best, or just .... raw source, that is probably the best tbh... back in my day we didn't have "books", we had broken haskell wiki links, darcs checkouts, cabal sandbox tarballs, and blue / white hackage pages w/ no source hyperlinks.
+[01:55:06] *** Joins: jpds (~jpds@gateway/tor-sasl/jpds)
+[01:56:30] *** Quits: jpds (~jpds@gateway/tor-sasl/jpds) (Remote host closed the connection)
+[01:56:58] *** Joins: jpds (~jpds@gateway/tor-sasl/jpds)
+[01:58:05] *** Quits: ees (~user@pool-108-18-30-46.washdc.fios.verizon.net) (Remote host closed the connection)
+[01:58:26] <monochrom> The Haskell 2010 Report has all the definitions, but no examples.
+[01:58:34] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[01:58:47] <monochrom> The blogosphere tutorials have all the examples, but no definition.
+[01:58:53] <monochrom> Ah, what if you read both.
+[02:00:12] <BrokenClutch> monochrom: I forgot to say what I'm doing to solve that! I've downloaded a lot of source codes, git-annex source is helping me a lot
+[02:00:15] *** Quits: mc47 (~mc47@xmonad/TheMC47) (Remote host closed the connection)
+[02:00:56] <BrokenClutch> and when the people who write the definition write the examples too, everything becomes better connected
+[02:01:09] <BrokenClutch> bad comma, sorry
+[02:06:31] *** Quits: michalz (~michalz@185.246.204.122) (Remote host closed the connection)
+[02:06:31] *** Quits: burnsidesLlama (~burnsides@dhcp168-021.wadham.ox.ac.uk) (Remote host closed the connection)
+[02:10:17] *** Quits: smartin (~Thunderbi@88.135.18.171) (Quit: smartin)
+[02:13:47] *** Quits: Akiva (~Akiva@user/Akiva) (Ping timeout: 250 seconds)
+[02:15:07] *** Quits: jkaye (~jkaye@2601:281:8300:7530:770c:7340:e88b:8722) (Ping timeout: 252 seconds)
+[02:15:31] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[02:18:07] *** Joins: pfurla[m] (uid345156@id-345156.tinside.irccloud.com)
+[02:18:44] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[02:23:09] *** Parts: BrokenClutch (~pioneer@2804:d41:c2b2:be00:da32:623d:efa3:7121) ()
+[02:25:37] *** Joins: kranius_ (~kranius@222.186.245.213.rev.sfr.net)
+[02:27:57] *** Quits: emf (~emf@2620:10d:c091:480::1:cbc8) (Ping timeout: 252 seconds)
+[02:30:55] *** Joins: coot (~coot@89-64-85-93.dynamic.chello.pl)
+[02:32:13] *** Quits: kranius_ (~kranius@222.186.245.213.rev.sfr.net) (Read error: Connection reset by peer)
+[02:32:27] *** Joins: kranius_ (~kranius@222.186.245.213.rev.sfr.net)
+[02:33:18] *** Joins: alx741 (~alx741@181.199.42.79)
+[02:33:28] *** Quits: kjak (~kjak@pool-108-45-56-21.washdc.fios.verizon.net) (Ping timeout: 268 seconds)
+[02:34:05] *** Quits: slowtyper (~slowtyper@user/slowtyper) (Quit: ZNC 1.8.2 - https://znc.in)
+[02:34:21] *** Joins: slowtyper (~slowtyper@user/slowtyper)
+[02:34:58] *** Quits: kranius_ (~kranius@222.186.245.213.rev.sfr.net) (Read error: Connection reset by peer)
+[02:35:15] *** Quits: ChaiTRex (~ChaiTRex@user/chaitrex) (Remote host closed the connection)
+[02:35:31] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[02:35:46] *** Joins: ChaiTRex (~ChaiTRex@user/chaitrex)
+[02:36:11] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[02:36:59] *** Quits: cheater (~Username@user/cheater) (Ping timeout: 250 seconds)
+[02:37:27] *** Joins: kranius_ (~kranius@222.186.245.213.rev.sfr.net)
+[02:40:43] *** Parts: jakalx (~jakalx@base.jakalx.net) ()
+[02:41:31] *** Quits: myShoggoth (~myShoggot@97-120-85-195.ptld.qwest.net) (Quit: Leaving)
+[02:42:49] <jackdk> Axman6/dibblego: did you read that big ol' snippet I posted? I'm thinking of giving up mocking and splitting `MonadAmazonka` into `Monad m => MonadAmazonka m => MonadAmazonkaPager m`, where `MonadAmazonkaPager` provides the `paginate`/`paginateEither` operations; this makes `MonadAmazonka` GND-able
+[02:44:16] <jackdk> For practical use, people are gonna need `askEnv` and `localEnv`, which essentially locks the class to implementation details of `AmazonkaT` anyway
+[02:44:35] *** Quits: dmenz (~dmenz@2804:14d:5cd4:5e94::1) (Ping timeout: 268 seconds)
+[02:45:04] <geekosaur> @tell BrokenClutch if you're looking for source code, you can start with xmonad and then move on to xmonad-contrib (most modules within being self-contained)
+[02:45:04] <lambdabot> Consider it noted.
+[02:45:19] *** Joins: emf (~emf@2600:1700:841:cc20:184c:c9e0:41bd:a50)
+[02:46:23] <dibblego> haven't had a chance sorry mate, will do it
+[02:48:12] *** Quits: alx741 (~alx741@181.199.42.79) (Read error: Connection reset by peer)
+[02:48:17] *** Joins: jakalx (~jakalx@base.jakalx.net)
+[02:48:36] <jackdk> Everyone wants a new release, nobody wants to pick up a shovel and help dig
+[02:48:49] *** Joins: alx741 (~alx741@157.100.93.160)
+[02:48:50] *** Joins: emf_ (~emf@2620:10d:c091:480::1:e5d2)
+[02:49:00] <jackdk> (I know you're not in the amazonkaverse, but it's more of a general vent)
+[02:49:35] *** Quits: emf (~emf@2600:1700:841:cc20:184c:c9e0:41bd:a50) (Ping timeout: 252 seconds)
+[02:50:08] *** Quits: pfurla (~pfurla@177.25.178.222) (Ping timeout: 268 seconds)
+[02:50:53] <geekosaur> isn't that how it usually goes?
+[02:51:16] <jackdk> I guess
+[02:52:47] *** Quits: nfd (~nfd@user/nfd) (Ping timeout: 250 seconds)
+[02:54:16] *** Quits: psygate (~psygate@user/psygate) (Quit: Leaving)
+[02:56:22] *** Quits: nvmd (~nvmd@user/nvmd) (Quit: Later, nerds.)
+[02:56:34] *** Joins: nvmd (~nvmd@user/nvmd)
+[02:59:58] *** Joins: cheater (~Username@user/cheater)
+[03:01:15] *** Quits: machinedgod (~machinedg@24.105.81.50) (Ping timeout: 250 seconds)
+[03:01:17] <zero> > length [0,1,2,undefined,7,8,9]
+[03:01:18] <lambdabot>  7
+[03:01:49] <dibblego> just got an exam on Friday, so that's my spare time atm
+[03:02:29] *** Joins: pfurla (~pfurla@177.25.178.222)
+[03:02:33] <zero> > [0,1,2,undefined,7,8,9] !! 4
+[03:02:34] <lambdabot>  7
+[03:02:37] <zero> > [0,1,2,undefined,7,8,9] !! 3
+[03:02:39] <lambdabot>  *Exception: Prelude.undefined
+[03:03:37] *** Quits: __monty__ (~toonn@user/toonn) (Quit: leaving)
+[03:03:42] *** Quits: kranius_ (~kranius@222.186.245.213.rev.sfr.net) (Ping timeout: 268 seconds)
+[03:03:53] *** Quits: cosimone (~user@93-47-228-207.ip115.fastwebnet.it) (Ping timeout: 252 seconds)
+[03:04:50] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f458:37c0:1547:7436) (Remote host closed the connection)
+[03:04:54] <zero> is this because Cons is the head in WHNF ?
+[03:05:02] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f458:37c0:1547:7436)
+[03:05:10] <zero> (Cons = (:))
+[03:05:16] *** Quits: acidsys (~LSD@2.lsd.systems) (Quit: I love you.)
+[03:05:36] <geekosaur> yes, or put otherwise they only access the spine of the list, not the values
+[03:05:41] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[03:05:48] *** Joins: acidsys (~LSD@2.lsd.systems)
+[03:05:52] <zero> all right
+[03:06:19] <geekosaur> in fact !! doesn't touch the value either, it's MuEval's attempt to print it afterward that throws the exception
+[03:06:29] <dibblego> > length [[0,1,2,undefined,7,8,9] !! 3]
+[03:06:31] <lambdabot>  1
+[03:06:39] <c_wraith> put yet another way: evaluating either argument to (:) doesn't cause any evaluation of the other.
+[03:06:56] <EvanR> > [0, 1, 2, let x = x in x, 3, 4] !! 4
+[03:06:58] <lambdabot>  3
+[03:07:34] <EvanR> now we know it's not being touched, as opposed to hiding an exception
+[03:07:57] *** Quits: teo (~teo@user/teo) (Ping timeout: 250 seconds)
+[03:08:43] <EvanR> haskell is such a safe language, just by touching values you may explode, freeze
+[03:09:54] <zero> nice
+[03:10:53] <zero> that reminded me of a beautiful poem by Robert Frost
+[03:10:53] <jackdk> dibblego: I am happy with how I've decided to do things (single typeclass with a haddock note for people writing their own instances), so if you don't get to weigh in, that's cool
+[03:11:05] <dibblego> ok
+[03:11:11] <xsperry> is it really better if the freezing happens right away, before the values are even created?
+[03:11:19] <xsperry> as it would in a strict language
+[03:11:32] *** Quits: jgeerds (~jgeerds@55d4ac73.access.ecotel.net) (Ping timeout: 240 seconds)
+[03:11:58] <xsperry> the end result is still a crashing of freezing program
+[03:12:05] <zero> xsperry: if you think it is in a specific context, you can force its evaluatioon
+[03:12:19] <xsperry> s/of/or
+[03:12:39] *** Quits: earendel (uid498179@user/earendel) (Quit: Connection closed for inactivity)
+[03:12:47] <xsperry> zero, I know, I'm just arguing that this wouldn't make it any better or safer, whether done manually or automatically
+[03:13:01] <EvanR> the beauty is when your program doesn't freeze or crash and produces useful results despite bombs and bottoms
+[03:13:24] <EvanR> unlike a strict language
+[03:14:44] *** Joins: mdrake (~bc8147f2@cerf.good1.com)
+[03:15:48] *** Quits: Gurkenglas (~Gurkengla@dslb-002-203-144-204.002.203.pools.vodafone-ip.de) (Read error: Connection reset by peer)
+[03:16:06] *** Joins: Gurkenglas (~Gurkengla@dslb-002-203-144-204.002.203.pools.vodafone-ip.de)
+[03:16:19] *** Quits: d34df00d (~d34df00d@2600:1700:8c60:3a10::48) (Remote host closed the connection)
+[03:16:36] *** Quits: bollu (uid233390@id-233390.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[03:16:43] *** Quits: max22- (~maxime@lfbn-ren-1-762-224.w81-53.abo.wanadoo.fr) (Remote host closed the connection)
+[03:17:01] *** Quits: Jing (~hedgehog@2604:a840:3::10c8) (Remote host closed the connection)
+[03:17:02] <int-e> c_wraith: more adventures in dumbo octopus land: there are *long* loops: https://paste.debian.net/1223336/
+[03:17:04] <mdrake> hi. is it ok to upgrade to 9.2.1 if I only care about linux and windows platforms?
+[03:17:25] <mdrake> or is it still too buggy to make the switch
+[03:17:27] <zero> also there's the fact that you can have considerable guarantees that bombs and botoms don't exist
+[03:17:33] <c_wraith> as far as I know, the big issues are only on ARM, yes
+[03:17:54] *** Joins: Jing (~hedgehog@2604:a840:3::10c8)
+[03:18:14] <c_wraith> int-e: dang. that's one hell of a long cycle
+[03:18:38] <mdrake> when can we expect stack to upgrade to 9.2.1?
+[03:19:01] *** Quits: nvmd (~nvmd@user/nvmd) (Quit: Later, nerds.)
+[03:19:02] <monochrom> Laziness enables more abstractions.
+[03:19:18] <c_wraith> I doubt it will. I suspect stack won't upgrade until 9.2.2
+[03:19:34] <mdrake> :|
+[03:19:47] <c_wraith> because they don't want a stack release labeled "not for use on new MacBooks"
+[03:19:53] <zero> monochrom: i intuitively agree, but may i ask how so?
+[03:20:28] <mdrake> and how far away is 9.2.2, months? half a year?
+[03:20:32] <mdrake> +away
+[03:20:54] <c_wraith> probably not this month, due to the holidays. but I'd hope for January
+[03:21:01] <mdrake> that's not so bad
+[03:21:03] <monochrom> "f x y z = if x>0 then y else z, don't eval z if x>0, don't eval y if x<=0" cannot be user-defined in an eager language.
+[03:22:02] <monochrom> This explains why a lot of control constructs are merely library functions in Haskell, but have to be at the mercy of the language designers in other languages.
+[03:22:22] *** Quits: coot (~coot@89-64-85-93.dynamic.chello.pl) (Quit: coot)
+[03:22:44] <jackdk> IIRC there's a mean question in SICP about this exact point
+[03:23:36] *** Joins: alx741 (~alx741@157.100.93.160)
+[03:24:08] <dibblego> Has anyone ever asked for a strict if/then/else or && [for whatever reason, for whatever language]?
+[03:24:42] <EvanR> your cpu evaluates both sides and cancels the loser when the bool test is ready xD
+[03:24:51] <EvanR> luckily they can't explode (?)
+[03:24:56] <hpc> dibblego: i think people are more likely to ask for "i don't want to care if it is strict or lazy"
+[03:25:06] <monochrom> "cancel explosion"
+[03:25:21] <geekosaur> > zip "abcdefg" [1..] -- try this in a strict language
+[03:25:23] <lambdabot>  [('a',1),('b',2),('c',3),('d',4),('e',5),('f',6),('g',7)]
+[03:25:26] <mdrake> strict if isn't even an if, is it? just two blocks of code executed/evaluated
+[03:25:49] <geekosaur> for that matter
+[03:25:53] <geekosaur> > [1..]
+[03:25:54] <lambdabot>  [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,...
+[03:26:05] <dibblego> ...with a value
+[03:26:49] <mdrake> I think this is a nicely written article about all the benefits of laziness. http://augustss.blogspot.com/2011/05/more-points-for-lazy-evaluation-in.html
+[03:28:03] *** Parts: jakalx (~jakalx@base.jakalx.net) (Error from remote client)
+[03:29:13] <monochrom> John Hughes's "why FP matters" is also halfly "why laziness matters". Its many examples assume lazy lists.
+[03:31:34] *** Joins: jakalx (~jakalx@base.jakalx.net)
+[03:34:48] <monochrom> In eager languages, you can recover half of laziness (the delaying half, but not the memoizing half) by putting the burden on the user.
+[03:35:01] *** Quits: bitmapper (uid464869@id-464869.lymington.irccloud.com) (Quit: Connection closed for inactivity)
+[03:35:59] <monochrom> You can define "f' x y z = if x>0 then y() else z()", now the user has to write like "f' r (\_ -> 1/r) (\_ -> r*2)" instead of "f r (1/r) (r*2)"
+[03:35:59] <dsal> promise is the memoizing bit, right?
+[03:36:07] <monochrom> I don't know promise.
+[03:36:37] <dsal> https://srfi.schemers.org/srfi-155/srfi-155.html
+[03:36:58] <dsal> you explicitly "delay" to get a promise which can later be "force"d
+[03:36:59] <monochrom> I tried to do that in anger when teaching a course that taught that in Racket Scheme. It got old and error prone and painful very quickly.
+[03:36:59] <hpc> usually the memoizing bit is "put it in redis and be very careful how you access it" in practice
+[03:38:07] <hpc> dsal: that's more about side effects than memoizing i thought
+[03:38:29] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[03:38:32] <hpc> so you could reorder IO or potentially not do it at all
+[03:38:39] <hpc> like very manual unsafeInterleaveIO
+[03:39:31] <monochrom> And Lawrence Paulson agrees. In his SML textbook, he also teaches that technique, then finally concedes "this kind of thing is better in Haskell".
+[03:42:09] <snake> besides a tuple and a list are there any other data structures that are like front-line options that aren't like libraries etc
+[03:42:36] *** Quits: madjestic (~madjestic@88-159-247-120.fixed.kpn.net) (Ping timeout: 256 seconds)
+[03:43:46] <geekosaur> I think they're the only wired-in ones. And lists wouldn't be wired-in were it not for the [x,y,z] syntax (as opposed to x:y:z:[])
+[03:44:13] <dsal> snake: Is there a reason you're looking for "not in libraries"?
+[03:44:26] <dsal> There are some really common ones you'll see from external libraries.
+[03:44:47] <snake> nah i still have no idea what i'm going ngl
+[03:45:03] <monochrom> x:xs is also wired-in syntax.  You cannot do your own "import Prelude hiding ((:)); data F a = Nil | Int : F a"
+[03:45:13] <dsal> snake: you won't write much real world code without https://hackage.haskell.org/package/containers
+[03:45:19] <glguy> number literals, string literals, character literals...
+[03:45:28] *** Joins: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net)
+[03:45:29] *** Quits: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net) (Changing host)
+[03:45:29] *** Joins: wroathe (~wroathe@user/wroathe)
+[03:45:30] <snake> ooh
+[03:45:53] <snake> thankyou
+[03:46:01] <monochrom> Then again Integer is usually not considered "data structure". :)
+[03:46:28] <dsal> Integer is a fine data structure with a few functions applied.
+[03:46:38] <dsal> I made an Integer-backed BitSet a few days ago.
+[03:47:04] <geekosaur> unordered-containers is also pretty useful
+[03:47:28] <energizer> https://reasonablypolymorphic.com/blog/higher-kinded-data/ where it says `data Person' f = Person`, does that define `Person` to be something?
+[03:47:28] <dsal> I don't use unordered-containers much.  Too much chaos.
+[03:47:48] <dsal> energizer: Looks like Person is a data constructor.
+[03:48:12] <geekosaur> with a phantom type parameter
+[03:48:16] <dsal> Oh, it's a record.  You have to look at the next lines.
+[03:48:26] <geekosaur> oh
+[03:48:44] <energizer> yeah sorry didnt know how to typeset that nicely in here :)
+[03:49:36] <geekosaur> better to use a pastebin
+[03:49:39] <geekosaur> @where paste
+[03:49:39] <lambdabot> Help us help you: please paste full code, input and/or output at e.g. https://paste.tomsmeding.com
+[03:49:57] <energizer> well i already linked the code i'm talking about
+[03:51:42] <geekosaur> yeh
+[03:52:20] *** Joins: Guest19 (~Guest19@n110-33-34-202.hum1.act.optusnet.com.au)
+[03:52:42] *** Quits: Guest19 (~Guest19@n110-33-34-202.hum1.act.optusnet.com.au) (Client Quit)
+[03:53:25] *** Quits: Tuplanolla (~Tuplanoll@91-159-69-50.elisa-laajakaista.fi) (Quit: Leaving.)
+[03:53:25] <energizer> does Person have to be defined before that?
+[03:54:09] <dsal> What do you mean?  That's where Person is defined.
+[03:54:11] <hpc> Person is the data constructor
+[03:54:17] <hpc> Person' is like Bool, Person is like True
+[03:54:24] <dsal> Heh, I was about to use that example.
+[03:54:25] <geekosaur> I think they're asking about the original definition
+[03:54:29] <hpc> data Bool = False | True -- defines all three of those things
+[03:54:33] *** Joins: alx741 (~alx741@157.100.93.160)
+[03:54:36] <energizer> i tried https://bpa.st/7ORA  and ghc didn't complain
+[03:54:45] <geekosaur> and the answer is no, you need neither Person nor MaybePerson
+[03:54:51] <energizer> but i dont get how it's defining both Person' and Person in the same line
+[03:55:01] <geekosaur> hpc showed you
+[03:55:17] <geekosaur> Person' is a type constructor. Person is the corresponding data constructor
+[03:55:42] <energizer> ok
+[03:56:14] <hpc> maybe it would be easier to see in GADTSyntax?
+[03:56:18] <hpc> data Person' f where
+[03:56:22] <hpc>   Person :: Person' f
+[03:56:40] <geekosaur> well, you're missing the record part
+[03:56:50] <hpc> oh, i didn't click the link :P
+[03:57:12] <energizer> `data Colour = Red | Green | Blue` clears it up
+[03:57:16] <hpc> pretend i remember how to write records in GADTSyntax
+[03:58:11] *** Joins: BrokenClutch (~pioneer@2804:d41:c2b2:be00:da32:623d:efa3:7121)
+[03:58:29] <mdrake> that is kind of neat how you can have record with partial fields without having the boilerplate of defining two types
+[03:59:06] *** Quits: mmhat (~mmh@55d455f3.access.ecotel.net) (Quit: WeeChat 3.3)
+[03:59:26] <dsal> I feel like that's mostly a way to write bugs.
+[03:59:54] <energizer> i thought it was cool too, can you explain dsal
+[04:00:24] <dsal> If you have a sum type with records, what does an accessor do that's defined for only one of the branches?
+[04:00:40] *** Joins: d34df00d (~d34df00d@2600:1700:8c60:3a10::48)
+[04:00:48] <d34df00d> Hi!
+[04:00:58] <geekosaur> um? I didn't see it doing that
+[04:01:04] <d34df00d> I just wrote a function of type unsafeShrink :: A.STUArray s Int e -> Int -> A.STUArray s Int e
+[04:01:06] <BrokenClutch> d34df00d hi
+[04:01:14] <mdrake> yeah I'm not sure what you're talking about dsal
+[04:01:21] <dmj`> > do { x@2 <- [1,2,3,2,3]; pure x } 
+[04:01:21] <d34df00d> with the implementation unsafeShrink arr@(A.STUArray l _ n marr) cnt = if cnt >= n then arr else A.STUArray l (l + cnt - 1) cnt marr
+[04:01:23] <lambdabot>  [2,2]
+[04:01:24] <d34df00d> How bad should I feel?
+[04:01:33] <geekosaur> possibly making an assumption about "partial fields"?
+[04:01:45] <mdrake> good guess
+[04:02:06] *** Quits: boxscape_ (~boxscape_@p4ff0bb6c.dip0.t-ipconnect.de) (Quit: Connection closed)
+[04:02:24] <dsal> I meant doing things like this:    data S = A { someA :: Int } | B { someB :: Int}
+[04:02:32] <mdrake> dsal, I was talking about this: https://reasonablypolymorphic.com/blog/higher-kinded-data/
+[04:02:46] <dsal> Yeah, I guess I didn't understand what you meant by "partial fields"
+[04:03:24] <geekosaur> I thought it was a peculiar way of saying what they intended, since that does normally have the meaning you assumed
+[04:03:52] <mdrake> that's probably true. I just assumed everyone knew the context
+[04:05:10] *** Quits: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net) (Quit: Leaving...)
+[04:05:10] <mdrake> partial, as in data could be missing (it could be Nothing). not sure what would be the better way of phrasing it
+[04:05:33] <mdrake> s/data/field
+[04:05:34] <geekosaur> (possibly) incomplete?
+[04:10:32] *** Joins: mvk (~mvk@2607:fea8:5cdd:f000::9788)
+[04:12:11] <mdrake> yeah that's probably better
+[04:13:04] *** Joins: meinside (uid24933@id-24933.helmsley.irccloud.com)
+[04:13:19] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[04:14:47] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[04:15:18] <energizer> not sure if this question makes sense. how can you distinguish between instances of the Identity case, which has `= a`, and other instances, which have `= f a`? it's possible that the `a` in the first case could also be an instance of `f _`
+[04:16:44] <geekosaur> do you mean in the definition of HKD?
+[04:18:11] <monochrom> This is a closed type family. If you go to the GHC user's guide and look for "closed type families", it is well explained there.
+[04:19:33] <geekosaur> closed and non-injective, meaning that it can only ever be used in the direction HKD type1 type2 -> type1 type2 or HKD Identity type2 -> type2
+[04:19:36] <energizer> i mean after HKD is applied `HKD (Identity (foo bar))` or `HKD (foo bar)`, how do i know if i have the left case or thr right case
+[04:20:00] *** Quits: raehik1 (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net) (Ping timeout: 256 seconds)
+[04:20:16] <monochrom> That question is answered in the doc I referred to.
+[04:20:59] <energizer> https://ghc.gitlab.haskell.org/ghc/doc/users_guide/exts/type_families.html#closed-type-families
+[04:22:08] <geekosaur> not sure I'd recommend that link as it's for ghc HEAD and sometimes things will be different there. https://downloads.haskell.org/ghc/latest/docs/html/users_guide/index.html
+[04:22:22] <geekosaur> or replace "latest" with the version you want
+[04:22:56] <Axman6> energizer: it would be HKD Identity foo, and would mean all the elements of foo are just their respective types, without being wrapped in Identity
+[04:24:09] *** Quits: jpds (~jpds@gateway/tor-sasl/jpds) (Remote host closed the connection)
+[04:24:29] *** Joins: jpds (~jpds@gateway/tor-sasl/jpds)
+[04:24:38] <geekosaur> the type family (or type function if you prefer) HKD inspects its first argument and matches it against each specified instance in turn. so HKD Identity … will always match the first case and anything else the second
+[04:25:04] <Axman6> energizer: which library are you using for HKD?
+[04:25:06] <geekosaur> much like case … of at value level
+[04:25:24] <geekosaur> https://downloads.haskell.org/ghc/latest/docs/html/users_guide/index.html
+[04:25:37] <geekosaur> oops
+[04:26:17] <geekosaur> https://reasonablypolymorphic.com/blog/higher-kinded-data/
+[04:26:23] * Axman6 has to go
+[04:27:39] *** Joins: lavaman (~lavaman@98.38.249.169)
+[04:27:58] <energizer> i mean /after/ that. when i have either `a` or `f a`. the `a` that comes out of the first case might be similar to the `f a` that comes out of the second case, so i wont know where I came from, right?
+[04:28:26] <energizer> since once case drops a level of wrapping, and the other doesnt
+[04:29:04] *** dysfigured is now known as dfg
+[04:29:06] <geekosaur> that never comes up, because HKD is non-injective (meaning, it can't be run "backwards")
+[04:29:11] <monochrom> I'm actually quite disappointed at that article. "You won't need TH!" That would be great if not for "But now you need GHC.Generics." That's just a different yak to shave, really.
+[04:29:20] *** Quits: dfg (~dfg@li490-89.members.linode.com) (Changing host)
+[04:29:20] *** Joins: dfg (~dfg@user/dfg)
+[04:29:24] <geekosaur> we run it in only one direction and use the result immediately
+[04:29:45] <geekosaur> monochrom, the article says that in not so many words :)
+[04:29:49] *** Joins: alx741 (~alx741@157.100.93.160)
+[04:29:51] <monochrom> Plus the fact that the closed type family is just an distracting optimization to optimize away Identity.
+[04:30:56] <geekosaur> basically, you can never have Identity a because the HKD function disallows it
+[04:31:14] <geekosaur> *type function
+[04:32:01] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 250 seconds)
+[04:33:25] *** Joins: lavaman (~lavaman@98.38.249.169)
+[04:36:10] <energizer> suppose `HKD Identity a = a` produces `Just 4` (if `a` is `Just 4`) and `HKD f a = f a` produces `Just 4` (if `f` is `Just` and `a` is `4`). that can happen, right?
+[04:36:55] <monochrom> For starters, where did that "4" come from?!
+[04:37:13] <monochrom> Why is it not 5? Why is it not a boolean?
+[04:37:17] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[04:38:26] <jackdk> I do not like the HKD family, it seems to create a bunch of extra noise. I'd rather eat the boilerplate of explicit `Identity` here and there where I can actually see what's going on
+[04:38:28] <energizer> the value of `a` is data, right? so i can suppose it to be 4
+[04:39:16] <monochrom> So you agree that you, not `HKD Identity a = a`, produced that "4".
+[04:40:03] <energizer> can you ask a more helpful question or something
+[04:40:09] *** Joins: nattiestnate (~nate@2001:448a:20a0:4134:25e:715f:d637:5263)
+[04:41:02] <energizer> if it was `Identity 4` when it comes in, it's `4` when it goes out
+[04:41:02] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[04:41:09] <monochrom> Yes. "What does your question mean?"
+[04:41:43] *** Joins: SummerSonw (~The_viole@203.77.49.232)
+[04:41:47] <energizer> what is a plausible value of `a` there?
+[04:41:59] <monochrom> Int, Bool, Char
+[04:42:20] <dsal> Are there any constraints?
+[04:42:21] *** Quits: Gurkenglas (~Gurkengla@dslb-002-203-144-204.002.203.pools.vodafone-ip.de) (Ping timeout: 268 seconds)
+[04:42:47] <geekosaur> if I understand your question, you are asking if Just 4 came from HKD Identity (Maybe Int) or from HKD Maybe Int?
+[04:43:00] <geekosaur> and you can't know this
+[04:43:11] <energizer> that is right geekosaur 
+[04:43:14] <geekosaur> but then, you can't know it in any other situation either
+[04:44:33] <geekosaur> you know it only if you have just received it from a `Person'` of some variety — but to receive it, you must know whether it was a `Person' Identity` or a `Person' Maybe`, so you must know the answer already
+[04:44:57] <geekosaur> and afterward it is irrelevant
+[04:46:10] *** Quits: SummerSonw (~The_viole@203.77.49.232) (Ping timeout: 260 seconds)
+[04:48:05] <geekosaur> in particular, if you are operating on a `Person` a` for unspecified `a`, you cannot inspect the `Person` because you have to know what `a` is to do so
+[04:48:06] <johnw> monochrom: thank you!
+[04:48:20] <geekosaur> it's the same as
+[04:48:28] <geekosaur> % :t length @[]
+[04:48:28] <yahb> geekosaur: [a] -> Int
+[04:48:46] <geekosaur> length cannot inspect the values in the list because it has no idea what `a` is
+[04:48:54] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[04:49:43] <geekosaur> but it can inspect the list nodes themselves because it knows a list is (_ : xs) for some unknown `_`
+[04:49:50] *** Quits: slice (~slice@user/slice) (Quit: zzz)
+[04:51:47] <johnw> monochrom: Conal showed me this article a few weeks ago, but hadn't read it yet
+[04:52:28] *** Quits: cjb (~cjb@user/cjb) (Read error: Connection reset by peer)
+[04:52:30] *** Quits: aplainzetakind (~johndoe@captainludd.powered.by.lunarbnc.net) (Quit: Free ZNC ~ Powered by LunarBNC: https://LunarBNC.net)
+[04:52:32] *** Quits: acidjnk (~acidjnk@p200300d0c7271e77ede7a7f9d267d612.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[04:53:11] *** Joins: aplainzetakind (~johndoe@captainludd.powered.by.lunarbnc.net)
+[04:53:28] <energizer> that means there's no distinguishing between instances of the types described earlier in the article as MaybePerson and Person, right? whereas they can be distinguished under the other method that doesn't drop the Identity wrapper
+[04:53:29] <monochrom> It's pretty delightful. I have always felt "there are consistent rules behind APL but I can't tell say what". This paper solves it.
+[04:53:31] <geekosaur> now, as it turns out, there is nothing about a `Person'` you can determine without knowing if it is a `Person' Identity` or a `Person' Maybe` or something else, so at the only point where your question has meaning either you know the answer already or it can't come up
+[04:53:43] <jackdk> monochrom: what paper is this?
+[04:54:12] <monochrom> https://link.springer.com/chapter/10.1007/978-3-662-54434-1_21
+[04:56:26] *** Joins: SummerSonw (~The_viole@203.77.49.232)
+[04:57:30] <energizer> geekosaur: that means there's no distinguishing between instances of the types described earlier in the article as MaybePerson and Person, right? whereas they can be distinguished under the other method that doesn't drop the Identity wrapper. so if I'm given a Person' I can't tell if it's been cleaned already
+[04:57:39] <geekosaur> uh?
+[04:57:43] *** Quits: Kauto (~Kauto@wireless-student-pt10-182-232.lut.ac.uk) (Quit: Client closed)
+[04:58:02] *** Joins: alx741 (~alx741@157.100.93.160)
+[04:58:03] <geekosaur> you never have a Person'. you have a Person' Identity or a Person' Maybe
+[04:58:29] <geekosaur> and since you have to know which of those you have to do anything with it, you know what a Maybe 4 must mean
+[04:58:59] <geekosaur> the fact that we talk about a Person' Maybe instead of a MaybePerson is not relevant; they're still distinct types
+[04:59:18] *** Quits: curiousgay (~curiousga@77-120-141-90.kha.volia.net) (Remote host closed the connection)
+[05:00:32] <geekosaur> if you have a Person' Identity then a Maybe 4 must mean it's a field of type Maybe Int. if you have a Person' Maybe then the field is of type Int. there are no other options and *there is no way to not know which you have*
+[05:00:53] <zero> is there a generalized version of (\\) like a `differenceBy :: (a -> a -> Bool) -> [a] -> [a] -> [a]` ?
+[05:01:07] <geekosaur> your expression will not typecheck unless you know which one you have
+[05:01:19] *** Joins: nfd (~nfd@user/nfd)
+[05:01:41] <monochrom> Does Data.List have it?
+[05:02:07] <monochrom> Oh well it doesn't.
+[05:02:26] <geekosaur> "It is a special case of deleteFirstsBy, which allows the programmer to supply their own equality test."
+[05:02:29] <monochrom> Eh it does, but it is called deleteBy
+[05:03:19] *** Quits: jiribenes (~jiribenes@rosa.jiribenes.com) (Remote host closed the connection)
+[05:04:04] *** Joins: jiribenes (~jiribenes@rosa.jiribenes.com)
+[05:04:11] *** Parts: BrokenClutch (~pioneer@2804:d41:c2b2:be00:da32:623d:efa3:7121) ()
+[05:05:13] <monochrom> Then it goes on to give an example that is not even remotely close to any sense of equality test...
+[05:05:59] <monochrom> What's wrong with people...
+[05:06:21] *** Quits: emf_ (~emf@2620:10d:c091:480::1:e5d2) (Ping timeout: 252 seconds)
+[05:07:29] <jackdk> monochrom: thank you for that link, fun paper.
+[05:07:34] <energizer> ok i'll medidate on that. thank you geekosaur 
+[05:07:44] *** Quits: pfurla[m] (uid345156@id-345156.tinside.irccloud.com) (Quit: Connection closed for inactivity)
+[05:07:48] *** Joins: lavaman (~lavaman@98.38.249.169)
+[05:07:50] *** Quits: mjacob (~mjacob@adrastea.uberspace.de) (Ping timeout: 265 seconds)
+[05:07:51] *** Quits: AWizzArd (~code@gehrels.uberspace.de) (Ping timeout: 245 seconds)
+[05:07:59] <geekosaur> basically Person' is not a thing, like Maybe by itself is not a thing
+[05:08:16] <geekosaur> it's always something like Maybe Int. it's always something like Person' Identity
+[05:09:12] <geekosaur> (this is not always true, as Person' itself demonstrates for Maybe. but that's where "higher kinded" comes in; you are talking about types of kinds other than `Type`)
+[05:09:14] <zero> monochrom: thanks. i should have been more dilligent in my search
+[05:10:20] *** Joins: shapr (~user@12.5.211.156)
+[05:10:26] <geekosaur> but there are not *values* of kinds other than `Type`. thus there is never a value of type Person', because Person' has kind `Type -> Type`, not `Type`
+[05:10:56] <geekosaur> (more correctly it's of kind `(Type -> Type) -> Type`)
+[05:10:56] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[05:12:18] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 260 seconds)
+[05:13:30] *** Joins: mjacob (~mjacob@adrastea.uberspace.de)
+[05:15:36] *** Joins: AWizzArd (~code@gehrels.uberspace.de)
+[05:15:55] <EvanR> if values correspond to proofs, and there are no values of anything other than Type, does that mean most things in type level haskell are not true? xD
+[05:16:20] *** Quits: shapr (~user@12.5.211.156) (Remote host closed the connection)
+[05:18:19] <monochrom> In fact you could ask that question of all dependently typed languages. You can ask it of Coq and Agda.
+[05:18:31] <zero> dO(n) . The deleteBy function behaves like delete, but takes a user-supplied equality predicate.
+[05:18:34] <zero> >>> deleteBy (<=) 4 [1..10]
+[05:18:37] <zero> [1,2,3,5,6,7,8,9,10]
+[05:18:43] <zero> what am i not getting here?
+[05:18:49] <EvanR> 4 is gone
+[05:18:51] <mniip> <= is not an equality
+[05:19:01] *** Joins: machinedgod (~machinedg@24.105.81.50)
+[05:19:24] <EvanR> oh tricky
+[05:19:28] <monochrom> It stops after the first deletion.
+[05:19:38] <zero> why 4 then?
+[05:19:41] *** Joins: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470)
+[05:19:51] <mniip> the docs doesn't specify which side of the equality predicate the four will appear on
+[05:19:54] <monochrom> 4<=1 is false.
+[05:19:57] <mniip> so it's deleting the first x such taht 4<=x
+[05:20:08] *** Quits: nattiestnate (~nate@2001:448a:20a0:4134:25e:715f:d637:5263) (Quit: WeeChat 3.3)
+[05:20:16] <zero> oh
+[05:20:37] <geekosaur> which is what you get for specifying a non-equality predicate :)
+[05:20:39] *** Quits: aplainzetakind (~johndoe@captainludd.powered.by.lunarbnc.net) (Quit: Free ZNC ~ Powered by LunarBNC: https://LunarBNC.net)
+[05:20:55] <monochrom> But deleteFirstBy is more analogous to (\\) and has a better name.
+[05:21:12] *** Joins: g (x@libera/staff/glguy)
+[05:21:15] *** Joins: aplainzetakind (~johndoe@captainludd.powered.by.lunarbnc.net)
+[05:21:46] <EvanR> > deleteBy (\x y -> (even x && even y) || (odd x && odd y)) 1 [0..9]
+[05:21:48] <lambdabot>  [0,2,3,4,5,6,7,8,9]
+[05:22:26] <EvanR> works
+[05:22:31] <EvanR> > deleteBy (\x y -> (even x && even y) || (odd x && odd y)) 7 [0..9]
+[05:22:32] <lambdabot>  [0,2,3,4,5,6,7,8,9]
+[05:22:36] <g> even x == even y
+[05:22:51] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Ping timeout: 252 seconds)
+[05:23:48] <monochrom> Suppose I want to explain factorial to you. I begin with "it maps a natural number n to the product 1*2*...*n".
+[05:24:09] <monochrom> Then I proceed to say "Example: factorial of 3.5 is 11.6317..."
+[05:24:23] <monochrom> What are you missing? Answer: The fact that I'm nuts. :)
+[05:26:02] <monochrom> Did you know: "even x == even y" is a thing, too.
+[05:27:02] <monochrom> Err g beat me to it, heh
+[05:28:31] *** Joins: alx741 (~alx741@157.100.93.160)
+[05:31:53] *** Joins: slice (~slice@user/slice)
+[05:32:56] *** Joins: curiousgay (~curiousga@77-120-141-90.kha.volia.net)
+[05:33:28] <g> We have pretty good participation this year so far, but if anyone's doing advent of code in Haskell and hasn't joined the private leaderboard in the topic, there's still room!
+[05:34:45] <g> It's ok if your goal isn't speed; it's also a good way to find solutions to compare with
+[05:36:47] *** Quits: xff0x (~xff0x@2001:1a81:5245:500:35c3:4c34:eb85:8494) (Ping timeout: 252 seconds)
+[05:36:55] *** Quits: hughjfchen (~hughjfche@vmi556545.contaboserver.net) (Quit: WeeChat 2.8)
+[05:38:39] <mniip> something about setoids
+[05:38:47] *** Joins: xff0x (~xff0x@2001:1a81:5283:7b00:4425:b1f0:8a15:3e7c)
+[05:41:35] *** Quits: slice (~slice@user/slice) (Quit: zzz)
+[05:41:46] *** Quits: vicfred (~vicfred@user/vicfred) (Quit: Leaving)
+[05:42:26] *** Quits: aplainzetakind (~johndoe@captainludd.powered.by.lunarbnc.net) (Quit: Free ZNC ~ Powered by LunarBNC: https://LunarBNC.net)
+[05:43:19] *** Joins: lavaman (~lavaman@98.38.249.169)
+[05:46:32] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Ping timeout: 240 seconds)
+[05:47:02] *** Quits: machinedgod (~machinedg@24.105.81.50) (Ping timeout: 240 seconds)
+[05:47:25] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 240 seconds)
+[05:47:25] *** Quits: mvk (~mvk@2607:fea8:5cdd:f000::9788) (Ping timeout: 252 seconds)
+[05:47:44] *** Quits: Ferdirand (~somebody@2001:4c78:2012:5000::2) (Ping timeout: 268 seconds)
+[05:47:50] *** Quits: InternetCitizen (~fuzzypixe@eth-west-pareq2-46-193-4-100.wb.wifirst.net) (Ping timeout: 256 seconds)
+[05:47:51] *** Joins: Ferdirand (~somebody@2001:4c78:2012:5000::2)
+[05:48:05] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[05:48:15] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Client Quit)
+[05:48:32] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[05:48:42] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Client Quit)
+[05:49:43] *** Joins: slice (~slice@user/slice)
+[05:53:41] *** Joins: aplainzetakind (~johndoe@captainludd.powered.by.lunarbnc.net)
+[05:58:52] *** Quits: Jing (~hedgehog@2604:a840:3::10c8) (Remote host closed the connection)
+[05:59:24] *** Quits: slice (~slice@user/slice) (Quit: zzz)
+[05:59:38] *** Joins: nosewings (~ngpc@2603-8081-3e05-e2d0-f324-1a41-5d30-c2c5.res6.spectrum.com)
+[06:01:43] *** Joins: slice (~slice@user/slice)
+[06:02:15] *** Joins: Jing (~hedgehog@2604:a840:3::10c8)
+[06:02:31] *** Joins: shapr (~user@12.5.211.156)
+[06:06:27] *** Joins: ubert1 (~Thunderbi@p200300ecdf1abbee60b6487a781d8af1.dip0.t-ipconnect.de)
+[06:07:16] *** Quits: curiousgay (~curiousga@77-120-141-90.kha.volia.net) (Quit: Leaving)
+[06:07:35] *** Quits: ubert (~Thunderbi@p200300ecdf1abbd3ca03b07f10ffc657.dip0.t-ipconnect.de) (Ping timeout: 250 seconds)
+[06:07:35] *** ubert1 is now known as ubert
+[06:08:07] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[06:09:13] <dsal> Is there anything in megaparsec for parsing quoted strings?
+[06:11:39] <glguy> between and then your own set of escapes?
+[06:21:38] *** Quits: nfd (~nfd@user/nfd) (Ping timeout: 268 seconds)
+[06:21:45] <snake> why is insert into a map O(log n)
+[06:21:56] <snake> that is slow
+[06:24:44] *** Quits: shapr (~user@12.5.211.156) (Ping timeout: 268 seconds)
+[06:25:55] *** Quits: epolanski (uid312403@id-312403.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[06:26:05] *** Joins: alx741 (~alx741@157.100.93.160)
+[06:29:00] <zero> well... it really depends
+[06:30:13] <nosewings> O(log n) is fast
+[06:30:46] <nosewings> Ignoring the constants, log(2^64) ~ 44
+[06:32:23] *** Quits: nosewings (~ngpc@2603-8081-3e05-e2d0-f324-1a41-5d30-c2c5.res6.spectrum.com) (Remote host closed the connection)
+[06:32:38] <zero> i would say it's fast for a purely functional data structure
+[06:33:40] <dsal> glguy: Yeah… I've done it a few ways, but it seems like something kind of common.
+[06:34:05] <dsal> snake: how would you do it?
+[06:34:29] <glguy> About every language uses a slightly different escape syntax, so I'm not sure what I'd want megaparsec to provide
+[06:34:59] <dsal> Yeah, I guess.  I just end up with some basic "x" type strings.
+[06:35:25] *** Joins: deadmarshal (~deadmarsh@95.38.230.166)
+[06:35:47] *** Joins: nosewings (~ngpc@2603-8081-3e05-e2d0-f324-1a41-5d30-c2c5.res6.spectrum.com)
+[06:35:59] <snake> dsal, i'd use an array, O(1) time
+[06:36:12] <snake> zero, sure maybe that is true
+[06:36:28] <glguy> updating an array would be O(n) instead of the faster O(log n)
+[06:37:00] <snake> glguy, what do you mean by "array"
+[06:37:11] <snake> the way i have learned about arrays they are O(1) for access and update
+[06:37:15] <glguy> If you're talking about Map, you're talking about an immutable data structure
+[06:37:29] <glguy> so updating an array would mean to copy it to make a new one with the change
+[06:37:38] *** Joins: Guest99 (~Guest99@pool-100-8-45-127.nwrknj.fios.verizon.net)
+[06:37:42] <snake> no he's asking how i would do it
+[06:37:46] <snake> not how Map would do it
+[06:37:59] *** Quits: Guest99 (~Guest99@pool-100-8-45-127.nwrknj.fios.verizon.net) (Client Quit)
+[06:38:04] <dsal> Yes, and glguy's response suggests that your way would be *significantly* more expensive.
+[06:38:13] *** Joins: Guest99 (~Guest99@pool-100-8-45-127.nwrknj.fios.verizon.net)
+[06:38:22] <snake> not in a language where you can update a single entry in an array
+[06:38:27] <snake> without replacing it
+[06:38:53] *** Quits: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470) (Read error: Connection reset by peer)
+[06:38:58] <dsal> OK, this conversation is a bit weird because we're not talking about what we'd try to do, but let's assume you're using mutable arrays.  How do you decide which element to update?
+[06:39:05] <dsal> What if you didn't build a large enough array in the first place?
+[06:39:05] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[06:39:51] *** Quits: deadmarshal (~deadmarsh@95.38.230.166) (Ping timeout: 252 seconds)
+[06:39:56] <snake> you use a hash algorithm on the key to get a bucket to insert to, and a probing function to handle collisions
+[06:40:21] <snake> the array would have a certain capacity and would resize after its maybe like 75% full for example
+[06:40:22] *** Quits: Guest99 (~Guest99@pool-100-8-45-127.nwrknj.fios.verizon.net) (Client Quit)
+[06:40:47] <snake> this is amortized constant time since you have to resize and rehash every 0.75 N elements you insert
+[06:40:53] <snake> since you only*
+[06:40:53] <glguy> snake: If you're interested in talking about mutable datastructures (which Haskell has) then you wouldn't bring up the complexity of inserting into a Map
+[06:42:29] <snake> what advantage does Map have over the faster data structure and algorithm?
+[06:42:30] <glguy> There are also mutable hashtables and mutable arrays available
+[06:43:06] <glguy> snake: Map is faster and more efficient for rolling back to old versions and having multiple versions active at the same time
+[06:43:39] <snake> ah i see
+[06:43:50] <glguy> and not having mutation makes it easier to maintain invariants, avoid side-effect
+[06:43:59] <dsal> And cheaper to pass your map around.
+[06:45:25] <dsal> It's quite possible that if your program is slow, it's not because of Map.  Did you profile?
+[06:45:32] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[06:45:33] *** Joins: rekahsoft (~rekahsoft@cpe0008a20f982f-cm64777d666260.cpe.net.cable.rogers.com)
+[06:46:00] <snake> no i didn't use it yet, i was just curious because it was theoretically slower than i expected
+[06:46:20] <snake> i think c++ calls hash table a map, so maybe that's why i expected that
+[06:47:00] <dsal> https://en.cppreference.com/w/cpp/container/map
+[06:47:08] <dsal> std::map is not a hash table.
+[06:47:37] *** Joins: raghavgururajan (9fd51d1ea8@user/raghavgururajan)
+[06:47:49] <snake> you are right, thankyou
+[06:48:13] <snake> guess i just assumed maps are hash tables
+[06:50:03] <dsal> You'll learn more about performance issues from the profiler than just guessing.  O(log n) isn't a big deal since most data is pretty small.   I did find a case where just using lookup in a list was faster (that's O(N)).  But it's faster in my program.
+[06:50:40] <zero> aren't Data.Map self-balancing binary search trees? 
+[06:50:43] <dsal> There's also the case where the Aeson hash table stuff where badly formed input can do really awful things due to hash collisions.
+[06:51:51] <dsal> zero: https://hackage.haskell.org/package/containers-0.4.0.0/docs/Data-Map.html  yeah, the docs suggest it does fancy stuff.
+[06:54:29] <Axman6> snake: it;'s worth mentioning that hash based structures are fundamentally different from ordering based structures like map. an orserding based array implementation would have worse asymtotics than the Map implementation
+[06:54:29] *** Quits: Jing (~hedgehog@2604:a840:3::10c8) (Remote host closed the connection)
+[06:55:11] <Axman6> O(log n) is, IIRC, optimal for comparison bsed maps. hash maps are a differtent beast, and we use a different strucutre for thos (HAMTs)
+[06:55:27] <Axman6> based* those*
+[06:56:36] <snake> yeah i had no idea there was a distinction. i thought map was just an ADT that used keys to access values
+[06:56:47] *** Quits: td_ (~td@94.134.91.178) (Ping timeout: 268 seconds)
+[06:57:21] <Axman6> one of the big benefits of Data.Map is that you can get out the elements in orted order in O(n) time, which you can't do with a hash based structure
+[06:57:43] *** Joins: alx741 (~alx741@157.100.93.160)
+[06:57:58] *** Joins: td_ (~td@muedsl-82-207-238-255.citykom.de)
+[06:58:12] <Axman6> Data.HashMap gives you a HAMT, which also has O(log n) operations (though really, you can consider them O(1) because n is bounded to 64 bits)
+[06:58:23] <Axman6> use the right tool for the job
+[06:58:24] *** Joins: mbuf (~Shakthi@122.178.176.47)
+[06:58:44] *** Joins: Jing (~hedgehog@2604:a840:3::10c8)
+[06:59:02] <zero> Ord is also an arguably better consraint to have than Hashable
+[07:02:42] *** Joins: Inst (~Inst@2601:6c4:4080:3f80:1504:5494:6920:c755)
+[07:02:51] <dsal> Ord is certainly easier to get.
+[07:03:26] <glguy> snake: any chance you're doing the advent of code problems this year?
+[07:04:03] <snake> glguy, i was but im also doing final exams this week. i did days 1-5 with java and day 6 with haskell
+[07:06:13] *** Joins: BrokenClutch (~pioneer@2804:d41:c2b2:be00:da32:623d:efa3:7121)
+[07:06:34] <snake> glguy, https://dpaste.com/5GFLBLSEJ this is day 6
+[07:07:15] *** Joins: nfd (~nfd@user/nfd)
+[07:07:27] <glguy> ah, cool :)
+[07:10:18] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[07:13:34] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[07:14:11] <glguy> snake: Do you know you can use [x,y,z] list syntax in patterns (instead of needing to write (x:y:z:[])?
+[07:16:10] <snake> no i didnt know that im a bit lost LOL
+[07:19:38] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[07:26:00] *** Quits: BrokenClutch (~pioneer@2804:d41:c2b2:be00:da32:623d:efa3:7121) (Quit: Leaving.)
+[07:28:14] *** Joins: alx741 (~alx741@157.100.93.160)
+[07:28:55] *** Joins: abhixec (~abhixec@c-67-169-139-16.hsd1.ca.comcast.net)
+[07:40:42] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[07:54:07] *** Quits: zebrag (~chris@user/zebrag) (Quit: Konversation terminated!)
+[07:59:11] *** Joins: alx741 (~alx741@157.100.93.160)
+[08:05:12] *** Quits: kayvank (~user@52-119-115-185.PUBLIC.monkeybrains.net) (Remote host closed the connection)
+[08:08:22] *** Joins: Nolrai2 (~Nolrai2@73.240.1.39)
+[08:10:03] <Nolrai2> So if I there is a bug in a library on stackage whats the best way to pull down a local copy of it so I can fix it?
+[08:10:52] <dsal> There's usually a github url
+[08:11:14] <dsal> If you're using stack, you can just clone it and override to your clone in stack.yaml
+[08:11:14] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[08:15:11] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 250 seconds)
+[08:23:49] <Nolrai2> In the stack.yaml does the path to the clone go in packages or extra-deps?
+[08:24:02] <dsal> extra-deps
+[08:24:25] <dsal> You can either put a path there, or a git URL and commit.
+[08:24:51] <dsal> stack gets pretty confused if change code at a reference without changing the version number, though.
+[08:25:52] <Nolrai2> Thanks. I'll keep that in mind!
+[08:29:41] *** Joins: alx741 (~alx741@157.100.93.160)
+[08:32:36] *** Quits: Nolrai2 (~Nolrai2@73.240.1.39) (Quit: Client closed)
+[08:34:41] *** Quits: rekahsoft (~rekahsoft@cpe0008a20f982f-cm64777d666260.cpe.net.cable.rogers.com) (Ping timeout: 250 seconds)
+[08:36:49] *** Joins: osewingsn (~ngpc@2603-8081-3e05-e2d0-a55f-bbff-7ca5-7d0e.res6.spectrum.com)
+[08:36:50] *** Joins: neverwas (jpneverwas@swissbox.unperson.link)
+[08:37:32] *** Quits: osewingsn (~ngpc@2603-8081-3e05-e2d0-a55f-bbff-7ca5-7d0e.res6.spectrum.com) (Remote host closed the connection)
+[08:38:44] *** Joins: osewingsn (~ngpc@2603-8081-3e05-e2d0-a55f-bbff-7ca5-7d0e.res6.spectrum.com)
+[08:55:06] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[08:58:04] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[09:00:14] *** Quits: ubert (~Thunderbi@p200300ecdf1abbee60b6487a781d8af1.dip0.t-ipconnect.de) (Remote host closed the connection)
+[09:00:32] *** Joins: ubert (~Thunderbi@p200300ecdf1abbee60b6487a781d8af1.dip0.t-ipconnect.de)
+[09:07:28] *** Quits: juhp (~juhp@128.106.188.82) (Quit: juhp)
+[09:14:44] *** Joins: alx741 (~alx741@181.199.42.79)
+[09:16:07] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[09:17:13] *** Quits: mikoto-chan (~mikoto-ch@esm-84-240-99-143.netplaza.fi) (Quit: mikoto-chan)
+[09:24:30] *** Quits: slowButPresent (~slowButPr@user/slowbutpresent) (Quit: leaving)
+[09:28:29] *** Quits: alx741 (~alx741@181.199.42.79) (Read error: Connection reset by peer)
+[09:29:14] *** Joins: alx741 (~alx741@157.100.93.160)
+[09:37:30] *** Joins: lavaman (~lavaman@98.38.249.169)
+[09:38:46] *** Joins: takuan (~takuan@178-116-218-225.access.telenet.be)
+[09:40:22] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[09:40:59] *** Joins: deadmarshal (~deadmarsh@95.38.230.166)
+[09:41:52] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 256 seconds)
+[09:42:33] *** Quits: Jing (~hedgehog@2604:a840:3::10c8) (Remote host closed the connection)
+[09:43:17] *** Joins: Jing (~hedgehog@125.106.89.200)
+[09:45:50] *** Joins: _ht (~quassel@82-169-194-8.biz.kpn.net)
+[09:50:09] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 252 seconds)
+[09:55:28] *** Quits: lbseale (~ep1ctetus@user/ep1ctetus) (Ping timeout: 256 seconds)
+[09:57:17] *** Joins: alx741 (~alx741@181.199.42.79)
+[09:58:04] *** Quits: monochrom (trebla@216.138.220.146) (Quit: NO CARRIER)
+[09:59:49] *** Joins: monochrom (trebla@216.138.220.146)
+[10:03:15] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[10:04:36] *** Quits: osewingsn (~ngpc@2603-8081-3e05-e2d0-a55f-bbff-7ca5-7d0e.res6.spectrum.com) (Remote host closed the connection)
+[10:10:02] *** Quits: alx741 (~alx741@181.199.42.79) (Read error: Connection reset by peer)
+[10:10:34] *** Joins: Akiva (~Akiva@user/Akiva)
+[10:10:47] *** Joins: alx741 (~alx741@157.100.93.160)
+[10:13:44] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[10:15:26] <xerox> cyphase: we are tied for 10 :o
+[10:16:09] <cyphase> hmm, perhaps i need to refocus my efforts
+[10:16:26] <cyphase> (no, not really)
+[10:17:17] *** Quits: Inst (~Inst@2601:6c4:4080:3f80:1504:5494:6920:c755) (Ping timeout: 252 seconds)
+[10:17:36] <cyphase> the drop in rank is totally worth the distraction i have to say :)
+[10:25:52] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[10:29:51] *** Quits: Jing (~hedgehog@125.106.89.200) (Read error: Connection reset by peer)
+[10:34:31] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 250 seconds)
+[10:35:27] *** Joins: Jing (~hedgehog@2604:a840:3::10c8)
+[10:35:45] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[10:36:04] *** Quits: remexre (~remexre@user/remexre) (Remote host closed the connection)
+[10:36:57] *** Joins: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470)
+[10:37:42] *** Joins: chele (~chele@user/chele)
+[10:44:22] *** Joins: alx741 (~alx741@157.100.93.160)
+[10:47:07] <int-e> > "AoD" > "AoC" -- 'D' is for 'distractions' of course
+[10:47:09] <lambdabot>  True
+[10:50:48] *** Joins: remexre (~remexre@user/remexre)
+[10:52:21] *** Quits: xff0x (~xff0x@2001:1a81:5283:7b00:4425:b1f0:8a15:3e7c) (Ping timeout: 268 seconds)
+[10:52:31] *** Joins: michalz (~michalz@185.246.204.109)
+[10:52:59] *** Joins: xff0x (~xff0x@2001:1a81:5283:7b00:6c74:59db:ccc0:34d8)
+[10:53:47] *** Joins: bollu (uid233390@id-233390.helmsley.irccloud.com)
+[10:55:02] *** Quits: mncheck (~mncheck@193.224.205.254) (Quit: Leaving)
+[10:55:35] <mjrosenb> xerox: cyphase: globally?
+[10:56:08] <cyphase> haha, no. the haskell leaderboard; code in the topic
+[10:57:46] *** Quits: mdrake (~bc8147f2@cerf.good1.com) (Quit: CGI:IRC (Session timeout))
+[10:58:21] *** Joins: coot (~coot@89-64-85-93.dynamic.chello.pl)
+[10:58:32] <xerox> tie... broken! :D
+[10:58:49] <mjrosenb> you're welcome?
+[10:59:27] <mjrosenb> c.c there are people ahead of me that haven't finished today's yet.
+[10:59:40] <mjrosenb> that's what I get for forgetting about it for a couple of days.
+[11:01:37] <mjrosenb> anyhow, I came in here to ask about emacs and flycheck.  I just set up haskell-lsp, and it says that flycheck is enabled in my buffers, but I'm not seeing any evidence of it.
+[11:05:04] *** Joins: evocatus (~evocatus@91.211.251.87)
+[11:06:34] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f458:37c0:1547:7436) (Remote host closed the connection)
+[11:08:40] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[11:09:30] *** Quits: phma (phma@2001:5b0:211c:2a58:d0c:f178:6e2:131e) (Read error: Connection reset by peer)
+[11:10:15] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[11:10:25] *** Joins: phma (~phma@host-67-44-208-155.hnremote.net)
+[11:11:00] *** Quits: shriekingnoise (~shrieking@186.137.144.80) (Quit: Quit)
+[11:17:31] *** Joins: cfricke (~cfricke@user/cfricke)
+[11:18:19] *** Joins: fr33domlover (~fr33@2.55.170.123)
+[11:21:07] *** Joins: InternetCitizen (~fuzzypixe@eth-west-pareq2-46-193-4-100.wb.wifirst.net)
+[11:26:43] *** Joins: alx741 (~alx741@157.100.93.160)
+[11:30:44] *** Joins: lortabac (~lortabac@2a01:e0a:541:b8f0:2c0a:74d4:9496:54f1)
+[11:31:45] *** Joins: dyeplexer (~dyeplexer@user/dyeplexer)
+[11:38:55] <[itchyjunk]> @where paste
+[11:38:55] <lambdabot> Help us help you: please paste full code, input and/or output at e.g. https://paste.tomsmeding.com
+[11:39:30] <[itchyjunk]> Huh, I was expecting this to be harder. does this look correct? https://paste.tomsmeding.com/dzQcCatd
+[11:40:18] <[itchyjunk]> I guess `fib n` should actually generate n terms maybe. but that would just be turning this into a helper and having come other function do the counting and recursion maybe?
+[11:40:34] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[11:41:41] *** Joins: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4)
+[11:46:27] <[itchyjunk]> Hm, looks like i still have issues with making lists.
+[11:46:30] *** Joins: dschrempf (~dominik@070-207.dynamic.dsl.fonira.net)
+[11:46:45] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[11:46:47] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[11:47:00] <[itchyjunk]> `fib :: Int -> [Int]` I want to take some integer n and produce a list of n integers, so i think the signature is correct
+[11:47:56] *** Joins: cosimone (~user@93-47-231-203.ip115.fastwebnet.it)
+[11:48:36] *** Joins: phma_ (phma@2001:5b0:2144:24c8:3448:3cec:586:a41)
+[11:49:20] *** Joins: iteratee_ (~kyle@162.218.222.107)
+[11:49:32] *** Joins: pyook (~puke@user/puke)
+[11:49:33] *** puke is now known as Guest534
+[11:49:33] *** Quits: Guest534 (~puke@user/puke) (Killed (iridium.libera.chat (Nickname regained by services)))
+[11:49:33] *** pyook is now known as puke
+[11:50:25] <mjrosenb> is there a reason to have fib :: Int -> [Int] rather than just fib :: [Int]?
+[11:50:34] <mjrosenb> [itchyjunk]: ^
+[11:50:41] <[itchyjunk]> hmmmmmmmmm
+[11:51:13] <[itchyjunk]> I would just produce infinite list of fibbonaci lazyly evaluated?
+[11:51:32] <[itchyjunk]> Didn't realize that was an option. but is this harder?
+[11:51:52] *** Quits: iteratee (~kyle@162.218.222.107) (Read error: Connection reset by peer)
+[11:52:15] *** Quits: phma (~phma@host-67-44-208-155.hnremote.net) (Ping timeout: 252 seconds)
+[11:53:32] <mjrosenb> the lazy list of infinite fibonacci numbers is definitely one of the "wait, haskell can do /that/?!" examples
+[11:56:50] <[itchyjunk]> Hm, idk how a function that take no parameter but produces a list would go
+[11:56:58] *** Joins: alx741 (~alx741@157.100.93.160)
+[11:58:25] *** Joins: chexum_ (~quassel@gateway/tor-sasl/chexum)
+[11:58:41] *** Joins: lbseale (~ep1ctetus@user/ep1ctetus)
+[11:58:42] <mjrosenb> You can start simple, how about a list that contains only the number 1, an infinite number of times?
+[11:58:50] *** Quits: chexum (~quassel@gateway/tor-sasl/chexum) (Remote host closed the connection)
+[12:00:53] *** Joins: max22- (~maxime@lfbn-ren-1-762-224.w81-53.abo.wanadoo.fr)
+[12:01:37] <[itchyjunk]> this does something but running this turned into an infinite loop
+[12:01:38] <[itchyjunk]> https://paste.tomsmeding.com/RfymL3yt
+[12:02:06] <[itchyjunk]> guess this isn't what i want though
+[12:02:22] <[itchyjunk]> But does compile and run @_@
+[12:02:38] *** Quits: slice (~slice@user/slice) (Quit: cya)
+[12:03:13] <mjrosenb> that looks correct.
+[12:03:26] <mjrosenb> it'll turn into an infinite loop if you try to look at all of ut
+[12:03:53] <mjrosenb> but e.g. `take 300 simple` or `simple !! 9000` should both be fine.
+[12:03:53] *** Joins: dhouthoo (~dhouthoo@178-117-36-167.access.telenet.be)
+[12:05:13] <[itchyjunk]> hmm, `take 30 simple` produces a list of 30 1's but `simple !! 30` just outputs 1
+[12:05:14] *** Quits: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao) (Remote host closed the connection)
+[12:05:36] *** Joins: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao)
+[12:06:01] *** Quits: Sgeo (~Sgeo@user/sgeo) (Read error: Connection reset by peer)
+[12:06:02] <mjrosenb> yes. (!!) is the index operator, it asks for the 30th element in the list, which is 1
+[12:06:07] <mjrosenb> since every element in the list is 1.
+[12:06:12] <[itchyjunk]> ah
+[12:06:34] <mjrosenb> ok, next step: how about a list that has the natural numbers?
+[12:06:57] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:158b:cfc1:e7b3:d4ac)
+[12:07:57] *** Joins: mncheck (~mncheck@193.224.205.254)
+[12:08:54] *** Joins: evocatus_ (~evocatus@213.193.2.105)
+[12:09:30] *** Quits: evocatus_ (~evocatus@213.193.2.105) (Remote host closed the connection)
+[12:11:19] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:158b:cfc1:e7b3:d4ac) (Ping timeout: 252 seconds)
+[12:11:54] *** Quits: evocatus (~evocatus@91.211.251.87) (Ping timeout: 268 seconds)
+[12:13:40] *** Joins: jgeerds (~jgeerds@55d4ac73.access.ecotel.net)
+[12:14:31] <[itchyjunk]> Do i wanna take the last element, add one to it and add it back to the list?
+[12:14:49] <[itchyjunk]> natList = n+1 : natList where n = 0 was the closest idea i had lol
+[12:16:27] <mjrosenb> that will produce the same thing as simple, since n is always the same.
+[12:16:36] <[itchyjunk]> right
+[12:16:38] *** Quits: tzh (~tzh@c-24-21-73-154.hsd1.or.comcast.net) (Quit: zzz)
+[12:17:01] *** Joins: kuribas (~user@ptr-25vy0i8khbpxjegyagx.18120a2.ip6.access.telenet.be)
+[12:17:15] <[itchyjunk]> but i might be able to say where n is last thing in natList though.. I think
+[12:18:25] <mjrosenb> so starting with `natList = 1 : natList`, the second element is wrong, since it is 1 rather than 2
+[12:18:35] <mjrosenb> and you want to affect *every* element after the first
+[12:18:43] <mjrosenb> how do you affect every element in a list?
+[12:18:55] *** Joins: machinedgod (~machinedg@24.105.81.50)
+[12:19:21] *** Joins: CiaoSen (~Jura@p200300c957347b002a3a4dfffe84dbd5.dip0.t-ipconnect.de)
+[12:19:38] <[itchyjunk]> Hm, apply a function to each element of list? maybe with map
+[12:20:01] <mjrosenb> sounds right.
+[12:20:43] <[itchyjunk]> This seems to somehow compile and do something weird btw : natList = n+1 : natList where n = last natList
+[12:21:05] *** Joins: Inst (~Inst@2601:6c4:4080:3f80:7939:82b5:8236:6c32)
+[12:21:10] <[itchyjunk]> When i run it, all I see is a `[`
+[12:22:26] <mjrosenb> hah, yeah.  taking the last element of an infinite list will take a while.
+[12:22:35] <[itchyjunk]> ah
+[12:24:22] <mjrosenb> so
+[12:24:44] <mjrosenb> `natlist = 1 : ` is definitely correct.  You have your base case; the first natural number is 1.
+[12:25:12] <mjrosenb> and you want to continue from there, with something that will evaluate to [2,3,4,5...]
+[12:25:43] <[itchyjunk]> yeah i was testing out how map works `map (+ 1) [1 .. 10] seems to do what i wanted
+[12:26:09] <mjrosenb> but using a range is cheating :-p
+[12:26:22] <mjrosenb> anyhow...
+[12:26:28] <[itchyjunk]> that was for testing
+[12:26:30] <[itchyjunk]> natList = 1 : map (+ 1) natList
+[12:26:45] *** Quits: CiaoSen (~Jura@p200300c957347b002a3a4dfffe84dbd5.dip0.t-ipconnect.de) (Ping timeout: 250 seconds)
+[12:26:47] <mjrosenb> yup, that looks right.
+[12:27:12] <[itchyjunk]> Hmm, I need to think this one through though. Does work
+[12:28:37] *** Joins: acidjnk (~acidjnk@p200300d0c7271e77ede7a7f9d267d612.dip0.t-ipconnect.de)
+[12:28:37] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[12:29:24] <[itchyjunk]> Oh i think it makes sense.. just barely
+[12:29:40] <[itchyjunk]> it hard to mentally follow along what is happening
+[12:29:53] <mjrosenb> it... takes some getting used to
+[12:30:04] <mjrosenb> but it is *very* illustrative
+[12:30:17] <[itchyjunk]> ah, good to know there is a future where i will be used to it
+[12:30:53] <mjrosenb> so, this is the natural numbers; nats 1 = 1; nats n = 1 + nats (n-1)
+[12:31:17] <mjrosenb> we want the fibonacci numbers; fib 1 = 1; fib 2 = 1; fib n = fib (n-1) + fib (n-2)
+[12:32:02] <mjrosenb> just by cargo culting, you can get something like `fibList = 1:1:...`
+[12:32:15] <[itchyjunk]> lol tat's what i had
+[12:32:35] <mjrosenb> but map isn't going to work, since the thing that is being applied isn't a constant, but instead varies depending on where you are in the list
+[12:32:50] <mjrosenb> but, a quirk of this method is... you can't really tell where you are in the list.
+[12:33:37] *** Quits: abhixec (~abhixec@c-67-169-139-16.hsd1.ca.comcast.net) (Quit: leaving)
+[12:34:01] <mjrosenb> so, I guess as another intermediate step, rather than the natural numbers, you can do the powers of two
+[12:34:12] <mjrosenb> which comes in a simple flavor
+[12:34:33] <mjrosenb> powTwoList = 1 : map (2*) powTwoList
+[12:34:58] <mjrosenb> and, knowing that 2*x == x+x, a slightly stranger form
+[12:35:18] <mjrosenb> powTwoList = 1 : zip (+) powTwoList powTwoList
+[12:36:42] <[itchyjunk]> hmm
+[12:40:17] <mjrosenb> err
+[12:40:28] <mjrosenb> powTwoList = 1 : zipWith (+) powTwoList powTwoList
+[12:40:30] <mjrosenb> sorry about that.
+[12:42:39] *** Joins: mikail (~mikail@2a02:c7f:bc1f:4a00:fc9:3da5:3e1e:8303)
+[12:42:46] <int-e> > fix (scanl (+) 1)
+[12:42:47] <lambdabot>  [1,2,4,8,16,32,64,128,256,512,1024,2048,4096,8192,16384,32768,65536,131072,2...
+[12:43:13] <[itchyjunk]> looks cheaty
+[12:43:42] <int-e> > fix ((0:) . scanl (+) 1) -- this is the more famous twin
+[12:43:44] <lambdabot>  [0,1,1,2,3,5,8,13,21,34,55,89,144,233,377,610,987,1597,2584,4181,6765,10946,...
+[12:43:52] *** Joins: notzmv (~zmv@user/notzmv)
+[12:44:23] <xerox> who wears a cool hat
+[12:44:59] *** Joins: alx741 (~alx741@157.100.93.160)
+[12:45:11] <mjrosenb> int-e: well, I guess that doesn't take away from the solution I was working towards at all :-p
+[12:46:03] <int-e> mjrosenb: I hope you're aiming for the zip-based one
+[12:46:41] <int-e> I would always start at F_0 = 0 though.
+[12:46:47] <mjrosenb> well, I did have zipWith in the last definition I gave :-)
+[12:47:19] <mjrosenb> any reason? 
+[12:47:36] <mjrosenb> I know why I don't like it, but it is a dumb reason.
+[12:48:30] <mjrosenb> actually, technically, I don't even like starting with two ones; 1:2:3:5:8...
+[12:48:42] <mjrosenb> but that seems to upset people too much.
+[12:48:50] <int-e> mjrosenb: yes, there is a reason: F_0 = 0 ensures that F_n | F_m when n | m
+[12:49:15] *** Joins: cosimone` (~user@2001:b07:ae5:db26:a7aa:8027:6b4e:2fb3)
+[12:50:34] *** Quits: cosimone (~user@93-47-231-203.ip115.fastwebnet.it) (Ping timeout: 256 seconds)
+[12:51:39] <mjrosenb> is that n divides evenly into m?
+[12:51:45] <int-e> yes
+[12:52:23] <mjrosenb> that makes sense.
+[12:52:35] *** Joins: madjestic (~madjestic@88-159-247-120.fixed.kpn.net)
+[12:53:29] <mjrosenb> I like [1,2,3,5...] because  every integer can be uniquely represented as a sum of non-consecutive fibonacci numbers
+[12:53:41] <mjrosenb> but including a second 1 and a 0 breaks that.
+[12:54:49] <int-e> Oh the Zeckendorf thing.
+[12:57:34] <mjrosenb> is F_0 = 0 required for gcd(F_n, F_m) = F_gcd(n,m)?
+[12:58:40] <int-e> Yes. (If you take n = 0 then this becomes gcd(F_0, F_m) = F_m)
+[12:59:34] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[13:01:26] *** Joins: gehmehgeh (~user@user/gehmehgeh)
+[13:02:04] *** Quits: mikail (~mikail@2a02:c7f:bc1f:4a00:fc9:3da5:3e1e:8303) (Remote host closed the connection)
+[13:02:28] *** Joins: mikail (~mikail@2a02:c7f:bc1f:4a00:fc9:3da5:3e1e:8303)
+[13:02:29] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 250 seconds)
+[13:02:41] *** Quits: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470) (Read error: Connection reset by peer)
+[13:08:35] *** Quits: greyrat_ (~greyrat@ip202.ip-51-178-215.eu) (Bye)
+[13:08:55] *** Joins: greyrat (~greyrat@ip202.ip-51-178-215.eu)
+[13:09:48] <mjrosenb> hrm, so far, I'm unimpressed with lsp-mode
+[13:09:55] *** Joins: Logio_ (em@kapsi.fi)
+[13:09:58] *** Joins: jzsinatr2 (~jzsinatra@88-114-238-31.elisa-laajakaista.fi)
+[13:09:59] *** Quits: madjestic (~madjestic@88-159-247-120.fixed.kpn.net) (Ping timeout: 252 seconds)
+[13:10:04] *** Joins: haveo_ (~haveo@sl35.iuwt.fr)
+[13:10:05] <mjrosenb> I kind of suspect I don't have it set up correctly.
+[13:10:12] *** Joins: td__ (~td@muedsl-82-207-238-255.citykom.de)
+[13:10:13] *** Joins: hltk_ (~hltk@hltk.fi)
+[13:10:14] *** Joins: _ht_ (~quassel@82-169-194-8.biz.kpn.net)
+[13:10:20] *** Joins: kritzefitz_ (~kritzefit@debian/kritzefitz)
+[13:10:20] *** Joins: Techcable_ (~Techcable@168.235.93.147)
+[13:10:25] *** Joins: mjacob_ (~mjacob@adrastea.uberspace.de)
+[13:10:26] *** Joins: bens_ (~bens@www.typius.com)
+[13:10:44] *** Joins: ft_ (~ft@shell.chaostreff-dortmund.de)
+[13:10:55] *** Joins: Megant_ (megant@user/megant)
+[13:11:01] *** Joins: mstksg (~jle`@cpe-23-240-75-236.socal.res.rr.com)
+[13:11:03] *** Joins: gentauro_ (~gentauro@185.107.12.141)
+[13:11:05] *** Joins: dfordvm (~dfordivam@tk2-219-19469.vs.sakura.ne.jp)
+[13:11:07] *** Joins: jjhoo_ (~jahakala@user/jjhoo)
+[13:11:11] *** Joins: peutri_ (~peutri@ns317027.ip-94-23-46.eu)
+[13:11:12] *** Server sets mode: +Cnt 
+[13:11:13] *** Joins: [exa]_ (exa@srv3.blesmrt.net)
+[13:11:22] *** Joins: gdd1 (~gdd@129.199.146.230)
+[13:11:23] *** Joins: takuan_dozo (~takuan@178-116-218-225.access.telenet.be)
+[13:11:23] *** Joins: jlamothe_ (~jlamothe@198.251.61.229)
+[13:11:25] *** Joins: sweater1 (~sweater@206.81.18.26)
+[13:11:28] *** Joins: pie_ (~pie_bnc@user/pie/x-2818909)
+[13:11:43] *** Joins: finstern1s (~X@23.226.237.192)
+[13:11:49] *** Joins: aweinsto1k (~aweinstoc@cpe-67-248-65-250.nycap.res.rr.com)
+[13:11:55] *** Joins: kritzefitz_unaut (~kritzefit@fw-front.credativ.com)
+[13:12:08] *** Parts: kritzefitz_unaut (~kritzefit@fw-front.credativ.com) ()
+[13:13:05] *** Quits: kritzefitz (~kritzefit@debian/kritzefitz) (Killed (lithium.libera.chat (Nickname regained by services)))
+[13:13:05] *** kritzefitz_ is now known as kritzefitz
+[13:13:13] *** Quits: pavonia (~user@user/siracusa) (Read error: Connection reset by peer)
+[13:14:36] *** Joins: adamCS_ (~adamCS@ec2-34-207-160-255.compute-1.amazonaws.com)
+[13:14:45] *** Joins: dka_ (~code-is-a@ns3059207.ip-193-70-33.eu)
+[13:14:52] *** Joins: cyphase_eviltwin (~cyphase@user/cyphase)
+[13:15:56] *** Joins: alx741 (~alx741@157.100.93.160)
+[13:16:22] *** Quits: [exa]_ (exa@srv3.blesmrt.net) (Changing host)
+[13:16:22] *** Joins: [exa]_ (exa@user/exa/x-3587197)
+[13:16:40] *** Quits: [exa] (~exa@user/exa/x-3587197) (Killed (calcium.libera.chat (Nickname regained by services)))
+[13:16:40] *** [exa]_ is now known as [exa]
+[13:16:44] *** Quits: InternetCitizen (~fuzzypixe@eth-west-pareq2-46-193-4-100.wb.wifirst.net) (*.net *.split)
+[13:16:44] *** Quits: cfricke (~cfricke@user/cfricke) (*.net *.split)
+[13:16:44] *** Quits: _ht (~quassel@82-169-194-8.biz.kpn.net) (*.net *.split)
+[13:16:44] *** Quits: deadmarshal (~deadmarsh@95.38.230.166) (*.net *.split)
+[13:16:44] *** Quits: takuan (~takuan@178-116-218-225.access.telenet.be) (*.net *.split)
+[13:16:44] *** Quits: td_ (~td@muedsl-82-207-238-255.citykom.de) (*.net *.split)
+[13:16:44] *** Quits: mjacob (~mjacob@adrastea.uberspace.de) (*.net *.split)
+[13:16:44] *** Quits: cheater (~Username@user/cheater) (*.net *.split)
+[13:16:44] *** Quits: dsrt^ (~dsrt@wsip-98-188-240-142.mc.at.cox.net) (*.net *.split)
+[13:16:44] *** Quits: paddymahoney (~paddymaho@cpe9050ca207f83-cm9050ca207f80.cpe.net.cable.rogers.com) (*.net *.split)
+[13:16:44] *** Quits: kmein (~weechat@user/kmein) (*.net *.split)
+[13:16:44] *** Quits: gdd (~gdd@129.199.146.230) (*.net *.split)
+[13:16:44] *** Quits: Alex_test (~al_test@178.34.163.33) (*.net *.split)
+[13:16:44] *** Quits: AlexZenon (~alzenon@178.34.163.33) (*.net *.split)
+[13:16:44] *** Quits: Techcable (~Techcable@168.235.93.147) (*.net *.split)
+[13:16:44] *** Quits: tubogram (~tubogram@user/tubogram) (*.net *.split)
+[13:16:44] *** Quits: darkstardevx (~darkstard@50.39.115.145) (*.net *.split)
+[13:16:44] *** Quits: danso (~danso@23-233-111-52.cpe.pppoe.ca) (*.net *.split)
+[13:16:44] *** Quits: joo-_ (~joo-_@fsf/member/joo--) (*.net *.split)
+[13:16:44] *** Quits: Digit (~user@user/digit) (*.net *.split)
+[13:16:44] *** Quits: jle` (~jle`@cpe-23-240-75-236.socal.res.rr.com) (*.net *.split)
+[13:16:44] *** Quits: nek0 (~nek0@nek0.eu) (*.net *.split)
+[13:16:44] *** Quits: Megant (megant@user/megant) (*.net *.split)
+[13:16:44] *** Quits: sweater (~sweater@206.81.18.26) (*.net *.split)
+[13:16:44] *** Quits: dwt_ (~dwt_@c-98-198-103-176.hsd1.tx.comcast.net) (*.net *.split)
+[13:16:44] *** Quits: Flonk (~Flonk@vps-zap441517-1.zap-srv.com) (*.net *.split)
+[13:16:44] *** Quits: noctux (~noctux@user/noctux) (*.net *.split)
+[13:16:44] *** Quits: feliix42 (~felix@gibbs.uberspace.de) (*.net *.split)
+[13:16:44] *** Quits: cyphase (~cyphase@user/cyphase) (*.net *.split)
+[13:16:44] *** Quits: ezzieyguywuf (~Unknown@user/ezzieyguywuf) (*.net *.split)
+[13:16:44] *** Quits: Hecate (~mariposa@user/hecate) (*.net *.split)
+[13:16:44] *** Quits: remedan (~remedan@balak.me) (*.net *.split)
+[13:16:45] *** Quits: ft (~ft@shell.chaostreff-dortmund.de) (*.net *.split)
+[13:16:45] *** Quits: drewolson (~drewolson@user/drewolson) (*.net *.split)
+[13:16:45] *** Quits: PigDude (~PigDude@159.203.16.199) (*.net *.split)
+[13:16:45] *** Quits: aweinstock (~aweinstoc@cpe-67-248-65-250.nycap.res.rr.com) (*.net *.split)
+[13:16:45] *** Quits: hrdl (~hrdl@mail.hrdl.eu) (*.net *.split)
+[13:16:45] *** Quits: jlamothe (~jlamothe@198.251.61.229) (*.net *.split)
+[13:16:45] *** Quits: lambdabot (~lambdabot@haskell/bot/lambdabot) (*.net *.split)
+[13:16:45] *** Quits: gentauro (~gentauro@user/gentauro) (*.net *.split)
+[13:16:45] *** Quits: Logio (em@kapsi.fi) (*.net *.split)
+[13:16:45] *** Quits: niko (~niko@libera/staff/niko) (*.net *.split)
+[13:16:45] *** Quits: nisstyre (~wes@user/nisstyre) (*.net *.split)
+[13:16:45] *** Quits: pragma- (~chaos@user/pragmatic-chaos) (*.net *.split)
+[13:16:45] *** Quits: dka (~code-is-a@ns3059207.ip-193-70-33.eu) (*.net *.split)
+[13:16:45] *** Quits: hltk (~hltk@hltk.fi) (*.net *.split)
+[13:16:45] *** Quits: pie__ (~pie_bnc@user/pie/x-2818909) (*.net *.split)
+[13:16:45] *** Quits: dfordivam1 (~dfordivam@tk2-219-19469.vs.sakura.ne.jp) (*.net *.split)
+[13:16:45] *** Quits: greyrat_ (~greyrat@ip202.ip-51-178-215.eu) (*.net *.split)
+[13:16:45] *** Quits: eL_Bart0- (eL_Bart0@dietunichtguten.org) (*.net *.split)
+[13:16:45] *** Quits: jzsinatra (~jzsinatra@88-114-238-31.elisa-laajakaista.fi) (*.net *.split)
+[13:16:45] *** Quits: statusbot (~statusbot@ec2-34-198-122-184.compute-1.amazonaws.com) (*.net *.split)
+[13:16:45] *** Quits: peutri (~peutri@ns317027.ip-94-23-46.eu) (*.net *.split)
+[13:16:45] *** Quits: ikke (~kevin@alpine/developer/ikke) (*.net *.split)
+[13:16:45] *** Quits: Athas (athas@sigkill.dk) (*.net *.split)
+[13:16:45] *** Quits: haveo (~haveo@sl35.iuwt.fr) (*.net *.split)
+[13:16:45] *** Quits: bens (~bens@www.typius.com) (*.net *.split)
+[13:16:45] *** Quits: jjhoo (~jahakala@user/jjhoo) (*.net *.split)
+[13:16:45] *** Quits: finsternis (~X@23.226.237.192) (*.net *.split)
+[13:16:45] *** Quits: yahb (xsbot@user/mniip/bot/yahb) (*.net *.split)
+[13:16:45] *** Quits: tetrahedron (~derelict@user/derelict) (*.net *.split)
+[13:16:46] *** Quits: asm (~alexander@user/asm) (*.net *.split)
+[13:16:46] *** Quits: adamCS (~adamCS@ec2-34-207-160-255.compute-1.amazonaws.com) (*.net *.split)
+[13:16:46] *** tubogram4 is now known as tubogram
+[13:16:46] *** ft_ is now known as ft
+[13:16:46] *** adamCS_ is now known as adamCS
+[13:16:56] *** Joins: dsrt^ (~dsrt@wsip-98-188-240-142.mc.at.cox.net)
+[13:17:27] *** Joins: yahb (xsbot@user/mniip/bot/yahb)
+[13:18:05] *** Quits: max22- (~maxime@lfbn-ren-1-762-224.w81-53.abo.wanadoo.fr) (Ping timeout: 250 seconds)
+[13:18:29] *** Joins: pavonia (~user@user/siracusa)
+[13:21:51] *** Joins: AlexZenon (~alzenon@178.34.163.33)
+[13:21:51] *** Joins: Alex_test (~al_test@178.34.163.33)
+[13:21:51] *** Joins: InternetCitizen (~fuzzypixe@eth-west-pareq2-46-193-4-100.wb.wifirst.net)
+[13:21:51] *** Joins: deadmarshal (~deadmarsh@95.38.230.166)
+[13:21:51] *** Joins: cheater (~Username@user/cheater)
+[13:21:51] *** Joins: kmein (~weechat@user/kmein)
+[13:21:51] *** Joins: joo-_ (~joo-_@fsf/member/joo--)
+[13:21:51] *** Joins: Digit (~user@user/digit)
+[13:21:51] *** Joins: nek0 (~nek0@nek0.eu)
+[13:21:51] *** Joins: dwt_ (~dwt_@c-98-198-103-176.hsd1.tx.comcast.net)
+[13:21:51] *** Joins: Flonk (~Flonk@vps-zap441517-1.zap-srv.com)
+[13:21:51] *** Joins: drewolson (~drewolson@user/drewolson)
+[13:21:51] *** Joins: PigDude (~PigDude@159.203.16.199)
+[13:21:51] *** Joins: hrdl (~hrdl@mail.hrdl.eu)
+[13:21:51] *** Joins: lambdabot (~lambdabot@haskell/bot/lambdabot)
+[13:21:51] *** Joins: niko (~niko@libera/staff/niko)
+[13:21:51] *** Joins: nisstyre (~wes@user/nisstyre)
+[13:22:25] *** Joins: noctux (~noctux@user/noctux)
+[13:23:06] *** Joins: asm (~alexander@burner.asm89.io)
+[13:23:36] *** Joins: pragma- (~chaos@user/pragmatic-chaos)
+[13:23:38] *** Joins: paddymahoney (~paddymaho@cpe9050ca207f83-cm9050ca207f80.cpe.net.cable.rogers.com)
+[13:23:39] *** Joins: cfricke (~cfricke@user/cfricke)
+[13:23:39] *** Joins: teo (~teo@user/teo)
+[13:23:40] *** Joins: danso (~danso@23-233-111-52.cpe.pppoe.ca)
+[13:23:53] *** Joins: ikke (~kevin@alpine/developer/ikke)
+[13:23:55] *** Quits: nfd (~nfd@user/nfd) (Ping timeout: 252 seconds)
+[13:29:43] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[13:30:14] *** Quits: joo-_ (~joo-_@fsf/member/joo--) (Ping timeout: 256 seconds)
+[13:32:08] *** Joins: joo-_ (~joo-_@87-49-45-77-mobile.dk.customer.tdc.net)
+[13:32:08] *** Quits: joo-_ (~joo-_@87-49-45-77-mobile.dk.customer.tdc.net) (Changing host)
+[13:32:08] *** Joins: joo-_ (~joo-_@fsf/member/joo--)
+[13:38:57] *** Quits: lortabac (~lortabac@2a01:e0a:541:b8f0:2c0a:74d4:9496:54f1) (Ping timeout: 252 seconds)
+[13:39:09] *** Joins: kjak (~kjak@pool-108-45-56-21.washdc.fios.verizon.net)
+[13:45:02] *** Quits: Lord_of_Life (~Lord@user/lord-of-life/x-2819915) (Ping timeout: 240 seconds)
+[13:45:06] *** Joins: Lord_of_Life_ (~Lord@user/lord-of-life/x-2819915)
+[13:45:51] *** Joins: Whatever009 (~fuzzypixe@tchebychev.ensimag.fr)
+[13:45:58] *** Joins: alx741 (~alx741@157.100.93.160)
+[13:46:07] *** Quits: InternetCitizen (~fuzzypixe@eth-west-pareq2-46-193-4-100.wb.wifirst.net) (Ping timeout: 256 seconds)
+[13:46:20] *** Joins: lortabac (~lortabac@2a01:e0a:541:b8f0:2a7d:20d:33d5:1d47)
+[13:47:00] *** Joins: mc47 (~mc47@xmonad/TheMC47)
+[13:47:56] *** Lord_of_Life_ is now known as Lord_of_Life
+[13:54:42] *** Joins: CiaoSen (~Jura@p200300c957347b002a3a4dfffe84dbd5.dip0.t-ipconnect.de)
+[13:55:09] *** Quits: cfricke (~cfricke@user/cfricke) (Ping timeout: 265 seconds)
+[13:58:01] *** jjhoo_ is now known as jjhoo
+[14:00:25] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[14:03:38] *** Joins: mmhat (~mmh@55d46318.access.ecotel.net)
+[14:06:50] *** Joins: Gurkenglas (~Gurkengla@dslb-002-203-144-204.002.203.pools.vodafone-ip.de)
+[14:13:37] *** Quits: mikail (~mikail@2a02:c7f:bc1f:4a00:fc9:3da5:3e1e:8303) (Quit: Leaving)
+[14:14:00] *** Quits: Inst (~Inst@2601:6c4:4080:3f80:7939:82b5:8236:6c32) (Remote host closed the connection)
+[14:14:11] *** Joins: mikail (~mikail@2a02:c7f:bc1f:4a00:fc9:3da5:3e1e:8303)
+[14:14:18] *** Joins: Inst (~Inst@2601:6c4:4080:3f80:7939:82b5:8236:6c32)
+[14:15:42] *** Quits: mikail (~mikail@2a02:c7f:bc1f:4a00:fc9:3da5:3e1e:8303) (Client Quit)
+[14:16:29] *** Joins: mikail (~mikail@2a02:c7f:bc1f:4a00:fc9:3da5:3e1e:8303)
+[14:16:43] *** Quits: Unhammer (~Unhammer@user/unhammer) (Ping timeout: 252 seconds)
+[14:16:55] *** Joins: alx741 (~alx741@157.100.93.160)
+[14:24:30] *** Quits: Erutuon (~Erutuon@user/erutuon) (Ping timeout: 268 seconds)
+[14:24:53] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[14:25:16] *** Quits: mikail (~mikail@2a02:c7f:bc1f:4a00:fc9:3da5:3e1e:8303) (Quit: Leaving)
+[14:25:43] *** Quits: SummerSonw (~The_viole@203.77.49.232) (Ping timeout: 268 seconds)
+[14:25:43] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[14:26:17] *** Joins: DNH (~DNH@2a02:8108:1100:16d8:f5a3:3a61:fbe9:f021)
+[14:27:00] *** Quits: dschrempf (~dominik@070-207.dynamic.dsl.fonira.net) (Quit: WeeChat 3.3)
+[14:27:50] *** Joins: SummerSonw (~The_viole@203.77.49.232)
+[14:30:03] *** Joins: zincy_ (~zincy@2a00:23c8:970c:4801:4508:9275:13c9:2a0)
+[14:30:46] *** Joins: Unhammer (~Unhammer@user/unhammer)
+[14:35:11] *** Joins: max22- (~maxime@2a01cb08833598008d643fe4ea2e3b05.ipv6.abo.wanadoo.fr)
+[14:37:04] *** Joins: cfricke (~cfricke@user/cfricke)
+[14:37:18] *** Quits: zincy_ (~zincy@2a00:23c8:970c:4801:4508:9275:13c9:2a0) (Remote host closed the connection)
+[14:37:20] *** Joins: __monty__ (~toonn@user/toonn)
+[14:37:21] *** Joins: lavaman (~lavaman@98.38.249.169)
+[14:37:45] *** Athas_ is now known as Athas
+[14:41:32] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 240 seconds)
+[14:41:57] *** Joins: alx741 (~alx741@157.100.93.160)
+[14:42:49] *** Quits: CiaoSen (~Jura@p200300c957347b002a3a4dfffe84dbd5.dip0.t-ipconnect.de) (Ping timeout: 250 seconds)
+[14:47:19] *** Joins: madjestic (~madjestic@88-159-247-120.fixed.kpn.net)
+[14:49:46] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[14:51:14] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[14:52:41] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[14:59:02] *** Quits: Whatever009 (~fuzzypixe@tchebychev.ensimag.fr) (Ping timeout: 240 seconds)
+[14:59:17] *** Quits: jgeerds (~jgeerds@55d4ac73.access.ecotel.net) (Ping timeout: 250 seconds)
+[14:59:26] *** Quits: fr33domlover (~fr33@2.55.170.123) (Ping timeout: 265 seconds)
+[14:59:35] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[15:00:05] *** Joins: Whatever009 (~fuzzypixe@eth-west-pareq2-46-193-4-100.wb.wifirst.net)
+[15:01:00] *** Joins: fr33domlover (~fr33@2.55.142.29)
+[15:06:38] *** Joins: xkuru (~xkuru@user/xkuru)
+[15:06:47] *** Joins: Hecate (~mariposa@163.172.211.189)
+[15:07:30] *** Joins: lbseale_ (~ep1ctetus@user/ep1ctetus)
+[15:08:02] *** Quits: lbseale (~ep1ctetus@user/ep1ctetus) (Ping timeout: 240 seconds)
+[15:09:06] *** Quits: cfricke (~cfricke@user/cfricke) (Quit: WeeChat 3.3)
+[15:09:15] *** Joins: cfricke (~cfricke@user/cfricke)
+[15:10:37] *** Joins: alx741 (~alx741@157.100.93.160)
+[15:10:48] *** Quits: johnw (~johnw@2607:f6f0:3004:1:c8b4:50ff:fef8:6bf0) (Read error: Connection reset by peer)
+[15:11:04] *** Joins: ThC27 (ThC27@gateway/vpn/protonvpn/thc27)
+[15:11:43] *** Quits: Akiva (~Akiva@user/Akiva) (Ping timeout: 252 seconds)
+[15:12:30] *** Joins: johnw (~johnw@76-234-69-149.lightspeed.frokca.sbcglobal.net)
+[15:16:17] *** Quits: joo-_ (~joo-_@fsf/member/joo--) (Quit: leaving)
+[15:16:34] *** Joins: joo-_ (~joo-_@87-49-45-77-mobile.dk.customer.tdc.net)
+[15:16:34] *** Quits: joo-_ (~joo-_@87-49-45-77-mobile.dk.customer.tdc.net) (Changing host)
+[15:16:34] *** Joins: joo-_ (~joo-_@fsf/member/joo--)
+[15:19:47] *** Quits: Whatever009 (~fuzzypixe@eth-west-pareq2-46-193-4-100.wb.wifirst.net) (Ping timeout: 252 seconds)
+[15:23:46] *** Joins: pfurla_ (~pfurla@177.79.122.168)
+[15:27:07] *** Quits: pfurla (~pfurla@177.25.178.222) (Ping timeout: 252 seconds)
+[15:28:10] *** Joins: raehik (~raehik@cpc144538-stap14-2-0-cust361.12-2.cable.virginm.net)
+[15:30:36] *** aweinsto1k is now known as aweinstock
+[15:33:46] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[15:34:53] *** Quits: asm (~alexander@burner.asm89.io) (Changing host)
+[15:34:53] *** Joins: asm (~alexander@user/asm)
+[15:36:36] *** Quits: SummerSonw (~The_viole@203.77.49.232) (Ping timeout: 256 seconds)
+[15:38:55] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[15:40:15] *** Quits: canta (~canta@user/canta) (Quit: WeeChat 2.8)
+[15:43:14] *** Joins: curiousgay (~curiousga@77-120-141-90.kha.volia.net)
+[15:55:54] *** Joins: alx741 (~alx741@157.100.93.160)
+[15:56:43] *** Joins: jgeerds (~jgeerds@55d4ac73.access.ecotel.net)
+[16:05:15] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Quit: = "")
+[16:08:23] <dminuoso> Is there a way to protect myself against a cabal package on hackage being replaced?
+[16:08:34] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[16:08:59] *** Joins: Dansk31 (~Dansk31@147.114.141.88.rev.sfr.net)
+[16:09:14] *** Quits: Dansk31 (~Dansk31@147.114.141.88.rev.sfr.net) (Client Quit)
+[16:09:40] <dminuoso> If memory serves right, hackage in principle allows some people to replace a package
+[16:11:18] *** Quits: ThC27 (ThC27@gateway/vpn/protonvpn/thc27) (Quit: ThC27)
+[16:14:44] <hpc> i think the best protection is to keep the package actively maintained
+[16:15:49] <hpc> it will never be "impossible" to replace a hackage package, as long as the reason is good enough
+[16:22:49] *** Quits: Hecate (~mariposa@163.172.211.189) (Changing host)
+[16:22:49] *** Joins: Hecate (~mariposa@user/hecate)
+[16:25:02] *** Joins: alx741 (~alx741@157.100.93.160)
+[16:28:40] *** Quits: econo (uid147250@user/econo) (Quit: Connection closed for inactivity)
+[16:29:29] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[16:33:38] *** Quits: max22- (~maxime@2a01cb08833598008d643fe4ea2e3b05.ipv6.abo.wanadoo.fr) (Ping timeout: 260 seconds)
+[16:35:53] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[16:38:00] <dminuoso> Sure, I dont mind that part as much
+[16:38:10] <dminuoso> But cabal has no way of pinning the hash, right?
+[16:38:17] *** Joins: chomwitt (~chomwitt@2a02:587:dc0d:3700:12c3:7bff:fe6d:d374)
+[16:38:21] <dminuoso> It seems the best way would be to vendor all dependencies
+[16:38:38] *** Joins: altern (~Sergii@altern.corbina.com.ua)
+[16:38:52] <dminuoso> Incidentally, if you vendor them, you get to actually observe and use `git diff` each time a package is updated. Makes auditing changes in your transitive dependency graph easier. :)
+[16:39:52] <dminuoso> And it keeps my build really deterministic, irrespective of whether a compromised or evil hackage admin decides to hijack `containers`
+[16:39:56] <merijn> dminuoso: If you use source-repositories you can pin to specific git commits
+[16:40:20] <dminuoso> merijn: I felt this feature has quite poor UX
+[16:40:28] <dminuoso> I still have a bad taste in my mouth of it.
+[16:40:31] <merijn> dminuoso: tbh, freeze files pinning a specific version should have the same effect, since versions do have hashes in the cabal index
+[16:40:38] *** Quits: deadmarshal (~deadmarsh@95.38.230.166) (Ping timeout: 256 seconds)
+[16:40:39] <merijn> dminuoso: How so?
+[16:41:02] <dminuoso> So first, it relies on the git repository still being available. Every now and then I find packages whose upstream git/mercurial repo has just vanished
+[16:41:35] <merijn> dminuoso: Well, pin to repos you control (which can just be mirrors of upstream)
+[16:41:53] <merijn> That doesn't sound like a UX issue
+[16:42:03] <dminuoso> merijn: I think it might be much easier to instrument cabal to vendor all libraries, rather than to fork all repositories
+[16:42:34] <dminuoso> merijn: I found it interefered with caching in strange ways.
+[16:43:00] <dminuoso> There are bugs I still cant reliably reproduce that would leave me with stale dist-newstyle/ in very odd scenarios, and they always occured when I used source-repositories
+[16:43:09] <dminuoso> s/always/only/
+[16:43:41] *** Quits: SIben (~SIben@ns3106586.ip-5-135-191.eu) (Ping timeout: 245 seconds)
+[16:52:07] *** Joins: alx741 (~alx741@157.100.93.160)
+[16:52:07] *** Joins: slowButPresent (~slowButPr@user/slowbutpresent)
+[16:53:38] *** Quits: coot (~coot@89-64-85-93.dynamic.chello.pl) (Quit: coot)
+[16:54:04] *** Joins: coot (~coot@89-64-85-93.dynamic.chello.pl)
+[16:56:11] *** Quits: son0p (~ff@2800:484:1d81:b700::4) (Ping timeout: 268 seconds)
+[17:06:30] *** Joins: max22- (~maxime@2a01cb08833598001d6a33d2fe2bc13e.ipv6.abo.wanadoo.fr)
+[17:09:24] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[17:09:43] *** Quits: jgeerds (~jgeerds@55d4ac73.access.ecotel.net) (Ping timeout: 250 seconds)
+[17:11:47] *** Joins: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net)
+[17:11:52] *** Joins: CiaoSen (~Jura@p200300c957347b002a3a4dfffe84dbd5.dip0.t-ipconnect.de)
+[17:12:38] <neverwas> mjrosenb, what problems were you seeing with lsp? I tried setting it up recently as well and ran into a few sore spots. for example, it gets in an inconsistent state where the snippet sent for diagnosis will be elided
+[17:13:00] <neverwas> as in corrupted by virtue of being sent too early (i think).
+[17:13:13] <neverwas> so what the server sees is somehow "stale" while the live text in the buffer may be fine but gets underlined as being faulty anyway. 
+[17:13:58] <neverwas> To be clear, this is lsp-mode (not eglot), and the version I'm running is likely a few weeks old (or more)
+[17:15:46] *** Joins: ezzieyguywuf (~Unknown@user/ezzieyguywuf)
+[17:16:02] *** Quits: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net) (Ping timeout: 240 seconds)
+[17:26:15] *** Joins: alx741 (~alx741@157.100.93.160)
+[17:26:41] *** Joins: ian` (~user@ool-45779fe5.dyn.optonline.net)
+[17:26:44] *** ian` is now known as Guest999
+[17:27:01] *** Guest999 is now known as bontaq
+[17:34:58] *** Joins: shriekingnoise (~shrieking@186.137.144.80)
+[17:35:08] *** Joins: SIben (~SIben@ns3106586.ip-5-135-191.eu)
+[17:35:43] *** Quits: max22- (~maxime@2a01cb08833598001d6a33d2fe2bc13e.ipv6.abo.wanadoo.fr) (Ping timeout: 250 seconds)
+[17:37:01] *** Quits: xff0x (~xff0x@2001:1a81:5283:7b00:6c74:59db:ccc0:34d8) (Ping timeout: 240 seconds)
+[17:37:19] *** Joins: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470)
+[17:38:10] *** Joins: xff0x (~xff0x@2001:1a81:5283:7b00:180c:adc:91b3:927a)
+[17:44:11] *** Joins: deadmarshal (~deadmarsh@95.38.230.166)
+[17:46:36] *** Joins: ub (~Thunderbi@p200300ecdf1abbee153a2c4097e8e97e.dip0.t-ipconnect.de)
+[17:51:57] *** Quits: CiaoSen (~Jura@p200300c957347b002a3a4dfffe84dbd5.dip0.t-ipconnect.de) (Ping timeout: 250 seconds)
+[17:53:20] *** Quits: chexum_ (~quassel@gateway/tor-sasl/chexum) (Remote host closed the connection)
+[17:53:32] *** Joins: chexum (~quassel@gateway/tor-sasl/chexum)
+[17:53:32] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[18:01:11] *** Joins: CiaoSen (~Jura@p200300c957347b002a3a4dfffe84dbd5.dip0.t-ipconnect.de)
+[18:09:57] *** Joins: burnsidesLlama (~burnsides@dhcp168-019.wadham.ox.ac.uk)
+[18:10:07] *** Joins: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net)
+[18:10:07] *** Quits: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net) (Changing host)
+[18:10:07] *** Joins: wroathe (~wroathe@user/wroathe)
+[18:10:13] *** Quits: gehmehgeh (~user@user/gehmehgeh) (Quit: Leaving)
+[18:10:24] *** Joins: alx741 (~alx741@157.100.93.160)
+[18:10:38] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[18:13:17] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Ping timeout: 268 seconds)
+[18:13:50] *** Joins: thevishy (~Nishant@2405:201:f005:c007:d93e:9746:14f0:2f69)
+[18:13:52] *** Quits: ChaiTRex (~ChaiTRex@user/chaitrex) (Remote host closed the connection)
+[18:14:16] *** Joins: ChaiTRex (~ChaiTRex@user/chaitrex)
+[18:18:23] *** Quits: xff0x (~xff0x@2001:1a81:5283:7b00:180c:adc:91b3:927a) (Ping timeout: 250 seconds)
+[18:18:39] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[18:20:16] *** Joins: pfurla (~pfurla@177.79.125.203)
+[18:20:28] <dminuoso> Is there some windows/linux/macOS portable mechanism for asking whether a given path is a regular file or a regular direcotry?
+[18:20:37] <dminuoso> I dont care about anything else, really.
+[18:20:55] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[18:21:47] *** Quits: pfurla_ (~pfurla@177.79.122.168) (Read error: Connection reset by peer)
+[18:24:00] *** Quits: wagle (~wagle@quassel.wagle.io) (Quit: http://quassel-irc.org - Chat comfortably. Anywhere.)
+[18:24:32] <merijn> dminuoso: One of the stat() system calls?
+[18:24:33] *** Joins: wagle (~wagle@quassel.wagle.io)
+[18:25:38] <dminuoso> merijn: And Windows?
+[18:25:48] <dminuoso> Or do you suggest I just ifdef my way out of this?
+[18:25:52] <geekosaur> do you care about symlinks?
+[18:26:07] <merijn> dminuoso: Good luck getting a single cross platform API
+[18:26:26] <geekosaur> that said, ifdefs may be your only solution (what merijn said, basically)
+[18:26:32] <dminuoso> My requirements are really simple. I want to naively traverse all files, under the assumption the administrator has not set up loops.
+[18:26:41] <dminuoso> And I want to read these files. 
+[18:27:01] <dminuoso> But for sanity I want to skip all these special files like fifos or chararacter devices
+[18:27:06] <merijn> dminuoso: Try changing directory to it and see if it works :p
+[18:27:17] *** Quits: deadmarshal (~deadmarsh@95.38.230.166) (Ping timeout: 250 seconds)
+[18:27:20] <merijn> dminuoso: stat and friend can tell you if something is a special file or not
+[18:27:26] <dminuoso> merijn: Sure, on linux.
+[18:28:18] <geekosaur> https://downloads.haskell.org/ghc/latest/docs/html/libraries/directory-1.3.6.2/System-Directory.html#v:doesFileExist may be the best you'll do, assuming you don't care about symlinks or something that is neither file nor directory
+[18:28:59] <geekosaur> on POSIX you need {,l}stat to do any better; on Windows you need to check for reparse points and possibly verify that a reparse point represents a symlink
+[18:29:24] <geekosaur> basically, doing this portably is Hard
+[18:32:21] <dminuoso> reparse points?
+[18:32:29] <dminuoso> What black magic does Win32 have here?
+[18:33:06] <geekosaur> reparse points are how windows implements symlinks, but also how it does other things like network directories (roughly equivalent to a unix mount point)
+[18:35:06] <geekosaur> https://downloads.haskell.org/ghc/latest/docs/html/libraries/directory-1.3.6.2/System-Directory.html#v:pathIsSymbolicLink note reference to junction points, which are not symlinks
+[18:35:32] *** Joins: Sgeo (~Sgeo@user/sgeo)
+[18:35:35] <geekosaur> also file and directory "symlinks" are distinct entities / reparse points on windows
+[18:36:49] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[18:37:43] *** Joins: alx741 (~alx741@157.100.93.160)
+[18:38:09] *** Quits: Feuermagier (~Feuermagi@user/feuermagier) (Remote host closed the connection)
+[18:40:45] *** Joins: xff0x (~xff0x@2001:1a81:5283:7b00:180c:adc:91b3:927a)
+[18:45:56] *** Joins: max22- (~maxime@2a01cb0883359800604ddf259a1a7168.ipv6.abo.wanadoo.fr)
+[18:45:57] *** Quits: dolio (~dolio@130.44.130.54) (Ping timeout: 268 seconds)
+[18:45:59] <sprout> https://github.com/egel-lang/aoc-2021/blob/main/day14/task2.eg <- Advent of Code, day 14,  task 2,  solution in Egel.  though dicts are overkill on this problem
+[18:46:08] <sprout> https://pasteboard.co/6fErCUImZtkF.png <- 'pretty' colors
+[18:48:34] <janus> what is the connection between haskell and egel?
+[18:49:11] <janus> is it that they both have purely functional parts?
+[18:49:11] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[18:50:03] *** Quits: _xor (~xor@dsl-50-5-233-169.fuse.net) (Read error: Connection reset by peer)
+[18:51:23] *** Joins: zebrag (~chris@user/zebrag)
+[18:51:35] *** Quits: Athas (athas@2a01:7c8:aaac:1cf:fd6:8489:d8da:43d) (Quit: ZNC 1.8.2 - https://znc.in)
+[18:51:46] *** Joins: Athas (athas@2a01:7c8:aaac:1cf:fd6:8489:d8da:43d)
+[18:52:11] *** Quits: xff0x (~xff0x@2001:1a81:5283:7b00:180c:adc:91b3:927a) (Ping timeout: 250 seconds)
+[18:52:56] *** Joins: xff0x (~xff0x@2001:1a81:5283:7b00:9491:73c8:4b2b:b7f3)
+[18:53:10] *** Joins: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net)
+[18:53:10] *** Quits: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net) (Changing host)
+[18:53:10] *** Joins: wroathe (~wroathe@user/wroathe)
+[18:54:18] <sprout> both functional.  but because how egel developed it is on a number of things diametrically opposite.  eager impure untyped and with reflection (under development)
+[18:55:51] *** Joins: _xor (~xor@dsl-50-5-233-169.fuse.net)
+[18:56:21] <sprout> still slow though.  beta/proof of concept code.  at some point I'll change the back-end which should give an order and be some factor slower than ghci hopefully
+[18:57:50] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 260 seconds)
+[18:57:51] *** Joins: juhp (~juhp@128.106.188.82)
+[18:59:10] *** Quits: acidjnk (~acidjnk@p200300d0c7271e77ede7a7f9d267d612.dip0.t-ipconnect.de) (Ping timeout: 265 seconds)
+[19:03:04] *** Joins: canta (~canta@user/canta)
+[19:05:31] *** Joins: doyougnu (~doyougnu@c-73-25-202-122.hsd1.or.comcast.net)
+[19:07:17] *** Joins: alx741 (~alx741@157.100.93.160)
+[19:09:41] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Ping timeout: 252 seconds)
+[19:11:00] *** Joins: nvmd (~nvmd@user/nvmd)
+[19:13:22] *** Joins: son0p (~ff@2800:484:1d81:b700:d40b:900:b387:320)
+[19:13:32] *** Joins: hololeap_ (~hololeap@user/hololeap)
+[19:13:45] *** Quits: hololeap (~hololeap@user/hololeap) (Ping timeout: 276 seconds)
+[19:15:07] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[19:15:19] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[19:18:11] *** Quits: raehik (~raehik@cpc144538-stap14-2-0-cust361.12-2.cable.virginm.net) (Ping timeout: 256 seconds)
+[19:19:41] *** Quits: zaquest (~notzaques@5.130.79.72) (Remote host closed the connection)
+[19:29:51] *** Quits: chele (~chele@user/chele) (Ping timeout: 252 seconds)
+[19:32:47] *** Joins: alx741 (~alx741@157.100.93.160)
+[19:32:51] *** Joins: josemotanet (~jose@2001:8a0:ee85:a00:d4ef:b473:6a8a:ba2e)
+[19:32:56] *** Quits: pavonia (~user@user/siracusa) (Quit: Bye!)
+[19:33:29] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Ping timeout: 256 seconds)
+[19:37:40] *** Joins: zaquest (~notzaques@5.130.79.72)
+[19:37:53] *** Joins: Whatever009 (~fuzzypixe@ensi-libre-service-019.ensimag.fr)
+[19:43:33] *** Joins: Guest19 (~Guest19@n110-33-34-202.hum1.act.optusnet.com.au)
+[19:44:23] *** Quits: bliminse (~bliminse@host86-162-147-196.range86-162.btcentralplus.com) (Quit: leaving)
+[19:47:03] *** Quits: lbseale_ (~ep1ctetus@user/ep1ctetus) (Read error: Connection reset by peer)
+[19:47:33] *** Quits: lortabac (~lortabac@2a01:e0a:541:b8f0:2a7d:20d:33d5:1d47) (Quit: WeeChat 2.8)
+[19:50:11] <snake> is there a doc or something that demonstrates all the places where i can use curly braces and semicolons in haskell?
+[19:51:42] <merijn> snake: Well, there's mostly documentation that explains on how to use indentation instead of braces, but that should also mostly explain the reverse :)
+[19:51:48] <merijn> snake: https://en.wikibooks.org/wiki/Haskell/Indentation
+[19:52:08] <merijn> And of course the (more formal) version in the report: https://www.haskell.org/onlinereport/haskell2010/haskellch10.html#x17-17800010.3
+[19:53:07] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[19:53:19] *** Joins: MoC (~moc@user/moc)
+[19:54:37] *** Quits: mncheck (~mncheck@193.224.205.254) (Remote host closed the connection)
+[19:56:36] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[19:56:57] *** Joins: bliminse (~bliminse@host86-162-147-196.range86-162.btcentralplus.com)
+[19:57:37] *** Quits: Gurkenglas (~Gurkengla@dslb-002-203-144-204.002.203.pools.vodafone-ip.de) (Ping timeout: 250 seconds)
+[20:00:46] *** Joins: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net)
+[20:03:56] *** Quits: coot (~coot@89-64-85-93.dynamic.chello.pl) (Quit: coot)
+[20:04:25] *** Joins: coot (~coot@89-64-85-93.dynamic.chello.pl)
+[20:04:28] *** Quits: coot (~coot@89-64-85-93.dynamic.chello.pl) (Remote host closed the connection)
+[20:05:20] *** Quits: nek0 (~nek0@nek0.eu) (Quit: The Lounge - https://thelounge.chat)
+[20:05:34] <snake> merijn, what is wrong with my main function? i'm getting "parse error on print" https://dpaste.com/9FEUGP7QS
+[20:06:43] *** Quits: cosimone` (~user@2001:b07:ae5:db26:a7aa:8027:6b4e:2fb3) (Ping timeout: 250 seconds)
+[20:07:16] <merijn> snake: You have no braces on let
+[20:07:22] <c_wraith> snake: that's what happens when you use braces and semicolons instead of layout - if you don't use all of them, you get parse errors
+[20:07:31] <merijn> let { nums = toList myLines }
+[20:07:32] <snake> oh i see
+[20:07:37] <snake> sad lol
+[20:07:58] *** Joins: cosimone (~user@93-47-231-203.ip115.fastwebnet.it)
+[20:08:33] <snake> why am i addicted to writing in a new lang i dislike
+[20:11:01] *** Joins: alx741 (~alx741@157.100.93.160)
+[20:11:38] <snake> maybe i'm a workaholic LOL
+[20:12:27] *** Joins: lbseale (~ep1ctetus@user/ep1ctetus)
+[20:13:51] *** Joins: dschrempf (~dominik@070-207.dynamic.dsl.fonira.net)
+[20:14:42] *** Joins: nek0 (~nek0@nek0.eu)
+[20:18:42] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[20:23:16] <merijn> bah
+[20:23:22] <merijn> My solution for today seems insufficiently lazy
+[20:24:32] *** Quits: fr33domlover (~fr33@2.55.142.29) (Ping timeout: 240 seconds)
+[20:24:58] *** Joins: emf (~emf@cpe-174-109-36-85.nc.res.rr.com)
+[20:27:40] <c_wraith> What laziness goal do you have for it?
+[20:27:41] *** Joins: Gurkenglas (~Gurkengla@dslb-002-203-144-204.002.203.pools.vodafone-ip.de)
+[20:28:00] <merijn> c_wraith: Not materialising several GB of state :p
+[20:28:16] <merijn> but I think more details is probably a spoiler?
+[20:28:32] <merijn> I seem to have gotten it lazy enough no, albeit still slow
+[20:28:58] *** Joins: emf_ (~emf@2620:10d:c091:480::1:3f40)
+[20:29:49] <c_wraith> It's exponential growth.  It's gonna be slow.
+[20:30:10] *** Quits: emf (~emf@cpe-174-109-36-85.nc.res.rr.com) (Ping timeout: 268 seconds)
+[20:30:57] <merijn> Yeah, but it's, like, a solid minute now, generally AOC solutions aren't *that* slow
+[20:31:25] <c_wraith> well, you don't *have* to do it the slow way.
+[20:31:38] *** Parts: snake (~snake@user/snake) (Leaving)
+[20:32:14] <c_wraith> I saw someone stick with the slow approach and use a kind of meet-in-the-middle approach to cut the exponent in half.
+[20:32:25] *** Quits: altern (~Sergii@altern.corbina.com.ua) (Ping timeout: 256 seconds)
+[20:33:30] <c_wraith> that was very clever for still needing exponential allocation
+[20:33:56] *** Quits: DNH (~DNH@2a02:8108:1100:16d8:f5a3:3a61:fbe9:f021) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[20:34:04] *** Quits: Guest19 (~Guest19@n110-33-34-202.hum1.act.optusnet.com.au) (Quit: Client closed)
+[20:36:43] *** Joins: alx741 (~alx741@181.199.42.79)
+[20:37:31] *** Joins: DNH (~DNH@2a02:8108:1100:16d8:f5a3:3a61:fbe9:f021)
+[20:39:33] *** Joins: lavaman (~lavaman@98.38.249.169)
+[20:41:02] <sprout> it's less than .5 sec in egel which is a slow...  language...  you could use maps instead of lists
+[20:41:02] *** Joins: tzh (~tzh@c-24-21-73-154.hsd1.or.comcast.net)
+[20:41:19] <sprout> though I think that's overkill on this problem
+[20:42:37] *** Quits: alx741 (~alx741@181.199.42.79) (Read error: Connection reset by peer)
+[20:43:12] *** Joins: alx741 (~alx741@181.199.42.79)
+[20:44:19] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 256 seconds)
+[20:45:46] *** Quits: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net) (Remote host closed the connection)
+[20:50:50] *** Joins: gdown (~gavin@94.140.8.38)
+[20:52:39] *** Quits: alx741 (~alx741@181.199.42.79) (Read error: Connection reset by peer)
+[20:53:46] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[20:54:06] *** Quits: DNH (~DNH@2a02:8108:1100:16d8:f5a3:3a61:fbe9:f021) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[20:54:58] *** Joins: notabled1 (~notabledu@ares.dbalan.in)
+[20:56:19] *** Joins: xkuru (~xkuru@user/xkuru)
+[20:56:54] *** Joins: deadmarshal (~deadmarsh@95.38.230.166)
+[21:03:32] *** Quits: CiaoSen (~Jura@p200300c957347b002a3a4dfffe84dbd5.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[21:07:37] *** Quits: josemotanet (~jose@2001:8a0:ee85:a00:d4ef:b473:6a8a:ba2e) (Quit: WeeChat 3.3)
+[21:07:52] *** Joins: DNH (~DNH@2a02:8108:1100:16d8:f5a3:3a61:fbe9:f021)
+[21:09:29] *** Joins: alx741 (~alx741@157.100.93.160)
+[21:11:55] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:158b:cfc1:e7b3:d4ac)
+[21:16:41] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[21:23:50] *** Joins: Akiva (~Akiva@user/Akiva)
+[21:28:22] *** Joins: dolio (~dolio@130.44.130.54)
+[21:32:58] *** peutri_ is now known as peutri
+[21:37:27] *** Joins: econo (uid147250@user/econo)
+[21:37:41] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[21:37:41] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[21:38:40] *** Joins: briandaed (~root@185.234.208.208.r.toneticgroup.pl)
+[21:38:41] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Client Quit)
+[21:40:25] *** Quits: dschrempf (~dominik@070-207.dynamic.dsl.fonira.net) (Quit: WeeChat 3.3)
+[21:40:35] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[21:40:52] *** Joins: nfd (~nfd@user/nfd)
+[21:41:13] <merijn> bah, I thought I had an ingenious solution, but clearly not >.>
+[21:42:48] <dsal> @tell snake You might not dislike it so much if you didn't work against how we do things.  Try doing things the way we do things and see where that takes you.
+[21:42:48] <lambdabot> Consider it noted.
+[21:45:47] <EvanR> had to get some sleep before getting day 14 part 2
+[21:45:51] *** Joins: coot (~coot@89-64-85-93.dynamic.chello.pl)
+[21:45:53] <EvanR> my poor rankings
+[21:47:14] <dsal> I had a tiny power glitch which took out my ailing UPS running my networking equipment right as I was submitting my part 2 answer.
+[21:47:25] <dsal> The good news is that the part 2 answer I was submitting was wrong.
+[21:48:06] <merijn> EvanR: I'm still fighting it >.>
+[21:48:48] <EvanR> I have an ingenious solution but the margin of the power failure is too small to fit it
+[21:49:13] <dsal> I got the right answer and submitted it via phone hot spot.
+[21:49:27] <dsal> Power's still out here, but I almost wouldn't've noticed if it weren't for that stupid UPS.
+[21:49:33] <EvanR> how did you solve it without power
+[21:50:53] <EvanR> phone haskell? xD
+[21:51:38] <dsal> I have a Powerwall, but was working my laptop anyway.  The thing that *didn't* have power was my networking equipment / Starlink.
+[21:53:21] *** Quits: bollu (uid233390@id-233390.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[21:53:34] *** Joins: earendel (uid498179@user/earendel)
+[21:55:55] *** Joins: alx741 (~alx741@157.100.93.160)
+[21:59:44] *** Joins: Midjak (~Midjak@may53-1-78-226-116-92.fbx.proxad.net)
+[22:00:33] *** Quits: briandaed (~root@185.234.208.208.r.toneticgroup.pl) (Quit: Lost terminal)
+[22:01:15] *** Joins: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4)
+[22:06:04] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[22:09:16] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:158b:cfc1:e7b3:d4ac) (Remote host closed the connection)
+[22:10:08] <oats> Optics By Example is an excellent book
+[22:10:45] *** Quits: dyeplexer (~dyeplexer@user/dyeplexer) (Remote host closed the connection)
+[22:13:29] <dsal> ++
+[22:14:10] <dsal> I was looking at propagators yesterday and the author also wrote this library:
+[22:14:13] <dsal> @package mad-props
+[22:14:14] <lambdabot> https://hackage.haskell.org/package/mad-props
+[22:15:19] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:158b:cfc1:e7b3:d4ac)
+[22:18:25] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[22:18:28] <EvanR> I went to order this book and found it's E only
+[22:20:48] <dsal> LOL at the guy who doesn't have a printer.
+[22:21:50] *** Joins: jgeerds (~jgeerds@55d4ac73.access.ecotel.net)
+[22:22:10] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[22:22:37] <EvanR> it literally has 420 pages
+[22:23:38] *** Quits: mbuf (~Shakthi@122.178.176.47) (Quit: Leaving)
+[22:24:49] *** Joins: alx741 (~alx741@157.100.93.160)
+[22:30:09] *** Quits: xff0x (~xff0x@2001:1a81:5283:7b00:9491:73c8:4b2b:b7f3) (Ping timeout: 250 seconds)
+[22:31:09] *** Joins: xff0x (~xff0x@2001:1a81:5283:7b00:fc6:4766:ca7:9337)
+[22:34:29] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[22:34:31] *** Joins: justsomeguy (~justsomeg@user/justsomeguy)
+[22:36:04] <earendel> you are still misusing the word literaly *rolleyes
+[22:37:04] <earendel> the damn printer mafia ink is expensive.
+[22:37:38] *** Quits: max22- (~maxime@2a01cb0883359800604ddf259a1a7168.ipv6.abo.wanadoo.fr) (Ping timeout: 265 seconds)
+[22:37:38] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[22:38:13] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[22:38:23] <dsal> It's a book.  How much more literal can it be?
+[22:38:50] <EvanR> I literally saw a stat on the page for it that literally says 420 pages
+[22:40:00] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[22:40:48] <monochrom> It is literally not a physics book. :)
+[22:41:31] <dsal> It's a great coffee table photography book.
+[22:41:37] *** Quits: madjestic (~madjestic@88-159-247-120.fixed.kpn.net) (Ping timeout: 256 seconds)
+[22:43:57] <earendel> literally is the opposite of figuratively. so if you don't use a metaphor, but want to express you mean it literally not figuratively it is a superfluos adverb
+[22:44:50] <EvanR> the number of ways to use literally seems open ended
+[22:44:58] <EvanR> to use literally wrong*
+[22:45:18] <EvanR> that has become it's defining characteristic
+[22:45:25] <earendel> this guy is literally melting down.. would mean he is changing his aggregate-state from solid to liquid.
+[22:45:35] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[22:45:35] *** Parts: jakalx (~jakalx@base.jakalx.net) (Error from remote client)
+[22:45:36] <monochrom> It is figuratively an optics book. Are you happy now?
+[22:45:53] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[22:46:23] <earendel> it just defines your inability to properly express yourself.
+[22:46:47] <[exa]> is literature allowed to be literal?
+[22:47:09] <earendel> monochom: i don't get it. ^^ maybe i'm not familiar with that figure. 
+[22:47:43] <monochrom> I want to say yes, but seeing that all the literature people are deeply into allegories, I think in practice no, they insist to be figurative.
+[22:47:48] <EvanR> earendel you're like a canary in a coal mine
+[22:48:05] <[exa]> I'll separate the figures from my literals later today
+[22:48:36] <EvanR> non-literally
+[22:49:18] <earendel> great. another satisfied customer
+[22:49:39] <monochrom> class Applicative f => Figurative f where burrito :: a -> f a; unwrap :: f (f a) -> f a   -- >:)
+[22:50:14] <EvanR> i though roll was f (f a) -> f a and unroll was f a -> f (f a)
+[22:50:22] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[22:50:25] <monochrom> Figurative burrito unwrapping law: unwrap . burrito = id
+[22:50:34] <[exa]> there was some coliteral damage to the semantics
+[22:50:44] <Clint> now i want a littoral burrito
+[22:50:47] <monochrom> Oh, "roll" is probably better, I didn't think of it!
+[22:51:15] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[22:51:16] <geekosaur> my literals have figures
+[22:51:28] <Clint> significant ones?
+[22:51:47] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[22:51:54] <monochrom> In a graphical programming language, you have figure literals >:)
+[22:53:57] *** Joins: alx741 (~alx741@157.100.93.160)
+[22:54:07] *** Joins: jakalx (~jakalx@base.jakalx.net)
+[22:54:42] <earendel> it also is a sign of inflationary superlatives in language. so, sometimes just leaving them out can make the break gaining the relvance of your expression (in the eye of the beholder)
+[22:55:28] <earendel> you can say really. it really has 420 pages? yes, there's no joke coming whatsoever.
+[22:55:43] <monochrom> What's your problem?
+[22:56:29] *** Joins: madjestic (~madjestic@88-159-247-120.fixed.kpn.net)
+[22:57:01] <earendel> hm? just talking.
+[22:57:15] <geekosaur> english is all about the unmarked metaphor
+[22:57:48] <monochrom> Please stop over-analyzing what was just having fun making bad jokes and bad puns.
+[22:58:22] <monochrom> All of us already know how "really" and "literally" are abused, you're preaching to the choir, thanks but no thanks.
+[22:58:24] <earendel> i see. 
+[22:59:56] <earendel> i did analyze a joke?
+[23:01:44] <earendel> maybe your analysis of my character is a bit premature, giving the fact i just joined this channel and we never spoke before.
+[23:02:05] <monochrom> Are you done?
+[23:02:50] <geekosaur> you, uh, filled up most of the channel and possibly derailed a discussion over it
+[23:02:52] <earendel> lol. 
+[23:03:13] <Clint> yes, but he only did that for 40 minutes
+[23:03:29] <earendel> was it me?
+[23:03:44] <earendel> oops. 
+[23:04:00] *** Quits: dhouthoo (~dhouthoo@178-117-36-167.access.telenet.be) (Quit: WeeChat 3.3)
+[23:04:14] <EvanR> I prefer paper books even though I don't have a bookshelf
+[23:04:43] <EvanR> I don't really have a convenient way to read 420 pages electronically :(
+[23:05:26] <Clint> i gave up on paper books and ereaders ages ago
+[23:05:32] <monochrom> I am paradoxical about paper books vs electronic books. Paper books feel better in hand. Electronic books are more mobile, seachable, copy-paste-able.
+[23:06:20] <monochrom> Eventually I broke the tie by "I have run out of room for paper books".
+[23:06:36] <systemfault> I usually buy the book... and steal the electronic version :/ They should really give you the electronic version when you buy the paper book.
+[23:06:49] <EvanR> really, I've camera-ed a page and screenshotted a pdf, but copying text out of a pdf is hit or miss
+[23:07:08] <EvanR> and searching paper books mainly involves accessing my photographic memory xD
+[23:07:08] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[23:07:28] <Clint> you might have to read the book first for that to work
+[23:07:30] <monochrom> Big volumes like CLRS make me feel guilty when I teach a course and say "the textbook is CLRS" and if the students go the the paper one it means they have like an extra 1kg to carry in their backpacks.
+[23:07:35] <EvanR> true
+[23:07:39] *** Joins: kayvan (~kayvan@52-119-115-185.PUBLIC.monkeybrains.net)
+[23:08:05] <monochrom> (And if I also declare "the exam is open book", you can be sure I am indirectly incentivizing the students to go for the paper book.)
+[23:08:26] <EvanR> which optics library does the book Optics By Example use?
+[23:08:35] <monochrom> (This is part of the reason why I now declare "you can bring 2 aid sheets to the exam".)
+[23:08:41] *** Quits: kayvan (~kayvan@52-119-115-185.PUBLIC.monkeybrains.net) (Remote host closed the connection)
+[23:09:03] <monochrom> systemfault: Yeah, I agree too.
+[23:09:13] *** Joins: nolrai (~nolrai@73.240.1.39)
+[23:09:56] <earendel> in my exams you would be allowed to use internet. 
+[23:10:31] <EvanR> I'd end up distracted on IRC or something
+[23:10:48] <nolrai> Hey so when building with stack I see this "ghc-pkg.exe: C:\Users\XXXX\haskell\Shades\.stack-work\install\791f0cf9\pkgdb\package.cache.lock: openBinaryFile: resource busy (file is locked)" or equivalent a lot, anyone know whats up with it and if I should do something about it?
+[23:12:33] *** Quits: burnsidesLlama (~burnsides@dhcp168-019.wadham.ox.ac.uk) (Remote host closed the connection)
+[23:13:44] *** Joins: max22- (~maxime@2a01cb088335980077ae04132abb6848.ipv6.abo.wanadoo.fr)
+[23:14:49] *** Quits: ChaiTRex (~ChaiTRex@user/chaitrex) (Remote host closed the connection)
+[23:15:11] *** Joins: ChaiTRex (~ChaiTRex@user/chaitrex)
+[23:25:49] *** Joins: alx741 (~alx741@157.100.93.160)
+[23:26:12] *** Joins: neurocyte0132889 (~neurocyte@user/neurocyte)
+[23:27:34] *** Quits: nunggu (~q@gateway/tor-sasl/nunggu) (Remote host closed the connection)
+[23:27:46] *** Quits: justsomeguy (~justsomeg@user/justsomeguy) (Quit: WeeChat 3.3)
+[23:31:59] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:158b:cfc1:e7b3:d4ac) (Remote host closed the connection)
+[23:34:57] *** Joins: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net)
+[23:35:27] *** Quits: juhp (~juhp@128.106.188.82) (Ping timeout: 256 seconds)
+[23:36:42] *** Joins: juhp (~juhp@128.106.188.82)
+[23:38:02] <merijn> bleh, solved part 2, but not happy with the result. Takes about 40s to complete
+[23:38:02] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[23:38:38] *** Joins: alx741 (~alx741@157.100.93.160)
+[23:39:04] <EvanR> dang
+[23:39:23] <merijn> I feel it should be possible to go much faster
+[23:39:30] <EvanR> better than my approach last night which might have taken days or months to finish xD
+[23:40:01] <merijn> ah
+[23:40:14] <merijn> I have an idea that might make it faster, but I can't be arsed atm >.>
+[23:42:00] *** Quits: nolrai (~nolrai@73.240.1.39) (Remote host closed the connection)
+[23:45:03] <EvanR> I'm curious how you got 40s
+[23:45:11] <EvanR> but it might be spoilery for here
+[23:47:24] *** Joins: glebg (~user@85-192-130-19.dsl.esoo.ru)
+[23:47:38] *** Quits: raghavgururajan (9fd51d1ea8@user/raghavgururajan) (Ping timeout: 260 seconds)
+[23:48:01] <merijn> EvanR: https://github.com/merijn/AdventOfCode/blob/master/Day14.hs
+[23:48:45] *** Quits: singpolyma (8a1e37e5a6@tilde.team/user/singpolyma) (Ping timeout: 268 seconds)
+[23:50:06] <EvanR> impressive
+[23:50:26] <EvanR> you did 20 rounds, not 40?
+[23:50:45] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[23:50:49] <merijn> I'll answer in PM to avoid spoilers :p
+[23:52:31] *** Quits: coot (~coot@89-64-85-93.dynamic.chello.pl) (Quit: coot)
+[23:54:15] *** Joins: nunggu (~q@gateway/tor-sasl/nunggu)
+[23:59:56] *** Quits: gdown (~gavin@94.140.8.38) (Remote host closed the connection)

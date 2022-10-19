@@ -1,0 +1,950 @@
+[00:02:18] <etimmons> Xach: what issues does asdf-system-connections present for quicklisp?
+[00:17:25] *** Joins: scymtym_ (~user@ip-094-114-248-079.um31.pools.vodafone-ip.de)
+[00:17:35] *** Quits: shka (~herr@109.231.0.226) (Ping timeout: 256 seconds)
+[00:18:03] *** Quits: Brucio-4 (~Brucio-4@ip6-2001-638-504-20d6-1000-0-0-17.VPN.Dyn.CIT-EC.NET) (Ping timeout: 268 seconds)
+[00:18:52] *** Quits: scymtym (~user@ip6-2001-638-504-20d6-1000-0-0-17.VPN.Dyn.CIT-EC.NET) (Ping timeout: 250 seconds)
+[00:21:09] <_death> etimmons: I guess because it uses asdf to load the system, rather than quicklisp, so if the project is not yet installed you'd get an error
+[00:23:53] <etimmons> _death: That sounds reasonable
+[00:26:30] <_death> etimmons: thinking about it some more, I think the case could be that you have A and B that are installed (as well as their dependencies), and you load project C.. C notices A and B are loaded and tries to load C-AB, but then C-AB depends on D which may not be installed.. if that's the issue quicklisp could probably know about C-AB and install the dependencies, but then it assumes A, B, and C-AB will be used, which is not certain
+[00:26:37] *** Quits: epony (epony@user/epony) (Quit: QUIT)
+[00:27:24] <phoe> quicklisp could work around it by assuming that A, B, and C-AB *might* be used, and downloading all of them
+[00:27:33] <phoe> but that's the difference between "will" and "might"
+[00:27:44] *** Joins: pranavats (3fba1d1b34@2a00:c70:1:178:170:40:189:1)
+[00:27:58] <_death> phoe: that's what I meant
+[00:28:07] <phoe> OK, I understood you well then :D
+[00:29:19] <etimmons> That all makes sense. I'd also be interested if there any any specific issues that crop up when building the dist (i.e., figuring out what triggers C-AB to be loaded)
+[00:29:47] <phoe> I don't think Quicklisp has that sort of information, or can easily get it without also parsing system-connections stuff
+[00:30:03] <phoe> in case of ASDF's :depends-on, things are very simple
+[00:30:07] <_death> maybe it's also possible to add a hook to asdf-system-connections to do that
+[00:30:24] <_death> or even to asdf
+[00:30:45] <etimmons> I ask partly because this issue comes up fairly regularly and the existing solution is rather nasty. So I wonder what a nice way of doing it would look like
+[00:30:47] <phoe> so that it automatically augments the loaded systems' depends-on? or uses ASDF's kinda-deprecated :weakly-depends-on?
+[00:31:02] <etimmons> And am trying to figure out all the issues with asdf-system-connections
+[00:31:19] <_death> with a hook you wouldn't need to perform any static analysis
+[00:31:27] <etimmons> I think weakly-depends-on is slightly different, IIRC
+[00:31:29] <EdLangley[m]> Asdf-system-connections works, iirc, by adding a system and an :after method to operate
+[00:32:06] <_death> such analysis wouldn't help you much anyway
+[00:32:14] <EdLangley[m]> When a system is loaded, the after method checks if the prerequisites of any connections are met and then loads the system in the connection.
+[00:32:32] <Guest74> Which all makes it so much easier to tell the user if you want to use colours from some-library just load mylibrary-some-library first. Just kick that responsibility down the road.
+[00:32:33] <EdLangley[m]> Although, it’s been a while since I’ve looked into this.
+[00:32:48] <EdLangley[m]> IMO, ASDF should provide this functionality
+[00:33:14] <etimmons> asdf-system-connections adds an after method on (operate t t)
+[00:33:27] <etimmons> which is, ugh
+[00:33:27] <EdLangley[m]> Yeah, that’s what I said :)
+[00:33:40] <EdLangley[m]> That’s necessary for it to work
+[00:33:53] <EdLangley[m]> But also, shouldn’t be done by something that’s not part of ASDF
+[00:34:04] <etimmons> Yeah, I was just clarifying its method isn't specialized on anything.
+[00:34:22] <etimmons> And yes, I think ASDF should provide this functionality too
+[00:35:38] <EdLangley[m]> I sort of prototyped a solution that involved adding an emacs-like hook feature to ASDF
+[00:36:31] <EdLangley[m]> ASDF, in general, is annoyingly opaque when it comes to introspection: a lot of the classes and operations it defines contain no information about the operation being performed.
+[00:37:00] *** Joins: gaqwas (~john@dynamic-077-004-058-202.77.4.pool.telefonica.de)
+[00:37:12] <jeosol> Good morning guys
+[00:39:16] <jeosol> Could use some brainstorming and get some advice. I have e functions I call in sequence fa() - prepare input file, fb() - run simulation, fb() - read results. fa() and fb() are very fast, but fb() is compute intensive can take 3 seconds, 30mins, 1 hour depend on input.
+[00:40:07] <jeosol> I am trying to run everything on remote machine when need to get some progress back. If I run everything in blocking mode, it works fine, but I don't know what stage fb() is at.
+[00:41:07] <jeosol> I have now instrumented the code to run fb() in background and then I send request to check the status of the log file which reports back the progress of the computation (e.g., time step in finite difference simulation)
+[00:41:10] *** Joins: cjb (~cjb@user/cjb)
+[00:42:28] <jeosol> My setup up works, then craps out for long jobs (socket closed, etc) - trying to rethink if there is a less problematic and cleaner way to set this up.
+[00:42:31] *** Quits: artchad (~user@public-gprs221619.centertel.pl) (Read error: Connection reset by peer)
+[00:42:48] <jeosol> The remote machine is running SBCL and hunchentoot (I only use SBCL ...)
+[00:42:53] *** Joins: shka (~herr@109.231.0.226)
+[00:53:25] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[00:53:53] <Josh_2> Are you using a remote lisp image?
+[00:53:58] *** Quits: fitzsim (~user@69-165-165-189.dsl.teksavvy.com) (Ping timeout: 250 seconds)
+[00:54:57] <fe[nl]ix> sm2n: I don't think I've ever seen thread-name returning a symbol
+[00:58:18] <sm2n> fe[nl]ix: ecl appears to always do it for some system threads
+[00:58:25] <sm2n> as far as I can tell
+[01:00:15] <sm2n> in particular I'm always getting SI:TOP-LEVEL and SI:SIGNAL-SERVICING
+[01:00:51] *** Joins: kevingal (~quassel@2a02:8084:4140:f300:dc6a:cea3:1af:140f)
+[01:02:55] *** Quits: pve (~pve@188-67-138-210.bb.dnainternet.fi) (Quit: leaving)
+[01:04:26] <phoe> welp, yes! (mapcar #'bt:thread-name (bt:all-threads)) ;=> (SI:SIGNAL-SERVICING SI:TOP-LEVEL)
+[01:04:38] *** Quits: Dynom (~niels@80-114-12-206.cable.dynamic.v4.ziggo.nl) (Quit: WeeChat 3.4)
+[01:04:39] <phoe> that's on ECL (Embeddable Common-Lisp) 21.2.1
+[01:07:15] <sm2n> I'm on the same version
+[01:07:32] <Josh_2> you can string-equal to search, it'll be fine
+[01:07:36] <Josh_2> or string=
+[01:08:07] <sm2n> I just wrapped it in (format nil "~a" ...) haha
+[01:08:24] <sm2n> string= and friends don't work since it's a type error
+[01:08:29] <jeosol> Josh: yes
+[01:08:46] <sm2n> oh, wait I was wrong
+[01:08:58] <Josh_2> string= doesn't type error when given a symbol and a string
+[01:09:05] *** Joins: Brucio-78 (~Brucio-4@ip-094-114-248-079.um31.pools.vodafone-ip.de)
+[01:09:05] <jeosol> It's a mess, I got a setup that works but it seems connection closing seems to be the issue
+[01:09:27] <sm2n> Right, "string designator", I always forget
+[01:10:03] <Josh_2> jeosol: You are connecting to the remote image with slime or some other means? There is a key arg :dont-close to create-server?
+[01:10:08] <Josh_2> Assuming I am not misunderstanding
+[01:10:47] <jeosol> Josh_2: Not the communication mechanism is through http requests
+[01:10:59] <Josh_2> I see, you are using dex for the requests?
+[01:11:16] <jeosol> I have a mix of problems, small one (runs in 3 seconds) and large ones (1 min, 10 mins)
+[01:11:37] <jeosol> Yes, I have drakma and dex and test with both.
+[01:11:52] <Josh_2> I see
+[01:11:53] *** Quits: gaqwas (~john@dynamic-077-004-058-202.77.4.pool.telefonica.de) (Remote host closed the connection)
+[01:12:12] <jeosol> Finally got one of the long run cases to work.
+[01:12:14] *** Joins: fitzsim (~user@69-165-165-189.dsl.teksavvy.com)
+[01:12:42] <jeosol> I am trying to make it fault tolerant with variant inputs, sometimes changing equality to >= due to round off errors -- real pain
+[01:13:32] <jeosol> I try to run from other clients - python notebook making request to remote CL worker
+[01:14:03] <jeosol> phoe: it appears the timeout was the main culprit, I will leave the setup for now
+[01:14:10] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 268 seconds)
+[01:15:56] <jeosol> Josh_2: I hope I am not biting more than I can chew with the setup - hard to debug
+[01:16:51] <sm2n> hmm, (search ... :test #'string=) does not appear to work on symbols
+[01:17:50] <sm2n> I guess because symbols aren't sequences, even if they can be coerced to one
+[01:18:21] <Bike> search looks for a subsequence. :test #'string= only makes sense if you're dealing with sequences of string designators.
+[01:19:44] <sm2n> right
+[01:26:11] *** Joins: pillton (~user@193-116-80-74.tpgi.com.au)
+[01:27:43] *** Joins: masinter (~masinter@c-73-158-116-21.hsd1.ca.comcast.net)
+[01:27:57] <Josh_2> (find "hunchentoot.." (bt:all-threads) :key #'bt:thread-name :test #'string=) .. something like that
+[01:31:03] *** Parts: masinter (~masinter@c-73-158-116-21.hsd1.ca.comcast.net) ()
+[01:32:40] *** Quits: kevingal (~quassel@2a02:8084:4140:f300:dc6a:cea3:1af:140f) (Remote host closed the connection)
+[01:33:13] *** Joins: masinter (~masinter@c-73-158-116-21.hsd1.ca.comcast.net)
+[01:33:28] *** Joins: kevingal (~quassel@2a02:8084:4140:f300:dc6a:cea3:1af:140f)
+[01:37:29] *** Quits: aeth (~aeth@user/aeth) (Ping timeout: 256 seconds)
+[01:38:17] *** Quits: attila_lendvai (~alendvai@catv-89-132-245-188.catv.fixed.vodafone.hu) (Ping timeout: 240 seconds)
+[01:38:56] *** Joins: aeth (~aeth@user/aeth)
+[01:44:51] *** Quits: aartaka (aartaka@gateway/vpn/protonvpn/aartaka) (Ping timeout: 256 seconds)
+[01:44:57] *** Joins: Algernon91 (~Algernon6@2a04:cec0:10e9:d728:806d:5f85:194:5a3e)
+[01:47:28] *** Joins: orestarod (~orestarod@2a02:2149:8ac6:5900:9a3d:dd76:4837:8b41)
+[01:47:53] *** Quits: orestarod (~orestarod@2a02:2149:8ac6:5900:9a3d:dd76:4837:8b41) (Client Quit)
+[01:48:09] *** Joins: orestarod (~orestarod@2a02:2149:8ac6:5900:9a3d:dd76:4837:8b41)
+[01:48:33] *** Quits: orestarod (~orestarod@2a02:2149:8ac6:5900:9a3d:dd76:4837:8b41) (Client Quit)
+[01:48:44] *** Joins: orestarod (~orestarod@2a02:2149:8ac6:5900:9a3d:dd76:4837:8b41)
+[01:49:36] *** Quits: Oddity (~Oddity@user/oddity) (Ping timeout: 256 seconds)
+[01:58:04] <jeosol> Josh_2: that was directed to me?
+[01:58:11] <Josh_2> nope
+[01:58:18] <jeosol> oh ok
+[01:59:31] <Josh_2> I dont know how to help you with your problem :( Sounds like a lot of information about the system is required to find the solution
+[02:04:32] *** Quits: wacki (~wacki@87.122.94.186) (Quit: Leaving.)
+[02:05:21] *** Quits: orestarod (~orestarod@2a02:2149:8ac6:5900:9a3d:dd76:4837:8b41) (Ping timeout: 268 seconds)
+[02:05:21] *** Quits: Algernon91 (~Algernon6@2a04:cec0:10e9:d728:806d:5f85:194:5a3e) (Ping timeout: 268 seconds)
+[02:06:53] *** Quits: dlowe (~dlowe@user/dlowe) (Remote host closed the connection)
+[02:08:58] *** Joins: dlowe (~dlowe@user/dlowe)
+[02:10:21] *** Quits: dlowe (~dlowe@user/dlowe) (Remote host closed the connection)
+[02:10:38] *** Joins: dlowe (~dlowe@user/dlowe)
+[02:13:02] *** Quits: dlowe (~dlowe@user/dlowe) (Remote host closed the connection)
+[02:13:21] *** Joins: dlowe (~dlowe@user/dlowe)
+[02:14:18] *** Quits: dlowe (~dlowe@user/dlowe) (Remote host closed the connection)
+[02:19:03] *** Quits: epolanski (uid312403@id-312403.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[02:21:03] <fe[nl]ix> sm2n: thanks, I committed https://github.com/sionescu/bordeaux-threads/commit/d5692d93ab8185fa74a378360276c996186273bb
+[02:25:58] *** Quits: Guest74 (~Guest74@modemcable110.164-177-173.mc.videotron.ca) (Quit: Connection closed)
+[02:30:49] *** Joins: aeth_ (~aeth@user/aeth)
+[02:31:00] *** Quits: aeth (~aeth@user/aeth) (Killed (NickServ (GHOST command used by aeth_)))
+[02:31:05] *** aeth_ is now known as aeth
+[02:32:29] *** Joins: wyrd (~wyrd@gateway/tor-sasl/wyrd)
+[02:38:06] *** Joins: Guest74 (~Guest74@modemcable110.164-177-173.mc.videotron.ca)
+[02:38:54] *** Quits: aeth (~aeth@user/aeth) (Ping timeout: 256 seconds)
+[02:40:28] *** Joins: aeth (~aeth@user/aeth)
+[02:40:50] *** Joins: Lord_of_Life_ (~Lord@user/lord-of-life/x-2819915)
+[02:40:52] *** Quits: Lord_of_Life (~Lord@user/lord-of-life/x-2819915) (Read error: Connection reset by peer)
+[02:41:34] *** Quits: [w] (~w]@2601:8c1:80:70d0::4b06) (Quit: nyaa~)
+[02:41:44] *** Joins: Oddity (~Oddity@user/oddity)
+[02:43:34] *** Lord_of_Life_ is now known as Lord_of_Life
+[02:47:45] <sm2n> thanks!
+[02:50:40] <sm2n> fe[nl]ix: is apiv2 not on quicklisp yet?
+[02:52:51] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Quit: ERC (IRC client for Emacs 27.1))
+[02:57:50] *** Joins: notzmv (~zmv@user/notzmv)
+[03:00:52] *** Quits: kevingal (~quassel@2a02:8084:4140:f300:dc6a:cea3:1af:140f) (Remote host closed the connection)
+[03:07:34] <fe[nl]ix> not yet
+[03:11:22] *** Joins: Oladon (~olad@98.43.81.226)
+[03:13:34] <sm2n> ah ok
+[03:15:12] *** Joins: cjb` (~cjb@user/cjb)
+[03:15:28] *** Quits: cjb (~cjb@user/cjb) (Ping timeout: 260 seconds)
+[03:16:02] *** Quits: morganw (~user@80.225.24.132) (Remote host closed the connection)
+[03:16:06] *** cjb` is now known as cjb
+[03:16:18] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Quit: WeeChat 3.4)
+[03:17:29] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[03:20:23] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Client Quit)
+[03:21:11] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[03:31:43] *** Joins: taiju (~user@240b:253:ec40:2400:b7d1:436e:2d61:e925)
+[03:33:39] *** Quits: aeth (~aeth@user/aeth) (Ping timeout: 256 seconds)
+[03:35:37] *** Joins: aeth (~aeth@user/aeth)
+[03:41:01] *** Quits: masinter (~masinter@c-73-158-116-21.hsd1.ca.comcast.net) (Ping timeout: 256 seconds)
+[03:44:40] *** Joins: xaltsc (~xaltsc@user/xaltsc)
+[03:46:04] *** Joins: jth (~jth@pool-71-163-85-19.washdc.fios.verizon.net)
+[03:49:34] *** Quits: shka (~herr@109.231.0.226) (Ping timeout: 268 seconds)
+[03:50:42] *** Joins: masinter (~masinter@c-73-158-116-21.hsd1.ca.comcast.net)
+[04:24:03] <Guest74> For those who use multiple desktops/workspaces any thoughts on strings vs keywords for naming them? Finally reworking my window manager.
+[04:24:25] <moon-child> strings
+[04:24:52] <Guest74> any particular reasons? spaces?
+[04:25:03] <moon-child> keywords can have spaces
+[04:25:19] <Guest74> with more keystrokes.
+[04:25:41] <dre> ok then keywords
+[04:25:47] <Guest74> I'm thinking mainly of my repl use.  But I'm sure many others don't care about manipulating their wm from the repl.
+[04:27:54] <Guest74> The only  hesitance I have with keywords is how do I display them in gui tools.  As a keyword? or as the symbol-name? keyword might look weird, a symbol-name might be misleading.  Or once again i'm overthinking it.
+[04:29:14] *** Joins: VincentVega (~user@212.97.4.182)
+[04:34:02] *** Quits: amb007 (~a_bakic@102.215.76.86.rev.sfr.net) (Ping timeout: 260 seconds)
+[04:45:52] *** Quits: dickbar__ (~dickbaren@86-90-132-28.fixed.kpn.net) (Read error: Connection reset by peer)
+[04:46:17] *** Joins: pmwals09 (~pmwals09@c-73-218-223-243.hsd1.ma.comcast.net)
+[04:46:37] *** Joins: dickbar__ (~dickbaren@86-90-132-28.fixed.kpn.net)
+[04:46:59] *** Quits: scymtym_ (~user@ip-094-114-248-079.um31.pools.vodafone-ip.de) (Remote host closed the connection)
+[04:47:08] *** Quits: fitzsim (~user@69-165-165-189.dsl.teksavvy.com) (Remote host closed the connection)
+[04:47:46] *** Quits: fiddlerwoaroof (~fiddlerwo@user/fiddlerwoaroof) (Quit: Gone.)
+[04:47:48] *** Quits: form_fee- (~form_feed@nixon.einval.eu) (Quit: ZNC 1.8.2 - https://znc.in)
+[04:48:03] *** Joins: fiddlerwoaroof (~fiddlerwo@user/fiddlerwoaroof)
+[04:48:04] *** Joins: form_feed (~form_feed@user/f/x-7101985)
+[04:48:37] *** Quits: micro_ (~micro@user/micro) (Ping timeout: 240 seconds)
+[04:49:37] *** Joins: micro (~micro@user/micro)
+[04:49:47] *** Joins: scymtym_ (~user@ip-094-114-248-079.um31.pools.vodafone-ip.de)
+[04:50:37] *** Quits: SAL9000 (~SAL9000@shirakumo/sal9000) (Ping timeout: 268 seconds)
+[04:51:17] *** Quits: random-nick (~random-ni@87.116.167.125) (Ping timeout: 256 seconds)
+[04:51:20] *** Joins: SAL9000 (~SAL9000@shirakumo/sal9000)
+[04:53:41] *** Quits: Catie (~user@user/catie) (Quit: going home)
+[04:54:20] *** Quits: VincentVega (~user@212.97.4.182) (Ping timeout: 256 seconds)
+[04:55:59] *** Parts: pranavats (3fba1d1b34@2a00:c70:1:178:170:40:189:1) (Error from remote client)
+[05:05:17] *** Joins: epony (epony@user/epony)
+[05:07:45] *** Quits: szkl (uid110435@id-110435.uxbridge.irccloud.com) (Quit: Connection closed for inactivity)
+[05:09:59] *** Quits: jth (~jth@pool-71-163-85-19.washdc.fios.verizon.net) (Ping timeout: 256 seconds)
+[05:10:30] *** Quits: rotateq (~user@p200300e78706a00050f72feb644e2401.dip0.t-ipconnect.de) (Quit: ERC (IRC client for Emacs 27.2))
+[05:14:58] *** Joins: pranavats (3fba1d1b34@2a00:c70:1:178:170:40:189:1)
+[05:15:25] *** Parts: parjanya (~esb@2804:14c:1ad:9351:1402:1741:3531:7449) (Using Circe, the loveliest of all IRC clients)
+[05:17:55] *** Quits: aeth (~aeth@user/aeth) (Ping timeout: 256 seconds)
+[05:19:34] *** Joins: aeth (~aeth@user/aeth)
+[05:25:39] *** Quits: Oladon (~olad@98.43.81.226) (Quit: Leaving.)
+[05:26:32] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[05:55:14] <sm2n> I'm writing a (s-exp based of course) DSL, and trying to understand different approaches. One way to do it would be to just have a macro that expands out the entire thing, but another approach I was considering was to basically write a simple interpreter that has a compiler macro, which could be expanded recursively.
+[05:55:31] <sm2n> Does anyone have any thoughts or recommendations for this?
+[05:56:09] <White_Flame> it all depends on the complexity you want.  macroexpansion is fine for literal expansion with no further analysis
+[05:56:51] <White_Flame> but really, any analysis you perform could either be done at compile time or at evaluation time, all depends on where the function calls are made
+[05:57:07] <White_Flame> s/compile time/macroexpansion time/
+[05:57:20] *** Joins: molson (~molson@2001:48f8:704a:123d::75f:1037)
+[05:58:06] <White_Flame> but once your macro reaches a certain size, it's certainly helpful to break out a bunch of functions to handle the various subclauses.  these functions can either be called by the macroexpander, or by the expanded code, or externally if your macro just generates a datastructure
+[06:00:35] <sm2n> So, no real point to the compiler macro approach?
+[06:05:20] <Josh_2> if you have a macro that expands out the entire thing then it should be trivial to add a compiler macro
+[06:13:45] *** Quits: Josh_2 (~user@37.25.47.130) (Ping timeout: 250 seconds)
+[06:15:59] *** Joins: fitzsim (~user@69-165-165-189.dsl.teksavvy.com)
+[06:33:30] *** Quits: Brucio-78 (~Brucio-4@ip-094-114-248-079.um31.pools.vodafone-ip.de) (Remote host closed the connection)
+[06:39:10] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4)
+[06:40:04] *** Joins: Brucio-92 (~Brucio-92@ip-094-114-248-079.um31.pools.vodafone-ip.de)
+[06:46:07] *** Joins: s-liao (~s-liao@101.86.96.21)
+[06:54:49] *** Quits: s-liao (~s-liao@101.86.96.21) (Ping timeout: 256 seconds)
+[07:02:50] *** Joins: s-liao (~s-liao@101.86.96.21)
+[07:03:03] <White_Flame> sm2n: oh sorry, didn't read that as "compiler macro" originally.  I haven't done that approach
+[07:12:08] *** Quits: terrorjack (~terrorjac@2a01:4f8:1c1e:509a::1) (Quit: The Lounge - https://thelounge.chat)
+[07:12:17] *** Quits: raeda (~raeda@72.49.252.109) (Ping timeout: 240 seconds)
+[07:12:26] *** Joins: raeda (~raeda@72.49.252.109)
+[07:13:02] *** Joins: terrorjack (~terrorjac@2a01:4f8:1c1e:509a::1)
+[07:23:27] *** Quits: Bike (~Glossina@71.69.170.70) (Quit: Lost terminal)
+[07:24:25] *** Quits: mzan (~quassel@mail.asterisell.com) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[07:25:36] *** Joins: mzan (~quassel@mail.asterisell.com)
+[07:25:58] *** Joins: Bike (~Bike@71.69.170.70)
+[07:30:06] <beach> Good morning everyone!
+[07:38:08] *** Joins: domovod (~domovod@176.196.122.197)
+[07:38:46] *** Quits: cjb (~cjb@user/cjb) (Quit: rcirc on GNU Emacs 29.0.50)
+[07:42:05] <fe[nl]ix> good morning beach
+[07:44:54] *** Quits: masinter (~masinter@c-73-158-116-21.hsd1.ca.comcast.net) (Ping timeout: 256 seconds)
+[07:44:56] <waleee> incredible cheerfulness at 5 in the morning
+[07:45:32] * waleee crawls to the coffee maker
+[07:56:08] *** Quits: dre (~dre@2001:8003:c932:c301:9978:1feb:26d8:cb0f) (Quit: Leaving)
+[08:09:03] *** Quits: s-liao (~s-liao@101.86.96.21) (Ping timeout: 256 seconds)
+[08:09:26] *** Joins: dre (~dre@2001:8003:c932:c301:77c0:cff4:f6dd:6abf)
+[08:09:38] *** Joins: semz_ (~semz@user/semz)
+[08:12:04] *** Quits: semz (~semz@user/semz) (Ping timeout: 250 seconds)
+[08:17:28] *** Joins: s-liao (~s-liao@101.86.96.21)
+[08:20:32] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[08:22:29] *** Joins: triffid (~triffid@gateway/tor-sasl/triffid)
+[08:30:11] <yottabyte> how do I remove the nth element from a list?
+[08:30:46] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Ping timeout: 268 seconds)
+[08:33:22] <mfiano> point the cdr of n-1 to the car of n+1
+[08:33:24] <moon-child> yottabyte: destructively or not?
+[08:34:21] <yottabyte> either one. I was trying to use remove-if/delete-if but yeah. I could do what mfiano is saying
+[08:34:29] <moon-child> yes, that is waht I would do
+[08:34:54] <yottabyte> do what mfiano said?
+[08:35:13] <moon-child> yes
+[08:35:21] <yottabyte> oh boy
+[08:36:24] <mfiano> walk the list up to n+1 keeping a pointer to n-1. then setf (setf (cdr n-1) n+1)
+[08:36:41] <mfiano> make sure the handle the bounds special cases
+[08:36:47] <Bike> the remove/delete-if incantation would be something like (remove-if (constantly t) sequence :start n :count 1), i guess
+[08:39:28] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-98.dsl.bell.ca) (Remote host closed the connection)
+[08:40:41] <mfiano> or -if-not with #'null for slightly more terse
+[08:41:15] *** Quits: igemnace (~ian@user/igemnace) (Remote host closed the connection)
+[08:41:42] <mfiano> Ah i guess semantics are different there
+[08:42:30] *** Quits: pmwals09 (~pmwals09@c-73-218-223-243.hsd1.ma.comcast.net) (Remote host closed the connection)
+[08:48:01] <White_Flame> you don't have to walk, there's NTHCDR
+[08:48:48] <mfiano> Sure, but we'd want 2 conses in 1 walk
+[08:48:53] <White_Flame> erm, manually walk :-P
+[08:48:57] <mfiano> I like Bike's solution
+[08:49:22] <White_Flame> yep, it is better
+[08:49:33] <moon-child> eh, I don't like it
+[08:49:40] <moon-child> predicate is redundant
+[08:49:41] <Bike> yeah i'd actually use the nthcdr.
+[08:49:50] <Bike> or a loop or something.
+[08:50:17] <mfiano> I'd use them all in different parts of the code, to please and displease everyone all at once.
+[08:50:42] <White_Flame> just use 2 subseq and append, just to please nobody
+[08:50:48] <mfiano> :D
+[08:50:51] <Bike> (let* ((n-1 (nthcdr (- n 1) list)) (n+1 (cddr n-1))) (setf (cdr n-1) n+1))
+[08:52:15] *** Quits: jealousmonk (~user@user/jealousmonk) (Quit: ERC 5.4.1 (IRC client for GNU Emacs 27.1))
+[08:52:31] <mfiano> My original solution was to do it without walking twice. I'm not sure how remove-if/delete-if is usually implemented, but that is certainly more readable, if not more efficient than that one ^
+[08:53:38] <White_Flame> if you walk once, you're going to be allocating as you go, and tail share the rest.  if the element is not found, then those copies are redundant
+[08:54:04] <mfiano> Well the above is going to fail in similar ways
+[08:54:05] <White_Flame> (for a non-destructive version)
+[08:54:49] <White_Flame> also, if you're removing the first element, that's a special case as it's not the CDR of anything
+[08:55:01] <White_Flame> calling remove/delete will handle that for you
+[08:56:11] *** Joins: aartaka (aartaka@gateway/vpn/protonvpn/aartaka)
+[08:56:12] <mfiano> Also that code is wrong is multiple ways
+[08:57:07] <mfiano> needs to return list, not the result of setf. also needs to handle n=1 case
+[08:57:16] <mfiano> err n=0
+[08:57:17] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 268 seconds)
+[08:57:23] <White_Flame> you can (let ((temp-list (cons nil list))) ...setf cdr stuff... (cdr temp-list)) to operate in full cdr mode without special case for removing the head
+[08:58:15] *** Parts: pranavats (3fba1d1b34@2a00:c70:1:178:170:40:189:1) (Error from remote client)
+[08:58:25] <White_Flame> bonus points for making the temp-list cell dynamic-extent
+[08:58:29] *** Quits: Bike (~Bike@71.69.170.70) (Quit: Connection closed)
+[08:59:59] <mfiano> Too tired to even think about n=0 edge case in Bike's latest code, without branching
+[09:03:27] *** Quits: s-liao (~s-liao@101.86.96.21) (Ping timeout: 256 seconds)
+[09:12:28] <White_Flame> just add a cons cell to the head, and lop it off at the end
+[09:12:37] <White_Flame> (which is what my temp-list is)
+[09:13:17] <White_Flame> then the removed cell always has a prior cell to be the cdr of
+[09:15:10] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 268 seconds)
+[09:29:08] *** Joins: s-liao (~s-liao@101.86.96.21)
+[09:45:36] *** Quits: domovod (~domovod@176.196.122.197) (Ping timeout: 256 seconds)
+[09:56:43] *** Quits: Oddity (~Oddity@user/oddity) (Ping timeout: 256 seconds)
+[09:57:17] *** Quits: raeda (~raeda@72.49.252.109) (Ping timeout: 256 seconds)
+[09:57:54] *** Joins: raeda (~raeda@72.49.252.109)
+[09:59:20] *** Joins: Jing (~hedgehog@240e:390:7c53:a7e1:1164:2854:8a6e:b4e3)
+[10:03:02] *** Quits: s-liao (~s-liao@101.86.96.21) (Quit: Client closed)
+[10:05:18] *** Joins: Oddity (~Oddity@user/oddity)
+[10:11:23] *** Joins: wacki (~wacki@87.122.94.186)
+[10:14:51] *** Quits: jemoka_ (~jemoka@user/jemoka) (Ping timeout: 256 seconds)
+[10:23:26] *** Joins: silasfox (~sbv@p200300cec7219d00ef0f653f23257d7e.dip0.t-ipconnect.de)
+[10:35:15] *** Quits: aeth (~aeth@user/aeth) (Ping timeout: 256 seconds)
+[10:37:02] *** Joins: aeth (~aeth@user/aeth)
+[10:40:00] *** Quits: occ (~occ@user/occ) (Ping timeout: 256 seconds)
+[10:40:00] *** Quits: frgo (~frgo@p548a30d7.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[10:45:43] *** Joins: Cymew (~ante@c-0c87225c.023-1144-7570702.bbcust.telenor.se)
+[10:48:23] *** Joins: iamFIREcracker (~iamFIREcr@user/iamfirecracker)
+[10:49:48] *** Joins: amb007 (~a_bakic@102.215.76.86.rev.sfr.net)
+[10:55:28] *** Joins: MajorBiscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e)
+[11:00:37] *** Joins: occ (~occ@user/occ)
+[11:03:06] *** Joins: notzmv (~zmv@user/notzmv)
+[11:04:34] *** Joins: ahc (~ahc@121.98.229.241)
+[11:04:59] *** Joins: gaqwas (~john@dynamic-095-115-027-162.95.115.pool.telefonica.de)
+[11:05:53] *** Joins: Algernon91 (~Algernon6@2a04:cec0:10e9:d728:5b6:beb2:e041:1ca2)
+[11:06:22] *** Quits: Algernon91 (~Algernon6@2a04:cec0:10e9:d728:5b6:beb2:e041:1ca2) (Read error: Connection reset by peer)
+[11:06:28] *** Joins: Algernon666 (~Algernon6@2a04:cec0:10e9:d728:e4a7:d8a0:e8d2:754b)
+[11:06:44] *** Quits: iamFIREcracker (~iamFIREcr@user/iamfirecracker) (Read error: Connection reset by peer)
+[11:10:37] *** Joins: lottaquestions (~nick@2607:fa49:5041:a200:c011:d62d:2c14:89f2)
+[11:11:17] *** Quits: silasfox (~sbv@p200300cec7219d00ef0f653f23257d7e.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[11:11:34] *** Joins: silasfox (~sbv@p4fe8d6cb.dip0.t-ipconnect.de)
+[11:11:37] *** Quits: lottaquestions_ (~nick@2607:fa49:5041:a200:9d2a:1a5d:fbd1:7e6b) (Ping timeout: 240 seconds)
+[11:14:09] *** Joins: iamFIREcracker (~iamFIREcr@user/iamfirecracker)
+[11:20:05] *** Joins: pve (~pve@178-55-121-71.bb.dnainternet.fi)
+[11:37:31] *** Joins: Major_Biscuit (~MajorBisc@c-001-020-005.client.tudelft.eduvpn.nl)
+[11:37:57] *** Joins: shka (~herr@109.231.0.226)
+[11:41:19] *** Quits: MajorBiscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e) (Ping timeout: 268 seconds)
+[11:42:31] *** semz_ is now known as semz
+[11:49:57] *** Quits: gaqwas (~john@dynamic-095-115-027-162.95.115.pool.telefonica.de) (Ping timeout: 268 seconds)
+[11:54:01] *** Joins: mgl (~mgl@cpc87455-finc19-2-0-cust234.4-2.cable.virginm.net)
+[12:19:33] *** Joins: rotateq (~user@p200300e78706a00050f72feb644e2401.dip0.t-ipconnect.de)
+[12:25:04] *** Joins: Dynom (~niels@80-114-12-206.cable.dynamic.v4.ziggo.nl)
+[12:34:50] *** Joins: Nirmal (~Nirmal@157.51.66.207)
+[12:34:58] <Nirmal> hi
+[12:35:02] <phoe> hey
+[12:35:33] <Nirmal> U name
+[12:36:12] <Nirmal> hey phoe
+[12:42:51] *** Quits: Nirmal (~Nirmal@157.51.66.207) (Remote host closed the connection)
+[12:55:04] *** Quits: Major_Biscuit (~MajorBisc@c-001-020-005.client.tudelft.eduvpn.nl) (Quit: WeeChat 3.4)
+[12:56:21] *** Quits: aartaka (aartaka@gateway/vpn/protonvpn/aartaka) (Ping timeout: 256 seconds)
+[12:57:31] *** Joins: MajorBiscuit (~MajorBisc@c-001-020-005.client.tudelft.eduvpn.nl)
+[13:05:55] *** Joins: attila_lendvai (~alendvai@catv-89-132-245-188.catv.fixed.vodafone.hu)
+[13:40:55] *** Joins: jasom_ (f3e90f0325@2604:bf00:561:2000::3a6)
+[13:40:58] *** Joins: payphone_ (dd09ba4109@2604:bf00:561:2000::20b)
+[13:41:10] *** Joins: Jing_ (~hedgehog@125.105.15.211)
+[13:41:11] *** Joins: dale_ (~dale@user/dale)
+[13:41:19] *** Joins: gko` (~user@2400:8902::f03c:91ff:fe70:e605)
+[13:41:33] *** Joins: taiju` (~user@240b:253:ec40:2400:b7d1:436e:2d61:e925)
+[13:41:36] *** Joins: susam_ (~susam@user/susam)
+[13:41:37] *** Quits: Rue (~rue@2001-b011-1000-11b6-9802-64fa-1e5c-3e4d.dynamic-ip6.hinet.net) (Ping timeout: 240 seconds)
+[13:41:37] *** Quits: dale (dale@user/dale) (Ping timeout: 240 seconds)
+[13:41:37] *** Quits: _whitelogger (~whitelogg@uruz.whitequark.org) (Ping timeout: 240 seconds)
+[13:41:43] *** Joins: conjunctive_ (sid433686@id-433686.helmsley.irccloud.com)
+[13:41:44] *** Joins: splittist__ (sid17737@id-17737.tinside.irccloud.com)
+[13:41:46] *** Joins: sveit_ (~sveit@2001:19f0:ac01:247:5400:ff:fe5c:689f)
+[13:41:57] *** Quits: lottaquestions (~nick@2607:fa49:5041:a200:c011:d62d:2c14:89f2) (Ping timeout: 240 seconds)
+[13:41:57] *** Quits: Jing (~hedgehog@240e:390:7c53:a7e1:1164:2854:8a6e:b4e3) (Ping timeout: 240 seconds)
+[13:41:57] *** Quits: payphone (dd09ba4109@2604:bf00:561:2000::20b) (Ping timeout: 240 seconds)
+[13:41:57] *** Quits: sveit (~sveit@2001:19f0:ac01:247:5400:ff:fe5c:689f) (Ping timeout: 240 seconds)
+[13:41:57] *** Quits: splittist_ (sid17737@id-17737.tinside.irccloud.com) (Ping timeout: 240 seconds)
+[13:41:57] *** payphone_ is now known as payphone
+[13:41:58] *** splittist__ is now known as splittist_
+[13:41:59] *** dale_ is now known as dale
+[13:42:03] *** Joins: lottaquestions_ (~nick@2607:fa49:5041:a200:c011:d62d:2c14:89f2)
+[13:42:07] *** Joins: victor__ (sid208353@id-208353.tinside.irccloud.com)
+[13:42:12] *** Joins: robin__ (~robin@user/terpri)
+[13:42:17] *** Quits: taiju (~user@240b:253:ec40:2400:b7d1:436e:2d61:e925) (Ping timeout: 240 seconds)
+[13:42:17] *** Quits: conjunctive (sid433686@id-433686.helmsley.irccloud.com) (Ping timeout: 240 seconds)
+[13:42:17] *** Quits: robin (~robin@user/terpri) (Ping timeout: 240 seconds)
+[13:42:17] *** Quits: jasom (f3e90f0325@2604:bf00:561:2000::3a6) (Ping timeout: 240 seconds)
+[13:42:17] *** Quits: Jach (~Jach@2601:600:8600:307:7e31:e7a7:f1f3:a96b) (Ping timeout: 240 seconds)
+[13:42:17] *** Quits: susam (~susam@user/susam) (Ping timeout: 240 seconds)
+[13:42:17] *** Quits: Nilby (Nilby@2600:3c01::f03c:92ff:feeb:88ff) (Ping timeout: 240 seconds)
+[13:42:17] *** Quits: GreaseMonkey (greaser@user/greasemonkey) (Ping timeout: 240 seconds)
+[13:42:18] *** jasom_ is now known as jasom
+[13:42:18] *** conjunctive_ is now known as conjunctive
+[13:42:37] *** Quits: victor_ (uid208353@id-208353.tinside.irccloud.com) (Ping timeout: 240 seconds)
+[13:42:37] *** Quits: luna-is-here (~quassel@2a02:908:f761:2a3c::a) (Ping timeout: 240 seconds)
+[13:42:37] *** Quits: gko (~user@user/gko) (Ping timeout: 240 seconds)
+[13:42:37] *** Quits: remexre (~remexre@user/remexre) (Ping timeout: 240 seconds)
+[13:42:50] *** Joins: kevingal (~quassel@149.157.105.172)
+[13:42:55] *** Joins: attila_lendvai_ (~alendvai@catv-89-132-245-188.catv.fixed.vodafone.hu)
+[13:43:02] *** Joins: iamFIREc1 (~iamFIREcr@user/iamfirecracker)
+[13:43:04] *** Joins: greaser|q (greaser@antihype.space)
+[13:43:11] *** Joins: luna-is-here (~quassel@2a02:908:f761:2a3c::a)
+[13:43:16] *** Joins: remexre (~remexre@user/remexre)
+[13:43:25] *** Joins: _whitelogger (~whitelogg@uruz.whitequark.org)
+[13:44:03] *** Joins: Jing (~hedgehog@125.105.15.211)
+[13:44:48] *** Joins: susam (~susam@user/susam)
+[13:45:05] *** Quits: wacki (~wacki@87.122.94.186) (Ping timeout: 256 seconds)
+[13:45:05] *** Quits: Oddity (~Oddity@user/oddity) (Ping timeout: 256 seconds)
+[13:45:39] *** Quits: Jing_ (~hedgehog@125.105.15.211) (Ping timeout: 256 seconds)
+[13:45:39] *** Quits: attila_lendvai (~alendvai@catv-89-132-245-188.catv.fixed.vodafone.hu) (Ping timeout: 256 seconds)
+[13:45:39] *** Quits: iamFIREcracker (~iamFIREcr@user/iamfirecracker) (Ping timeout: 256 seconds)
+[13:46:13] *** Quits: susam_ (~susam@user/susam) (Ping timeout: 256 seconds)
+[13:46:13] *** Quits: fitzsim (~user@69-165-165-189.dsl.teksavvy.com) (Ping timeout: 256 seconds)
+[13:47:28] *** attila_lendvai_ is now known as attila_lendvai
+[13:47:55] *** Quits: kevingal (~quassel@149.157.105.172) (Ping timeout: 256 seconds)
+[13:48:04] *** Joins: kevingal (~quassel@2001:770:c0:401:d00d:c035:37fe:5965)
+[13:48:09] *** Joins: wacki (~wacki@87.122.94.186)
+[13:49:16] *** splittist_ is now known as splittist
+[13:53:32] *** Quits: taiju` (~user@240b:253:ec40:2400:b7d1:436e:2d61:e925) (Ping timeout: 250 seconds)
+[13:54:19] *** Joins: Oddity (~Oddity@user/oddity)
+[13:57:28] *** Joins: szos (~user@tromso-studenter6-dhcp66.wifi.uit.no)
+[13:58:43] *** Joins: Jach (~Jach@2601:600:8600:307:7e31:e7a7:f1f3:a96b)
+[13:59:49] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[14:01:16] *** Joins: s-liao (~s-liao@101.86.96.21)
+[14:12:39] *** Quits: Jing (~hedgehog@125.105.15.211) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[14:14:05] *** Joins: rgherdt (~rgherdt@2a01:598:b1a3:2245:6a0f:5263:3193:7e65)
+[14:15:11] *** Quits: antoszka (sid528518@id-528518.uxbridge.irccloud.com) (Ping timeout: 250 seconds)
+[14:15:37] *** Quits: dbotton (sid492350@id-492350.lymington.irccloud.com) (Ping timeout: 250 seconds)
+[14:15:50] *** Joins: antoszka (sid528518@id-528518.uxbridge.irccloud.com)
+[14:15:58] *** Joins: jmercouris_ (sid438340@id-438340.hampstead.irccloud.com)
+[14:16:16] *** Joins: dbotton (sid492350@lymington.irccloud.com)
+[14:16:29] *** Quits: yitzi (~yitzi@2001:470:69fc:105::fafd) (Ping timeout: 250 seconds)
+[14:16:29] *** Quits: jmercouris (sid438340@id-438340.hampstead.irccloud.com) (Ping timeout: 250 seconds)
+[14:16:29] *** jmercouris_ is now known as jmercouris
+[14:16:37] *** Joins: cosimone` (~user@93-47-231-100.ip115.fastwebnet.it)
+[14:16:55] *** Quits: Duuqnd (~duuqnd@2001:470:69fc:105::e9c0) (Ping timeout: 250 seconds)
+[14:16:55] *** Quits: luis` (~luismboma@2001:470:69fc:105::cc7) (Ping timeout: 250 seconds)
+[14:16:55] *** Quits: jgart (16dd2205e4@irc.cheogram.com) (Ping timeout: 250 seconds)
+[14:17:14] *** Joins: Spec` (~spec@user/spec)
+[14:17:21] *** Quits: CodeBitCookie[m] (~code-bit-@2001:470:69fc:105::a2f) (Ping timeout: 250 seconds)
+[14:17:21] *** Quits: Mrtn[m] (~mrtn@2001:470:69fc:105::1f44) (Ping timeout: 250 seconds)
+[14:17:21] *** Quits: saltrocklamp[m] (~hexology@user/hexology) (Ping timeout: 250 seconds)
+[14:17:21] *** Quits: spec (~spec@user/spec) (Ping timeout: 250 seconds)
+[14:17:25] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[14:17:59] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Ping timeout: 250 seconds)
+[14:20:47] *** Quits: wacki (~wacki@87.122.94.186) (Ping timeout: 256 seconds)
+[14:21:30] *** Joins: wacki (~wacki@87.122.94.186)
+[14:21:34] *** Quits: Lord_of_Life (~Lord@user/lord-of-life/x-2819915) (Ping timeout: 256 seconds)
+[14:22:37] *** Joins: Lord_of_Life (~Lord@user/lord-of-life/x-2819915)
+[14:23:56] *** Joins: igemnace (~ian@user/igemnace)
+[14:25:21] *** Quits: szos (~user@tromso-studenter6-dhcp66.wifi.uit.no) (Ping timeout: 250 seconds)
+[14:32:10] *** Joins: szos (~user@tromso-studenter6-dhcp66.wifi.uit.no)
+[14:32:42] *** Joins: yitzi (~yitzi@2001:470:69fc:105::fafd)
+[14:32:44] *** Joins: Mrtn[m] (~mrtn@2001:470:69fc:105::1f44)
+[14:34:13] *** Joins: luis` (~luismboma@2001:470:69fc:105::cc7)
+[14:34:53] *** Joins: Duuqnd (~duuqnd@2001:470:69fc:105::e9c0)
+[14:36:30] *** Quits: rgherdt (~rgherdt@2a01:598:b1a3:2245:6a0f:5263:3193:7e65) (Ping timeout: 260 seconds)
+[14:36:36] *** Joins: rgherdt_ (~rgherdt@2a01:598:b1b0:57ed:1d3:f8d9:95fe:666e)
+[14:36:39] *** Quits: aeth (~aeth@user/aeth) (Ping timeout: 256 seconds)
+[14:38:17] *** Joins: aeth (~aeth@user/aeth)
+[14:38:22] *** Joins: CodeBitCookie[m] (~code-bit-@2001:470:69fc:105::a2f)
+[14:38:48] *** Joins: rgherdt__ (~rgherdt@2a01:598:b1a5:e39f:6219:9462:1ee1:d73b)
+[14:39:42] *** Joins: saltrocklamp[m] (~hexology@user/hexology)
+[14:40:05] *** Joins: Jing (~hedgehog@240e:390:7c53:a7e1:4458:b22e:b9a7:2cea)
+[14:41:23] *** Quits: rgherdt_ (~rgherdt@2a01:598:b1b0:57ed:1d3:f8d9:95fe:666e) (Ping timeout: 250 seconds)
+[14:41:41] *** Joins: dlowe (~dlowe@user/dlowe)
+[14:42:10] *** Quits: dlowe (~dlowe@user/dlowe) (Remote host closed the connection)
+[14:42:19] *** Quits: s-liao (~s-liao@101.86.96.21) (Ping timeout: 256 seconds)
+[14:42:49] *** Joins: s-liao (~s-liao@101.86.96.21)
+[14:43:35] *** Joins: dlowe (~dlowe@user/dlowe)
+[14:45:20] *** Quits: dlowe (~dlowe@user/dlowe) (Remote host closed the connection)
+[14:47:58] *** Joins: dlowe (~dlowe@user/dlowe)
+[14:48:57] *** Quits: dlowe (~dlowe@user/dlowe) (Remote host closed the connection)
+[14:49:40] *** Joins: Guest50 (~Guest50@23-31-147-162-static.hfc.comcastbusiness.net)
+[14:53:46] <Guest50> hello, I could use some eyes on a simple ironclad encryption test. https://plaster.tymoon.eu/view/2910/raw?password
+[14:54:09] <Guest50> the decrypted bytes don't match the plaintext bytes
+[14:56:07] <flip214> Guest50: my guess is that cipher is modified during encryption... you might need to copy it for decryption
+[14:57:33] <flip214> Guest50: also, the ciphertext will be rounded up to the cipher block size, won't it? so 7 bytes ("testing") are too small?
+[14:58:02] *** Quits: shka (~herr@109.231.0.226) (Ping timeout: 268 seconds)
+[15:00:13] <Guest50> flip214 I haven't read anything about the ciphertext rounding up, but I'll look into it.  If that's the case then plaintext needs to be 16 bytes min?
+[15:01:48] <phoe> won't it just get padded?
+[15:03:36] *** Quits: kakuhen (~kakuhen@user/kakuhen) (Quit: Bridge terminating on SIGTERM)
+[15:03:36] *** Quits: EdLangley[m] (~edwlanmed@2001:470:69fc:105::7a0b) (Quit: Bridge terminating on SIGTERM)
+[15:03:37] *** Quits: seragold[m] (~seragoldm@2001:470:69fc:105::1:6b7f) (Quit: Bridge terminating on SIGTERM)
+[15:03:38] *** Quits: Gnuxie (~gnuxie@user/gnuxie) (Quit: Bridge terminating on SIGTERM)
+[15:03:38] *** Quits: sp (~sp@user/susam) (Quit: Bridge terminating on SIGTERM)
+[15:03:38] *** Quits: edmrk[m] (~edmrkmatr@2001:470:69fc:105::1:5a63) (Quit: Bridge terminating on SIGTERM)
+[15:03:38] *** Quits: miique (~miiquemat@2001:470:69fc:105::1:6901) (Quit: Bridge terminating on SIGTERM)
+[15:03:38] *** Quits: zbrown[m] (~zbrownsys@2001:470:69fc:105::1:4e81) (Quit: Bridge terminating on SIGTERM)
+[15:03:38] *** Quits: Spawns_Carpet[m] (~inceptor-@2001:470:69fc:105::1:298b) (Quit: Bridge terminating on SIGTERM)
+[15:03:38] *** Quits: katco (~katco@2001:470:69fc:105::2b8) (Quit: Bridge terminating on SIGTERM)
+[15:03:39] *** Quits: char[m] (~charlesma@2001:470:69fc:105::1:7050) (Quit: Bridge terminating on SIGTERM)
+[15:03:39] *** Quits: akater[m] (~akatermat@2001:470:69fc:105::ccef) (Quit: Bridge terminating on SIGTERM)
+[15:03:39] *** Quits: sepanko (~sepanko@user/sepanko) (Quit: Bridge terminating on SIGTERM)
+[15:03:40] *** Quits: Arcsech (~arcsechma@2001:470:69fc:105::1:797) (Quit: Bridge terminating on SIGTERM)
+[15:03:40] *** Quits: nworb (~zbrownm]@2001:470:69fc:105::1:33db) (Quit: Bridge terminating on SIGTERM)
+[15:03:40] *** Quits: loke[m] (~loke@2001:470:69fc:105::237) (Quit: Bridge terminating on SIGTERM)
+[15:03:40] *** Quits: linjian (~linj@user/linj) (Quit: Bridge terminating on SIGTERM)
+[15:03:40] *** Quits: prov[m] (~provessor@2001:470:69fc:105::cfb) (Quit: Bridge terminating on SIGTERM)
+[15:03:40] *** Quits: opalvaults[m] (~opalvault@2001:470:69fc:105::1:51f6) (Quit: Bridge terminating on SIGTERM)
+[15:03:41] *** Quits: Mrtn[m] (~mrtn@2001:470:69fc:105::1f44) (Quit: Bridge terminating on SIGTERM)
+[15:03:41] *** Quits: yitzi (~yitzi@2001:470:69fc:105::fafd) (Quit: Bridge terminating on SIGTERM)
+[15:03:41] *** Quits: dieggsy (~dieggsy@2001:470:69fc:105::91f) (Quit: Bridge terminating on SIGTERM)
+[15:03:41] *** Quits: Duuqnd (~duuqnd@2001:470:69fc:105::e9c0) (Quit: Bridge terminating on SIGTERM)
+[15:03:41] *** Quits: luis` (~luismboma@2001:470:69fc:105::cc7) (Quit: Bridge terminating on SIGTERM)
+[15:03:41] <Guest50> from my understanding (which is marginal) there would be no padding since this is an aes cipher with a ctr mode
+[15:03:41] *** Quits: saltrocklamp[m] (~hexology@user/hexology) (Quit: Bridge terminating on SIGTERM)
+[15:03:41] *** Quits: CodeBitCookie[m] (~code-bit-@2001:470:69fc:105::a2f) (Quit: Bridge terminating on SIGTERM)
+[15:04:37] <phoe> if the length of the ciphertext is not an exact multiple of the key size then there will be some padding nonetheless, AES operates on blocks of data of predefined size
+[15:04:38] <flip214> yeah, but the counter gets incremented per cipher block and not per byte, so you'll need whole cipher blocks?
+[15:04:59] *** Quits: s-liao (~s-liao@101.86.96.21) (Ping timeout: 256 seconds)
+[15:05:56] <phoe> for aes-256 you need 32 bytes of data per block, so for 7 bytes you'll likely get a plaintext that looks like #x(01 23 45 67 89 ab cd 00 00 00 00 00 00 00 00 00)
+[15:06:01] <phoe> and that's what will be encrypted
+[15:06:11] <phoe> and that's what you should get upon decryption
+[15:10:14] <Guest50> phoe, how would you suggest I go about it?
+[15:11:49] *** Joins: katco (~katco@2001:470:69fc:105::2b8)
+[15:14:41] *** Quits: Algernon666 (~Algernon6@2a04:cec0:10e9:d728:e4a7:d8a0:e8d2:754b) (Ping timeout: 268 seconds)
+[15:14:41] <Guest50> would I need to check the length of the encrypted data to see if its a multiple of the key size and remove any extra bytes?
+[15:14:45] *** Joins: luis` (~luismboma@2001:470:69fc:105::cc7)
+[15:14:45] *** Joins: sepanko (~sepanko@user/sepanko)
+[15:14:45] *** Joins: edmrk[m] (~edmrkmatr@2001:470:69fc:105::1:5a63)
+[15:14:57] *** Joins: EdLangley[m] (~edwlanmed@2001:470:69fc:105::7a0b)
+[15:14:57] *** Quits: aeth (~aeth@user/aeth) (Ping timeout: 240 seconds)
+[15:15:02] *** Joins: Mrtn[m] (~mrtn@2001:470:69fc:105::1f44)
+[15:15:03] *** Joins: dieggsy (~dieggsy@2001:470:69fc:105::91f)
+[15:15:11] *** Quits: rgherdt__ (~rgherdt@2a01:598:b1a5:e39f:6219:9462:1ee1:d73b) (Ping timeout: 250 seconds)
+[15:15:27] *** Joins: akater[m] (~akatermat@2001:470:69fc:105::ccef)
+[15:15:27] *** Joins: Gnuxie (~gnuxie@user/gnuxie)
+[15:15:27] *** Joins: saltrocklamp[m] (~hexology@user/hexology)
+[15:15:28] *** Joins: yitzi (~yitzi@2001:470:69fc:105::fafd)
+[15:15:28] *** Joins: sp (~sp@user/susam)
+[15:15:28] *** Joins: nworb (~zbrownm]@2001:470:69fc:105::1:33db)
+[15:15:54] *** Joins: kakuhen (~kakuhen@user/kakuhen)
+[15:15:54] *** Joins: Duuqnd (~duuqnd@2001:470:69fc:105::e9c0)
+[15:15:54] *** Joins: CodeBitCookie[m] (~code-bit-@2001:470:69fc:105::a2f)
+[15:15:55] *** Joins: Arcsech (~arcsechma@2001:470:69fc:105::1:797)
+[15:15:55] *** Joins: loke[m] (~loke@2001:470:69fc:105::237)
+[15:16:10] *** Joins: char[m] (~charlesma@2001:470:69fc:105::1:7050)
+[15:16:17] *** Quits: Jach (~Jach@2601:600:8600:307:7e31:e7a7:f1f3:a96b) (Quit: Leaving.)
+[15:16:20] <phoe> you should either ignore the extra null bytes at the end of your message
+[15:16:44] <phoe> or include a message length in your plaintext, and then truncate the decrypted output to size
+[15:16:46] <flip214> Guest50: well, perhaps a higher-level library might be a good idea
+[15:16:48] *** Joins: seragold[m] (~seragoldm@2001:470:69fc:105::1:6b7f)
+[15:16:50] *** Joins: Spawns_Carpet[m] (~inceptor-@2001:470:69fc:105::1:298b)
+[15:16:50] *** Joins: zbrown[m] (~zbrownsys@2001:470:69fc:105::1:4e81)
+[15:17:09] <flip214> there's https://github.com/orthecreedence/cl-sodium (a CL version of NaCl)
+[15:17:12] *** Joins: aeth (~aeth@user/aeth)
+[15:17:16] *** Joins: prov[m] (~provessor@2001:470:69fc:105::cfb)
+[15:17:19] *** Joins: opalvaults[m] (~opalvault@2001:470:69fc:105::1:51f6)
+[15:17:20] <flip214> and my repo with a few updates at https://github.com/phmarek/cl-sodium
+[15:17:20] *** Joins: linjian (~linj@user/linj)
+[15:17:22] *** Joins: miique (~miiquemat@2001:470:69fc:105::1:6901)
+[15:17:41] *** Quits: seragold[m] (~seragoldm@2001:470:69fc:105::1:6b7f) (Remote host closed the connection)
+[15:17:41] *** Quits: kakuhen (~kakuhen@user/kakuhen) (Remote host closed the connection)
+[15:17:41] *** Quits: EdLangley[m] (~edwlanmed@2001:470:69fc:105::7a0b) (Remote host closed the connection)
+[15:17:42] *** Quits: char[m] (~charlesma@2001:470:69fc:105::1:7050) (Remote host closed the connection)
+[15:17:42] *** Quits: akater[m] (~akatermat@2001:470:69fc:105::ccef) (Remote host closed the connection)
+[15:17:42] *** Quits: saltrocklamp[m] (~hexology@user/hexology) (Write error: Connection reset by peer)
+[15:17:42] *** Quits: luis` (~luismboma@2001:470:69fc:105::cc7) (Remote host closed the connection)
+[15:17:42] *** Quits: Mrtn[m] (~mrtn@2001:470:69fc:105::1f44) (Read error: Connection reset by peer)
+[15:17:42] *** Quits: sp (~sp@user/susam) (Read error: Connection reset by peer)
+[15:17:42] *** Quits: Arcsech (~arcsechma@2001:470:69fc:105::1:797) (Read error: Connection reset by peer)
+[15:17:42] *** Quits: yitzi (~yitzi@2001:470:69fc:105::fafd) (Read error: Connection reset by peer)
+[15:17:42] *** Quits: sepanko (~sepanko@user/sepanko) (Read error: Connection reset by peer)
+[15:17:42] *** Quits: Gnuxie (~gnuxie@user/gnuxie) (Read error: Connection reset by peer)
+[15:17:42] *** Quits: katco (~katco@2001:470:69fc:105::2b8) (Remote host closed the connection)
+[15:17:42] *** Quits: zbrown[m] (~zbrownsys@2001:470:69fc:105::1:4e81) (Remote host closed the connection)
+[15:17:42] *** Quits: dieggsy (~dieggsy@2001:470:69fc:105::91f) (Read error: Connection reset by peer)
+[15:17:42] *** Quits: linjian (~linj@user/linj) (Read error: Connection reset by peer)
+[15:17:43] *** Quits: prov[m] (~provessor@2001:470:69fc:105::cfb) (Remote host closed the connection)
+[15:17:43] *** Quits: Duuqnd (~duuqnd@2001:470:69fc:105::e9c0) (Remote host closed the connection)
+[15:17:43] *** Quits: nworb (~zbrownm]@2001:470:69fc:105::1:33db) (Read error: Connection reset by peer)
+[15:17:43] *** Quits: opalvaults[m] (~opalvault@2001:470:69fc:105::1:51f6) (Read error: Connection reset by peer)
+[15:17:43] *** Quits: edmrk[m] (~edmrkmatr@2001:470:69fc:105::1:5a63) (Read error: Connection reset by peer)
+[15:17:43] *** Quits: Spawns_Carpet[m] (~inceptor-@2001:470:69fc:105::1:298b) (Read error: Connection reset by peer)
+[15:17:43] *** Quits: CodeBitCookie[m] (~code-bit-@2001:470:69fc:105::a2f) (Remote host closed the connection)
+[15:17:45] *** Quits: loke[m] (~loke@2001:470:69fc:105::237) (Read error: Connection reset by peer)
+[15:17:45] *** Quits: miique (~miiquemat@2001:470:69fc:105::1:6901) (Read error: Connection reset by peer)
+[15:19:37] *** Quits: amb007 (~a_bakic@102.215.76.86.rev.sfr.net) (Ping timeout: 268 seconds)
+[15:20:09] *** Joins: amb007 (~a_bakic@152.12.23.93.rev.sfr.net)
+[15:24:32] *** Quits: amb007 (~a_bakic@152.12.23.93.rev.sfr.net) (Read error: Connection reset by peer)
+[15:25:26] *** Joins: amb007 (~a_bakic@102.215.76.86.rev.sfr.net)
+[15:25:56] *** Joins: aartaka (aartaka@gateway/vpn/protonvpn/aartaka)
+[15:28:32] *** Joins: Jach (~Jach@2601:600:8600:307:7e31:e7a7:f1f3:a96b)
+[15:31:03] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 256 seconds)
+[15:31:28] *** Joins: katco (~katco@2001:470:69fc:105::2b8)
+[15:32:43] *** Quits: katco (~katco@2001:470:69fc:105::2b8) (Remote host closed the connection)
+[15:33:06] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[15:38:35] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 250 seconds)
+[15:38:56] *** Joins: katco (~katco@2001:470:69fc:105::2b8)
+[15:40:27] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[15:51:34] *** Joins: Rue (~rue@2001-b011-1000-11b6-9802-64fa-1e5c-3e4d.dynamic-ip6.hinet.net)
+[15:54:29] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-98.dsl.bell.ca)
+[15:55:43] *** Quits: szos (~user@tromso-studenter6-dhcp66.wifi.uit.no) (Ping timeout: 250 seconds)
+[15:57:39] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 250 seconds)
+[15:58:21] *** Joins: random-nick (~random-ni@87.116.181.150)
+[15:59:49] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[16:03:46] *** Quits: katco (~katco@2001:470:69fc:105::2b8) (Quit: Client limit exceeded: 20000)
+[16:08:40] *** Quits: occ (~occ@user/occ) (Ping timeout: 256 seconds)
+[16:14:50] *** Joins: luis` (~luismboma@2001:470:69fc:105::cc7)
+[16:14:50] *** Joins: sepanko (~sepanko@user/sepanko)
+[16:14:50] *** Joins: edmrk[m] (~edmrkmatr@2001:470:69fc:105::1:5a63)
+[16:14:50] *** Joins: EdLangley[m] (~edwlanmed@2001:470:69fc:105::7a0b)
+[16:14:50] *** Joins: dieggsy (~dieggsy@2001:470:69fc:105::91f)
+[16:14:50] *** Joins: Gnuxie (~gnuxie@user/gnuxie)
+[16:14:51] *** Joins: Mrtn[m] (~mrtn@2001:470:69fc:105::1f44)
+[16:14:51] *** Joins: akater[m] (~akatermat@2001:470:69fc:105::ccef)
+[16:14:51] *** Joins: saltrocklamp[m] (~hexology@user/hexology)
+[16:14:51] *** Joins: sp (~sp@user/susam)
+[16:14:51] *** Joins: yitzi (~yitzi@2001:470:69fc:105::fafd)
+[16:14:51] *** Joins: nworb (~zbrownm]@2001:470:69fc:105::1:33db)
+[16:14:51] *** Joins: kakuhen (~kakuhen@user/kakuhen)
+[16:14:51] *** Joins: Duuqnd (~duuqnd@2001:470:69fc:105::e9c0)
+[16:14:51] *** Joins: CodeBitCookie[m] (~code-bit-@2001:470:69fc:105::a2f)
+[16:14:51] *** Joins: char[m] (~charlesma@2001:470:69fc:105::1:7050)
+[16:14:51] *** Joins: loke[m] (~loke@2001:470:69fc:105::237)
+[16:14:51] *** Joins: seragold[m] (~seragoldm@2001:470:69fc:105::1:6b7f)
+[16:14:51] *** Joins: zbrown[m] (~zbrownsys@2001:470:69fc:105::1:4e81)
+[16:14:51] *** Joins: Spawns_Carpet[m] (~inceptor-@2001:470:69fc:105::1:298b)
+[16:14:51] *** Joins: opalvaults[m] (~opalvault@2001:470:69fc:105::1:51f6)
+[16:14:51] *** Joins: miique (~miiquemat@2001:470:69fc:105::1:6901)
+[16:14:51] *** Joins: linjian (~linj@user/linj)
+[16:15:03] *** Joins: Arcsech (~arcsechma@2001:470:69fc:105::1:797)
+[16:15:03] *** Joins: prov[m] (~provessor@2001:470:69fc:105::cfb)
+[16:17:10] *** Joins: osp (~osp@84.19.72.107)
+[16:17:17] *** Quits: EdLangley[m] (~edwlanmed@2001:470:69fc:105::7a0b) (Quit: Client limit exceeded: 20000)
+[16:17:18] *** Quits: kakuhen (~kakuhen@user/kakuhen) (Quit: Client limit exceeded: 20000)
+[16:22:30] *** Joins: OlCe (~user@amontsouris-654-1-37-13.w92-151.abo.wanadoo.fr)
+[16:25:11] *** Joins: occ (~occ@user/occ)
+[16:26:02] *** Joins: rgherdt (~rgherdt@2a01:598:d037:b097:b8db:6918:76e1:7858)
+[16:26:56] *** Quits: OlCe (~user@amontsouris-654-1-37-13.w92-151.abo.wanadoo.fr) (Ping timeout: 252 seconds)
+[16:27:52] *** Joins: Algernon666 (~Algernon6@2a04:cec0:10e9:d728:9d88:f54e:72ef:9b28)
+[16:28:18] *** Joins: Bike (~Bike@71.69.170.70)
+[16:32:38] *** Joins: chrnybo (~user@89.79-161-60.customer.lyse.net)
+[16:33:19] *** Joins: s-liao (~s-liao@101.86.96.21)
+[16:35:11] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 252 seconds)
+[16:40:18] *** Joins: domovod (~domovod@176.196.122.197)
+[16:41:46] *** Joins: rgherdt_ (~rgherdt@2a01:598:d039:414:563a:b3dc:13b5:c05c)
+[16:43:18] *** Joins: rgherdt__ (~rgherdt@2a01:598:b1aa:9b6c:a0d2:d786:f311:1678)
+[16:44:16] *** Quits: rgherdt (~rgherdt@2a01:598:d037:b097:b8db:6918:76e1:7858) (Ping timeout: 250 seconds)
+[16:45:47] <chrnybo> My server process, written in Lispworks,  holds too many file descriptors.  Guess I'm sloppy when closing them.  Can I map from the TID (thread id) listed by unix' lsof to something useful within the lisp to help me locate the error?
+[16:45:48] *** Joins: katco (~katco@2001:470:69fc:105::2b8)
+[16:46:00] *** Joins: EdLangley[m] (~edwlanmed@2001:470:69fc:105::7a0b)
+[16:46:00] *** Joins: kakuhen (~kakuhen@user/kakuhen)
+[16:46:11] *** Quits: rgherdt_ (~rgherdt@2a01:598:d039:414:563a:b3dc:13b5:c05c) (Ping timeout: 250 seconds)
+[16:46:19] *** Joins: rgherdt_ (~rgherdt@2a01:598:b1a4:4217:a65b:4dd:c76e:3b8f)
+[16:46:34] <phoe> how do you open files? via CL:OPEN, or WITH-OPEN-FILE or something similar?
+[16:47:55] *** Quits: rgherdt__ (~rgherdt@2a01:598:b1aa:9b6c:a0d2:d786:f311:1678) (Ping timeout: 250 seconds)
+[16:48:34] <chrnybo> phoe: Not really files, it's sockets represented in Linux by file descriptors.
+[16:49:01] *** Quits: ahc (~ahc@121.98.229.241) (Quit: Client closed)
+[16:49:07] <phoe> oh, sockets - so it's a networking problem
+[16:49:18] <phoe> the lisp-hug mailgroup might help you more if it's lispworks-specific
+[16:51:25] <chrnybo> Feels like submitting a ticket to support while certain that the problem sits in my chair.
+[16:51:46] <phoe> lisp-hug is a user group, not unlike #commonlisp is a user channel
+[16:52:07] <phoe> it's just that #commonlisp tends to focus on the FOSS implementations
+[16:54:00] *** Quits: raeda (~raeda@72.49.252.109) (Ping timeout: 256 seconds)
+[16:56:18] *** Joins: rgherdt__ (~rgherdt@2a01:598:d033:9b98:6b54:3afa:5afd:517)
+[16:58:16] *** robin__ is now known as robin
+[16:59:00] *** Quits: rgherdt_ (~rgherdt@2a01:598:b1a4:4217:a65b:4dd:c76e:3b8f) (Ping timeout: 250 seconds)
+[17:02:58] *** Quits: Devon (~devon@c-24-2-157-5.hsd1.ma.comcast.net) (Read error: Connection reset by peer)
+[17:05:18] *** Joins: Devon (~devon@c-24-2-157-5.hsd1.ma.comcast.net)
+[17:06:43] <Xach> chrnybo: if you pay for lispworks, that's one of the things you get for it!
+[17:06:56] *** Joins: rgherdt (~rgherdt@2a01:598:d030:8dd4:a16d:ab84:9794:611f)
+[17:06:56] <Xach> chrnybo: professionals who listen to your problems sympathetically
+[17:07:09] *** Quits: s-liao (~s-liao@101.86.96.21) (Quit: Client closed)
+[17:07:51] <rotateq> I wonder how many employees they have for that and maintaining everything.
+[17:08:37] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[17:08:41] *** Quits: rgherdt__ (~rgherdt@2a01:598:d033:9b98:6b54:3afa:5afd:517) (Ping timeout: 245 seconds)
+[17:08:46] *** Joins: rgherdt_ (~rgherdt@2a01:598:d032:e71d:11fb:f7b3:9f31:4445)
+[17:10:00] <beach> My guess is 1.
+[17:11:34] *** Quits: rgherdt (~rgherdt@2a01:598:d030:8dd4:a16d:ab84:9794:611f) (Ping timeout: 250 seconds)
+[17:12:25] <rotateq> beach: Even for all the incoming company support? ^^ Okay than one real advanced sorcerer employed for that may be cheaper.
+[17:13:01] <beach> I am just guessing.
+[17:14:01] <chrnybo> I suppose a sufficiently advanced GPT-n may well keep me entertained with adequate support replies.
+[17:14:48] *** Joins: rgherdt__ (~rgherdt@2a01:598:b1aa:fb03:abae:bd8d:5b3a:af02)
+[17:16:35] <chrnybo> I hope both Dave Fox and Martin Simmons are full time at Lispworks.
+[17:17:12] *** Quits: rgherdt_ (~rgherdt@2a01:598:d032:e71d:11fb:f7b3:9f31:4445) (Ping timeout: 250 seconds)
+[17:17:22] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-98.dsl.bell.ca) (Remote host closed the connection)
+[17:18:05] *** Quits: Bike (~Bike@71.69.170.70) (Quit: Connection closed)
+[17:18:09] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 256 seconds)
+[17:18:17] *** Quits: cosimone` (~user@93-47-231-100.ip115.fastwebnet.it) (Ping timeout: 240 seconds)
+[17:19:59] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[17:20:34] *** Joins: Bike (~Glossina@71.69.170.70)
+[17:20:38] *** Quits: ultera (~ultera@ec2-18-118-193-22.us-east-2.compute.amazonaws.com) (Ping timeout: 256 seconds)
+[17:20:57] <chrnybo> Then there's Usha, who politely ensures bills are paid.
+[17:21:41] *** Joins: s-liao (~s-liao@101.86.96.21)
+[17:23:50] *** Joins: taiju` (~user@240b:253:ec40:2400:b7d1:436e:2d61:e925)
+[17:25:50] *** Quits: triffid (~triffid@gateway/tor-sasl/triffid) (Remote host closed the connection)
+[17:26:12] *** Joins: triffid (~triffid@gateway/tor-sasl/triffid)
+[17:26:24] *** Joins: treflip (~user@user/treflip)
+[17:27:26] *** Quits: rgherdt__ (~rgherdt@2a01:598:b1aa:fb03:abae:bd8d:5b3a:af02) (Ping timeout: 245 seconds)
+[17:28:31] *** Joins: rgherdt (~rgherdt@tmo-087-14.customers.d1-online.com)
+[17:32:08] *** Quits: gko` (~user@2400:8902::f03c:91ff:fe70:e605) (Changing host)
+[17:32:08] *** Joins: gko` (~user@user/gko)
+[17:32:22] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 250 seconds)
+[17:34:21] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[17:36:17] *** Quits: s-liao (~s-liao@101.86.96.21) (Ping timeout: 256 seconds)
+[17:36:30] *** Joins: rgherdt_ (~rgherdt@2a01:598:d03b:93d4:360e:eea1:79cc:6c51)
+[17:38:48] *** Joins: rgherdt__ (~rgherdt@2a01:598:b1a4:b8cf:746f:6b24:d274:e071)
+[17:39:26] *** Joins: frgo (~frgo@p548a30d7.dip0.t-ipconnect.de)
+[17:39:54] *** Quits: rgherdt (~rgherdt@tmo-087-14.customers.d1-online.com) (Ping timeout: 256 seconds)
+[17:41:38] *** Joins: raeda (~raeda@72.49.252.109)
+[17:41:39] *** Quits: rgherdt_ (~rgherdt@2a01:598:d03b:93d4:360e:eea1:79cc:6c51) (Ping timeout: 250 seconds)
+[17:41:42] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[17:42:21] *** Quits: mgl (~mgl@cpc87455-finc19-2-0-cust234.4-2.cable.virginm.net) (Quit: Client closed)
+[17:43:11] *** Quits: dickbar__ (~dickbaren@86-90-132-28.fixed.kpn.net) ()
+[17:46:46] *** Joins: rgherdt_ (~rgherdt@2a01:598:b1b1:4d88:3891:54f1:b1b:c554)
+[17:49:06] *** Quits: rgherdt__ (~rgherdt@2a01:598:b1a4:b8cf:746f:6b24:d274:e071) (Ping timeout: 245 seconds)
+[17:51:51] *** Quits: Guest50 (~Guest50@23-31-147-162-static.hfc.comcastbusiness.net) (Quit: Client closed)
+[17:52:56] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 256 seconds)
+[17:54:48] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[17:55:18] *** Joins: rgherdt__ (~rgherdt@2a01:598:d034:43cd:fae4:bc4a:df80:aab0)
+[17:55:27] *** Joins: Josh_2 (~user@37.25.47.130)
+[17:55:48] <Josh_2> Good afternoon
+[17:57:01] *** Joins: artchad (~user@public-gprs218803.centertel.pl)
+[17:57:56] *** Quits: rgherdt_ (~rgherdt@2a01:598:b1b1:4d88:3891:54f1:b1b:c554) (Ping timeout: 250 seconds)
+[17:59:58] *** Joins: rgherdt (~rgherdt@2a01:598:b1a3:945e:7af4:8d3d:808:6177)
+[18:01:32] *** Quits: rgherdt__ (~rgherdt@2a01:598:d034:43cd:fae4:bc4a:df80:aab0) (Ping timeout: 252 seconds)
+[18:01:46] *** Joins: rgherdt_ (~rgherdt@2a01:598:b1b0:a3d9:b576:f797:be46:8fde)
+[18:04:31] *** Quits: rgherdt (~rgherdt@2a01:598:b1a3:945e:7af4:8d3d:808:6177) (Ping timeout: 245 seconds)
+[18:14:18] *** Joins: s-liao (~s-liao@101.86.96.21)
+[18:14:19] *** Quits: s-liao (~s-liao@101.86.96.21) (Client Quit)
+[18:16:10] *** Quits: silasfox (~sbv@p4fe8d6cb.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[18:25:14] *** Quits: attila_lendvai (~alendvai@catv-89-132-245-188.catv.fixed.vodafone.hu) (Ping timeout: 268 seconds)
+[18:30:48] *** Joins: rgherdt__ (~rgherdt@2a01:598:b1b2:3f0b:edb2:a1f2:2af5:a50b)
+[18:33:16] *** Quits: rgherdt_ (~rgherdt@2a01:598:b1b0:a3d9:b576:f797:be46:8fde) (Ping timeout: 245 seconds)
+[18:35:52] <phoe> I have the first chapter of CLR2 ready for review
+[18:35:59] <Josh_2> Very cool
+[18:36:00] <phoe> who would be up for helping me with that in exchange for my eternal thanks, a mention in the book, and an ebook copy once that thing is done?
+[18:36:12] <artchad> how could I help?
+[18:36:36] <artchad> oh, probably reading it and telling you what's unclear?
+[18:36:58] <phoe> yes, and what's broken, and what isn't working, and what's badly written, and what's missing
+[18:37:09] <phoe> in other words, linguistic and technical review
+[18:37:33] <artchad> sure, sounds fun. I have time.
+[18:38:56] <jcowan> phoe: I'm volunteering as well
+[18:38:57] <sm2n> I can look at it
+[18:40:57] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-98.dsl.bell.ca)
+[18:46:55] *** Quits: Josh_2 (~user@37.25.47.130) (Remote host closed the connection)
+[18:47:08] *** Joins: Josh_2 (~user@37.25.47.130)
+[18:50:37] *** Quits: Josh_2 (~user@37.25.47.130) (Remote host closed the connection)
+[18:50:50] *** Joins: Josh_2 (~user@37.25.47.130)
+[18:53:43] *** Joins: pranavats (3fba1d1b34@2a00:c70:1:178:170:40:189:1)
+[18:56:22] *** Joins: VincentVega (~user@212.97.4.17)
+[19:02:34] <semz> split-sequence declares (ftype (function (&rest t) (values list unsigned-byte)) for its functions. Now type declarations for public interfaces are tricky because in general violating them is undefined behavior, but this one is safe, isn't it? Afaict there is no way to violate it.
+[19:03:07] <semz> Would it be good practice to do this for your libraries then?
+[19:04:52] <semz> There's a ) missing, for shame. I need paredit for IRC.
+[19:05:20] *** Quits: rgherdt__ (~rgherdt@2a01:598:b1b2:3f0b:edb2:a1f2:2af5:a50b) (Ping timeout: 252 seconds)
+[19:05:45] *** Quits: Jing (~hedgehog@240e:390:7c53:a7e1:4458:b22e:b9a7:2cea) (Quit: Textual IRC Client: www.textualapp.com)
+[19:08:54] <Bike> the user of split-sequence couldn't violate it, sure
+[19:11:10] *** Joins: fitzsim (~user@69-165-165-189.dsl.teksavvy.com)
+[19:12:43] *** Quits: Posterdati (~posterdat@host-87-19-166-231.retail.telecomitalia.it) (Ping timeout: 268 seconds)
+[19:14:56] *** Joins: easye (~user@oxi.slack.net)
+[19:20:22] *** Joins: cylb (~cylb@pool-173-76-181-138.bstnma.fios.verizon.net)
+[19:25:19] *** Joins: Posterdati (~posterdat@host-87-19-166-231.retail.telecomitalia.it)
+[19:27:00] *** Joins: utis (~utis@84.208.160.26)
+[19:27:07] <utis> ahoi-hoi
+[19:29:08] <utis> what does one do if one wants to call a macro with different arguments?  it seems that (dolist (x '(foo bar)) (macro x))) doesn't work, since `x' is not evaluated.
+[19:29:47] <phoe> sounds like bad macro design
+[19:29:56] <phoe> or, perhaps, correct macro design that is used wrongly
+[19:30:20] <phoe> what is the macro in question?
+[19:30:47] <Xach> Sometimes the solution is another macro, e.g. with macrolet
+[19:31:43] <utis> well, the macro is a macrolet macro, just to avoid repetition
+[19:32:09] <Bike> but what does it do?
+[19:32:12] <utis> but i suppose the macro should take a list instead of a single argument
+[19:32:20] <utis> it defines a method
+[19:33:09] <phoe> can you post its code? it'll be the quickest to figure it out this way
+[19:35:40] <utis> yeah, but i think you may have given me a sufficient hint
+[19:35:54] <utis> for which thanks
+[19:36:58] *** Quits: jeosol (~jeosol@user/jeosol) (Quit: Client closed)
+[19:38:27] <_death> I think a manual macrolet form is generally bad style.. it often just makes it more difficult to read the code
+[19:39:10] <utis> _death: do you mean repetition is better?
+[19:39:36] <_death> the thinking often goes "I don't want to write this again", but it should be "Will it be harder to read?"
+[19:40:11] <utis> my thinking is more: it's annoying to have to look at repetition
+[19:40:48] *** Joins: jealousmonk (~user@user/jealousmonk)
+[19:41:15] <_death> to each his own I guess.. there was a time when I wrote such forms as well
+[19:43:57] *** Quits: Cymew (~ante@c-0c87225c.023-1144-7570702.bbcust.telenor.se) (Ping timeout: 240 seconds)
+[19:44:15] <semz> macrolet can work wonders sometimes but often an inline function does the job better in my experience
+[19:44:29] *** Joins: rgherdt (~rgherdt@2a01:598:b1b2:3f0b:edb2:a1f2:2af5:a50b)
+[19:50:09] <utis> all right, my original attempt is at bpa.st/WIWA
+[19:51:01] <phoe> oh, you want another macro that expands into a PROGN of DEFMETHODs
+[19:51:28] <phoe> I've seen and used that idiom a few times
+[19:52:04] * phoe brb
+[19:52:14] <phoe> or rather, bbl - it'll be like 20 minutes
+[19:53:06] <beach> utis: I haven't been following the discussion, but in that last link, the macro is used only once, so it doesn't seem to serve any purpose.
+[19:54:17] *** Quits: rgherdt (~rgherdt@2a01:598:b1b2:3f0b:edb2:a1f2:2af5:a50b) (Ping timeout: 252 seconds)
+[19:54:40] <utis> beach: do you mean used twice with the same argument?
+[19:54:53] <_death> instead of the double reverse, you can do (append propp (list char)) .. then compare this and simply having two defmethod forms.. if needed, you can define an auxiliary function to reduce
+[19:55:28] <beach> utis: I see only one instance of (DFM NAME).  Maybe I'm blind?
+[19:56:02] <phoe> utis: try to macrostep your form to see where and how it goes wrong
+[19:56:05] <utis> beach: oh, i thought you meant evaluated once
+[19:56:15] <beach> utis: No, one occurrence.
+[19:56:30] <phoe> it isn't (dolist (x '(foo bar)) (eval `(dfm ,x)))
+[19:56:37] <_death> beach: utis actually wants (dfm rmprop) (dfm addprop)
+[19:56:39] <phoe> and I think you mean semantics like that
+[19:57:20] <beach> _death: I wasn't commenting on what utis wants.  Just the fact that in the code of the link, the macro appears in a single call.
+[19:57:42] <utis> yeah, all i want is to avoid repeating the same defmethod
+[19:57:47] <beach> _death: But OK, if what is wanted requires two calls, then that's different.
+[19:58:57] *** Spec` is now known as spec
+[19:59:09] *** Joins: clos-encounters (~user@167-248-4-131.oa01.lnk01.ne.dynamic.allophone.net)
+[20:01:59] *** Quits: taiju` (~user@240b:253:ec40:2400:b7d1:436e:2d61:e925) (Ping timeout: 252 seconds)
+[20:03:44] <dbotton> Does anyone know of a page some place with lots of Common Lisp quotes? I'd like to have a little tip box appear on my tools start up
+[20:05:58] *** Joins: shka (~herr@109.231.0.226)
+[20:06:40] *** Quits: domovod (~domovod@176.196.122.197) (Ping timeout: 256 seconds)
+[20:10:51] <utis> phoe: yes, but i thought almost every use of eval were considered bad style
+[20:11:13] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[20:11:28] <phoe> utis: because it is
+[20:11:31] <phoe> you can achieve the same with macros
+[20:12:50] *** Joins: jgart (16dd2205e4@irc.cheogram.com)
+[20:13:50] <phoe> utis: https://plaster.tymoon.eu/view/2911#2911
+[20:20:21] *** Quits: clos-encounters (~user@167-248-4-131.oa01.lnk01.ne.dynamic.allophone.net) (Ping timeout: 245 seconds)
+[20:21:20] *** Joins: masinter (~masinter@c-73-158-116-21.hsd1.ca.comcast.net)
+[20:24:39] <utis> thanks, phoe!
+[20:26:17] <Guest74> beach: I think you're the only person I've seen talking about a cl desktop environment.  do you have your thoughts written down anywhere?
+[20:26:36] <Guest74> or more specifically anything about multiple desktops/workspaces which is what I'm working on now.
+[20:33:50] *** Joins: Oladon (~olad@98.43.81.226)
+[20:35:28] *** Joins: jeosol (~jeosol@user/jeosol)
+[20:36:07] <Guest74> ...probably too late. Oh well.
+[20:36:24] *** Quits: wyrd (~wyrd@gateway/tor-sasl/wyrd) (Ping timeout: 276 seconds)
+[20:36:36] <rotateq> Do you maybe mean the paper on CLOSOS or similar?
+[20:37:19] <Guest74> Well, I'm only working on a desktop environment, so just desktop stuff.  That ones pretty much OS stuff.
+[20:37:28] *** Joins: attila_lendvai (~alendvai@2a02:ab88:3710:7c80:9130:5abf:96b3:dc0c)
+[20:38:13] <rotateq> But it will also be with CLIM for the desktop parts.
+[20:39:12] <rotateq> (as far as i understood it)
+[20:41:33] <Guest74> I don't see how considering CLIM isn't a wm let alone a desktop.
+[20:41:35] *** Quits: Algernon666 (~Algernon6@2a04:cec0:10e9:d728:9d88:f54e:72ef:9b28) (Read error: Connection reset by peer)
+[20:41:57] *** Quits: igemnace (~ian@user/igemnace) (Ping timeout: 240 seconds)
+[20:42:41] *** Joins: wyrd (~wyrd@gateway/tor-sasl/wyrd)
+[20:43:05] <rotateq> I see.
+[20:49:09] *** Quits: lisp123 (~lisp123@5.30.23.247) (Remote host closed the connection)
+[20:55:31] *** Joins: dlowe (~dlowe@user/dlowe)
+[20:56:04] *** Joins: igemnace (~ian@user/igemnace)
+[20:59:36] <jackdaniel> technically speaking clim specification includes abstractions from genera called "silica", that is a windowing substrate. that includes a frame manager that may be used as a wm
+[20:59:48] <jackdaniel> in fact someone did exactly that: https://github.com/admich/Doors
+[21:00:50] <jackdaniel> as of desktop thing, as I understand it, it is a universe of interconnected applications and utilities that share data and semantics - I gather that frames and presentations could be arranged to constitue such universe
+[21:01:42] *** Quits: Rue (~rue@2001-b011-1000-11b6-9802-64fa-1e5c-3e4d.dynamic-ip6.hinet.net) (Quit: WeeChat 3.4)
+[21:01:58] *** Joins: Rue (~rue@2001-b011-1000-11b6-9802-64fa-1e5c-3e4d.dynamic-ip6.hinet.net)
+[21:02:18] <jackdaniel> I'm not saying that you should jump at that and write clim-desktop if you don't want to, just pointing out that the assertion was incorrect
+[21:03:18] <etimmons> jackdaniel: I got really confused for a moment. I recently learned of another system called doors: https://github.com/Lovesan/doors
+[21:04:01] *** Joins: silasfox (~sbv@p200300cec7219d00ef0f653f23257d7e.dip0.t-ipconnect.de)
+[21:04:06] <phoe> as if the only openings from a building were doors and windows; where's (ql:quickload :chimneys)!?
+[21:04:23] <masinter> There's Rooms for Interlisp -- shouldn't be too hard to port
+[21:04:51] <etimmons> chimneys are reserved for advent of code usage
+[21:04:59] <phoe> oh, right; pardon
+[21:05:15] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[21:05:51] *** Quits: kevingal (~quassel@2001:770:c0:401:d00d:c035:37fe:5965) (Remote host closed the connection)
+[21:06:00] <Guest74> jd: I'll leave that to the clim people.  I just said 'i dont see how' wasn't asserting anything.
+[21:06:22] <jackdaniel> "considering CLIM isn't a wm let alone a desktop" looks like an assertion to me
+[21:06:27] <jackdaniel> but whatever
+[21:06:39] <Guest74> I would prefer a protocol that is agnostic about the things it deals with.  So people could include stuff written in other languages.
+[21:07:26] <Guest74> you would think stating how I see things would be my opinion of what I know, not an assertion about the reality of things.
+[21:07:50] <jackdaniel> I would think that if you state opinion you at least believe that it is true. stop playing word games
+[21:08:05] <jackdaniel> when someone asserts something they don't present absolute truth
+[21:08:56] <Guest74> it is HOW I SEE THINGS. which is obviously contingent on what I know, not on my opinion.  But this has absolutely nothing to do with a desktop environment.
+[21:09:47] <masinter> https://patents.google.com/patent/US5533183A (expired)
+[21:09:48] <jackdaniel> simple "ack, I was wrong" would suffice - one you state opinion and someone shows that it is incorrect that is the most honest thing to do
+[21:10:01] <jackdaniel> s/one you/when you/
+[21:10:07] <Guest74> yes please do so.
+[21:10:08] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 256 seconds)
+[21:11:25] * Shinmera rolls eyes
+[21:12:58] *** Joins: morganw (~user@80.225.24.132)
+[21:15:49] *** Joins: karlosz (~karlosz@47.151.136.69)
+[21:18:01] *** Joins: Algernon666 (~Algernon6@2a04:cec0:10e9:d728:9d88:f54e:72ef:9b28)
+[21:18:42] *** Quits: karlosz (~karlosz@47.151.136.69) (Client Quit)
+[21:21:51] *** Joins: karlosz (~karlosz@47.151.136.69)
+[21:23:04] *** Joins: rgherdt (~rgherdt@2a01:598:d03e:b78c:9795:3485:9416:4f30)
+[21:24:35] *** Joins: cage (~cage@dynamic-adsl-84-221-50-16.clienti.tiscali.it)
+[21:24:37] *** Quits: Rue (~rue@2001-b011-1000-11b6-9802-64fa-1e5c-3e4d.dynamic-ip6.hinet.net) (Quit: WeeChat 3.4)
+[21:28:43] <Josh_2> Does anyone have an example of using  uiop:with-temporary-file ?
+[21:29:24] *** Quits: MajorBiscuit (~MajorBisc@c-001-020-005.client.tudelft.eduvpn.nl) (Ping timeout: 250 seconds)
+[21:33:25] *** Quits: karlosz (~karlosz@47.151.136.69) (Quit: karlosz)
+[21:34:20] *** Quits: pillton (~user@193-116-80-74.tpgi.com.au) (Ping timeout: 250 seconds)
+[21:35:39] *** Quits: Algernon666 (~Algernon6@2a04:cec0:10e9:d728:9d88:f54e:72ef:9b28) (Ping timeout: 250 seconds)
+[21:37:39] <Josh_2> I can use call-with-temporary-file, that seems to work
+[21:38:09] *** Joins: MajorBiscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e)
+[21:46:18] *** Quits: silasfox (~sbv@p200300cec7219d00ef0f653f23257d7e.dip0.t-ipconnect.de) (Ping timeout: 260 seconds)
+[21:50:43] *** Quits: dlowe (~dlowe@user/dlowe) (Ping timeout: 256 seconds)
+[21:51:26] *** Quits: MajorBiscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e) (Ping timeout: 252 seconds)
+[21:51:55] *** Joins: clos-encounters (~user@167-248-4-131.oa01.lnk01.ne.dynamic.allophone.net)
+[21:59:01] *** Joins: Algernon666 (~Algernon6@i19-lef01-t2-89-85-247-5.ft.lns.abo.bbox.fr)
+[22:00:12] *** Joins: ldb (~user@user/ldb)
+[22:10:07] <etimmons> Josh_2: what are you trying to do? There's a lot of options to with-temporary-file, so it's not clear an example would be super useful
+[22:10:36] <Josh_2> Chirp seems to only accept a file as an input for uploading to Twitter, I have the binary data itself
+[22:10:51] <Josh_2> so I just want a quick and easy way of creating and deleting a temporary file for use by Chirp
+[22:13:31] <Shinmera> iirc that limitation is because of drakma.
+[22:13:50] *** Quits: Algernon666 (~Algernon6@i19-lef01-t2-89-85-247-5.ft.lns.abo.bbox.fr) (Ping timeout: 260 seconds)
+[22:15:34] *** Quits: rgherdt (~rgherdt@2a01:598:d03e:b78c:9795:3485:9416:4f30) (Remote host closed the connection)
+[22:15:45] *** Joins: rgherdt (~rgherdt@2a01:598:d03e:b78c:9795:3485:9416:4f30)
+[22:18:17] <etimmons> Josh_2: Assuming you need a pathname, I think something like this should work: https://plaster.tymoon.eu/view/2913#2913
+[22:20:26] <Josh_2> In that case dont I have to open a file?
+[22:21:10] <etimmons> with-temporary-file creates the file for you and gives you both the stream and pathname to it (if you ask for them)
+[22:21:46] *** Quits: rgherdt (~rgherdt@2a01:598:d03e:b78c:9795:3485:9416:4f30) (Ping timeout: 260 seconds)
+[22:22:22] <Josh_2> Alright cool thanks :)
+[22:23:07] *** Quits: treflip (~user@user/treflip) (Quit: good night!)
+[22:27:12] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[22:27:54] *** Quits: chrnybo (~user@89.79-161-60.customer.lyse.net) (Ping timeout: 250 seconds)
+[22:29:34] *** Quits: triffid (~triffid@gateway/tor-sasl/triffid) (Remote host closed the connection)
+[22:29:56] *** Joins: triffid (~triffid@gateway/tor-sasl/triffid)
+[22:30:04] *** Quits: clos-encounters (~user@167-248-4-131.oa01.lnk01.ne.dynamic.allophone.net) (Quit: ERC (IRC client for Emacs 27.1))
+[22:31:31] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 256 seconds)
+[22:36:08] *** Quits: pjb (~pjb@user/pjb) (Ping timeout: 250 seconds)
+[22:36:52] *** Joins: pjb (~pjb@user/pjb)
+[22:41:45] *** Joins: chrnybo (~user@89.79-161-60.customer.lyse.net)
+[22:44:23] *** Joins: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4)
+[22:50:26] *** Joins: kpoeck (~kpoeck@2a01:598:92ba:b949:6171:6dd6:3e6f:83bb)
+[23:02:49] *** Joins: karlosz (~karlosz@47.151.136.69)
+[23:05:11] *** Quits: karlosz (~karlosz@47.151.136.69) (Client Quit)
+[23:05:20] <Xach> I used the :continuation option to upload stuff from memory with drakma
+[23:05:58] *** Quits: Oladon (~olad@98.43.81.226) (Quit: Leaving.)
+[23:13:02] *** Quits: greaser|q (greaser@antihype.space) (Changing host)
+[23:13:02] *** Joins: greaser|q (greaser@user/greasemonkey)
+[23:13:05] *** greaser|q is now known as GreaseMonkey
+[23:13:42] *** Quits: ldb (~user@user/ldb) (Quit: ERC (IRC client for Emacs 27.2))
+[23:15:44] *** Joins: karlosz (~karlosz@47.151.136.69)
+[23:21:23] *** Quits: karlosz (~karlosz@47.151.136.69) (Ping timeout: 256 seconds)
+[23:22:00] *** Quits: aartaka (aartaka@gateway/vpn/protonvpn/aartaka) (Read error: Connection reset by peer)
+[23:23:17] *** Quits: amb007 (~a_bakic@102.215.76.86.rev.sfr.net) (Ping timeout: 252 seconds)
+[23:23:24] *** Joins: amb007 (~a_bakic@219.12.23.93.rev.sfr.net)
+[23:23:27] *** Joins: simendsjo (~user@84.211.91.241)
+[23:25:02] *** Quits: simendsjo (~user@84.211.91.241) (Remote host closed the connection)
+[23:27:21] *** Joins: simendsjo (~user@84.211.91.241)
+[23:30:59] <masinter> XCL used an in-memory file system for things like that
+[23:31:46] <masinter> Instead of {DSK} it was called {CORE}
+[23:32:58] *** Joins: orestarod (~orestarod@2a02:2149:8ac6:5900:9a3d:dd76:4837:8b41)
+[23:33:25] <_death> nowadays /tmp is usually a tmpfs (backed by RAM)
+[23:33:51] *** Quits: rogersm (~rogersm@90.166.180.250) (Quit: Leaving...)
+[23:36:10] <masinter> I think at the time it was novel, and tied to the residential environment
+[23:37:44] <masinter> inspired by Multics
+[23:37:49] *** Quits: aeth (~aeth@user/aeth) (Ping timeout: 256 seconds)
+[23:37:53] <_death> nice
+[23:38:17] *** Quits: Guest74 (~Guest74@modemcable110.164-177-173.mc.videotron.ca) (Quit: Connection closed)
+[23:39:10] <masinter> We've been using it ({CORE}) more lately, for the git integration
+[23:39:44] *** Joins: aeth (~aeth@user/aeth)
+[23:40:52] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 256 seconds)
+[23:41:26] <_death> what does git integration mean? also, if I have a medley image and I want to update, what should be done? (hopefully there's a document explaining it, since I'm not sure it's on topic)
+[23:42:31] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[23:43:58] *** Joins: gaqwas (~john@dynamic-095-115-027-162.95.115.pool.telefonica.de)
+[23:45:06] *** Quits: gaqwas (~john@dynamic-095-115-027-162.95.115.pool.telefonica.de) (Remote host closed the connection)
+[23:49:34] <masinter> I think that depends on whether CLtL 1 is on topic
+[23:50:01] <_death> right, medley does contain a CL mode, that's why I wasn't sure ;)
+[23:50:59] <masinter> Ron's been working on a new Github interface
+[23:52:13] <dbotton> How do I find what directories will be searched for projects by users when I do (ql:quickload :my-proj)?
+[23:53:03] <dbotton> Currently I just people all my projects in ~/common-lisp
+[23:53:46] <dbotton> As I plan on generating projects I'd like to see if some way to see what is available dynamically
+[23:54:38] <_death> quicklisp at least has ql:*local-project-directories*
+[23:55:06] <White_Flame> there's (ql:list-local-projects) for the paths, and (ql:list-local-systems) for just the names
+[23:55:35] <White_Flame> but those obv don't include the ones in the dist, which since they automatically download, doesn't make a distinction for what's cached
+[23:55:54] <etimmons> It's complicated. In addition to ql:_local-project-directories_, ASDF has asdf:_central-registry_ and the source registry
+[23:55:54] *** Quits: amb007 (~a_bakic@219.12.23.93.rev.sfr.net) (Read error: Connection reset by peer)
+[23:56:04] *** Joins: amb007 (~a_bakic@102.215.76.86.rev.sfr.net)
+[23:56:14] <etimmons> The source registry is not particularly introspectable
+[23:56:44] <dbotton> and it seems ~/common-lisp hard coded
+[23:56:59] <etimmons> ~/common-lisp is part of the source registry
+[23:57:07] <etimmons> And can be ignored
+[23:57:18] <etimmons> but most frequently isn't
+[23:57:42] <White_Flame> the intended use with QL is ~/quicklisp/local-projects/
+[23:57:48] <dbotton> where is the source registry?
+[23:58:02] <etimmons> I'd suggest defaulting to something like ~/common-lisp or ~/quicklisp/local-projects and letting the user override it if they have a different setup
+[23:58:26] <etimmons> https://asdf.common-lisp.dev/asdf.html#Controlling-where-ASDF-searches-for-systems
+[23:58:46] <etimmons> It's built up from a lot of different files and an environment variable
+[23:58:55] <Xach> You can also add to asdf:*system-definition-search-functions*!
+[23:59:05] <Xach> That can get a little obscure
+[23:59:05] <etimmons> Oh yeah, forgot about that one!
+[23:59:13] <White_Flame> ~/common-lisp/ is searched via ASDF, not directly by QL.  QL obviously defers to ASDF if it's not under the QL paths
+[23:59:33] <Xach> the local-projects system uses asdf:*system-definition-search-functions*
+[23:59:44] <Xach> and dist search too

@@ -1,0 +1,672 @@
+[00:10:02] *** Joins: monkey_ (~user@190.104.116.153)
+[00:21:53] *** Joins: rgrinberg (~textual@2806:101e:7:def:9c0d:c444:6765:d1db)
+[00:23:07] <daemon> ouch that is a heavy load
+[00:23:11] <daemon> you tried isolation
+[00:23:25] <daemon> or offsetting some data into redis/pg etc
+[00:23:43] <daemon> or if you do not just have a good old fashioned memory leak
+[00:24:57] *** Quits: morte_ (~user@190.56.51.233) (Ping timeout: 240 seconds)
+[00:34:34] *** Quits: UsbSick (~UsbSick@2600:6c48:757f:e654:a863:efc5:fd1:1de4) (Remote host closed the connection)
+[00:38:02] *** Quits: furrymcgee (~devuan@cgn-89-1-208-9.nc.de) (Quit: leaving)
+[00:42:57] *** Quits: monkey_ (~user@190.104.116.153) (Ping timeout: 240 seconds)
+[00:49:28] *** Joins: kensanata (~user@user/kensanata)
+[00:49:38] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 260 seconds)
+[00:51:25] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[00:57:36] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 268 seconds)
+[00:58:04] *** Quits: rgrinberg (~textual@2806:101e:7:def:9c0d:c444:6765:d1db) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[01:13:41] <aquanight> daemon: I'm already at less than 0.2% of possible states at that particular point in the algorithm.
+[01:13:47] <aquanight> I'm not sure if I *can* reduce it further.
+[01:14:13] <aquanight> probably the best I can do is try to optimize things from the memory front. Find better/more compact ways to store the situation.
+[01:15:01] <aquanight> hmmm
+[01:15:19] <aquanight> maybe I can. A given state is 4 integers. In theory I have a lower bound of 1.8GB at that particular point.
+[01:16:18] <daemon> aquanight, eh honestly depending exactly what type of thing you was trying to do and the infrastructure I would probably start putting rust or erlang in place for certain things
+[01:16:20] <aquanight> but I have no idea how. For many integers there is probably not much to be saved between its string representation and an 8-byte integer.
+[01:17:00] <aquanight> daemon: I'm really hoping to solve this with perl. Hitting this kind of heavy complexity was a bit unexpected, sure.
+[01:17:22] <daemon> perl is great for quickly writing stuff but it is an interpolated language, sometimes its better to use it as the glue not the engine
+[01:18:15] <aquanight> hmm
+[01:18:16] <daemon> which is why openapi is so great, you can write complex systems and interchange the bits you need with languages that excel at them
+[01:18:23] <daemon> nothing does everthing and all
+[01:19:15] <aquanight> sweval: use integer; my $x = (2 ** 63 - 1);
+[01:19:17] <perlbot> aquanight: 9223372036854775807
+[01:19:24] <aquanight> sweval: use integer; my $x = (2 ** 63 - 1); length "$x";
+[01:19:25] <perlbot> aquanight: 19
+[01:19:45] <aquanight> this could work.
+[01:19:45] <Yaakov> I do it all, and then I tear it all down and do it all again.
+[01:20:02] <aquanight> maybe.
+[01:20:31] <aquanight> sweval: use Devel::Peek; my $x = 12345; $x = 0 + ("${x}67"); Dump($x); # Please no PV please no PV please no PV
+[01:20:32] <perlbot> aquanight: SV = PVIV(0x5635507674a8) at 0x5635509aab30   REFCNT = 1   FLAGS = (IOK,pIOK)   IV = 1234567   PV = 0x5635509ab220 "12345"\0   CUR = 5   LEN = 10 
+[01:20:42] <aquanight> FUCK
+[01:22:17] <aquanight> I wonder if I can figure out how to "force" perl to drop the PV
+[01:22:24] <aquanight> like the buffer
+[01:22:29] <aquanight> I need the *buffer* gone.
+[01:22:54] <aquanight> maybe Scalar::Util can help here?
+[01:23:15] <ology> A worthy workflow.
+[01:23:20] <aquanight> sweval: use Devel::Peek; use Scalar::Util 'dualvar'; my $x = 12345; $x = dualvar(0 + ("${x}67"), undef); Dump($x); # Please no PV please no PV please no PV
+[01:23:22] <perlbot> aquanight: Use of uninitialized value in subroutine entry at (IRC) line 1. SV = PVNV(0x559d2acdc358) at 0x559d2af26240   REFCNT = 1   FLAGS = (IOK,POK,pIOK,pPOK)   IV = 1234567   NV = 0   PV = 0x559d2af4b240 ""\0   CUR = 0   LEN = 10 
+[01:23:39] <aquanight> damn
+[01:24:24] <aquanight> sweval: use Devel::Peek; my $x = 12345; $x = 1 * ("${x}67"); Dump($x); # Please no PV please no PV please no PV
+[01:24:25] <perlbot> aquanight: SV = PVIV(0x55a6d64114a8) at 0x55a6d6654b30   REFCNT = 1   FLAGS = (IOK,pIOK)   IV = 1234567   PV = 0x55a6d6655240 "12345"\0   CUR = 5   LEN = 10 
+[01:24:37] <aquanight> I mean. I guess I get it.
+[01:24:38] <daemon> aquanight, for the sake of christmas I am just going to re-point to my point about using perl for what it is good at, if you need number precision use a functional language like lisp haskell or erlang, write it all as seperate modules in perl that talk over tcp in a task or queue base arch and replace the bits you need with what you need
+[01:24:41] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[01:25:44] <aquanight> daemon: in all honesty, this shit's probably going to be slow and massive as fuck no matter what language I write it in unless I can figure out what I'm doing wrong.
+[01:25:59] *** Joins: xenial-user5 (~androirc@20014C4C17E1D2005D3863A85B8423A7.catv.pool.telekom.hu)
+[01:26:10] <daemon> aquanight, make sure to take a step back and look at the entire program, large blocks of code are evil weather in perl or another language
+[01:26:21] <daemon> never ever end up in a 'block of code that does magic things'
+[01:26:34] <daemon> segregation and simplicity in function is how to crack any problem
+[01:26:37] <aquanight> I know *approximately* why RAM blows up so much. Hashes are huge almost certainly.
+[01:26:43] *** Joins: monkey_ (~user@190.104.116.153)
+[01:27:11] <aquanight> I just need to figure out what part of the hash is the biggest contributor and I can look at slimming it down
+[01:27:31] <daemon> then write some prototype throw away cases full of crap that mimic the behaviour
+[01:27:58] <daemon> if they don't mimic it, then you likely have a memory leak
+[01:28:04] <aquanight> sweval: use Devel::Peek; my $x = 12345; my $y; $y = 0 + ("${x}67"); Dump($y); # Please no PV please no PV please no PV
+[01:28:05] <daemon> re-add portions till it does represent
+[01:28:05] <perlbot> aquanight: SV = IV(0x55b7615b4a00) at 0x55b7615b4a10   REFCNT = 1   FLAGS = (IOK,pIOK)   IV = 1234567 
+[01:28:08] <aquanight> YES.
+[01:28:14] <aquanight> there's the ticket
+[01:28:26] *** Joins: RandalSchwartz (~Adium@2601:1c0:6a00:71d0::3593)
+[01:28:29] <aquanight> let's see what this does
+[01:28:46] <daemon> :)
+[01:29:37] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 240 seconds)
+[01:32:42] <aquanight> looks like so far I've about halved my RAM peak
+[01:32:53] <aquanight> just by using that trick
+[01:33:04] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[01:33:08] <daemon> what are you actuall doing
+[01:33:17] <daemon> what is the goal
+[01:33:33] <aquanight> daemon: this is all adventofcode madness
+[01:33:43] <daemon> ah I seen some of that in another channel
+[01:34:01] <aquanight> today's is doing some ALU emulation madness.
+[01:34:29] <daemon> I did the first few days then got diverted to other projects
+[01:34:45] <daemon> but thought it would be fun next year to release the solutions as an ACME module
+[01:35:08] *** Joins: morte_ (~user@190.104.116.153)
+[01:35:40] <aquanight> I'm basically taking a sort of quantum-superposition-like approach where I'm tracking the possible states (and collapsing those that are identical)
+[01:35:53] <aquanight> the problem of course is that the input domain is 9^11
+[01:35:55] <daemon> reudction of possibilities 
+[01:35:56] <aquanight> er
+[01:35:58] <aquanight> 9^14th
+[01:36:27] <daemon> can't you use an A* type optimization and eliminate entire paths (I do not know the actual question)
+[01:37:40] <aquanight> I could probably do some tricks to take assumptions based on how the input "algorithm" is written, but I usually don't like making arbitrary assumptions about the input that aren't spelled out
+[01:38:50] <aquanight> the number of times AOC makes it look like "oh you can make this assumption about the input" and then blows that assumption out of the water
+[01:40:55] <aquanight> but I think I now need to look at when I'm doing the non-input sections of the algorithm. I'm up to 4 minutes to work over 58M states but I'm not really sure what I can do about it.
+[01:41:33] <aquanight> I could try to kill off one more level of the entersub/leavesub overhead but I can't remember if lexical variables are visible to a string eval
+[01:41:41] <aquanight> sweval: my $x = 42; eval '$x';
+[01:41:42] <perlbot> aquanight: 42
+[01:41:47] <aquanight> apparently they are.
+[01:41:59] <daemon> :)
+[01:42:11] <daemon> could always remove strict and have globals everywhere
+[01:42:34] <aquanight> and before someone mentions that string eval is still an entersub/leavesub boundary: this would replace 58M entersub/leavesub with just 1.
+[01:45:25] <aquanight> looks like hash destruction is also still a problem. Input #12 still spent 30 seconds destroying the old state.
+[01:46:00] * aquanight kicks self
+[01:46:08] <daemon> maybe you could use multi threading
+[01:46:08] <aquanight> I keep forgetting it's safe to delete the current item while iterating.
+[01:46:19] <aquanight> I should change my $input = $state{$state}; to my $input = delete $state{$state};
+[01:47:08] <daemon> got to admit when I am faced with such problems I normally just use redis and design a cleaner
+[01:47:29] <aquanight> I should probably also switch to each() instead of keys()
+[01:47:34] <aquanight> that might also be contributing to some slowdown
+[01:48:00] <aquanight> unless foreach has an internal optimization for foreach (keys %hash) it's having to pull all the keys into a list
+[01:48:37] <daemon> before shoving them into a hash shove them into a list or array and do a while shift
+[01:48:55] <daemon> lists are far faster than hashes as long as you do not need lookups
+[01:49:14] <aquanight> I'm using the hash to condense identical states.
+[01:49:46] <daemon> do both, keep a hash as index of seen keys entered into the array and their placement 
+[01:52:02] <buu> perlbot: utf8 
+[01:52:03] <perlbot> buu: U+F898 (ef a2 98):  [] 
+[01:52:13] <buu> wtf is that
+[01:52:19] <buu> bah
+[01:52:23] <aquanight>  a box, by the look of it
+[01:53:36] <daemon> closest thing I could find is in image search by google
+[01:53:38] <daemon> it came up with 'the'
+[01:53:58] <daemon> https://en.wikipedia.org/wiki/The
+[01:53:58] <Paperbot> Link title(s): [ The - Wikipedia ]
+[01:54:10] <buu> o.O
+[01:54:20] <daemon> or 'barren thorn'
+[01:54:31] <daemon> barred*
+[01:54:45] <buu> that sounds more likely
+[01:55:07] <daemon> never had a google result only have 5 results x-x
+[01:55:19] <daemon> did you copy it off the side of some very old rock or something
+[01:55:27] <RandalSchwartz> hi
+[01:56:40] <RandalSchwartz> Merry Christmas Eve
+[01:56:56] <xenial-user5> Christmas Eve, no snow
+[01:57:17] *** Quits: morte_ (~user@190.104.116.153) (Ping timeout: 240 seconds)
+[01:57:33] <daemon> RandalSchwartz, 10:27pm, here merry christmas (eve) :)
+[01:57:49] <xenial-user5> Maybe tomorrow :-)
+[01:59:05] <ology> Snow here. w00t
+[01:59:16] <ology> Hey RandalSchwartz 
+[02:02:29] <RandalSchwartz> hi gene
+[02:03:02] <RandalSchwartz> By the time I master these crutches, I won't need them. :)
+[02:03:41] <RandalSchwartz> I broke my hip two days before my 60th birthday, and spent two weeks in a Tijuana hospital
+[02:05:23] <RandalSchwartz> on the other hand, except for the crutches, I'm doing pretty well now being 60
+[02:07:37] *** Quits: monkey_ (~user@190.104.116.153) (Read error: Connection reset by peer)
+[02:08:11] <ology> Oh man! Hope the crutch is not needed for long.
+[02:08:23] <ology> es
+[02:08:44] *** Quits: pabogr (uid27497@id-27497.tinside.irccloud.com) (Quit: Connection closed for inactivity)
+[02:08:52] *** Joins: monkey_ (~user@190.104.116.153)
+[02:09:11] <ology> s/ is/es are/ # Grammar!
+[02:10:01] <RandalSchwartz> yeah. they tend to come in pairs
+[02:10:11] <RandalSchwartz> I'm walking 5 steps nearly normally now
+[02:10:21] <RandalSchwartz> in a few more days, maybe longer
+[02:10:49] <RandalSchwartz> who did the perl podcast,  and worked with chicago.pm?
+[02:11:52] <RandalSchwartz> names on tip of tongue
+[02:12:17] <ology> Joel Berger
+[02:12:27] <ology> no
+[02:13:07] <RandalSchwartz> no
+[02:13:45] <ology> https://code-maven.com/cmos ?
+[02:13:45] <Paperbot> Link title(s): [ CMOS - Code-Maven Open Source podcast ]
+[02:14:10] <RandalSchwartz> mcadams
+[02:14:17] <ology> ah
+[02:14:17] <RandalSchwartz> something like that
+[02:14:49] <ology> http://www.perlcast.com/ ?
+[02:14:49] <Paperbot> Link title(s): [ Perlcast: Podcasting Perl ]
+[02:14:57] <RandalSchwartz> Joshua McAdams
+[02:15:26] <RandalSchwartz> Ugh, no phone for him
+[02:20:23] <ology> I still remember the sessions and help you gave to my company with Stonehenge, when I was working in Chicago, back in... 2000?
+[02:20:32] *** Quits: locrian9 (~mike@99-153-255-194.lightspeed.irvnca.sbcglobal.net) (Quit: leaving)
+[02:20:38] <ology> Never went to many pm mettings though.
+[02:21:09] <ology> We got rootbeer to come to a pm, I belive.
+[02:21:45] * ology orders a new set of fingers
+[02:21:45] <RandalSchwartz> yeah. would imagine pms
+[02:21:57] <RandalSchwartz> back in the 2000 days
+[02:22:05] <RandalSchwartz> oh, I should try to call tom
+[02:22:48] <ology> One time he said something like, "Perl gives you enough rope to shoot yourself in the foot with." I think.
+[02:23:18] <RandalSchwartz> that originated from Larry
+[02:23:21] <ology> aha
+[02:25:06] <RandalSchwartz> voicemail for a person that sounds like tom
+[02:25:30] <RandalSchwartz> it's sad that stonehenge's tad and bill have both passed away
+[02:25:42] <daemon> ology, perl gives you enough power and rope to shoot your self in the foot recursively and possible with witnesses :)
+[02:26:26] <daemon> perl hails from the world of where languages do what you say not what is safe
+[02:27:46] <ology> RandalSchwartz: :\ sorry man
+[02:27:58] <ology> daemon: :)
+[02:28:18] <RandalSchwartz> chip is alive … talking with him right now
+[02:28:40] *** Joins: Guest18 (~Guest18@cpe0050568017ea-cmf81d0fa79ca0.cpe.net.cable.rogers.com)
+[02:29:01] <ology> Say hi to Chip. I got him to apply to Cloudmark, long ago...
+[02:29:16] <ology> Fuckin embarrassed myself at that company though. Ugh
+[02:30:37] *** Quits: djerius (~quassel@pool-108-20-43-199.bstnma.fios.verizon.net) (Ping timeout: 240 seconds)
+[02:32:35] *** Joins: djerius (~quassel@pool-108-20-43-199.bstnma.fios.verizon.net)
+[02:33:33] *** Quits: pizdets (~pizdets@183.182.111.24) (Ping timeout: 256 seconds)
+[02:33:52] *** Joins: pizdets_ (~pizdets@183.182.110.125)
+[02:38:01] *** Joins: djerius_ (~quassel@pool-108-20-43-199.bstnma.fios.verizon.net)
+[02:38:06] *** Quits: djerius (~quassel@pool-108-20-43-199.bstnma.fios.verizon.net) (Ping timeout: 268 seconds)
+[02:39:46] *** Joins: whynot (~whynot@37.73.3.126)
+[02:43:52] <RandalSchwartz> he says he owes something to you
+[02:45:17] *** Quits: monkey_ (~user@190.104.116.153) (Ping timeout: 240 seconds)
+[02:48:41] <ology> what the?
+[02:48:55] <ology> nah
+[02:49:11] <ology> Unless I loaned him a book back then!
+[02:49:13] <ology> haha
+[02:52:44] *** Quits: Guest18 (~Guest18@cpe0050568017ea-cmf81d0fa79ca0.cpe.net.cable.rogers.com) (Quit: Client closed)
+[02:52:48] <daemon> sounds like time for an email :)
+[02:55:21] *** Quits: xenial-user5 (~androirc@20014C4C17E1D2005D3863A85B8423A7.catv.pool.telekom.hu) (Ping timeout: 245 seconds)
+[02:56:19] *** Joins: rgrinberg (~textual@187.223.23.238)
+[02:58:05] *** Joins: zer0bitz_ (~zer0bitz@dsl-hkibng32-54f844-160.dhcp.inet.fi)
+[03:00:18] *** Quits: zer0bitz (~zer0bitz@2001:2003:f444:a000:2421:137f:dee3:7f7d) (Ping timeout: 260 seconds)
+[03:01:25] <RandalSchwartz> chip convo done
+[03:01:55] <aquanight> hmm
+[03:02:04] <aquanight> sweval: my %x = (hello => 42); "%x"
+[03:02:06] <perlbot> aquanight: %x
+[03:02:16] *** Joins: monkey_ (~user@190.56.51.233)
+[03:02:25] <aquanight> of all the dumb things. Why did I keep wanting to think hashes could be stringed
+[03:03:21] *** Joins: morte_ (~user@190.104.116.153)
+[03:04:51] *** Joins: zer0bitz (~zer0bitz@dsl-hkibng32-54f844-160.dhcp.inet.fi)
+[03:07:15] * GumbyPAN CPAN Upload: Tickit-App-Plugin-EscapePrefix-0.02 by PEVANS https://metacpan.org/release/PEVANS/Tickit-App-Plugin-EscapePrefix-0.02
+[03:08:17] *** Quits: zer0bitz_ (~zer0bitz@dsl-hkibng32-54f844-160.dhcp.inet.fi) (Ping timeout: 240 seconds)
+[03:12:39] *** Quits: monkey_ (~user@190.56.51.233) (Read error: Connection reset by peer)
+[03:13:25] *** Joins: monkey_ (~user@190.56.51.233)
+[03:15:22] * ology ponders his bourbon...
+[03:16:20] <ology> Ode to a shot of bourbon / How I love thee / Let me count the shots^Wways
+[03:21:39] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Killed (NickServ (Forcing logout FinnElija -> finn_elija)))
+[03:21:39] *** Joins: finn_elija (~finn_elij@user/finn-elija/x-0085643)
+[03:21:39] *** finn_elija is now known as FinnElija
+[03:28:29] * ology & # Ok. Time to go to Mom's for goose dinner
+[03:31:13] *** Quits: tejr (~tejr@user/tejr) (Remote host closed the connection)
+[03:31:17] *** Quits: morte_ (~user@190.104.116.153) (Ping timeout: 240 seconds)
+[03:32:39] *** Joins: tejr (~tejr@user/tejr)
+[03:34:06] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Remote host closed the connection)
+[03:34:11] *** Quits: swaggboi (~swaggboi@slackware.uk/supporter/swaggboi) (Quit: C-x C-c)
+[03:34:31] *** Joins: FinnElija (~finn_elij@user/finn-elija/x-0085643)
+[03:35:40] <aquanight> daemon: I got about 25% better speed by putting the entire loop inside the string eval (and thus now only one entersub/leavesub transition).
+[03:36:25] <aquanight> I just might have to remember this for later.
+[03:39:38] <ether> poor cobra chicken
+[03:40:16] *** Joins: swaggboi (~swaggboi@slackware.uk/supporter/swaggboi)
+[03:41:26] *** Quits: kensanata (~user@user/kensanata) (Remote host closed the connection)
+[03:48:25] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 268 seconds)
+[03:52:27] *** Quits: zer0bitz (~zer0bitz@dsl-hkibng32-54f844-160.dhcp.inet.fi) (Read error: Connection reset by peer)
+[03:53:44] <berndj> is it unidiomatic these days to write loops over ($[..$#foo) rather than simply over (0..$#foo)?
+[04:03:49] <tirnanog> I would assume so, given that it was deprecated in 5.12 and that it's no longer possible to assign to $[ as of 5.30.
+[04:05:53] <tirnanog> also, 5.12 made it possible to write keys @foo instead.
+[04:08:08] *** Joins: krismatrix (~krismatri@38.80.149.51)
+[04:08:38] <aquanight> berndj: also you can just loop on @foo directly unless you actually need the index
+[04:08:45] *** Quits: krismatrix (~krismatri@38.80.149.51) (Client Quit)
+[04:09:01] <aquanight> e.g. for my $foo (@foo) is perfectly fine
+[04:09:35] <berndj> ah my system has a perl < 5.30 so the man page still documents a writeable $[
+[04:09:39] <aquanight> provided you: A) do not need the index of any given item, B) do not modify @foo
+[04:10:05] <aquanight> even so it was really never a good idea to set $[
+[04:10:26] <berndj> aquanight, and yeah, i think i do need the index (i end up (sometimes) having to splice out parts of an array)
+[04:10:49] <aquanight> ok
+[04:11:03] <aquanight> if you need the index *AND* you are modifying the array during loop you probably need a long-form loop then
+[04:11:21] <berndj> no, luckily not modifying the array during the loop
+[04:11:25] <aquanight> ah
+[04:11:39] <aquanight> in that case for my $ix ( 0 .. $#foo ) is fine
+[04:11:51] <berndj> utility function identifies a few elements to toss, then calling code does the splices
+[04:11:53] <aquanight> I actually would recommend this in preference to for my $ix (keys @foo)
+[04:12:08] <berndj> not really 100% happy with how i'm doing it, but meh, it's a 20-liner
+[04:13:57] <berndj> note to self: remember to splice out unwanted items in reverse order
+[04:15:00] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[04:15:51] <aquanight> note to berndj: my %todelete; for my $ix ( 0 .. $#foo ) { if (should_delete) { $todelete{$ix} = 1; } } @foo = @foo[grep { !$todelete{$_} } 0 .. $#foo]; # mass-splice in one swoop
+[04:15:57] <berndj> if foreach (reverse @i) { "nothing that modifies @i" } somewhat efficient, as in the list hopefully only gets reversed once?
+[04:16:37] <aquanight> hell
+[04:16:41] <aquanight> you could even do it as
+[04:17:07] <berndj> aquanight, yeah thanks for that reminder. maybe i should do %todelete rather, that's more in line with how i normally do things
+[04:17:08] <aquanight> @foo = @foo[grep { !delete-condition } 0 .. $#foo]; and skip the for loop
+[04:18:23] *** Quits: monkey_ (~user@190.56.51.233) (Ping timeout: 256 seconds)
+[04:18:24] <berndj> unfortunately a grep isn't nice here, as i'd have to run the condition in duplicate (once to see if there's anything to delete (and print something only once), and another time to actually delete the things)
+[04:19:37] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 240 seconds)
+[04:21:41] <berndj> ugh, i don't need a list at all, i can just use a hash. doh
+[04:28:12] <berndj> aquanight, thanks for the sounding board. just using hash membership as the condition works out much more elegantly here than having to dick around with splice
+[04:43:28] *** Joins: magla (~gelignite@55d49e3c.access.ecotel.net)
+[04:43:30] *** Quits: tirnanog (~tirnanog@user/tirnanog) (Quit: = "")
+[04:47:54] *** Quits: RandalSchwartz (~Adium@2601:1c0:6a00:71d0::3593) (Quit: Leaving.)
+[04:49:12] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[04:53:35] *** Quits: Paladin (~paladin@S0106c0eae42a785d.vc.shawcable.net) (Remote host closed the connection)
+[04:54:10] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 260 seconds)
+[04:54:30] *** Joins: RandalSchwartz (~Adium@2601:1c0:6a00:71d0::3593)
+[04:55:54] *** Quits: RandalSchwartz (~Adium@2601:1c0:6a00:71d0::3593) (Client Quit)
+[04:56:27] *** Joins: Paladin (~paladin@S0106c0eae42a785d.vc.shawcable.net)
+[05:04:25] *** Quits: magla (~gelignite@55d49e3c.access.ecotel.net) (Quit: Stay safe!)
+[05:15:33] <aquanight> you could put your print logic in the grep
+[05:15:47] <aquanight> the block to grep is, very loosely, a block.
+[05:15:55] <aquanight> (it's not in that you can't use next/last within it, sadly)
+[05:22:00] <aquanight> why is it I never remember that you don't need to spell out 'defined' when doing while ($x = each %x)
+[05:22:13] <aquanight> maybe it's because I hardly ever use 'each'
+[05:24:10] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[05:26:28] *** Quits: Colt (~Colt@user/colt) (Remote host closed the connection)
+[05:26:38] *** Quits: rgrinberg (~textual@187.223.23.238) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[05:27:04] *** Joins: Colt (~Colt@user/colt)
+[05:29:33] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 268 seconds)
+[05:45:23] <gordonfish> aquanight: You can't use next/last as a block is basically a sub routine body. Just like when using the &@ prototype for your own grep/map type routine. It's much easier to then see that the second arg is a code ref.
+[05:46:07] *** Quits: leitz (~LeamHall@072-182-158-027.res.spectrum.com) (Quit: nappy time)
+[05:47:23] <aquanight> gordonfish: yes I'm aware but don't forget grep/map blocks aren't real subs either.
+[05:47:58] <aquanight> and sometimes I wonder if next/last would be useful in grep/map
+[05:49:36] <gordonfish> I could perhaps see it used in a grep to act like List::Util::first, or in a most custom way, like last if <cond>; instead of simply after first occurrance.
+[05:51:56] <gordonfish> I could it being useful in a map. next could be a way to skip that iteration (like giving () as the last expession does already, but next would be usable anywhere) and last would end the whole process, so nothing else is emitted to the output side.
+[05:52:07] <gordonfish> At least from a quick thought.
+[05:57:08] *** Quits: Su-Shee (~Susanne@p508946a3.dip0.t-ipconnect.de) (Ping timeout: 252 seconds)
+[05:57:33] *** Joins: monkey_ (~user@190.148.252.73)
+[05:57:55] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[05:58:33] *** Joins: Su-Shee (~Susanne@p4ff496a2.dip0.t-ipconnect.de)
+[06:02:37] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 240 seconds)
+[06:04:29] <aquanight> gordonfish: and then there's redo
+[06:04:57] <gordonfish> Now that would be interesting
+[06:07:35] <gordonfish> The question might be, would redo generate another output element, or operate on the same one. The former seems to me more sense at first thought.
+[06:09:33] <gordonfish> (Gah, please my terrible typing tonight.)
+[06:09:52] <gordonfish> *please excuse
+[06:12:39] * gordonfish really hates typing on mobile sometimes, it's considerably slower and more cumbersome than on a desktop keyboard.
+[06:14:55] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[06:15:13] *** Joins: monkey_ (~user@190.148.252.73)
+[06:25:33] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[06:25:51] *** Joins: monkey_ (~user@190.148.252.73)
+[06:30:07] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[06:32:36] *** Joins: finn_elija (~finn_elij@user/finn-elija/x-0085643)
+[06:32:36] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Killed (NickServ (Forcing logout FinnElija -> finn_elija)))
+[06:32:36] *** finn_elija is now known as FinnElija
+[06:35:31] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 268 seconds)
+[06:46:37] * GumbyPAN CPAN Upload: Duadua-0.25 by BAYASHI https://metacpan.org/release/BAYASHI/Duadua-0.25
+[07:00:12] *** Quits: R2robot (~R2robot@user/r2robot) (Quit: Pull the lever, Kronk.  Wrong leverrrrrrr!)
+[07:00:38] *** Joins: finn_elija (~finn_elij@user/finn-elija/x-0085643)
+[07:00:38] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Killed (NickServ (Forcing logout FinnElija -> finn_elija)))
+[07:00:38] *** finn_elija is now known as FinnElija
+[07:04:04] *** Joins: R2robot (~R2robot@user/r2robot)
+[07:05:49] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[07:06:47] *** Joins: rgrinberg (~textual@2806:101e:1:83af:99bc:509:eb58:3474)
+[07:11:18] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 268 seconds)
+[07:11:49] *** Quits: Pali (~pali@user/pali) (Ping timeout: 240 seconds)
+[07:21:40] <pragma-> gordonfish: https://perldoc.perl.org/perlsyn#Basic-BLOCKs "A BLOCK by itself (labeled or not) is semantically equivalent to a loop that executes once. Thus you can use any of the loop control statements in it to leave or restart the block."
+[07:21:40] <Paperbot> Link title(s): [ perlsyn - Perl syntax - Perldoc Browser ]
+[07:22:01] <pragma-> Also "(Note that this is NOT true in eval{}, sub{}, or contrary to popular belief do{} blocks, which do NOT count as loops.)"
+[07:22:57] <pragma-> but within the sub you can make blocks
+[07:38:10] *** Quits: dsrt^ (~dsrt@207.5.54.6) (Remote host closed the connection)
+[07:38:12] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[07:43:06] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 260 seconds)
+[07:45:38] *** Quits: whynot (~whynot@37.73.3.126) (Quit: leaving)
+[07:51:43] * GumbyPAN CPAN Upload: Date-Holidays-AU-0.28 by DDICK https://metacpan.org/release/DDICK/Date-Holidays-AU-0.28
+[07:59:48] *** Joins: Martchus_ (~martchus@2a01:c22:77eb:8200:d250:99ff:fe49:3cce)
+[08:00:37] *** Quits: Martchus (~martchus@2a01:c23:c145:c100:d250:99ff:fe49:3cce) (Ping timeout: 240 seconds)
+[08:11:54] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[08:12:04] <aquanight> 19:37:47/D1625 < gordonfish> The question might be, would redo generate another output element, or operate on the same one. The former seems to me more sense at first thought.
+[08:12:12] <aquanight> it wouldn't generate an output any more than next/last would
+[08:12:22] <aquanight> it would just restart the block with the same input element
+[08:13:16] <aquanight> in all honesty though maybe it is better not to mess with grep/map. A proper gather/yield would do better.
+[08:16:37] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 240 seconds)
+[08:19:37] *** Quits: zgu|skaro (~zgu@2603-7080-a040-3100-0000-0000-0000-000b.res6.spectrum.com) (Ping timeout: 240 seconds)
+[08:29:20] *** Quits: PancakeMatsuri (~textual@222-154-148-93-fibre.sparkbb.co.nz) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[08:31:28] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[08:31:30] *** Joins: PancakeMatsuri (~textual@222-154-148-93-fibre.sparkbb.co.nz)
+[08:31:51] *** Joins: monkey_ (~user@190.148.252.73)
+[08:36:17] *** Quits: monkey_ (~user@190.148.252.73) (Remote host closed the connection)
+[08:36:32] *** Joins: monkey_ (~user@190.148.252.73)
+[08:44:39] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[08:49:50] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 260 seconds)
+[08:52:24] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[08:52:47] *** Joins: monkey_ (~user@190.148.252.73)
+[08:53:57] *** Quits: Woodzy (~quassel@198.204.246.228) (Ping timeout: 240 seconds)
+[08:54:46] <aquanight> huh. An easy one for the last day for AOC how interesting.
+[08:54:57] <aquanight> last year it was breaking encryption
+[08:59:17] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[09:00:24] *** Joins: monkey_ (~user@190.148.252.73)
+[09:04:34] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[09:04:57] *** Joins: monkey_ (~user@190.148.252.73)
+[09:09:19] *** Quits: slowButPresent (~slowButPr@user/slowbutpresent) (Quit: leaving)
+[09:19:38] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[09:20:12] *** Joins: monkey_ (~user@190.148.252.73)
+[09:20:26] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[09:23:57] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[09:24:57] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 240 seconds)
+[09:25:14] *** Joins: monkey_ (~user@190.148.252.73)
+[09:27:18] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[09:29:18] *** Joins: monkey_ (~user@190.148.252.73)
+[09:30:58] *** Joins: rindolf (~shlomif@inkscape/dev/shlomif)
+[09:35:38] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[09:36:40] *** Joins: monkey_ (~user@190.148.252.73)
+[09:39:38] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[09:41:19] *** Joins: monkey_ (~user@190.148.252.73)
+[09:45:22] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[09:45:55] *** Joins: monkey_ (~user@190.148.252.73)
+[09:48:13] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[09:52:15] *** Joins: kadir (~kadir@88.251.54.120)
+[09:53:05] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 252 seconds)
+[09:55:34] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[09:56:21] *** Joins: monkey_ (~user@190.148.252.73)
+[10:00:05] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[10:01:09] *** Joins: monkey_ (~user@190.148.252.73)
+[10:04:45] *** Joins: stanrifkin (~stanrifki@p200300dbcf358300201bcd2402226878.dip0.t-ipconnect.de)
+[10:05:46] *** Parts: stanrifkin (~stanrifki@p200300dbcf358300201bcd2402226878.dip0.t-ipconnect.de) (Leaving)
+[10:06:08] *** Quits: rgrinberg (~textual@2806:101e:1:83af:99bc:509:eb58:3474) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[10:08:18] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[10:08:47] *** Joins: monkey_ (~user@190.148.252.73)
+[10:13:14] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[10:13:45] *** Joins: monkey_ (~user@190.148.252.73)
+[10:18:37] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[10:19:13] *** Joins: monkey_ (~user@190.148.252.73)
+[10:22:28] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[10:22:51] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[10:23:01] *** Joins: monkey_ (~user@190.148.252.73)
+[10:28:18] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 260 seconds)
+[10:31:02] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[10:31:39] *** Joins: monkey_ (~user@190.148.252.73)
+[10:36:33] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[10:38:09] *** Joins: monkey_ (~user@190.148.252.73)
+[10:45:15] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[10:46:25] *** Joins: monkey_ (~user@190.148.252.73)
+[10:49:34] *** Quits: yzhernand (~yzhernand@38-73-255-174.starry-inc.net) (Read error: Connection reset by peer)
+[10:49:46] *** Joins: yzhernand (~yzhernand@38-73-255-174.starry-inc.net)
+[10:55:46] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[10:57:37] *** Quits: dimbag (daimbag@2607:5300:60:21b::1) (Ping timeout: 240 seconds)
+[10:57:55] *** Joins: xenial-user5 (~androirc@3EC97C6F.catv.pool.telekom.hu)
+[11:00:44] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234) (Ping timeout: 252 seconds)
+[11:04:38] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[11:05:26] *** Joins: monkey_ (~user@190.148.252.73)
+[11:14:30] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[11:16:01] *** Joins: monkey_ (~user@190.148.252.73)
+[11:18:17] *** Quits: kevin-oculus (~tomys@c188-149-14-10.bredband.tele2.se) (Ping timeout: 240 seconds)
+[11:19:25] *** Quits: xenial-user5 (~androirc@3EC97C6F.catv.pool.telekom.hu) (Ping timeout: 256 seconds)
+[11:23:57] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[11:24:23] *** Joins: monkey_ (~user@190.148.252.73)
+[11:24:43] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:5c9e:b916:30fd:4234)
+[11:31:17] *** Quits: Adura (~Adura@user/adura) (Quit: Quit)
+[11:31:17] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[11:33:00] *** Joins: monkey_ (~user@190.148.252.73)
+[11:39:49] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[11:40:21] *** Joins: monkey_ (~user@190.148.252.73)
+[11:44:56] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[11:45:38] *** Joins: monkey_ (~user@190.148.252.73)
+[11:51:32] *** Quits: monkey_ (~user@190.148.252.73) (Remote host closed the connection)
+[11:51:58] *** Joins: monkey_ (~user@190.148.252.73)
+[11:59:42] *** Joins: kevin-oculus (~tomys@c188-149-14-10.bredband.tele2.se)
+[12:04:51] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[12:05:27] *** Joins: monkey_ (~user@190.148.252.73)
+[12:09:34] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[12:10:14] *** Joins: monkey_ (~user@190.148.252.73)
+[12:12:42] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[12:13:53] *** Joins: monkey_ (~user@190.148.252.73)
+[12:25:11] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[12:25:52] *** Joins: monkey_ (~user@190.148.252.73)
+[12:29:28] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[12:30:10] *** Joins: monkey_ (~user@190.148.252.73)
+[12:31:15] *** Quits: Somni (insomnia@77-88-237-24.gci.net) (Ping timeout: 256 seconds)
+[12:40:28] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[12:41:14] *** Joins: monkey_ (~user@190.148.252.73)
+[12:42:13] * GumbyPAN CPAN Upload: File-Slurper-0.013 by LEONT https://metacpan.org/release/LEONT/File-Slurper-0.013
+[12:44:19] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[12:45:21] *** Joins: monkey_ (~user@190.148.252.73)
+[12:45:53] *** Joins: dsrt^ (~dsrt@207.5.54.6)
+[12:51:43] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[12:54:18] *** Joins: monkey_ (~user@190.148.252.73)
+[12:54:18] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[12:55:53] *** Joins: monkey_ (~user@190.148.252.73)
+[13:00:17] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[13:00:39] *** Joins: magla (~gelignite@55d48f64.access.ecotel.net)
+[13:00:51] *** Joins: monkey_ (~user@190.148.252.73)
+[13:09:21] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[13:11:47] *** Joins: monkey_ (~user@190.148.252.73)
+[13:11:47] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[13:12:16] * GumbyPAN CPAN Upload: CryptX-0.075 by MIK https://metacpan.org/release/MIK/CryptX-0.075
+[13:13:46] *** Joins: monkey_ (~user@190.148.252.73)
+[13:23:26] *** Quits: humky (~humky@user/humky) (Quit: Leaving)
+[13:25:17] *** Joins: Somni (~insomnia@77-88-237-24.gci.net)
+[13:31:17] *** Joins: Pali (~pali@user/pali)
+[13:33:20] *** Quits: monkey_ (~user@190.148.252.73) (Remote host closed the connection)
+[13:36:00] *** Joins: monkey_ (~user@190.148.252.73)
+[13:36:28] *** Joins: furrymcgee (~devuan@cgn-213-196-210-78.nc.de)
+[13:39:03] *** Quits: rindolf (~shlomif@inkscape/dev/shlomif) (Read error: Connection reset by peer)
+[13:39:30] *** Joins: rindolf (~shlomif@inkscape/dev/shlomif)
+[13:48:28] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[13:48:37] *** Quits: KnoP (~KnoP@p4ff56d9d.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[13:51:18] *** Joins: monkey_ (~user@190.148.252.73)
+[13:51:18] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[13:52:49] *** Joins: monkey_ (~user@190.148.252.73)
+[13:58:05] *** Joins: The_Blode (~Blode@user/the-blode/x-7164444)
+[14:00:22] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[14:00:55] *** Joins: monkey_ (~user@190.148.252.73)
+[14:07:38] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[14:10:39] *** Joins: monkey_ (~user@190.148.252.73)
+[14:10:39] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[14:12:13] *** Joins: monkey_ (~user@190.148.252.73)
+[14:16:23] * GumbyPAN CPAN Upload: autocroak-0.003 by LEONT https://metacpan.org/release/LEONT/autocroak-0.003
+[14:19:38] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[14:20:12] *** Joins: monkey_ (~user@190.148.252.73)
+[14:25:54] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[14:28:13] *** Joins: monkey_ (~user@190.148.252.73)
+[14:30:13] *** Quits: csrf (~csrf@user/csrf) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[14:30:58] *** Joins: csrf (~csrf@user/csrf)
+[14:35:30] *** Quits: monkey_ (~user@190.148.252.73) (Read error: Connection reset by peer)
+[14:36:08] *** Joins: monkey_ (~user@190.148.252.73)
+[14:38:53] *** Quits: fling (~fling@user/fling) (Ping timeout: 256 seconds)
+[14:50:47] *** Quits: yzhernand (~yzhernand@38-73-255-174.starry-inc.net) (Ping timeout: 256 seconds)
+[14:54:19] *** Joins: KnoP (~KnoP@p4ff56d9d.dip0.t-ipconnect.de)
+[15:18:53] *** Joins: yzhernand (~yzhernand@38-73-255-174.starry-inc.net)
+[15:30:14] *** Quits: monkey_ (~user@190.148.252.73) (Ping timeout: 260 seconds)
+[15:31:17] *** Joins: zer0bitz (~zer0bitz@196.244.192.54)
+[15:35:48] *** Quits: Linux77 (~LinuMage@186.233.183.58) (Quit: KVIrc 5.0.1 Aria http://www.kvirc.net/)
+[15:37:07] <simcop2387> everyone here must watch the jwst launch.  https://youtu.be/7nT7JGZMbtM
+[15:37:07] <Paperbot> YouTube video linked by simcop2387: James Webb Space Telescope Launch — Official NASA Broadcast - published by NASA
+[15:37:32] *** Joins: zgu|skaro (~zgu@cpe-66-66-161-247.rochester.res.rr.com)
+[15:41:47] *** Joins: Adura (~Adura@user/adura)
+[15:54:04] <lopid> 3D animation :/  they should have a drone with a camera flying alongside it instead
+[16:02:09] <simcop2387> lopid: show me a drone than can do 60 km/min
+[16:06:14] <lopid> they can put a telescope in space
+[16:09:37] *** Quits: pj (~pj@ghettoforge/pj) (Ping timeout: 240 seconds)
+[16:13:20] *** Quits: henry40408 (~henry4040@175.181.186.198) (Ping timeout: 268 seconds)
+[16:22:45] *** Joins: pj (~pj@ghettoforge/pj)
+[16:31:08] *** Joins: digitok (~death@about/regex/digitok)
+[16:35:45] *** Joins: kitsunenokenja (~kitsunech@68.91.220.96)
+[16:38:13] <digitok> hey, any suggestions on how i could get this to work
+[16:38:15] <digitok> !eval "<a_a_a> <b_b_b> <c_c_c>" =~ s/(<)(\w+)(>)/"$1".($2 =~ s#_#.#gr)."$3"/ger
+[16:38:26] <digitok> perlbot eval "<a_a_a> <b_b_b> <c_c_c>" =~ s/(<)(\w+)(>)/"$1".($2 =~ s#_#.#gr)."$3"/ger
+[16:38:27] <perlbot> digitok: Use of uninitialized value $3 in string at (IRC) line 1. Use of uninitialized value $3 in string at (IRC) line 1. Use of uninitialized value $3 in string at (IRC) line 1. <a.a.a <b.b.b <c.c.c
+[16:38:45] <digitok> this is just a pseudo example
+[16:46:29] *** Joins: henry40408 (~henry4040@175.181.186.198)
+[16:46:34] *** Joins: ukine (sid436777@id-436777.hampstead.irccloud.com)
+[16:47:06] *** Joins: tirnanog (~tirnanog@user/tirnanog)
+[16:53:50] <lopid> s/(<)(\w+)(>)/($x,$y,$z)=($1,$2,$3);"$x".($y =~ s#_#.#gr)."$z"/ge
+[16:58:45] <digitok> i see. and this is the easiest/cleanest way?
+[16:58:58] <digitok> it would be much easier in php lol
+[16:59:32] <digitok> ty btw
+[17:18:02] *** Quits: kitsunenokenja (~kitsunech@68.91.220.96) (Ping timeout: 240 seconds)
+[17:46:44] <rindolf> digitok: there are also named captures
+[17:47:32] *** Quits: rindolf (~shlomif@inkscape/dev/shlomif) (Read error: Connection reset by peer)
+[17:48:00] *** Joins: rindolf (~shlomif@inkscape/dev/shlomif)
+[17:48:17] <rindolf> digitok: there are also named captures
+[17:50:57] *** Quits: magla (~gelignite@55d48f64.access.ecotel.net) (Quit: Stay safe!)
+[17:54:57] *** Quits: HvszrStykp (~X@81.171.62.82) (Ping timeout: 256 seconds)
+[17:55:09] *** Parts: ukine (sid436777@id-436777.hampstead.irccloud.com) ()
+[17:57:09] <digitok> hm, would that help?
+[17:58:18] <digitok> my assumption is that, in my example, $3 no longer exists after the secondary s### operation
+[17:58:32] <digitok> but i do not know very much about perl
+[18:01:37] <rindolf> digitok: you can assign $z=$3 alone, 
+[18:02:26] <rindolf> digitok: or use lookaheads
+[18:02:36] <xenu> you don't need captures at all
+[18:02:39] <xenu> eval: my $foo = "<a_a_a> <b_b_b> <c_c_c>"; $foo =~ s/<\w+>/$& =~ s{_}{.}rg/eg; say $foo;
+[18:02:40] <perlbot> xenu: <a.a.a> <b.b.b> <c.c.c> 
+[18:05:38] <xenu> also, in your example you can avoid overwriting $3 by using do {} instead of ()
+[18:05:53] <xenu> eval:  "<a_a_a> <b_b_b> <c_c_c>" =~ s/(<)(\w+)(>)/"$1".do{$2 =~ s#_#.#gr}."$3"/ger
+[18:05:55] <perlbot> xenu: <a.a.a> <b.b.b> <c.c.c> 🎄
+[18:06:20] <xenu> match variables are block scoped
+[18:06:39] <xenu> er, dynamically scoped*
+[18:10:17] <rindolf> xenu++
+[18:17:44] <digitok> yep, the captures would not be required there, but it was just an example. your solution is what i was looking for, thanks! :)
+[18:18:36] <digitok> 07simcop2387, did you just add emojis to the eval output? :p
+[18:23:36] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Killed (NickServ (Forcing logout FinnElija -> finn_elija)))
+[18:23:36] *** Joins: finn_elija (~finn_elij@user/finn-elija/x-0085643)
+[18:23:36] *** finn_elija is now known as FinnElija
+[18:27:46] *** Quits: LeoNerd (~leo@genoa.dictatorshipcake.co.uk) (Remote host closed the connection)
+[18:28:23] *** Joins: LeoNerd (~leo@genoa.dictatorshipcake.co.uk)
+[18:28:36] <LeoNerd> Much weirdness
+[18:29:35] <rindolf> LeoNerd: hi
+[18:36:13] <LeoNerd> simcop2387: Heh.. as predicted: seems my NaIRC code doesn't connect to non-SASL
+[18:36:28] <LeoNerd> A task for future-me once I have things like DNS and email working
+[18:42:22] *** Joins: leitz (~LeamHall@072-182-158-027.res.spectrum.com)
+[18:51:37] *** Quits: veesh (~veesh@5.28.146.151) (Ping timeout: 256 seconds)
+[18:52:18] <aquanight> LeoNerd: out of curiosity, do you think a warning would be useful for after something like \$x = \$y where the thing \$x used to be would still be around afterward?
+[18:54:23] <LeoNerd> what?
+[18:55:54] <aquanight> it was something I ran into a couple days ago, I had a file-scope lexical hash, and rather than doing %x = %y to copy a new hash into it, I figured it'd be smarter to do \%x = \%y;
+[18:56:05] *** Quits: woei (~woei@cust-73-85-110-94.dyn.as47377.net) (Quit: woei)
+[18:56:27] <aquanight> problem is: there were two places that needed to do so and one of them was in a named sub, so they ended up having two different versions of the lexical
+[18:57:35] <aquanight> took me way too long to realize what was going on because somehow this didn't trip a closure warning
+[18:57:40] *** Joins: woei (~woei@cust-73-85-110-94.dyn.as47377.net)
+[18:58:59] <aquanight> I got thinking that most of the time you use a ref-assignment, the thing that used to be referred to would be going away
+[18:59:46] <LeoNerd> I really don't follow, but also I'm busy rescuing my DNS right now
+[18:59:46] <aquanight> e.g. most cases are my \$var = ($ref); or whatever, so $var gets created then gets ref-assigned
+[18:59:58] <aquanight> that's fair
+[19:04:19] *** Joins: veesh (~veesh@89.237.116.56)
+[19:05:16] *** Joins: slowButPresent (~slowButPr@user/slowbutpresent)
+[19:27:14] <daemon> LeoNerd, how much of your infra you managed to actually get back running, only nameservers remaining?
+[19:29:40] <LeoNerd> Eh.. most
+[19:30:24] <daemon> ah well done not bad for 24 hours :) take it you will be putting up some redundancies this time
+[19:31:00] <LeoNerd> Hm?
+[19:31:16] <daemon> external backups or even fallback services for things like ns and mx
+[19:31:41] <LeoNerd> I have those
+[19:31:53] <LeoNerd> This is me getting the -primaries- back up and running
+[19:32:05] <daemon> ah that is not so bad then I thought your entire infra was out
+[19:32:14] * LeoNerd <== ex-google SRE :P
+[19:32:18] <daemon> :)
+[19:32:57] <daemon> well I ate to much food (same as everyone else in the house) and now feel like I can't move lol, ontop of a wonderful suprise from the daughter
+[19:33:19] <daemon> this year she had nearly a 1000 pounds of gifts, includng a 10" kindle a switch, 4 games for the switch and a shed load of other stuff
+[19:33:39] <daemon> and out of all of them the present she loved the most ... the 10 GBP nerf guns I picked up for a laugh at the supermarket a week or two ago -_-
+[19:50:33] *** Quits: zgu|skaro (~zgu@cpe-66-66-161-247.rochester.res.rr.com) (Remote host closed the connection)
+[19:51:00] *** Joins: zgu|skaro (~zgu@2603-7080-a040-3100-0000-0000-0000-000b.res6.spectrum.com)
+[19:52:30] *** Joins: krismatrix (~krismatri@38.80.149.51)
+[19:53:29] <krismatrix> how do I fix the following statement: system("perltidy -b `find my_app/ -type f -name glob(*pm)`;"); My code hangs and I suspect it has somethign to do with my trying to do glob.
+[19:59:28] <tirnanog> krismatrix: is recursion beneath my_app required? that is, do you need to go deeper than merely my_app/*.pm?
+[19:59:30] *** Joins: proller (~p@178.34.150.67)
+[19:59:51] <krismatrix> yes
+[19:59:58] <tirnanog> system('find', 'my_app', '-type', 'f', '-name', '*.pm', '-exec', 'perltidy', '-b', '{}', '+') would be one way.
+[20:00:11] <krismatrix> For example the controller files are in my_app/lib/MyApp/Controller/
+[20:00:25] <tirnanog> no shells, no extraneous quoting layers.
+[20:00:42] <krismatrix> very interesting...did not know that.
+[20:02:44] * pragma- points at qw
+[20:02:49] <tirnanog> although, in this specific case, it wouldn't need to be parameterised. this would also work: system('find my_app -type f -name "*.pm" -exec perldity -b {} +'). still, when in doubt, better to use multi-arg system and cut out the shell.
+[20:03:23] <krismatrix> thank you for teaching me the multi-arg method. That is certainly useful, even if it looks a bit ridiculous.
+[20:03:35] <pragma-> you may find system(qw/find myapp -type etc/) easier to type and read
+[20:03:46] <tirnanog> yeah, I mean you can use qw if all the quotes bother you.
+[20:04:00] <krismatrix> isn't qw simply adding quotes for anything between spaces?
+[20:04:06] <tirnanog> no.
+[20:04:22] <krismatrix> quote word is qw right?
+[20:04:52] <tirnanog> more like: it splits on whitespace and produces a list from the results. to say it adds quotes isn't really on the mark. at least, not from an abstract perspective.
+[20:05:48] *** Quits: diskin (~diskin@188.114.63.151) (Ping timeout: 240 seconds)
+[20:05:53] <krismatrix> right.
+[20:07:04] <tirnanog> I don't think glob can recurse, otherwise it could have been an option.
+[20:07:43] *** Joins: zgu|skar0 (~zgu@cpe-66-66-161-247.rochester.res.rr.com)
+[20:07:47] <tirnanog> it has no equivalent to bash globstar, say.
+[20:09:17] *** Quits: zgu|skaro (~zgu@2603-7080-a040-3100-0000-0000-0000-000b.res6.spectrum.com) (Ping timeout: 240 seconds)
+[20:09:37] <tirnanog> besides, one benefit of using find is that it stays within ARG_MAX constraints.
+[20:14:09] <krismatrix> a little bash help here then. If I want to remove all the *.pm.bak files, can i do: find my_app/ -type f -name *.pm.bak -exec rm {}    
+[20:14:29] <krismatrix> and essentially...system(qw /above command/); ???
+[20:14:58] <tirnanog> you just need the + to terminate -exec there.
+[20:15:13] <krismatrix> find my_app/ -type f -name *.pm.bak -exec rm {} +   
+[20:15:15] <krismatrix> like so?
+[20:15:29] <tirnanog> yes, assuming that's qw'd correctly.
+[20:16:34] <krismatrix> thx u.
+[20:16:42] <tirnanog> no problem.
+[20:17:03] <krismatrix> i need to go and review what exec {} and + do in bash.
+[20:17:13] <tirnanog> in find.
+[20:17:20] <tirnanog> remember, you're not even using a shell in this case.
+[20:18:55] <tirnanog> the short version is that {} + has the -exec parameter compose an argument list consisting of as many pathnames as it safely can. it will probably execute rm only once, but could execute it more than once if traversing a great many pathnames.
+[20:19:41] <tirnanog> and this is more efficient than -exec rm {} ; would be
+[20:20:53] <krismatrix> hmm...interesting
+[20:21:03] *** Quits: zgu|skar0 (~zgu@cpe-66-66-161-247.rochester.res.rr.com) (Remote host closed the connection)
+[20:27:23] <tirnanog> as an aside, if you were still using a shell (single-arg system), you'd have had to quote *.pm.bak for the benefit of said shell. no need with qw as the string, *.pm.bak, will be conveyed literally.
+[20:27:46] <tirnanog> otherwise *.pm.bak would run the risk of being globbed in the shell and unravelling the whole affair.
+[20:28:42] <tirnanog> in a nutshell, reducing quoting layers minimises potential headaches.
+[20:31:14] *** Quits: krismatrix (~krismatri@38.80.149.51) (Ping timeout: 260 seconds)
+[20:37:55] *** Joins: zgu|skaro (~zgu@cpe-66-66-161-247.rochester.res.rr.com)
+[20:52:03] *** Quits: zgu|skaro (~zgu@cpe-66-66-161-247.rochester.res.rr.com) (Remote host closed the connection)
+[21:07:47] *** Joins: zgu|skaro (~zgu@cpe-66-66-161-247.rochester.res.rr.com)
+[21:11:01] <aquanight> 05:32:21/3B165 < simcop2387> lopid: show me a drone than can do 60 km/min ## it'll probably happen about the same time we get a space ship that can go 60 AU/min
+[21:14:57] <aquanight> tirnanog: another option that does not rely on execution efficiency of rm commands: unlink split /\0/, qx/find my_app/ -type f -name *.pm.bak -print0/;
+[21:15:35] <tirnanog> aquanight: yes, indeed, albeit not strictly portable.
+[21:15:51] <aquanight> qx/find/ is not strictly portable in the first place
+[21:16:08] <tirnanog> the sample under discussion was, as far as posix is concerned.
+[21:19:00] <aquanight> there's also File::Find
+[21:20:50] <aquanight> use File::Find; find(sub { /-f and \.pm\.bak$/ and unlink $_; }, "my_app/");
+[21:22:03] *** Quits: zgu|skaro (~zgu@cpe-66-66-161-247.rochester.res.rr.com) (Remote host closed the connection)
+[21:34:25] <krako[m]> `/-f and .../` ?! Is this a typo or you can really combine tests inside `/.../` ? 
+[21:35:34] <tirnanog> typo, probably.
+[21:37:47] *** Joins: zgu|skaro (~zgu@cpe-66-66-161-247.rochester.res.rr.com)
+[21:40:08] <krako[m]> That's what I'm thinking but I'm a real beginner and prefer to ask
+[21:41:01] *** Parts: digitok (~death@about/regex/digitok) ()
+[21:42:05] <tirnanog> there's a typo in the preceding example also. either my_app/ must be written as my_app\/ or different delimiters must be used for qx.
+[21:50:08] *** Joins: jlenz (~jlenz@c-73-104-246-233.hsd1.fl.comcast.net)
+[21:53:03] *** Quits: zgu|skaro (~zgu@cpe-66-66-161-247.rochester.res.rr.com) (Remote host closed the connection)
+[21:57:07] <sbrothy> nothing wrong with being a beginner. im pretty clueless myself but there's always the manual
+[22:07:18] *** Joins: krismatrix (~krismatri@38.80.149.51)
+[22:07:57] *** Joins: zgu|skaro (~zgu@cpe-66-66-161-247.rochester.res.rr.com)
+[22:10:16] *** Quits: djerius_ (~quassel@pool-108-20-43-199.bstnma.fios.verizon.net) (Quit: No Ping reply in 180 seconds.)
+[22:10:32] *** Joins: djerius (~quassel@pool-108-20-43-199.bstnma.fios.verizon.net)
+[22:20:19] *** Joins: fling (~fling@user/fling)
+[22:23:03] *** Quits: zgu|skaro (~zgu@cpe-66-66-161-247.rochester.res.rr.com) (Remote host closed the connection)
+[22:23:37] *** Joins: GEttR (~GEttR@user/gettr)
+[22:24:50] *** Quits: furrymcgee (~devuan@cgn-213-196-210-78.nc.de) (Quit: leaving)
+[22:25:17] *** Quits: pj (~pj@ghettoforge/pj) (Ping timeout: 240 seconds)
+[22:28:08] *** Joins: martinus__ (~martin@2.56.202.77.rev.sfr.net)
+[22:31:37] *** Quits: ology (~gene@user/ology) (Quit: Right)
+[22:38:02] *** Joins: zgu|skaro (~zgu@cpe-66-66-161-247.rochester.res.rr.com)
+[22:38:48] *** Joins: pj (~pj@ghettoforge/pj)
+[22:44:31] *** Quits: rindolf (~shlomif@inkscape/dev/shlomif) (Ping timeout: 245 seconds)
+[22:54:03] *** Quits: zgu|skaro (~zgu@cpe-66-66-161-247.rochester.res.rr.com) (Remote host closed the connection)
+[22:56:17] *** Quits: pj (~pj@ghettoforge/pj) (Ping timeout: 240 seconds)
+[22:58:33] *** Joins: kitsunenokenja (~kitsunech@68.91.220.96)
+[23:00:13] *** Joins: locrian9 (~mike@99-153-255-194.lightspeed.irvnca.sbcglobal.net)
+[23:01:15] *** justSleigh is now known as justIrresolute
+[23:07:25] *** Quits: krismatrix (~krismatri@38.80.149.51) (Quit: Leaving)
+[23:07:49] *** Joins: zgu|skaro (~zgu@cpe-66-66-161-247.rochester.res.rr.com)
+[23:09:28] *** Joins: pj (~pj@ghettoforge/pj)
+[23:24:03] *** Quits: zgu|skaro (~zgu@cpe-66-66-161-247.rochester.res.rr.com) (Remote host closed the connection)
+[23:32:33] *** Joins: magla (~gelignite@55d48f64.access.ecotel.net)
+[23:37:54] *** Joins: zgu|skaro (~zgu@cpe-66-66-161-247.rochester.res.rr.com)
+[23:39:33] *** Quits: zgu|skaro (~zgu@cpe-66-66-161-247.rochester.res.rr.com) (Remote host closed the connection)
+[23:40:05] *** Joins: rgrinberg (~textual@200.68.178.168)
+[23:49:42] *** Quits: rgrinberg (~textual@200.68.178.168) (Read error: Connection reset by peer)
+[23:52:08] *** Joins: rgrinberg (~textual@187.223.78.219)
+[23:52:22] *** Quits: proller (~p@178.34.150.67) (Ping timeout: 260 seconds)
+[23:53:33] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Killed (NickServ (Forcing logout FinnElija -> finn_elija)))
+[23:53:33] *** Joins: finn_elija (~finn_elij@user/finn-elija/x-0085643)
+[23:53:33] *** finn_elija is now known as FinnElija
+[23:57:49] *** Quits: castawayc (~castaway@cpc81822-swin19-2-0-cust3.3-1.cable.virginm.net) (Ping timeout: 240 seconds)
+[23:59:20] *** Joins: castawayc (~castaway@cpc81822-swin19-2-0-cust3.3-1.cable.virginm.net)

@@ -1,0 +1,708 @@
+[00:00:55] *** Joins: jkaye (~jkaye@2601:281:8300:7530:25cb:799d:2790:e606)
+[00:01:46] *** Quits: cm007magnum (~Rheanna@218.78.109.69) (Remote host closed the connection)
+[00:02:06] *** Quits: g0zart (~g0zart@gateway/vpn/pia/g0zart) (Quit: Leaving)
+[00:02:16] <InPhase> Note that top-level exception handling is broken by design in Qt threads starting with Qt6, so Qthread should no longer be used outside of the main gui thread.  They have warned they might also break exception handling for the main thread later, in which case Qt should not be used.  But so far they limited their breakage to every other thread.
+[00:03:09] <InPhase> This still works fine in Qt5, but this is surviving on borrowed time, so projects starting now should plan ahead to work around this bad design decision.
+[00:03:11] *** Joins: cm007magnum (~Rheanna@218.78.109.69)
+[00:03:27] <Raziel> Qt? Bad design decision? I'm shocked!
+[00:03:45] *** Quits: sonic (~sonic@user/sonic) (Ping timeout: 268 seconds)
+[00:04:10] *** Joins: gehn (~gehn@user/gehn)
+[00:04:33] <cbreak> how the hell did they manage to break exceptions?
+[00:06:46] <InPhase> cbreak: The standard method for decades was to extend QApplication and implement the virtual function notify to add top level exception handlers within the event loop calls.  They deprecated this and provide no alternative for doing so, declaring it a bad idea to propagate exceptions.
+[00:07:41] <InPhase> So now if you do not add top level catches for all possible exceptions in every possible slot, it just crashes on exceptions.
+[00:07:50] <cbreak> ah. I never ever did that
+[00:08:33] <cbreak> exceptions shouldn't leave my code unless I want the program to terminate with unhandled ones
+[00:11:00] <InPhase> Well, "leave my code" isn't really happening.  Event loop calls work basically like using std::function.  It would be like if std::function was altered so that any exceptions that propagate into operator() in std::function caused a program crash, and the standards committee declared people should not propagate exceptions out to the standard library.
+[00:13:40] <cbreak> InPhase: all slot functions would ideally be noexcept
+[00:13:51] <cbreak> if that still exists in 6
+[00:14:35] <cbreak> (although I'd kind of expect that direct connections would still work, if those still exist)
+[00:14:39] <InPhase> cbreak: That results in excessive redundancy and provides numerous opportunities for crash errors.
+[00:14:43] <cbreak> I kind of haven't used Qt much since 4
+[00:15:00] <InPhase> It is far better to centralize robustness guarantees.
+[00:15:21] <cbreak> I like to handle exceptions that I intend to be handled
+[00:15:28] <InPhase> Of course.
+[00:15:32] <cbreak> and I can't handle exceptions centrally
+[00:15:39] <cbreak> because there, I don't know what failed anymore
+[00:15:56] <cbreak> I do know what failed in a catch inside a call stack... well, at least I should
+[00:15:59] <InPhase> But the ones that you don't have a resolution for shouldn't just crash the program.
+[00:16:10] <cbreak> inside a tangled mess of cross-thread event calls? I don't know.
+[00:16:32] <Raziel> so, on a somewhat related note: why the fuck do caught exceptions still show up in debug out?
+[00:16:35] <cbreak> InPhase: depends. I'd want them to terminate the program usually. Ideally in an orderly fashion
+[00:16:42] <InPhase> Crashing is a terrible solution on production code.  Errors should be reported and logged, not just wildly crash.
+[00:16:44] *** johnny__ is now known as johnny
+[00:16:48] <cbreak> Raziel: what do you mean?
+[00:17:03] <cbreak> "debug out"? that's because you std::cerr << blah stuff
+[00:17:10] <cbreak> unrelated to exceptions
+[00:17:13] <Raziel> cbreak, I mean, we use poco timers in some places. and when poco timers time out, they throw an exception. we catch that and do what we have to do for the end of the timer.
+[00:17:28] <Raziel> but at the same time, the debug console gets spammed every time with "Poco Timer threw an exception!"
+[00:17:29] <cbreak> that seems like a silly design
+[00:17:43] <cbreak> wonder why they do that.
+[00:17:48] <cbreak> is it so exceptional to time out?
+[00:17:53] *** Joins: sonic (~sonic@user/sonic)
+[00:18:57] <Raziel> apparently :/
+[00:19:18] <cbreak> does seem ... dumb... are those syncronous timers?
+[00:19:32] <cbreak> like c++ std::this_thread::wait_for / wait_until?
+[00:19:44] <cbreak> or async ones like boost::asio's deadline timers?
+[00:21:47] <Raziel> it might actually be the poco sockets that throw that exception? I'm not even sure at this point
+[00:22:06] <cbreak> you can attack a debugger and break on throw
+[00:23:35] <Raziel> I don't currently have the source or symbols for the part that does that and uses poco (it's a dynamic lib) but I'll try to look into it later
+[00:24:37] <Raziel> I also am not sure why the exceptions from a dynamic lib should propagate to and pollute my debug out, but :p
+[00:24:37] <cbreak> if you have the symbols of poco itself, that should be enough
+[00:24:46] <cbreak> why not?
+[00:24:56] <cbreak> a dynamic lib is part of the same address space
+[00:25:00] <cbreak> it shares all FDs
+[00:25:28] <Raziel> it makes sense, but, oof.
+[00:25:28] <cbreak> if a library uses cout or cerr, it'll use the same fd 1 or 2 as your main program
+[00:25:43] <cbreak> that's why libraries shouldn't print crap unless they're directed to.
+[00:25:53] <cbreak> but some libs are just badly designed
+[00:25:57] <cbreak> seems poco is one of them.
+[00:26:05] <cbreak> (not that I've ever used it)
+[00:26:55] *** Quits: X-Scale (~ARM@165.201.137.78.rev.vodafone.pt) (Ping timeout: 250 seconds)
+[00:27:04] *** Joins: X-Scale` (~ARM@46.50.4.208)
+[00:27:59] *** Joins: RoKenn (~RoKenn@2001:a61:35bf:6201:faa8:de83:584d:7c97)
+[00:28:00] *** Quits: RoKenn (~RoKenn@2001:a61:35bf:6201:faa8:de83:584d:7c97) (Changing host)
+[00:28:00] *** Joins: RoKenn (~RoKenn@user/rokenn)
+[00:28:42] *** Joins: spaceangel (~spaceange@ip-89-176-181-220.net.upcbroadband.cz)
+[00:29:08] *** X-Scale` is now known as X-Scale
+[00:29:55] * imMute doesn't see that string in the POCO sources.  are you sure it's not coming from your app's code?
+[00:30:28] <Raziel> Exception thrown at 0x75C6B502 in MYSHIT.exe: Microsoft C++ exception: Poco::TimeoutException at memory location 0x179BDA60.
+[00:30:38] <Raziel> it wasn't the literal string cause I just made it up on the fly
+[00:30:41] <Raziel> this is the actual one :p
+[00:31:05] <johnny> harsh
+[00:31:31] <Raziel> and, unfortunately, there's many of them. so it gets very annoying when I'm trying to read my own debug output and have to go through 30 lines of that.
+[00:31:47] <imMute> now that sounds like some kind of IDE helper message or something...
+[00:33:51] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Ping timeout: 245 seconds)
+[00:33:55] <Raziel> I mean, in VS I can disable "exception messages" from the output, but
+[00:34:19] <Raziel> I still feel like... there's a design problem *somewhere*
+[00:36:43] <Raziel> maybe the problem is with VS thinking caught exceptions are something it should output there by default v:
+[00:38:55] <johnny> i've seen that in wine before.. logging all caught exceptions with SEH :(
+[00:45:21] *** Quits: kylese (~kylese@p5dd8b9a8.dip0.t-ipconnect.de) (Quit: Leaving)
+[00:45:36] *** Quits: Fault (~Fault@150.230.39.7) (Quit: Quit.)
+[00:46:20] *** Joins: Fault (~Fault@150.230.39.7)
+[00:46:51] *** Quits: emerent (~quassel@p200300cd573070b2ba27ebfffed28a59.dip0.t-ipconnect.de) (Ping timeout: 250 seconds)
+[00:47:21] *** Joins: emerent (~quassel@p200300cd573070d3ba27ebfffed28a59.dip0.t-ipconnect.de)
+[00:51:21] *** Quits: cm007magnum (~Rheanna@218.78.109.69) (Remote host closed the connection)
+[00:52:29] *** Quits: Fault (~Fault@150.230.39.7) (Quit: Quit.)
+[00:53:30] *** Joins: cm007magnum (~Rheanna@218.78.79.129)
+[00:54:52] *** Joins: Fault (~Fault@150.230.39.7)
+[01:07:09] *** Quits: robod34 (Username@79.113.195.239) (Quit: Goe offline! ( http://marius.sucan.ro/ ))
+[01:20:05] *** Joins: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it)
+[01:21:15] *** Joins: Guest92 (~Guest92@68.132.78.81)
+[01:28:54] *** Quits: Simplar (~Simplar@188.163.92.225) (Ping timeout: 260 seconds)
+[01:31:39] *** Quits: riksteri (riksteri@gateway/vpn/airvpn/riksteri) (Quit: riksteri)
+[01:32:51] <RandomReader> I've used that before to find problems; being caught doesn't mean it's being handled correctly, and it's a lot harder to know that's going on if you debug something cold
+[01:33:26] <RandomReader> although I think VC++ might be missing some filtering compared to the other languages, e.g. ignoring C++ exceptions
+[01:34:03] <RandomReader> it is one of those things that makes more sense if you understand the Windows exception system though ... it's a lot less clear if all you know is C++ exceptions
+[01:35:11] *** Quits: chozorho (~chozorho@2601:146:300:c30::8489) (Ping timeout: 264 seconds)
+[01:35:51] *** Joins: chozorho (~chozorho@2601:146:300:c30::9ed1)
+[01:37:07] *** Quits: unixpro1970 (~unixpro19@c-73-181-185-205.hsd1.wa.comcast.net) (Ping timeout: 250 seconds)
+[01:37:57] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[01:38:06] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[01:38:07] *** ChanServ sets mode: +v npaperbot
+[01:41:28] *** Quits: cm007magnum (~Rheanna@218.78.79.129) (Remote host closed the connection)
+[01:43:04] *** Joins: cm007magnum (~Rheanna@218.78.105.67)
+[01:43:34] *** Quits: sord937 (~sord937@gateway/tor-sasl/sord937) (Quit: sord937)
+[01:43:37] *** Joins: Mooncairn (~mooncairn@user/mooncairn)
+[01:46:29] *** Joins: unixpro1970 (~unixpro19@c-73-181-185-205.hsd1.wa.comcast.net)
+[01:56:24] *** Quits: Fault (~Fault@150.230.39.7) (Quit: Quit.)
+[01:56:26] <Friithian> collect2: fatal error: cannot find ‘ld’
+[01:56:35] <Friithian> well, I haven't see that before
+[01:57:06] *** Joins: Fault (~Fault@150.230.39.7)
+[01:57:12] <Friithian> the fun of doing something on a new computer you haven't really setup
+[01:58:26] <Friithian> oh heck I don't have a new enough version of clang (or gcc) on this machine
+[01:58:54] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Ping timeout: 276 seconds)
+[02:00:05] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[02:06:33] *** Quits: kenanmarasli (~kenanmara@user/kenanmarasli) (Quit: Leaving)
+[02:12:55] *** Quits: Codaraxis (~Codaraxis@user/codaraxis) (Quit: Leaving)
+[02:14:56] *** Joins: themarktyzer (~marcotizz@host-87-18-92-176.retail.telecomitalia.it)
+[02:16:37] *** Quits: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net) (Quit: Going offline, see ya! (www.adiirc.com))
+[02:16:42] *** Parts: themarktyzer (~marcotizz@host-87-18-92-176.retail.telecomitalia.it) ()
+[02:17:20] *** Joins: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net)
+[02:19:48] *** Joins: KillAnimals (~anon@208.98.223.90)
+[02:31:31] *** Quits: cm007magnum (~Rheanna@218.78.105.67) (Remote host closed the connection)
+[02:33:39] *** Joins: cm007magnum (~Rheanna@218.78.99.237)
+[02:35:56] *** Quits: Guest92 (~Guest92@68.132.78.81) (Quit: Client closed)
+[02:43:34] *** Quits: KillAnimals (~anon@208.98.223.90) (Ping timeout: 260 seconds)
+[02:48:02] *** Joins: ferdna (~ferdna@user/ferdna)
+[02:53:54] *** Quits: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net) (Quit: Going offline, see ya! (www.adiirc.com))
+[02:55:54] *** Quits: zen_coder (~zen_coder@2a02:8109:a280:2d8d:b80b:fa5c:c6a4:6438) (Quit: Konversation terminated!)
+[02:56:50] *** Quits: m_ben (~m_ben@user/m-ben/x-7429725) (Quit: WeeChat 3.3)
+[02:59:47] *** Quits: jkaye (~jkaye@2601:281:8300:7530:25cb:799d:2790:e606) (Ping timeout: 264 seconds)
+[03:01:47] *** Quits: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it) (Quit: Leaving.)
+[03:04:33] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Ping timeout: 276 seconds)
+[03:05:54] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[03:19:57] *** Joins: proller (~p@2a02:6b8:b081:7::1:0)
+[03:21:20] *** Quits: cm007magnum (~Rheanna@218.78.99.237) (Remote host closed the connection)
+[03:23:08] *** Joins: cm007magnum (~Rheanna@101.89.150.168)
+[03:25:13] *** Joins: m_ben (~m_ben@user/m-ben/x-7429725)
+[03:25:22] *** Joins: RoKenn_ (~RoKenn@2001:a61:35bf:6201:c186:7bf:df8c:adc7)
+[03:25:23] *** Quits: RoKenn_ (~RoKenn@2001:a61:35bf:6201:c186:7bf:df8c:adc7) (Changing host)
+[03:25:23] *** Joins: RoKenn_ (~RoKenn@user/rokenn)
+[03:27:10] *** Quits: RoKenn (~RoKenn@user/rokenn) (Ping timeout: 265 seconds)
+[03:30:25] *** Quits: KombuchaKip (~kip@192.252.230.5) (Quit: Leaving.)
+[03:33:48] *** Quits: teepee (~teepee@openscad/teepee) (Ping timeout: 276 seconds)
+[03:35:23] *** Joins: teepee (~teepee@openscad/teepee)
+[03:44:14] *** Quits: spaceangel (~spaceange@ip-89-176-181-220.net.upcbroadband.cz) (Remote host closed the connection)
+[03:49:21] *** Quits: Guest42 (~Guest42@eth-west-pareq2-46-193-4-100.wb.wifirst.net) (Quit: Client closed)
+[03:50:09] *** Joins: KillAnimals (~anon@199.119.235.197)
+[03:53:28] *** Quits: gehn (~gehn@user/gehn) (Quit: Leaving)
+[03:53:57] *** Quits: teepee (~teepee@openscad/teepee) (Remote host closed the connection)
+[03:55:13] *** Joins: teepee (~teepee@openscad/teepee)
+[04:00:49] *** Quits: m_ben (~m_ben@user/m-ben/x-7429725) (Quit: WeeChat 3.3)
+[04:01:54] *** Quits: dextercd (~dexter@2a02-a450-f25d-1-76d4-35ff-fefe-34c.fixed6.kpn.net) (Quit: WeeChat 3.3)
+[04:02:14] <very_sneaky_> i wish there was a language standard for CI configuration
+[04:02:36] <very_sneaky_> i feel like i've learnt like 8 different ways to write CI build instructions, all in yaml
+[04:03:26] *** Quits: RoKenn_ (~RoKenn@user/rokenn) (Quit: NSA proxy service interrupted)
+[04:07:40] *** very_sneaky_ is now known as very_sneaky
+[04:07:46] <anyone> whatever people did before Web 4.0, they complained much less :-/
+[04:11:20] *** Quits: cm007magnum (~Rheanna@101.89.150.168) (Remote host closed the connection)
+[04:11:35] *** Quits: Praise (~Fat@user/praise) (Quit: Vado a fare qualcosa di utile.)
+[04:11:55] <computerquip> wait aren't we on web 2.0 or whatever
+[04:11:59] <computerquip> what happened to 3
+[04:12:06] <Stryyker> Windows 9
+[04:12:32] <anyone> I must have mixed up Web 2.0 with Industry 4.0. You know, because those numbers mean nothing.
+[04:12:45] <anyone> just like the points you get in Whose Line Is It Anyway.
+[04:12:59] *** Joins: cm007magnum (~Rheanna@61.171.69.141)
+[04:14:26] *** Joins: Praise (~Fat@user/praise)
+[04:17:58] *** Joins: gggp (~gggp@li2010-23.members.linode.com)
+[04:18:10] *** Quits: gggp (~gggp@li2010-23.members.linode.com) (Client Quit)
+[04:23:29] *** Quits: horribleprogram (~user@user/horribleprogram) (Remote host closed the connection)
+[04:24:30] <KillAnimals> I have a class that is a subclass of a template class, which is a subclass of a class. In this derived class, I am trying to use a protected function, but its giving me this error: "create is a protected member of card"
+[04:24:47] <KillAnimals> What da?
+[04:27:42] <anyone> then subclass isn't actually derived from card
+[04:27:43] <KillAnimals> Does that make sense?
+[04:28:12] <KillAnimals> anyone: But the template class is. Isn't that enough?
+[04:28:21] <anyone> !give KillAnimals testcase
+[04:28:22] <nolyc> KillAnimals: A testcase is the _least_ amount of code that replicates your problem, paste it to https://wandbox.org/ then: 1) click run 2) click share 3) click url and 4) paste the url for us. You _must_ use that website. Do _not_ use a different website. Do _not_ paste code to the channel. See the testcase checklist at http://eel.is/iso-c++/testcase/
+[04:28:32] <KillAnimals> all right all right one sec
+[04:33:25] *** Joins: KombuchaKip (~kip@192.252.230.5)
+[04:35:53] <KillAnimals> ahhh wait I see...
+[04:36:10] <KillAnimals> huh weird. Wonder what the workaround should be
+[04:37:40] <KillAnimals> anyone: https://pastebin.com/hy3DtwA4
+[04:42:27] *** Joins: Tokamak (~Tokamak@172.58.191.72)
+[04:47:12] <anyone> a noncompiling pastebin, really
+[04:47:24] *** Quits: proller (~p@2a02:6b8:b081:7::1:0) (Ping timeout: 268 seconds)
+[04:48:09] <anyone> you never set "c" to a meaningful value
+[04:49:20] <KillAnimals> anyone: Its just dummy code.
+[04:50:03] <anyone> I think the protections of "protected:" may only go as far as the current instance
+[04:50:43] *** Quits: magla (~gelignite@55d446ec.access.ecotel.net) (Quit: Stay safe!)
+[04:50:52] <anyone> this->create().
+[04:53:06] *** Joins: asen (~asen@2408:821b:618:2ef0:ab85:814b:bf8f:a143)
+[04:53:54] *** Joins: smallville7123 (~smallvill@cpe-172-193-200-97.qld.foxtel.net.au)
+[04:54:30] *** Quits: asen (~asen@2408:821b:618:2ef0:ab85:814b:bf8f:a143) (Read error: Connection reset by peer)
+[04:54:42] *** Joins: asen (~asen@2408:821b:618:2ef0:ab85:814b:bf8f:a143)
+[04:55:13] *** Joins: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net)
+[04:55:37] *** Quits: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net) (Client Quit)
+[04:55:42] <anyone> Since "create" is inherited, Foo::create exists. Foo's member functions can always invoke other Foo member functions.
+[04:56:02] <anyone> In line 22 however, you are not invoking Foo::create, but Card::create, therefore the request is denied.
+[04:56:07] <anyone> That's the explanation.
+[05:01:25] *** Quits: Tobbi (~Tobbi@2a02:8108:1240:48ec:41fb:5c60:6504:346a) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[05:01:26] *** Quits: cm007magnum (~Rheanna@61.171.69.141) (Remote host closed the connection)
+[05:02:05] *** Quits: KillAnimals (~anon@199.119.235.197) (Ping timeout: 256 seconds)
+[05:02:05] *** Joins: Tobbi (~Tobbi@2a02:8108:1240:48ec:41fb:5c60:6504:346a)
+[05:02:10] <anyone> (it's a little more complicated considering the possibility of this->Card::create(), but alas, the brief answer from before should be good to use.)
+[05:02:11] *** Quits: Tobbi (~Tobbi@2a02:8108:1240:48ec:41fb:5c60:6504:346a) (Client Quit)
+[05:02:48] *** Joins: cm007magnum (~Rheanna@101.89.150.168)
+[05:16:10] *** Quits: asen (~asen@2408:821b:618:2ef0:ab85:814b:bf8f:a143) (Remote host closed the connection)
+[05:16:22] *** Joins: asen (~asen@2408:821b:618:2ef0:ab85:814b:bf8f:a143)
+[05:17:29] *** Quits: asen (~asen@2408:821b:618:2ef0:ab85:814b:bf8f:a143) (Read error: Connection reset by peer)
+[05:17:42] *** Joins: asen (~asen@2408:821b:618:2ef0:ab85:814b:bf8f:a143)
+[05:34:59] *** Quits: plastico (~plastico@neomutt/plastico) (Quit: WeeChat 3.3)
+[05:37:58] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[05:38:06] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[05:38:06] *** ChanServ sets mode: +v npaperbot
+[05:51:24] *** Quits: cm007magnum (~Rheanna@101.89.150.168) (Remote host closed the connection)
+[05:53:21] *** Joins: cm007magnum (~Rheanna@101.91.232.166)
+[06:06:21] *** Quits: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com) (Quit: WeeChat 3.0.1)
+[06:22:07] *** Joins: lh_mouse (~lh_mouse@mingw-w64/developer/lhmouse)
+[06:37:09] <yolo_> just realize why not use docker to play with the newest g++, no need waiting for ubuntu's ppa maintainer at all, how stupid I was
+[06:42:57] *** Quits: PJBoy (~PJBoy@user/pjboy) (Ping timeout: 256 seconds)
+[06:44:00] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[06:45:38] <computerquip> Or use a distro that keeps up to date and isn't 4 years behind at all times. That's my preference personally.
+[06:47:31] *** Joins: emerent_ (~quassel@p200300cd574309b6ba27ebfffed28a59.dip0.t-ipconnect.de)
+[06:47:32] *** emerent is now known as Guest6618
+[06:47:32] *** emerent_ is now known as emerent
+[06:47:39] *** Quits: Guest6618 (~quassel@p200300cd573070d3ba27ebfffed28a59.dip0.t-ipconnect.de) (Ping timeout: 268 seconds)
+[06:51:01] <Alipha> I believe I have g++8 on Ubuntu
+[06:54:14] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[06:57:13] <yolo_> I need newest stuff to play with some MLIR, other than that, gcc9 works fine, c++17 is a sweetspot to the point I think c++20 is an overkill for my stuff. C++17 will be proven to be a good compromise between keep-coming  modern features and too-complex
+[06:59:41] *** Joins: callq (~callq@2409:4062:2d0c:d18f:992e:9e9b:dd11:9514)
+[07:08:01] <InPhase> yolo_: C++20 is not really ready.  C++17 is the correct choice.
+[07:08:27] *** Quits: smallville7123 (~smallvill@cpe-172-193-200-97.qld.foxtel.net.au) (Ping timeout: 256 seconds)
+[07:10:31] <InPhase> C++14 and C++17 hit production ready quite a bit faster if I'm remembering correctly, but C++11 took a while, and C++20 is taking a while.  I think that's just a reflection of the complexities in those two updates.
+[07:15:43] *** Quits: AmR (~AmREiSa@156.199.86.69) (Quit: Konversation terminated!)
+[07:16:36] *** Joins: smallville7123 (~smallvill@cpe-172-193-200-97.qld.foxtel.net.au)
+[07:35:03] *** Quits: artok (~azo@mobile-access-5d6aa9-118.dhcp.inet.fi) (Ping timeout: 250 seconds)
+[07:35:13] *** Joins: KillAnimals (~anon@24.244.23.150)
+[07:38:02] *** Quits: smallville7123 (~smallvill@cpe-172-193-200-97.qld.foxtel.net.au) (Remote host closed the connection)
+[07:38:35] *** Joins: gggp (~gggp@li2010-23.members.linode.com)
+[07:39:16] *** Quits: gggp (~gggp@li2010-23.members.linode.com) (Client Quit)
+[07:39:56] *** Joins: gggp (~gggp@li2010-23.members.linode.com)
+[07:40:07] *** Quits: gggp (~gggp@li2010-23.members.linode.com) (Client Quit)
+[07:46:23] <celphi> hi.
+[07:47:45] <celphi> can someone explain what im doing wrong here? https://bpa.st/4SQA
+[07:47:59] <celphi> i don't understand the error
+[07:49:12] *** Joins: txtsd (~txtsd@user/txtsd)
+[07:50:48] <Raziel> celphi, unordered_map needs to be able to hash its key, and vector doesn't have any standard hasher
+[07:51:04] <Raziel> https://jimmy-shen.medium.com/stl-map-unordered-map-with-a-vector-for-the-key-f30e5f670bae
+[07:51:19] <Raziel> and yeah, that error fuckin sucks. lol
+[07:51:23] *** Quits: Tokamak (~Tokamak@172.58.191.72) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[07:52:04] <celphi> oh so i have to use map
+[07:52:12] <celphi> yeah tell me about it haha
+[07:52:14] <Raziel> you can use unordered if you make a hasher for vector
+[07:52:17] <Raziel> like in that link
+[07:52:28] <Raziel> but, if those vectors are big, it may be rather slow
+[07:52:37] <celphi> they're only size 8
+[07:52:43] <celphi> but they're ints
+[07:53:41] <Raziel> should be alright
+[07:53:56] <Raziel> you can just copypasta the hasher from that link and it should be fine
+[07:55:19] <celphi> yeah it's that im trying to be able to remember this and i won't be able to copy paste from site if doing interview
+[07:55:41] <celphi> it doesn't matter though it seems my solution is too slow even with cache
+[07:56:29] <celphi> im pretty sure there's a math solution to this problem.. so lame
+[07:57:48] *** Joins: pulse (~pulse@user/pulse)
+[08:03:08] *** Joins: artok (~azo@mobile-access-5d6aa9-118.dhcp.inet.fi)
+[08:04:40] <Raziel> celphi, remembering hashing algorithms by heart is not recommended :p
+[08:04:59] <celphi> :P
+[08:08:12] *** Joins: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse)
+[08:08:22] *** Quits: artok (~azo@mobile-access-5d6aa9-118.dhcp.inet.fi) (Ping timeout: 260 seconds)
+[08:12:59] <Raziel> celphi, if you must pull a hashing algorithm out of your ass for an interview or such, just use some random operations and hope for the best :p
+[08:13:02] <Raziel> preferably fast ones
+[08:22:19] <InPhase> Multiply by a prime, add, repeat.
+[08:23:17] <InPhase> That will work remarkably well.  You can do better, but you don't need to do better for this purpose.
+[08:23:51] <InPhase> Just do that with unsigned values of course, so that they modulo-wrap properly.
+[08:25:37] <InPhase> When doing it by memory, pick the largest prime you can remember up to somewhere around half of the max value for that data type.
+[08:27:26] *** Quits: Juliu (~Juliu@2a02:810b:c640:3ec0:e5bd:e50d:3469:9d40) (Quit: Quit)
+[08:27:47] *** Quits: KillAnimals (~anon@24.244.23.150) (Ping timeout: 256 seconds)
+[08:28:30] <InPhase> 89 is super easy to remember, and does a pretty nice mapping for 8 bit values.
+[08:31:53] <Alipha> 31 is common
+[08:46:10] *** Quits: pah (~pah@user/pah) (Ping timeout: 260 seconds)
+[08:46:49] *** Joins: pah_ (~pah@host-80-181-159-12.pool80181.interbusiness.it)
+[08:59:11] *** Quits: pah_ (~pah@host-80-181-159-12.pool80181.interbusiness.it) (Ping timeout: 264 seconds)
+[09:04:08] *** Joins: Tobbi (~Tobbi@2a02:8108:1240:48ec:f161:5763:53fa:a148)
+[09:04:56] *** Joins: pah (~pah@user/pah)
+[09:08:52] *** Quits: Tobbi (~Tobbi@2a02:8108:1240:48ec:f161:5763:53fa:a148) (Ping timeout: 268 seconds)
+[09:09:43] *** Quits: pah (~pah@user/pah) (Ping timeout: 256 seconds)
+[09:09:48] *** Joins: pah_ (~pah@host-80-183-148-206.pool80183.interbusiness.it)
+[09:16:26] *** Quits: skapata (~Skapata@user/skapata) (Remote host closed the connection)
+[09:16:52] *** Quits: luizfrds (~Luiz@152.250.243.147) (Read error: Connection reset by peer)
+[09:25:01] *** Quits: Mooncairn (~mooncairn@user/mooncairn) (Ping timeout: 256 seconds)
+[09:32:59] *** Quits: great_taste (~great_tas@190.32.235.20) (Quit: Client closed)
+[09:37:58] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[09:38:06] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[09:38:06] *** ChanServ sets mode: +v npaperbot
+[09:49:58] *** Joins: skapata (~Skapata@2804:14c:87b0:a6f9:41b0:6e8:d3fa:5cea)
+[09:49:58] *** Quits: skapata (~Skapata@2804:14c:87b0:a6f9:41b0:6e8:d3fa:5cea) (Changing host)
+[09:49:58] *** Joins: skapata (~Skapata@user/skapata)
+[09:50:52] *** Quits: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse) (Remote host closed the connection)
+[09:52:00] *** Joins: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse)
+[09:53:47] *** Quits: pah_ (~pah@host-80-183-148-206.pool80183.interbusiness.it) (Ping timeout: 264 seconds)
+[09:54:33] *** Joins: pah (~pah@user/pah)
+[10:00:59] *** Joins: ambasta (~ambasta@89.46.62.147)
+[10:02:01] *** Quits: cm007magnum (~Rheanna@101.91.232.166) (Remote host closed the connection)
+[10:02:52] <ambasta> https://godbolt.org/z/f1jaqz7oT , why the the combined shift output different from explicitly casted shifts?
+[10:03:12] <ambasta> Does the compiler automatically resize the data type when using bitwise shift?
+[10:04:02] *** Joins: cm007magnum (~Rheanna@218.78.79.129)
+[10:04:52] <Ameisen> intermediate type of (value << 2) is 'int'.
+[10:05:08] <ambasta> Right, but why?
+[10:05:17] <Ameisen> before you assign that directly to uint8_t, truncating the result, and then shifting that truncated result >> 3
+[10:05:21] <Ameisen> in the second version, you do not truncate.
+[10:05:36] <Ameisen> (value << 2) is int, then you truncate that 32-bit integer right 3
+[10:05:59] <Ameisen> https://godbolt.org/z/Y4TWx41T5
+[10:06:02] <Ameisen> that would be equivalent.
+[10:06:08] <ambasta> Ameisen, what I am trying to ask is does bitshift automatically return int?
+[10:06:38] <ambasta> Because as per reference T::operator<<(const T2&) should return value of type T
+[10:06:43] <ambasta> Which is uin8_t here
+[10:07:38] <Ameisen> in C, at least, this is defined via arithmetic conversions for 'Usual arithmetic conversions'
+[10:08:04] <ambasta> https://godbolt.org/z/GG5rrv9sP (updated to use shift params also as uint8_t)
+[10:08:33] <Ameisen> that doesn't change anything.
+[10:08:39] <ambasta> So cppreference ( T operator<<(const T &a, const T2 &b); ) is incorrect? https://en.cppreference.com/w/cpp/language/operator_arithmetic
+[10:08:59] <Ameisen> uint8_t isn't a class.
+[10:09:08] <Ameisen> those are prototype examples for reference.
+[10:09:13] *** Quits: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse) (Ping timeout: 256 seconds)
+[10:09:39] *** Joins: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse)
+[10:10:24] <ambasta> If the operand passed to an arithmetic operator is integral or unscoped enumeration type, then before any other action (but after lvalue-to-rvalue conversion, if applicable), the operand undergoes integral promotion.
+[10:10:32] <ambasta> I guess this is the section that applies then
+[10:10:58] <Ameisen> "For the binary operators (except shifts), if the promoted operands have different types"
+[10:13:14] <ambasta> What's the general strategy if I want to avoid integral promotion (or undo effects of), explicitly cast after bitshift?
+[10:13:23] *** Joins: riksteri (riksteri@gateway/vpn/airvpn/riksteri)
+[10:14:07] <Ameisen> That's what I do
+[10:14:12] <Ameisen> particularly on 8-bit embedded
+[10:14:29] <ambasta> Something similar here (base_n encoding)
+[10:15:34] <ville> !fs result
+[10:15:35] <Ameisen> type promotion rules can be very complicated to follow, I basically always specify exactly what I want.
+[10:15:37] <nolyc> Result types of arithmetic operations are easy, just memorize http://eel.is/c++/resulttypes.png and you'll be fine!
+[10:16:06] <ambasta> Heh
+[10:16:14] <Ameisen> what about implementations that have [u]int48_t?!
+[10:16:17] <Ameisen> and half?
+[10:16:24] <Ameisen> and [u]int24_t
+[10:17:22] <Ameisen> I generally assume that if both operands aren't the same, they're both gonna get promoted to int or whatever the larger type is
+[10:17:30] <Ameisen> unsigned will be maintained except in the weird case of shifting
+[10:17:55] <Ameisen> I generally also assume that if I want it to do something specific, it won't do it unless I tell it to :)
+[10:18:15] <ville> unsigned will not be maintained... look at the picture
+[10:18:21] <ambasta> I feel like operators should only cast to the largest of operands, but I am sure C++ has a good reasons for this behavior
+[10:18:45] <ville> ambasta: c
+[10:20:39] <ambasta> So legacy?
+[10:20:57] *** Joins: fdgr (~fdgr@178.49.152.42)
+[10:21:08] <ambasta> That's not a very good reason :/
+[10:21:45] <Ameisen> unsigned int + unsigned int == unsigned int
+[10:21:47] <Ameisen> as per the picture.
+[10:25:59] <ambasta> Yes, but char + char = int
+[10:26:22] <ville> or X + unsigned and bam you're not unsigned
+[10:26:39] <ville> well X << unsigned
+[10:26:54] <ambasta> ville, is this the sort of change that would be called an ABI break?
+[10:27:39] <ville> ambasta: it was a good reason at the time i am sure. first didnd't have to come up with new rules and secondly all the old c code would work with out modification making migration path smoother
+[10:28:53] <ville> ambasta: depends what you did, but hard to see how it would break abi. if you made the rules "sane", for some definition of "sane", it'd usually mean quite lot of current code wouldn't compile at all
+[10:29:47] <ambasta> well, just that operatorX(U u, V u) -> sizeof(U) > sizeof(V) : U:V in general
+[10:30:22] <Ameisen> Everything smaller than int wants to promote to int. At that point, if the operands are the same they stay the same, otherwise they will try to promote to the larger of the two.
+[10:30:24] <ville> try sticking -Wconversion -Werror=conversion on some existing project out there
+[10:31:06] <ambasta> Ye, but existing projects can fix this
+[10:31:21] <ambasta> I come from py world and 2to3 did break a lot of stuff
+[10:31:28] <ambasta> But it made things simpler/saner imo
+[10:32:08] <ville> ambasta: theoretically they could fix it, but would is another matter
+[10:33:01] <ville> i doubt a proposal to change any of this would have any chance of going through the committee
+[10:33:06] <ambasta> I was trying to understand if there are good reasons for this (performance or something more intuitive that I am missing here).. not breaking code to me doesn't sound like one
+[10:33:36] <ville> ambasta: interoperation with c
+[10:33:53] <ambasta> Ah yes
+[10:34:26] <ambasta> So C++ is C with classes still
+[10:35:47] <ville> i wish
+[10:35:56] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Ping timeout: 245 seconds)
+[10:38:21] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[10:44:38] <pulse> C++ is C with classes, a suspicious box of cat hair, a golden Russell's teapot, several mobius strips glued together, a mop bucket, and a tape recorded stuck playing Tom Scott's monologues on repeat
+[10:45:05] <pulse> That's more or less what C++ is
+[10:46:19] <Stryyker> Reminds me of Windows. Legacy stuff making things more complicated
+[10:51:14] *** Quits: pah (~pah@user/pah) (Ping timeout: 260 seconds)
+[10:51:22] *** Quits: cm007magnum (~Rheanna@218.78.79.129) (Remote host closed the connection)
+[10:53:16] *** Joins: cm007magnum (~Rheanna@218.78.105.67)
+[10:53:35] <Ameisen> Is the box itself suspicious, or the cat hair within it
+[10:53:48] <Stryyker> both
+[10:54:31] *** Joins: pah (~pah@user/pah)
+[10:57:11] *** Joins: Jupp_S (~quassel@ip-88-153-154-129.hsi04.unitymediagroup.de)
+[10:57:46] *** Joins: artok (~azo@mobile-access-5d6aa9-118.dhcp.inet.fi)
+[10:57:59] <pulse> It's just a box with a label "Cat hair. Do not open"
+[10:58:14] <pulse> Describes a lot of C++ repos now that I think about it
+[10:58:19] * pulse shrugs
+[10:58:31] <pulse> I still love it *pets C++ until it purrs*
+[11:02:54] *** Quits: artok (~azo@mobile-access-5d6aa9-118.dhcp.inet.fi) (Ping timeout: 260 seconds)
+[11:09:59] *** Quits: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse) (Ping timeout: 264 seconds)
+[11:10:26] *** Joins: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse)
+[11:19:29] *** Quits: chozorho (~chozorho@2601:146:300:c30::9ed1) (Quit: WeeChat 3.0)
+[11:29:17] <ville> ambasta: i guess it would be an abi break were you to have a template that did: auto f(T x, U y) -> decltype(x + y); and then you had an explicit instantiation of that in some TU. that TU would need to be rebuilt
+[11:30:33] <ville> i suppose doesn't have to be a template either. just auto f(char x, char y) -> decltype(x + y); would do
+[11:33:29] *** Quits: asen (~asen@2408:821b:618:2ef0:ab85:814b:bf8f:a143) (Remote host closed the connection)
+[11:33:42] *** Joins: asen (~asen@2408:821b:618:2ef0:ab85:814b:bf8f:a143)
+[11:35:47] *** Quits: pah (~pah@user/pah) (Ping timeout: 264 seconds)
+[11:36:31] *** Joins: pah_ (~pah@host-79-26-188-85.retail.telecomitalia.it)
+[11:41:25] *** Quits: cm007magnum (~Rheanna@218.78.105.67) (Remote host closed the connection)
+[11:42:09] *** Quits: immibis (~hexchat@62.156.144.218) (Ping timeout: 256 seconds)
+[11:43:19] *** Joins: cm007magnum (~Rheanna@218.78.79.129)
+[11:48:55] *** Quits: skapata (~Skapata@user/skapata) (Remote host closed the connection)
+[11:53:05] *** Joins: paul424 (~tom@ip-37-248-157-172.multi.internet.cyfrowypolsat.pl)
+[11:58:01] *** Quits: pah_ (~pah@host-79-26-188-85.retail.telecomitalia.it) (Ping timeout: 245 seconds)
+[11:58:02] *** Joins: pah (~pah@user/pah)
+[11:59:51] *** Quits: ville (~ville@178-75-128-81.bb.dnainternet.fi) (Quit: leaving)
+[12:00:26] *** Quits: givemeyourpies (~givemeyou@c-66-235-2-202.sea.wa.customer.broadstripe.net) (Quit: Going offline, see ya! (www.adiirc.com))
+[12:01:57] *** Joins: ville (~ville@178-75-128-81.bb.dnainternet.fi)
+[12:09:20] *** Joins: kenanmarasli (~kenanmara@user/kenanmarasli)
+[12:11:22] *** Joins: smallville7123 (~smallvill@cpe-172-193-200-97.qld.foxtel.net.au)
+[12:14:50] *** Joins: givemeyourpies (~givemeyou@c-66-235-2-202.sea.wa.customer.broadstripe.net)
+[12:17:00] *** Joins: robod34 (Username@79.113.195.239)
+[12:30:13] *** Quits: asen (~asen@2408:821b:618:2ef0:ab85:814b:bf8f:a143) (Quit: Leaving)
+[12:31:33] *** Joins: artok (~azo@mobile-access-5d6aa9-118.dhcp.inet.fi)
+[12:31:34] *** Quits: cm007magnum (~Rheanna@218.78.79.129) (Remote host closed the connection)
+[12:33:56] *** Joins: cm007magnum (~Rheanna@61.171.69.141)
+[12:38:15] *** Quits: artok (~azo@mobile-access-5d6aa9-118.dhcp.inet.fi) (Ping timeout: 256 seconds)
+[12:44:30] *** Quits: ullbeking (sid5364@user/ullbeking) (Ping timeout: 256 seconds)
+[12:45:04] *** Quits: kristjansson_ (sid126207@tinside.irccloud.com) (Ping timeout: 256 seconds)
+[12:47:17] *** Quits: fdgr (~fdgr@178.49.152.42) (Quit: Client closed)
+[12:47:30] *** Joins: artok (~azo@mobile-access-5d6aa9-118.dhcp.inet.fi)
+[12:47:56] *** Joins: ullbeking (sid5364@user/ullbeking)
+[12:48:49] *** Joins: kristjansson_ (sid126207@tinside.irccloud.com)
+[12:49:36] *** Quits: bjs (sid190364@user/bjs) (Ping timeout: 256 seconds)
+[12:50:09] *** Quits: NiKaN (sid385034@helmsley.irccloud.com) (Ping timeout: 256 seconds)
+[12:51:59] *** Quits: headline_ (sid102736@tinside.irccloud.com) (Ping timeout: 264 seconds)
+[12:52:20] *** Quits: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse) (Remote host closed the connection)
+[12:54:09] *** Joins: andreasbuhr (~quassel@p549db51f.dip0.t-ipconnect.de)
+[12:54:09] *** Quits: andreasbuhr (~quassel@p549db51f.dip0.t-ipconnect.de) (Client Quit)
+[12:54:34] *** Joins: NiKaN (sid385034@helmsley.irccloud.com)
+[12:55:16] *** Quits: ullbeking (sid5364@user/ullbeking) (Max SendQ exceeded)
+[12:57:06] *** Joins: bjs (sid190364@user/bjs)
+[12:57:36] *** Quits: smallville7123 (~smallvill@cpe-172-193-200-97.qld.foxtel.net.au) (Remote host closed the connection)
+[12:58:02] *** Joins: ullbeking (sid5364@user/ullbeking)
+[12:58:59] *** Joins: headline_ (sid102736@tinside.irccloud.com)
+[13:12:49] *** Quits: pulse (~pulse@user/pulse) (Ping timeout: 256 seconds)
+[13:15:44] *** Joins: smallville7123 (~smallvill@cpe-172-193-200-97.qld.foxtel.net.au)
+[13:21:24] *** Quits: cm007magnum (~Rheanna@61.171.69.141) (Remote host closed the connection)
+[13:22:46] <RandomReader> ambasta - the Conversion section right below that table on cppreference explains what happens to the arguments and when
+[13:22:50] *** Joins: cm007magnum (~Rheanna@218.78.79.129)
+[13:23:10] <ambasta> RandomReader, yeah.. read that
+[13:23:49] <RandomReader> originally it likely was related to performance and/or simplicity of codegen, C essentially started with "everything is an int" and grew from there
+[13:23:51] <ambasta> I'll still say that the conversion logic is obtuse
+[13:23:58] <RandomReader> today it just "is
+[13:24:24] <RandomReader> today it just "is", and no particular reason to break compatibility with 30+ years of existing code over it
+[13:25:27] <ambasta> Well, user friendly would be a good reason.. but my livelihood doesn't rely on C++ so maybe I'm biased
+[13:25:52] <RandomReader> (and by "everything is an int", I mean hardware had native word sizes, everything else was awkward, so the beginnings of C had everything oriented around word-sized things expressed as type int or similar)
+[13:26:13] <RandomReader> breaking compatibility would be extremely user-unfriendly, since relative stability is one of the strengths of both C and C++
+[13:26:24] <RandomReader> especially compared to the majority of other languages in common use
+[13:26:39] <ambasta> Is this a problem unique to C++?
+[13:26:45] <ambasta> i.e. avoiding breaking ABI
+[13:27:01] <RandomReader> I'm talking about code behavior, not ABI
+[13:27:10] <RandomReader> ABI is a platform-invented problem, nothing to do with the language
+[13:27:35] <RandomReader> if the language rules change, then recompiling or pasting any existing code will silently do the wrong thing
+[13:27:35] <ambasta> okay, then avoiding breaking compat
+[13:28:50] <RandomReader> on the other hand, the implicit conversions have become so undesired that there are libraries dedicated to making things more strict, so you're not the only one to look at this mess and want to walk away
+[13:29:26] <ambasta> Fair enough, personally, I like most of the newer language features
+[13:29:27] <RandomReader> e.g. https://github.com/foonathan/type_safe
+[13:29:32] <ambasta> But once in a while something like this comes up
+[13:29:43] <ambasta> And then I have to RTFM to see what sorcery is going on
+[13:30:51] <ambasta> Thanks for type_safe btw
+[13:33:13] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[13:37:59] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[13:38:06] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[13:38:06] *** ChanServ sets mode: +v npaperbot
+[13:42:41] *** Joins: TheHermann (~TheHerman@gateway/tor-sasl/thehermann)
+[13:46:21] *** Quits: TheHermann (~TheHerman@gateway/tor-sasl/thehermann) (Remote host closed the connection)
+[13:46:47] *** Joins: TheHermann (~TheHerman@gateway/tor-sasl/thehermann)
+[13:51:23] *** Quits: unixpro1970 (~unixpro19@c-73-181-185-205.hsd1.wa.comcast.net) (Ping timeout: 264 seconds)
+[13:53:28] *** Joins: gggp (~gggp@li2010-23.members.linode.com)
+[14:01:04] *** Joins: unixpro1970 (~unixpro19@c-73-181-185-205.hsd1.wa.comcast.net)
+[14:03:15] *** Joins: Simplar (~quassel@188.163.92.225)
+[14:09:22] *** Quits: ambasta (~ambasta@89.46.62.147) (Remote host closed the connection)
+[14:09:22] *** Joins: immibis (~hexchat@62.156.144.218)
+[14:12:36] *** Quits: gggp (~gggp@li2010-23.members.linode.com) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[14:22:08] *** Quits: txtsd (~txtsd@user/txtsd) (Ping timeout: 268 seconds)
+[14:29:58] *** Joins: xiongxin (~Thunderbi@113.116.224.42)
+[14:34:19] *** Joins: pulse (~pulse@user/pulse)
+[14:38:06] *** Joins: xkuru (~xkuru@user/xkuru)
+[14:41:25] *** Quits: z8z (~x@ac255238.ppp.asahi-net.or.jp) (Quit: Quitting)
+[14:41:42] *** Joins: z8z (~x@ac255238.ppp.asahi-net.or.jp)
+[14:47:12] <antto> okay, what's a non-stupid way to put a "version" on your program?
+[14:47:39] <antto> a basic way.. for a basic CLI program
+[14:47:39] *** Joins: proller (~p@80.240.216.69)
+[14:48:35] <antto> const string app_version_str = std::string("v0.99 (") + __DATE__ + ")";
+[14:48:47] <antto> this, in the global scope, perhaps is silly
+[14:50:23] *** Joins: Tobbi (~Tobbi@2a02:8108:1240:48ec:4900:6067:dd0f:2f7e)
+[14:59:37] *** Joins: KillAnimals (~anon@199-7-159-56.eng.wind.ca)
+[15:01:40] *** Quits: cm007magnum (~Rheanna@218.78.79.129) (Remote host closed the connection)
+[15:23:55] <TinoDidriksen> antto, not date. The build should be reproducible - same sources should produce same binary, regardless of time.
+[15:24:21] <antto> yeah, ignore that perhaps
+[15:25:38] <antto> this string is in main.cpp basically
+[15:29:34] <anyone> since the string is const anyway, you could also just  constexpr char app_versino_str[] = "v0.99";
+[15:39:09] <TinoDidriksen> You'll probably eventually want the version pieces as integers, so just start them as integers and build the string at compile time.
+[15:39:13] *** Quits: paul424 (~tom@ip-37-248-157-172.multi.internet.cyfrowypolsat.pl) (Remote host closed the connection)
+[15:43:01] *** Quits: smallville7123 (~smallvill@cpe-172-193-200-97.qld.foxtel.net.au) (Ping timeout: 245 seconds)
+[15:49:26] *** Quits: KillAnimals (~anon@199-7-159-56.eng.wind.ca) (Ping timeout: 260 seconds)
+[15:59:43] *** Joins: cm007magnum (~Rheanna@61.171.21.169)
+[16:07:26] *** Joins: Guest80 (~Guest80@pd95ed7c0.dip0.t-ipconnect.de)
+[16:09:22] *** Joins: m_ben (~m_ben@user/m-ben/x-7429725)
+[16:27:41] *** Quits: Leo_V (~Leo@216.154.50.172) ()
+[16:39:39] *** Joins: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net)
+[16:48:17] *** Joins: Flonk (~Flonk@vps-zap441517-1.zap-srv.com)
+[16:51:28] *** Joins: cart_man (~rynot@2a00:23c4:2b81:5401:34b0:3739:9242:110c)
+[16:52:56] *** Joins: sysctl (~user@88.215.77.255)
+[16:54:37] *** Joins: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it)
+[16:57:43] *** Joins: magla (~gelignite@55d45814.access.ecotel.net)
+[16:59:32] *** Joins: plastico (~plastico@neomutt/plastico)
+[17:06:46] *** Joins: chris64 (~chris@user/chris64)
+[17:07:22] *** Joins: Leone (~Leo@216.154.50.172)
+[17:18:27] *** Joins: jkaye (~jkaye@2601:281:8300:7530:2d7e:ffab:3b55:862f)
+[17:18:29] *** Joins: Guest42 (~Guest42@eth-west-pareq2-46-193-4-100.wb.wifirst.net)
+[17:19:05] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[17:31:03] *** Joins: night_wulfe_ (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[17:31:18] *** Quits: cm007magnum (~Rheanna@61.171.21.169) (Remote host closed the connection)
+[17:32:48] *** Quits: Simplar (~quassel@188.163.92.225) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[17:33:43] *** Joins: smallville7123 (~smallvill@cpe-172-193-200-97.qld.foxtel.net.au)
+[17:34:22] *** Joins: cm007magnum (~Rheanna@218.78.79.129)
+[17:34:35] *** Quits: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 246 seconds)
+[17:37:59] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[17:38:07] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[17:38:08] *** ChanServ sets mode: +v npaperbot
+[17:38:26] *** Quits: smallville7123 (~smallvill@cpe-172-193-200-97.qld.foxtel.net.au) (Ping timeout: 245 seconds)
+[17:50:20] *** Quits: xiongxin (~Thunderbi@113.116.224.42) (Quit: xiongxin)
+[17:53:07] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[17:54:23] *** Joins: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[17:58:26] *** Quits: night_wulfe_ (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 256 seconds)
+[18:02:59] *** Parts: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it) ()
+[18:07:32] *** Quits: Guest80 (~Guest80@pd95ed7c0.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[18:07:38] <cart_man> Is there anybody here who are familiar with Curl lib?
+[18:13:08] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[18:18:07] *** Joins: AbleBacon (~AbleBacon@user/AbleBacon)
+[18:20:01] <chris64> cart_man: I've used the non multi threaded API, what are you looking for specifically?
+[18:21:40] *** Quits: cm007magnum (~Rheanna@218.78.79.129) (Remote host closed the connection)
+[18:22:56] *** Joins: cm007magnum (~Rheanna@218.78.105.67)
+[18:28:02] <chris64> cart_man: i.e. the curl_easy_* functions of libcurl
+[18:29:25] *** Quits: m_ben (~m_ben@user/m-ben/x-7429725) (Ping timeout: 268 seconds)
+[18:29:52] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[18:30:17] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[18:30:26] *** Quits: pulse (~pulse@user/pulse) (Ping timeout: 260 seconds)
+[18:39:26] *** Joins: m_ben (~m_ben@user/m-ben/x-7429725)
+[18:42:07] *** Quits: robod34 (Username@79.113.195.239) (Quit: Goe offline! ( http://marius.sucan.ro/ ))
+[18:42:34] *** Quits: cart_man (~rynot@2a00:23c4:2b81:5401:34b0:3739:9242:110c) (Remote host closed the connection)
+[18:51:28] *** Joins: xiongxin (~Thunderbi@113.116.224.68)
+[18:51:37] *** Joins: Juliu (~Juliu@2a02:810b:c640:3ec0:b91d:2ba:e99e:93c5)
+[18:53:14] <celphi> so lame that NULL == 0
+[18:54:07] <celphi> like what's the point of having null the
+[18:54:15] <celphi> then*
+[18:57:06] *** Joins: AmR (~AmREiSa@156.199.219.108)
+[18:57:08] <chris64> celphi: people used to compare pointers with null. nowadays you're preferring nullptr
+[18:57:59] *** Quits: jkaye (~jkaye@2601:281:8300:7530:2d7e:ffab:3b55:862f) (Ping timeout: 264 seconds)
+[18:58:25] <chris64> I don't know why null was introduced apart from pointer comparisons. Does anybody know?
+[19:02:27] *** Quits: pah (~pah@user/pah) (Ping timeout: 256 seconds)
+[19:03:10] <ville> NULL may be argued to be more indicative of intent and it's grep-able too
+[19:03:30] *** Joins: pah (~pah@user/pah)
+[19:03:59] <ville> int x = 0; int* y = &x; *y = NULL; is a good indicator some kind of break in thinking is happening
+[19:04:49] *** Quits: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net) (Quit: Going offline, see ya! (www.adiirc.com))
+[19:06:33] <ville> ...but the way C++ defined NULL and function overloading is a funny one: void f(int); void f(void*); f(NULL);
+[19:08:09] <Alipha> celphi: in C, NULL is allowed to be (void*)0, so that made sense. But C++ tightened the type system so that void* to T* required a cast, so NULL can't be (void*)0 in C++
+[19:08:45] *** Joins: cart_man (~rynot@2a00:23c4:2b81:5401:7493:3190:5141:6d12)
+[19:09:01] *** Quits: xiongxin (~Thunderbi@113.116.224.68) (Remote host closed the connection)
+[19:11:25] *** Quits: cm007magnum (~Rheanna@218.78.105.67) (Remote host closed the connection)
+[19:12:18] *** Quits: sprout_ (~quassel@2a02:a467:ccd6:1:9825:20f3:f69:55d5) (Ping timeout: 250 seconds)
+[19:12:26] *** Joins: cm007magnum (~Rheanna@61.171.69.141)
+[19:16:20] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:34a5:6053:7bcf:2391)
+[19:16:20] *** Joins: robod34 (Username@79.113.195.239)
+[19:27:23] *** Quits: sonic (~sonic@user/sonic) (Ping timeout: 256 seconds)
+[19:28:03] *** Joins: sonic (~sonic@user/sonic)
+[19:28:55] *** Quits: cart_man (~rynot@2a00:23c4:2b81:5401:7493:3190:5141:6d12) (Remote host closed the connection)
+[19:29:09] *** Joins: Guest80 (~Guest80@pd95ed7c0.dip0.t-ipconnect.de)
+[19:30:07] *** Joins: cart_man (~rynot@2a00:23c4:2b81:5401:b887:5e96:a7fa:a864)
+[19:44:34] *** Joins: Mooncairn (~mooncairn@user/mooncairn)
+[19:48:03] <AmR> Any one look at NetSurf ?
+[19:48:45] *** Joins: pulse (~pulse@user/pulse)
+[19:52:46] *** Joins: bomb (~bomb@user/bomb)
+[19:53:54] *** Joins: lpapp (~lpapp@ec2-15-161-137-233.eu-south-1.compute.amazonaws.com)
+[19:53:57] <lpapp> hi, I have a silly question
+[19:54:35] <lpapp> when you have two pointers one pointing at the front and another at the back of an array, and sometimes you advance the front and ... the back, what the best word to use for this? recede, retreat, withdraw, something else? I guess I am looking for the alternative of increase/decrease.
+[19:54:43] <lpapp> Where I do not know the opposite of advance in this programming jargon.
+[19:54:54] <lpapp> but advance is commonly used in my experience.
+[19:55:58] *** Joins: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net)
+[19:58:09] *** Joins: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it)
+[20:01:31] *** Quits: cm007magnum (~Rheanna@61.171.69.141) (Read error: Connection reset by peer)
+[20:02:57] *** Joins: smallville7123 (~smallvill@cpe-172-193-200-97.qld.foxtel.net.au)
+[20:03:59] *** Quits: cart_man (~rynot@2a00:23c4:2b81:5401:b887:5e96:a7fa:a864) (Ping timeout: 264 seconds)
+[20:04:13] *** Joins: cm007magnum (~Rheanna@101.91.232.166)
+[20:04:26] *** Joins: cart_man (~rynot@2a00:23c4:2b81:5401:d596:ecd3:b25f:1ade)
+[20:04:50] <cart_man> chris64 Hey I dont know if you are still here but I am having a super hard time staying connected to this channel
+[20:04:56] <cart_man> Or IRC in general
+[20:05:17] <cart_man> I am just looking to delete some files from a server using FTP
+[20:05:31] <cart_man> and also curl but there is no example of deleteing a file from a server
+[20:08:05] <cart_man> chris64: If you reply I will check the logs. I cant seem to stay online for some reason
+[20:08:48] <cart_man> chris64: -> https://pastebin.com/Qwfuf9Mh
+[20:09:13] <cart_man> So I am trying to simply delete a file from the server using curl but I get segfaults no matter what I do and there isnt any great explanation or error for it.
+[20:17:42] *** Joins: skapata (~Skapata@2804:14c:87b0:a6f9:60e3:f790:778c:1e41)
+[20:17:42] *** Quits: skapata (~Skapata@2804:14c:87b0:a6f9:60e3:f790:778c:1e41) (Changing host)
+[20:17:42] *** Joins: skapata (~Skapata@user/skapata)
+[20:18:21] *** Quits: skapata (~Skapata@user/skapata) (Remote host closed the connection)
+[20:18:46] *** Joins: skapata (~Skapata@2804:14c:87b0:a6f9:60e3:f790:778c:1e41)
+[20:18:46] *** Quits: skapata (~Skapata@2804:14c:87b0:a6f9:60e3:f790:778c:1e41) (Changing host)
+[20:18:46] *** Joins: skapata (~Skapata@user/skapata)
+[20:21:35] <Guest80> lpapp: shift?
+[20:21:55] *** Quits: pulse (~pulse@user/pulse) (Read error: Connection reset by peer)
+[20:23:00] <anyone> looking at vector, you've got pop_front, push_back, pop_back, push_front etc.
+[20:24:15] <anyone> "shift" is Perl nomenclature, but yeah that could work too
+[20:24:16] <Guest80> as i understand it he moves front and back pointers together by the same offset
+[20:24:31] <anyone> if you move two pointers at the same time, what you have is a window movement
+[20:25:55] <Guest80> yes. Depending on the semantics it could also be called "rotate". But if it can't "wrap around" then "shift" sounds better to me.
+[20:26:51] <Guest80> or maybe it has ringbuffer semantics and you should call it push_back?
+[20:34:37] *** Quits: jzsinatra (~jzsinatra@88-114-238-31.elisa-laajakaista.fi) (Ping timeout: 268 seconds)
+[20:41:28] *** Quits: cart_man (~rynot@2a00:23c4:2b81:5401:d596:ecd3:b25f:1ade) (Remote host closed the connection)
+[20:45:31] *** Quits: pah (~pah@user/pah) (Ping timeout: 245 seconds)
+[20:46:51] *** Joins: pah (~pah@user/pah)
+[20:51:26] *** Quits: cm007magnum (~Rheanna@101.91.232.166) (Remote host closed the connection)
+[20:53:18] *** Joins: cm007magnum (~Rheanna@218.78.53.13)
+[20:54:23] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:34a5:6053:7bcf:2391) (Ping timeout: 264 seconds)
+[20:55:11] <chris64> cart_man: I did only work with curl's http support but as far as I can see from the man page you referenced and the example in there, you'll have to pass a pointer to an instance of `curl_slist` to curl_easy_setopt. It seems that c style strings are not accepted as argument -- only as argument to `curl_slist_append`.
+[20:56:01] *** Joins: jzsinatra (~jzsinatra@88-114-238-31.elisa-laajakaista.fi)
+[20:56:14] *** Joins: pulse (~pulse@user/pulse)
+[20:57:06] <chris64> cart_man: To me it looks like however, that you still need to download a file. If I remember correctly, FTP is a quite simple protocol. Maybe it's worth to check whether it's simpler to just open a raw socket, do the handshake and write the delete command.
+[21:06:46] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:34a5:6053:7bcf:2391)
+[21:08:40] *** Parts: lpapp (~lpapp@ec2-15-161-137-233.eu-south-1.compute.amazonaws.com) ()
+[21:08:53] *** Quits: chris64 (~chris@user/chris64) (Quit: leaving)
+[21:09:03] *** Quits: pah (~pah@user/pah) (Ping timeout: 265 seconds)
+[21:09:59] *** Quits: callq (~callq@2409:4062:2d0c:d18f:992e:9e9b:dd11:9514) (Ping timeout: 264 seconds)
+[21:11:25] *** Joins: pah (~pah@user/pah)
+[21:11:37] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:34a5:6053:7bcf:2391) (Ping timeout: 268 seconds)
+[21:17:18] *** Joins: cart_man (~rynot@2a00:23c4:2b81:5401:b9aa:2f9b:f73:835c)
+[21:20:03] *** Quits: cart_man (~rynot@2a00:23c4:2b81:5401:b9aa:2f9b:f73:835c) (Client Quit)
+[21:21:47] *** Joins: spaceangel (~spaceange@ip-62-245-71-160.net.upcbroadband.cz)
+[21:23:39] *** Quits: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it) (Quit: Leaving.)
+[21:29:37] *** Joins: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it)
+[21:30:50] *** Quits: KombuchaKip (~kip@192.252.230.5) (Quit: Leaving.)
+[21:31:23] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:34a5:6053:7bcf:2391)
+[21:31:28] *** Joins: KombuchaKip (~kip@192.252.230.5)
+[21:32:49] *** Quits: TheHermann (~TheHerman@gateway/tor-sasl/thehermann) (Remote host closed the connection)
+[21:33:03] *** Joins: TheHermann (~TheHerman@gateway/tor-sasl/thehermann)
+[21:33:05] *** Joins: Kebianizao (~Kebianiza@188.127.164.127)
+[21:38:00] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[21:38:07] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[21:38:08] *** ChanServ sets mode: +v npaperbot
+[21:42:01] *** Quits: cm007magnum (~Rheanna@218.78.53.13) (Remote host closed the connection)
+[21:43:09] *** Joins: cm007magnum (~Rheanna@218.78.105.67)
+[21:45:51] *** Parts: anyone (~filler@a4.inai.de) ()
+[21:48:04] *** Quits: vdamewood (~vdamewood@fedora/vdamewood) (Quit: My MacBook Pro has gone to sleep. ZZZzzz…)
+[21:53:12] *** Quits: Fault (~Fault@150.230.39.7) (Quit: Quit.)
+[21:58:02] *** Parts: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it) ()
+[22:00:21] *** Joins: ferdna (~ferdna@user/ferdna)
+[22:00:26] *** Joins: Fault (~Fault@150.230.39.7)
+[22:12:40] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[22:25:59] *** Quits: Fault (~Fault@150.230.39.7) (Quit: Quit.)
+[22:26:13] *** Quits: pah (~pah@user/pah) (Ping timeout: 268 seconds)
+[22:26:39] *** Joins: Fault (~Fault@150.230.39.7)
+[22:26:57] *** Joins: pah_ (~pah@host-87-18-70-12.retail.telecomitalia.it)
+[22:31:34] *** Quits: cm007magnum (~Rheanna@218.78.105.67) (Remote host closed the connection)
+[22:33:01] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[22:33:15] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[22:33:56] *** Joins: cm007magnum (~Rheanna@218.78.79.129)
+[22:34:09] *** Quits: cbreak (~cbreak@77-58-201-132.dclient.hispeed.ch) (Quit: ZNC - https://znc.in)
+[22:35:53] *** Joins: cbreak (~cbreak@77-58-201-132.dclient.hispeed.ch)
+[22:38:51] *** Joins: luizfrds (~Luiz@152.250.243.147)
+[22:45:41] *** Quits: riksteri (riksteri@gateway/vpn/airvpn/riksteri) (Quit: riksteri)
+[22:46:16] *** Joins: paul424 (~tom@ip-37-248-152-4.multi.internet.cyfrowypolsat.pl)
+[22:54:11] *** Joins: KillAnimals (~anon@199-7-159-56.eng.wind.ca)
+[22:56:07] <LordKalma> PJBoy, https://github.com/microsoft/vscode-cmake-tools/issues/93#issuecomment-968120396
+[22:56:09] <LordKalma> check that out
+[22:58:29] <LordKalma> (and @everybody that uses cmake on vscode)
+[23:13:32] *** Quits: Guest80 (~Guest80@pd95ed7c0.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[23:21:32] *** Quits: cm007magnum (~Rheanna@218.78.79.129) (Remote host closed the connection)
+[23:23:16] *** Joins: cm007magnum (~Rheanna@218.78.99.237)
+[23:32:21] <m_ben> it's not open source wtf. the repository is just a readme and a screenshot
+[23:34:00] *** Quits: sysctl (~user@88.215.77.255) (Quit: Konversation terminated!)
+[23:34:26] <LordKalma> yeah, noticed that. I left a comment asking if it'll be
+[23:35:44] <LordKalma> it's written in .net interestingly
+[23:36:11] <bomb> of course it's going to be. Microsoft is in embrace & extend mode right now
+[23:36:38] <LordKalma> the extension is by a random person
+[23:36:39] <LordKalma> not MS
+[23:36:45] <LordKalma> https://github.com/josetr/cmake-language-support
+[23:37:17] <bomb> not clicking that
+[23:37:37] <LordKalma> have something against GH?
+[23:38:06] <hnOsmium0001[m]> that looks a lot nicer than the current cmake language extension
+[23:38:14] <LordKalma> it is
+[23:38:26] <LordKalma> twxs abandoned them loooong time ago
+[23:38:32] <LordKalma> first impressions are quite nice
+[23:38:46] <LordKalma> *abandoned theirs
+[23:38:56] <hnOsmium0001[m]> this sounds amazing and cursed at the same time, a buildsystem debugger
+[23:38:57] <hnOsmium0001[m]> >  vector-of-bool on 2 Feb 2017
+[23:38:57] <hnOsmium0001[m]> > I'm hoping that for a 1.0 release of this ext I'll have enhanced intellisense functionality (And maybe even a CMake debugger?
+[23:39:35] <LordKalma> vector-of-bool is the one who made the extensions MS supports now
+[23:39:38] <LordKalma> the one with the "runner"
+[23:39:56] <LordKalma> why MS didn't include the fucking language dictionary... URGH
+[23:40:05] <LordKalma> (that's what the issue I linked it about)
+[23:40:29] <LordKalma> MS makes a great extension to *use* cmake, but not to *write* cmake
+[23:40:36] <LordKalma> the one to write cmake was abandoned
+[23:40:53] <LordKalma> this one doesn't have its source released for some reason
+[23:41:03] <LordKalma> there were attempts are writing a cmake LSP, but they seem mostly dead
+[23:41:39] <LordKalma> I mean, it's not dead, but, https://github.com/regen100/cmake-language-server/issues/46
+[23:41:40] *** Joins: Voxel (~Voxel@user/voxel)
+[23:41:44] <Voxel> Hey all ^^
+[23:41:55] <bomb> hey Voxel how's life?
+[23:42:28] <Voxel> Relatively normal, but not really. Trying to figure out a lot of stuff recently...
+[23:42:35] <Voxel> Anyways, thank you for asking! ^^
+[23:42:49] <bomb> what stuff, computer-related?
+[23:43:05] <Voxel> I hope you have pleasant time and safe, bomb!
+[23:43:30] <bomb> it's all good here Voxel just finished eating a corn :)
+[23:46:35] <Voxel> Not very computer related. If I recall it correct, when I played Starbound, I found out that a Sweet Popcorn is very filling, and requires only Corn and Sugar to grow! Thus, it as quite handy. The game is an astronomically magnificent masterpiece! I'd definitely recommend to experience it...
+[23:47:34] <Voxel> It was long ago though... Thank you for reminding me it! I'll try finding some time, and installing the title again! ^^
+[23:48:38] *** Joins: dextercd (~dexter@2a02-a450-f25d-1-76d4-35ff-fefe-34c.fixed6.kpn.net)
+[23:54:07] <whupdup> does anyone know if there's a fast integer log2 in the standard lib? I can't seem to find one
+[23:54:49] <bomb> Voxel well, you're welcome :)
+[23:55:01] *** Joins: sysctl (~user@88.215.77.255)
+[23:55:50] *** Quits: paul424 (~tom@ip-37-248-152-4.multi.internet.cyfrowypolsat.pl) (Quit: Leaving)

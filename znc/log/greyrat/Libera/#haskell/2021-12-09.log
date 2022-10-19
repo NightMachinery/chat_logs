@@ -1,0 +1,1860 @@
+[00:00:04] <tomsmeding> so GHC has to unify "Inner mode pat" and "Inner mode pat'", but it can't use this unification to deduce anything about pat' because Inner is non-injective
+[00:01:00] <tomsmeding> (recall that a function f is injective if f x = f y => x = y)
+[00:01:13] <dminuoso> Are these two not alpha equivalent?
+[00:01:34] <tomsmeding> sure, you can _choose_ pat' ~ pat and make the constraints work out
+[00:01:47] <tomsmeding> but you have no guarantee that that is the only valid choice for pat'
+[00:02:00] <tomsmeding> because there may be other values for pat' for which Inner mode pat' ~ Inner mode pat
+[00:02:35] <tomsmeding> in fact, I'm indirectly forcing this choice pat' ~ pat by forcing pat' to equal the type parameter of that Proxy, which I set to pat
+[00:02:41] <dminuoso> So I guess one solution would be to newtype Sel intead.
+[00:02:45] <tomsmeding> yes
+[00:03:12] <tomsmeding> that fixes the problem too :p
+[00:03:23] <dminuoso> It seems my naive expectation was constantly "Hey you tool, Im giving you `Sel ()`, and you allow `Sel a`. Work it out!"
+[00:03:27] <tomsmeding> and is probably a nicer solution, depending on the rest of your code
+[00:03:37] <tomsmeding> right, which works for injective type constructors
+[00:03:40] <tomsmeding> but Sel is not
+[00:03:44] <tomsmeding> and newtypes and data types are
+[00:04:17] *** Joins: lortabac (~lortabac@2a01:e0a:541:b8f0:e6c3:e85f:49be:975c)
+[00:04:20] <dminuoso> tomsmeding: So it seems one other solution would be to fix mode
+[00:04:31] <dminuoso> Because then GHC can resolve the type family, and then do regular plain old unification
+[00:04:57] <tomsmeding> as in, make 'mode' a type parameter to Sel?
+[00:05:19] <dminuoso> No as in:
+[00:05:42] <dminuoso> `f (sel @Field)`
+[00:05:47] <dminuoso> Except for some reason I cant specify that
+[00:06:31] <dminuoso> oh wait
+[00:06:37] <dminuoso> No I begin to see the problem
+[00:06:59] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:b5e5:6571:976d:7afc)
+[00:07:00] <dminuoso> The problem is that `f` demands a polymorphic Sel
+[00:07:03] <tomsmeding> not sure that applies Field to the right type variable
+[00:07:04] <dminuoso> And g has no control over that
+[00:07:07] <tomsmeding> right
+[00:08:03] <tomsmeding> I like the newtype; they are kind of a catch-all solution for type inference issues it seems
+[00:08:20] <dminuoso> newtypes dont work well for my problem domain
+[00:08:34] <dminuoso> Tagged is by far the most ergonomic option
+[00:08:38] *** Joins: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net)
+[00:08:38] *** Quits: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net) (Changing host)
+[00:08:38] *** Joins: wroathe (~wroathe@user/wroathe)
+[00:08:40] <tomsmeding> they allow recursive ("infinite") types, and fix type inference surrounding universal quantification and non-injectivity
+[00:08:45] <tomsmeding> ah
+[00:08:54] <dminuoso> tomsmeding: Look at ArgF, do you see why?
+[00:09:04] <dminuoso> Though hold on
+[00:09:08] <dminuoso> Let me give it a try
+[00:09:14] <tomsmeding> 'Sel field1', right?
+[00:09:23] <tomsmeding> or am I brainfarting
+[00:10:03] <tomsmeding> how should I delimit code blocks here on irc
+[00:10:10] <tomsmeding> all the quotes are taken by haskell
+[00:10:42] <dminuoso> tomsmeding: I guess its just mildly annoying that I then have to wrap each field accessor with a newtype.
+[00:10:44] <byorgey> guillemets
+[00:10:47] <tomsmeding> I guess the correct answer is «
+[00:10:48] <tomsmeding> yeah
+[00:10:51] <byorgey> =D
+[00:11:11] <tomsmeding> dminuoso: true
+[00:11:19] <geekosaur> I just use `, it's only ambiguous if the content is a single identifier :)
+[00:11:37] <tomsmeding> but I don't feel like adding a hotkey to my keyboard layout for guillemets :p
+[00:11:42] <dminuoso> tomsmeding: So the two solutions we now have is: newtype on Sel, which means *every* use site has to wrap the selector before passing it around, or we use Tagged + tyfam fundeps, which just imposes a `runTagged` each time you use the `ArgF Descr` style
+[00:11:48] <tomsmeding> geekosaur: true
+[00:12:01] <dminuoso> tomsmeding: Given that the `Field` mode is by far used more, the second approach seems less intrusive
+[00:12:08] <dminuoso> otoh, with newtypes you get far easier diagnostics..
+[00:12:17] *** exarkun_ is now known as exarkun
+[00:12:31] <tomsmeding> are you using the selectors as actual selectors as well
+[00:12:45] <dminuoso> Well, only to read fields.
+[00:12:50] <tomsmeding> if not, do the lens thing and define the natural selector names as newtype-wrapped versions of the actual ones
+[00:12:53] <tomsmeding> ah
+[00:13:07] <dminuoso> Let me give you a broad idea what i Have:
+[00:13:14] <dminuoso> To introduce you why I started this whole thing:
+[00:13:52] <dminuoso> tomsmeding: https://gist.github.com/dminuoso/7df4f8ad87906050e08a0c1a0e041234
+[00:14:24] <dminuoso> Now, I can simply fling a selector around, and the relevant code can first check the authorization, while at the same time logging the correct description using permsDescr
+[00:14:36] <dminuoso> And at the same time, permsDescr is used in the config parser for diagnostics and help output
+[00:14:44] <dminuoso>     permTSIGKeyDelete     <- optSection' "tsigKeyDelete" auth''spec (descr permTSIGKeyDelete)
+[00:14:47] <dminuoso> Using lines like that
+[00:14:54] <tomsmeding> auth''spec
+[00:15:02] <tomsmeding> but yeah I figured this was for automatic documentation
+[00:15:13] <tomsmeding> or, automatic description of the fields
+[00:15:18] <dminuoso> Indeed.
+[00:15:53] <tomsmeding> so where would the Tagged go exactly, again?
+[00:16:26] <dminuoso> type family Inner tag field = r | r -> tag field where   Inner Field f = Maybe f;  Inner Descr f = Tagged f T.Text
+[00:16:32] <dminuoso> Note, that by using Tagged we can make the tyfam injective
+[00:16:41] <dsal> tomsmeding: Yeah, I think so, just -N.  It seems like an ideal parallel case, but only half my cores spin up.
+[00:16:43] *** Joins: pfurla_ (~pfurla@2804:14d:5c5a:9a78:840d:6ccb:3c35:c390)
+[00:17:05] <tomsmeding> dsal: check if your computations allocate
+[00:17:12] <dminuoso> tomsmeding: ah hold on, this gist is mispaste because emacs had a non-reverted buffer
+[00:17:20] <tomsmeding> if a computation doesn't allocate, it doesn't yield to the scheduler, and stuff gets locked up and no more threads get spawned
+[00:17:51] <tomsmeding> I fought with this a while ago, though I had N-1 threads instead of N/2
+[00:17:57] <dminuoso> tomsmeding: Its updated.
+[00:18:08] <tomsmeding> so the "solution" (read: workaround) was -N$(($(njobs) + 1))
+[00:18:25] <monochrom> But parMap uses sparks. Do they work differently from threads?
+[00:18:31] <dminuoso> tomsmeding: Also note that Authorization'' is where auth''spec comes from. :p
+[00:19:14] <tomsmeding> monochrom: I wasn't able to get reliably N threads with -N N when I tried a few months ago, in any way whatsoever, if the computations don't allocate often
+[00:19:43] *** Quits: pfurla_ (~pfurla@2804:14d:5c5a:9a78:840d:6ccb:3c35:c390) (Client Quit)
+[00:20:02] <dsal> I'm definitely allocating in the work.
+[00:20:12] <merijn> tomsmeding: You can just set the number of capabilities in code?
+[00:20:13] <tomsmeding> dminuoso: oh right, to make Inner injective
+[00:20:17] <dminuoso> Indeed.
+[00:20:31] *** Quits: pfurla (~pfurla@2804:14d:5c5a:9a78:10e5:165:b849:664a) (Ping timeout: 265 seconds)
+[00:20:38] *** Joins: smartin (~Thunderbi@88.135.18.171)
+[00:20:43] <tomsmeding> merijn: I believe I didn't try that, then, but I feel like that shouldn't do anything different than the -N switch, right?
+[00:20:48] <dminuoso> tomsmeding: This comes at the cost of every time I want to pull the documentation, I have to `runTagged`. But honestly, with newtype *everytime* you wanted to use a selector you'd have to unSel it, and everytime you wanted to pass it you'd have to Sel it.
+[00:20:56] <dminuoso> So ergonomically that seems far worse
+[00:21:01] <tomsmeding> dminuoso: makes sense
+[00:21:08] <merijn> tomsmeding: No, but then you don't have to remember to set flags and compiles with those flags enabled :p
+[00:21:29] <tomsmeding> dminuoso: ah, and it also kind of makes sense: the documentation is just a string, but it's tagged with the type of the thing that it's documenting
+[00:21:48] *** Joins: pfurla (~pfurla@2804:14d:5c5a:9a78:840d:6ccb:3c35:c390)
+[00:21:48] <tomsmeding> it's not a completely random type that's tucked somewhere just to make inference work out, it actually makes some semantic sense somehow
+[00:21:51] <tomsmeding> I like it
+[00:21:59] <tomsmeding> merijn: that was not my problem :p
+[00:22:02] *** Quits: pfurla (~pfurla@2804:14d:5c5a:9a78:840d:6ccb:3c35:c390) (Client Quit)
+[00:22:08] <tomsmeding> my problem was that I specify N threads and only N-1 do stuff
+[00:22:52] <merijn> tomsmeding: If N = number of cores, you shouldn't run N threads anyway, for reasons that mean it's not entirely unlikely that only N-1 do stuff :p
+[00:26:26] *** Joins: pfurla (~pfurla@2804:14d:5c5a:9a78:840d:6ccb:3c35:c390)
+[00:26:33] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[00:26:59] <dminuoso> tomsmeding: Fun thing, I cant have `Field f = f` because of this either. But luckily I want every field wrapped in Maybe anyway!
+[00:27:15] <dminuoso> So instead of putting it into the field, I just toss it into `Inner Field f = Maybe f` instead
+[00:27:15] <tomsmeding> dminuoso: heh yeah
+[00:27:21] <tomsmeding> #hacks
+[00:27:23] <dminuoso> :>
+[00:27:35] <tomsmeding> that indeed seems the appropriate emoji somehow
+[00:28:54] *** Joins: max22- (~maxime@2a01cb088335980012b6a709282cc846.ipv6.abo.wanadoo.fr)
+[00:29:14] *** Quits: rusty (~rustyboy@2a02:2f0e:5610:ab00:b16b:f583:26df:4061) (Quit: Leaving)
+[00:29:26] <dsal> -e200000 got it to burn more cores, but not really go faster.
+[00:29:34] <dminuoso> tomsmeding: Here's another cute trick you can do with this:
+[00:29:40] <dminuoso> describe :: forall a pat. (Typeable a, Tagged a String ~ Inner Descr pat) => Sel pat -> TypeRep
+[00:29:40] <dsal> Oh wait, because I overshot -N
+[00:29:42] <dminuoso> describe _ = typeOf (undefined :: a)
+[00:29:51] <dminuoso> This is another benefit of Tagged
+[00:30:07] <dminuoso> Sadly I have no use for this. :(
+[00:30:08] <merijn> dsal: Did you disbable parallel GC< btw?
+[00:31:05] <tomsmeding> dminuoso: does that work? Like, can ghc infer what `pat` should be there?
+[00:31:37] <dminuoso> Yes
+[00:31:41] <dsal> -qg slows it down a lot.
+[00:32:01] <dminuoso> tomsmeding: https://gist.github.com/dminuoso/28a5b34a92e4dc050313827ed2470ef9
+[00:32:05] <dminuoso> run this and try `describe field1`
+[00:32:13] <dsal> With `+RTS -N -e200000` it uses all the cores.
+[00:32:20] <merijn> dsal: It *slows down* with -qg? o.O
+[00:32:33] <merijn> dsal: I wanna see the output of +RTS -sstderr
+[00:32:58] <dsal> With -qg it only uses ~1 core.
+[00:33:05] <merijn> For GC...
+[00:33:18] <merijn> It doesn't affect the number of capabilities
+[00:33:25] <dminuoso> tomsmeding: Another solution in this design space would be to attach this documentation string to each field via Tagged and symbols.
+[00:33:29] *** Quits: pfurla (~pfurla@2804:14d:5c5a:9a78:840d:6ccb:3c35:c390) (Quit: gone to sleep. ZZZzzz…)
+[00:33:43] <merijn> "+RTS -N" without -qg is almost always a mistake
+[00:33:47] <dminuoso> But then I have to Tagged/runTagged fields all over the place. :(
+[00:34:00] <tomsmeding> dminuoso: interesting tradeoff
+[00:34:38] <dminuoso> i.e. so you'd have `data Foo = Foo { field1 :: Tagged "its a field" Char, field2 :: Tagged "another field" Int }`
+[00:34:54] <dminuoso> This incurs far less extensions and is mostly unnoticeable
+[00:35:14] <dminuoso> But if you have any unification errors with those fields, the diagnostics will be a bit noisy
+[00:35:19] <dsal> merijn: this is with -qg https://www.irccloud.com/pastebin/CMwJgYfY/sstdout.txt
+[00:35:33] <dminuoso> Well. Unnoticeable apart from having to runTagged/Tagged everywhere
+[00:35:34] <merijn> 36% productivity oof
+[00:35:44] <dminuoso> But if you use `lenses`, you could hide this away
+[00:35:49] <merijn> What's the code?
+[00:36:17] <dsal> merijn: Do you want something runnable?
+[00:36:24] <dminuoso> tomsmeding: Mmm. Actually this might be tempting
+[00:36:29] <tomsmeding> dminuoso: facepalm of course 'pat' is inferrable, because Inner is now injective so all is sweet
+[00:36:33] <dminuoso> Yup
+[00:36:44] <dsal> This is my aoc day 8.  It's a list monad. * each line of input.
+[00:36:57] <merijn> dsal: Not gonna be running it anyway :p
+[00:37:15] <tomsmeding> dminuoso: I also kind of like the type level version, but only you know whether the newtype (un)wrapping is doable or not
+[00:37:21] <merijn> Only looking at IRC to modulate videogame frustration levels xD
+[00:37:29] <dsal> part2 :: [Line] -> Int  ;   part2 = sum . parMap rseq decodeLine
+[00:37:49] <dminuoso> tomsmeding: Honestly, the more I have worked with this, the more I realize this is black magic to anyone not involved in type families
+[00:37:58] <dsal> decodeLine figures out what map works and then applies it to the "output" section.  So it's definitely doing some work.
+[00:38:04] <dminuoso> Nothing about it is clear to unsuspecting users.
+[00:38:11] <dsal> without the -qg (and another 0 of -e) :    Productivity  76.4% of total user, 9.4% of total elapsed
+[00:38:31] <tomsmeding> dminuoso: then perhaps the Tagged-with-docs-in-Symbol version is actually more accessible, even if more noisy
+[00:38:35] <dsal> It doesn't actually get *faster*, but it does more.
+[00:38:41] <merijn> dsal: Basically that means you have a giant live set, which I guess isn't surprising with the parMap + rseq
+[00:38:58] <dminuoso> It's sort of annoying we have no way of annotating data types
+[00:38:58] <tomsmeding> dsal: I can relate
+[00:39:14] <dsal> Let me try -N8.  I have this asymmetrical multiprocessor thing going on.
+[00:39:27] <dsal> I like that it's working harder.  I'd just hope that'd make it go faster.
+[00:39:38] <merijn> But that's also a *giant* time for the problem
+[00:39:49] <dsal> Oh, it says it decided on -N10
+[00:39:51] <merijn> Isn't the problem simply that decodeLine is super slow
+[00:40:28] <dsal> Sure, if decodeLine is slow, then I'd think using twice as many cores to get the same amount of work done wouldn't take almost the same amount of time.
+[00:40:32] <merijn> 132s, mine is effectively instant doing every line sequentially
+[00:41:49] <sprout_> Imma blow up my laptop with a par_map... 
+[00:41:58] <dsal> It's taking me 4s to do the Big Input™ on this machine.  Making it more parallel seems to slow it down, but not get it done sooner.
+[00:42:12] <dminuoso> tomsmeding: None of these are really comforting. :(
+[00:42:28] <merijn> dsal: eh, wait
+[00:42:43] <merijn> dsal: Shouldn't it be "parMap rpar" not "parMap rseq"?
+[00:43:17] <dsal> Hmm....
+[00:43:26] <tomsmeding> dminuoso: I agree
+[00:43:57] <dsal> I'd think rseq would get it done in the spark vs. just like, whatever rpar does.
+[00:44:12] <merijn> rpar makes sparks...
+[00:44:38] <merijn> tbh, I'm not sure, I haven't used parallel much
+[00:44:46] <dsal> sparks are flying... when I turn up -e I get a bunch of thread usage.
+[00:45:12] <dsal> Nothing really changes the amount of time it takes to finish, though
+[00:46:21] *** Joins: CiaoSen (~Jura@p200300c9570204002a3a4dfffe84dbd5.dip0.t-ipconnect.de)
+[00:47:42] <merijn> If you're not compute bound this behaviour isn't surprising, though. So the question is "is decodeLine compute bound?" and "if no, how to fix that"
+[00:47:53] <dsal> It does help a lot in smaller data sets.
+[00:47:59] <dsal> It's at the top of my profile
+[00:48:12] *** Joins: acidjnk_new (~acidjnk@p200300d0c7271e730cb547fb259b1246.dip0.t-ipconnect.de)
+[00:48:24] <merijn> Which implies that the difference is dataset size, possibly due to keep too much data alive?
+[00:48:46] <dsal> On the smaller data set, parMap is about 8x faster than fmap.  On the larger one, it won't show a difference.
+[00:48:50] <merijn> For comparisong, my max residency is: 571,992 bytes maximum residency
+[00:49:02] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 265 seconds)
+[00:49:09] <merijn> So that's, uh, 2-3 orders of magnitude :)
+[00:50:53] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:b5e5:6571:976d:7afc) (Remote host closed the connection)
+[00:51:14] <sprout_> https://github.com/egel-lang/aoc-2021/blob/main/day8/task2.eg <- 89 second parallel on the last computation,  29 seconds without par_map ...
+[00:51:16] <sprout_> heh
+[00:52:50] <merijn> dsal: What's decodeLine look like?
+[00:52:57] <sprout_> well doh.  guess the overhead of managing 200 threads is substantial...
+[00:53:03] <tomsmeding> merijn: hm, my brute force version has 996224 bytes max residency
+[00:53:53] <merijn> tomsmeding: Get on my level ;)
+[00:54:09] <sprout_> the fastest method so far is just counting digits on each line since those unique identify each other
+[00:54:21] <tomsmeding> :p
+[00:54:25] <sprout_> uh,  letters
+[00:54:40] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:b5e5:6571:976d:7afc)
+[00:54:43] <tomsmeding> lol
+[00:55:02] <sprout_> my solution is just picking one of 7! permutations on each line.   should be way fast in Haskell too
+[00:55:23] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[00:55:34] <sprout_> Haskell being roughly two orders faster I think
+[00:55:36] <dsal> That's the "brute force" way.  I'm doing a bit less brute
+[00:56:12] *** Quits: zer0bitz (~zer0bitz@dsl-hkibng32-54fbfb-173.dhcp.inet.fi) (Read error: Connection reset by peer)
+[00:56:14] <merijn> dsal: I'm not doing any brute force :p
+[00:56:33] <dsal> merijn: I can paste in a bit, but it's basically computing a map in a list monad and then applying that map to the output side to foldl' up a number
+[00:56:49] <merijn> https://paste.tomsmeding.com/nqzcEvju
+[00:57:11] <sprout_> not sure it's that brute force,  I precompute the 7! functions from word to digit and that gives 5040/2*2log(10)*small_constant (maps are easily rejected) or 10k comparisons per line
+[00:57:14] <dsal> Is that the large input?
+[00:57:22] <merijn> dsal: That's the large input, yeah
+[00:57:28] <dsal> Neat
+[00:57:32] <merijn> and tbh, not particularly optimised either
+[00:57:45] <merijn> Which is why I'm so curious why it's so slow for you :p
+[00:57:56] <merijn> I'm not using any list monad stuff, though
+[00:58:06] <dsal> I'm doing a bunch of selects to grab digits and guarding as I go
+[00:58:09] <sprout_> 200k comparisons.  shouldn't be a problem for Haskell.  not sure you even need a map.  log(n) lookup is nice but for a container with only 10 elements...
+[00:58:30] <merijn> dsal: https://github.com/merijn/AdventOfCode/blob/master/Day8.hs
+[00:58:32] <sprout_> shouldn't matter.   lists should be good enough
+[00:58:46] <dsal> It's not the slow thing that's the issue right now, it's why it's not faster on the large input with parMap (but it's is on the small input)
+[00:58:46] *** Quits: doyougnu (~doyougnu@c-73-25-202-122.hsd1.or.comcast.net) (Read error: Connection reset by peer)
+[00:59:03] <dsal> merijn: oh, I should point out that's a criterion run
+[00:59:30] <sprout_> dsal: with Egel it's just likely the OS overhead of managing 200 threads.  with Haskell I wouldn't know since that should have it's own scheduler
+[00:59:32] <merijn> dsal: Well, since a lot of time is GC time and GC time is proportional to live set, having parallelism on a large set of input increases the liveset and thus GC time
+[01:00:06] <merijn> dsal: oh, improper caching with criterion can also mess you up, depending on how you're configuring the criterion benchmarks
+[01:01:29] <sprout_> ah.  that too.  200 threads competing on access to the same data structures?
+[01:05:20] *** Joins: Guest97 (~Guest97@pool-98-111-246-199.pitbpa.ftas.verizon.net)
+[01:05:37] *** Joins: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net)
+[01:05:37] *** Quits: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net) (Changing host)
+[01:05:37] *** Joins: wroathe (~wroathe@user/wroathe)
+[01:06:36] <EvanR> accessing the same immutable data structure shouldn't be an issue
+[01:08:11] *** Joins: vicfred (~vicfred@user/vicfred)
+[01:08:56] <dminuoso> tomsmeding: it took me less time to switch to the Tagged than it took to make a reproducer for the tyfam injectivity issues!
+[01:09:05] <dminuoso> I think I made my decision
+[01:09:54] <Guest97> Question - I need the type-level version of the identity function, that is a type `Ident` of kind `* -> *` where `a = Ident a`.
+[01:09:54] <Guest97> I know its possible to construct this using type synonyms in Scala, but when I tried `type Ident a = a`, I can't seem to use `Ident` as a higher-kinded type. Is there any way to do this?
+[01:09:56] <tomsmeding> dminuoso: the Tagged with docs in a Symbol type param?
+[01:09:58] <tomsmeding> nice!
+[01:10:06] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[01:10:29] <dminuoso> tomsmeding: https://gitlab.com/wobcom/haskell/powerdns-gerd/-/blob/master/lib/PowerDNS/Gerd/Permission/Types.hs#L80-113
+[01:10:33] <tomsmeding> % :i Data.Functor.Identity  -- Guest97 
+[01:10:33] <yahb> tomsmeding: ; <interactive>:1:1: error: Not in scope: `Data.Functor.Identity'
+[01:10:36] <awpr> there's no current way to pass a non-generative type function as a type parameter, if that's what you're looking for.
+[01:10:41] <tomsmeding> % :i Identity  -- Guest97 
+[01:10:41] <yahb> tomsmeding: ; <interactive>:1:3: error: parse error (possibly incorrect indentation or mismatched brackets)
+[01:10:45] <tomsmeding> % import Data.Functor.Identity
+[01:10:45] <yahb> tomsmeding: 
+[01:10:49] <tomsmeding> % :i Identity
+[01:10:49] <yahb> tomsmeding: type Identity :: * -> *; newtype Identity a = Identity {runIdentity :: a}; -- Defined in `Data.Functor.Identity'; instance Applicative Identity -- Defined in `Data.Functor.Identity'; instance Eq a => Eq (Identity a) -- Defined in `Data.Functor.Identity'; instance Functor Identity -- Defined in `Data.Functor.Identity'; instance Monad Identity -- Defined in `Data.Functor.Identity'; instance Monoid a => 
+[01:10:55] <merijn> Guest97: You can't do that without a newtype
+[01:10:57] <awpr> that's not _exactly_ an identity function, unfortunately
+[01:11:07] <EvanR> what about a type family 
+[01:11:08] <awpr> representationally yes, but not nominally
+[01:11:16] <tomsmeding> right
+[01:11:16] <dminuoso> Hah I have another cunning plan
+[01:11:18] <awpr> a type family can't be passed as a type parameter
+[01:11:22] <dminuoso> You can use type constructors in infix position too
+[01:11:23] <merijn> EvanR: You can't have partially applied type families as parameter
+[01:11:26] <EvanR> oah right
+[01:11:26] <merijn> EvanR: So...no
+[01:11:32] <dminuoso> That might look nicer, and would avoid needing to wrap the field in parens
+[01:11:38] <tomsmeding> dminuoso: `WithDocs`?
+[01:11:39] *** Joins: myShoggoth (~myShoggot@97-120-85-195.ptld.qwest.net)
+[01:11:47] <myShoggoth> HF November update: https://discourse.haskell.org/t/haskell-foundation-november-update/3797
+[01:11:56] <EvanR> with dependent haskell we can finally write an identity function at the type level? xD
+[01:12:04] <EvanR> if no, that's ridiculous
+[01:12:16] <Guest97> The only constraint I need to satisfy is that `a = f a` for any a, and I have to be able to use `f` as a typeclass parameter
+[01:12:30] <awpr> not possible IIUC
+[01:12:51] <tomsmeding> yeah
+[01:13:06] <Guest97> thanks
+[01:13:06] <Guest97> I can technically do what I'm trying to do with a newtype, but having to throw another isomorphism into the mix is just annoying
+[01:13:09] <awpr> there are workarounds, though: you can pass a stub type and have the consuming thing apply a type family to it
+[01:14:11] <awpr> `data IdentityF`  `type family Apply f (a :: k) :: k`  `type instance Apply IdentityF a = a`  `class MyClass f a where something :: Apply f a -> Bool`
+[01:14:32] <awpr> then `something @IdentityF @a :: a -> Bool`
+[01:14:52] <dminuoso> tomsmeding: Yeah
+[01:15:11] *** Joins: pfurla (~pfurla@2804:14d:5c5a:9a78:840d:6ccb:3c35:c390)
+[01:15:12] <Guest97> oh thats actually genius
+[01:15:12] *** Quits: lortabac (~lortabac@2a01:e0a:541:b8f0:e6c3:e85f:49be:975c) (Quit: WeeChat 2.8)
+[01:15:52] <awpr> (this is often called "defunctionalization", and the `singletons` library takes it to extreme lengths)
+[01:16:08] <Guest97> makes sense
+[01:17:22] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:b5e5:6571:976d:7afc) (Remote host closed the connection)
+[01:18:45] *** Joins: Morrow (~quassel@bzq-110-168-31-106.red.bezeqint.net)
+[01:18:48] *** Quits: alx741 (~alx741@186.178.108.192) (Quit: alx741)
+[01:19:01] <Guest97> rn tho I think its easier for me to just use a newtype
+[01:19:02] <Guest97> Reworking the superclass to use the newtype is gonna be way easier than making defunctionalized versions of most of the things its building on anyway
+[01:19:06] <Guest97> thanks for the help tho
+[01:19:13] <dminuoso> tomsmeding: Oh yes, Ive pushed it already. This looks even nicer!
+[01:19:30] <dminuoso> Also cute benefit, the unwrapping functions name:
+[01:19:37] <awpr> yeah I've generally found in the things I've worked on that defunctionalizing ended up being more annoying than just doing the newtype
+[01:19:38] <dminuoso> data newtype WithDocs b (s :: Symbol) = WithDocs { withoutDocs :: b }
+[01:19:55] <tomsmeding> :)
+[01:19:57] *** Joins: alx741 (~alx741@186.178.108.192)
+[01:20:05] <dminuoso> Bikeshedded into oblivion. 
+[01:20:07] <dminuoso> Thanks :)
+[01:20:11] <tomsmeding> still see Tagged on the link you sent though
+[01:20:48] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[01:21:42] <dminuoso> Check again?
+[01:22:40] <tomsmeding> <3
+[01:23:08] <tomsmeding> a newline got introduced though before the 'Per zone' section
+[01:23:30] <tomsmeding> (noticed because the line highlight now stops one line before the end of the data type
+[01:23:31] <tomsmeding> )
+[01:24:08] <dminuoso> tomsmeding: Yeah, already fixed that up because I realized I can put `WithDocs` "foo" on a separate line as well
+[01:24:34] <dminuoso> Pushed, if you like to see
+[01:24:46] <dminuoso> I think this is quite acceptable now
+[01:24:46] <tomsmeding> oh that's nice indeed
+[01:24:55] <tomsmeding> quite high, but nice
+[01:25:11] <tomsmeding> alternative would be alignment, but then you get long lines
+[01:25:22] <tomsmeding> bikeshedded into oblivion indeed
+[01:28:15] *** Quits: Akiva (~Akiva@user/Akiva) (Quit: WeeChat 3.3)
+[01:28:35] *** Joins: Akiva (~Akiva@user/Akiva)
+[01:29:09] <dminuoso> tomsmeding: But with this indentation style, I could have kept Tagged!
+[01:29:31] <tomsmeding> nooooo
+[01:29:34] <tomsmeding> this is better
+[01:30:05] <dminuoso> Because this reads `foo :: Maybe [Baz]` at first glance?
+[01:30:30] <tomsmeding> yes, and because WithDocs precisely says what it means
+[01:30:36] <tomsmeding> s/cs/c/
+[01:30:53] *** Quits: meinside (uid24933@id-24933.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[01:31:34] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Ping timeout: 265 seconds)
+[01:32:18] *** Quits: user0 (~aj@154.0.137.32) (Quit: Leaving.)
+[01:33:24] *** Joins: lavaman (~lavaman@98.38.249.169)
+[01:33:30] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 265 seconds)
+[01:35:10] *** Quits: hskpractice (~hskpracti@94-255-217-215.cust.bredband2.com) (Remote host closed the connection)
+[01:35:23] <dminuoso> Guess another benefit is that I dont need polykinds
+[01:35:28] *** Joins: hskpractice (~hskpracti@94-255-217-215.cust.bredband2.com)
+[01:35:36] <dminuoso> Because WithDocs is tied to just (s :: Symbol)
+[01:36:32] *** Quits: retroid_ (~retro@05412d78.skybroadband.com) (Ping timeout: 268 seconds)
+[01:39:41] *** Quits: hskpractice (~hskpracti@94-255-217-215.cust.bredband2.com) (Remote host closed the connection)
+[01:39:58] *** Joins: hskpractice (~hskpracti@94-255-217-215.cust.bredband2.com)
+[01:40:47] *** Quits: takuan (~takuan@178-116-218-225.access.telenet.be) (Remote host closed the connection)
+[01:44:00] *** Quits: hskpractice (~hskpracti@94-255-217-215.cust.bredband2.com) (Remote host closed the connection)
+[01:44:18] *** Joins: hskpractice (~hskpracti@94-255-217-215.cust.bredband2.com)
+[01:45:42] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[01:45:54] *** Joins: lavaman (~lavaman@98.38.249.169)
+[01:47:58] *** Quits: hskpractice (~hskpracti@94-255-217-215.cust.bredband2.com) (Remote host closed the connection)
+[01:48:16] *** Joins: hskpractice (~hskpracti@94-255-217-215.cust.bredband2.com)
+[01:48:29] *** Joins: jgeerds (~jgeerds@55d4ac73.access.ecotel.net)
+[01:48:38] *** Quits: mcgroin (~mcgroin@roc37-h01-176-170-197-243.dsl.sta.abo.bbox.fr) (Ping timeout: 256 seconds)
+[01:50:03] *** Quits: mc47 (~mc47@xmonad/TheMC47) (Remote host closed the connection)
+[01:51:02] *** Quits: jespada (~jespada@87.74.37.56) (Ping timeout: 240 seconds)
+[01:52:13] *** Quits: k60`` (~user@static.100.218.46.78.clients.your-server.de) (Ping timeout: 240 seconds)
+[01:53:21] *** Joins: jespada (~jespada@87.74.33.157)
+[01:53:22] *** Joins: Guest48 (~Guest48@wireless-student-pt3-241-129.lut.ac.uk)
+[01:54:03] *** Joins: retroid_ (~retro@05412d78.skybroadband.com)
+[01:54:08] *** Joins: superstar64 (~superstar@2600:1700:ed80:50a0:d250:99ff:fe2c:53c4)
+[01:54:11] *** Joins: k60`` (~user@static.100.218.46.78.clients.your-server.de)
+[01:55:29] *** Quits: Guest48 (~Guest48@wireless-student-pt3-241-129.lut.ac.uk) (Client Quit)
+[01:55:59] *** Joins: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4)
+[01:57:04] *** Joins: jeetelongname (~jeet@148.197.248.50)
+[01:57:27] *** Quits: pfurla (~pfurla@2804:14d:5c5a:9a78:840d:6ccb:3c35:c390) (Quit: gone to sleep. ZZZzzz…)
+[01:57:30] *** Quits: hskpractice (~hskpracti@94-255-217-215.cust.bredband2.com) (Remote host closed the connection)
+[01:58:22] *** Quits: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net) (Remote host closed the connection)
+[02:04:17] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[02:04:36] *** Quits: bollu (uid233390@id-233390.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[02:06:22] *** Quits: k60`` (~user@static.100.218.46.78.clients.your-server.de) (Ping timeout: 265 seconds)
+[02:07:22] *** Joins: pfurla (~pfurla@2804:14d:5c5a:9a78:840d:6ccb:3c35:c390)
+[02:08:40] *** Joins: Dansk31 (~Dansk31@147.114.141.88.rev.sfr.net)
+[02:09:00] *** Quits: Dansk31 (~Dansk31@147.114.141.88.rev.sfr.net) (Client Quit)
+[02:09:16] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 265 seconds)
+[02:09:18] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[02:10:10] *** Quits: sciencentistguy (~sciencent@hacksoc/ordinary-member) (Ping timeout: 256 seconds)
+[02:11:05] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[02:15:04] *** Joins: Guest40 (~Guest40@ec2-54-215-90-243.us-west-1.compute.amazonaws.com)
+[02:17:47] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:b5e5:6571:976d:7afc)
+[02:20:37] *** Quits: chomwitt (~chomwitt@2a02:587:dc0d:3700:12c3:7bff:fe6d:d374) (Ping timeout: 240 seconds)
+[02:23:24] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:b5e5:6571:976d:7afc) (Ping timeout: 268 seconds)
+[02:26:32] *** Quits: Midjak (~Midjak@may53-1-78-226-116-92.fbx.proxad.net) (Quit: This computer has gone to sleep)
+[02:26:49] *** Quits: Guest97 (~Guest97@pool-98-111-246-199.pitbpa.ftas.verizon.net) (Quit: Client closed)
+[02:28:18] *** Axma10079 is now known as Axman6
+[02:29:24] *** Joins: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net)
+[02:29:25] *** Quits: CiaoSen (~Jura@p200300c9570204002a3a4dfffe84dbd5.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[02:32:59] *** Quits: __monty__ (~toonn@user/toonn) (Quit: leaving)
+[02:34:13] *** Quits: curiousgay (~curiousga@77-120-141-90.kha.volia.net) (Ping timeout: 240 seconds)
+[02:34:16] *** Quits: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao) (Remote host closed the connection)
+[02:34:34] *** relrod_ is now known as relrod
+[02:35:33] *** Joins: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao)
+[02:36:33] *** Joins: k60`` (~user@static.100.218.46.78.clients.your-server.de)
+[02:38:14] *** Quits: smartin (~Thunderbi@88.135.18.171) (Quit: smartin)
+[02:40:34] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[02:41:39] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Ping timeout: 265 seconds)
+[02:42:03] *** Joins: waleee (~waleee@h-98-128-229-110.NA.cust.bahnhof.se)
+[02:46:46] *** Joins: Sgeo (~Sgeo@user/sgeo)
+[02:47:49] *** Quits: pfurla (~pfurla@2804:14d:5c5a:9a78:840d:6ccb:3c35:c390) (Quit: gone to sleep. ZZZzzz…)
+[02:57:48] *** Quits: dhouthoo (~dhouthoo@178-117-36-167.access.telenet.be) (Quit: WeeChat 3.3)
+[02:59:45] *** Joins: AlexNoo_ (~AlexNoo@94.233.241.193)
+[03:00:13] *** Quits: InternetCitizen (~fuzzypixe@eth-west-pareq2-46-193-4-100.wb.wifirst.net) (Ping timeout: 240 seconds)
+[03:02:11] *** Quits: Alex_test (~al_test@178.34.163.11) (Ping timeout: 252 seconds)
+[03:02:55] *** Quits: AlexZenon (~alzenon@178.34.163.11) (Ping timeout: 252 seconds)
+[03:03:21] *** Quits: AlexNoo (~AlexNoo@178.34.163.11) (Ping timeout: 256 seconds)
+[03:04:55] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[03:06:32] *** Joins: Alex_test (~al_test@94.233.241.193)
+[03:07:07] *** Joins: AlexZenon (~alzenon@94.233.241.193)
+[03:13:16] *** Joins: pfurla (~pfurla@2804:14d:5c5a:9a78:840d:6ccb:3c35:c390)
+[03:14:41] <dsal> One of the more expensive parts of my code is this "select" function.  The good news is that if I inline it, it no longer shows up in the profile.
+[03:14:53] <dsal> I manually wrote out what it did in my list monad and it was faster, but grosser.
+[03:16:54] <monochrom> Good that it is actually faster.
+[03:17:12] <monochrom> Because "doesn't show up in profiling, but just as slow" is not progress heh
+[03:17:44] *** Joins: lavaman (~lavaman@98.38.249.169)
+[03:19:51] *** Joins: zhakupov (~zhakupov@static.90.189.158.74.sinor.ru)
+[03:21:01] <dsal> I think the inline select is a little faster.  But inlining everything takes all the blame away from the little functions.
+[03:22:04] <dsal> Doing it manually is a lot faster, but gross code.  Instead of   `(thing, things) <- select stuff;    (nextThing, nextThings) <- select things`   it's like, `thing <- stuff; let things = filter (/= thing) things`
+[03:22:20] <dsal> (I made an operator to make that slightly better, but only slightly)
+[03:24:40] *** Quits: zhakupov (~zhakupov@static.90.189.158.74.sinor.ru) (Ping timeout: 265 seconds)
+[03:25:20] <dsal> 20% of the runtime of this thing is select.  Followed by making a map.  I wonder if using a list instead of a map would be faster.
+[03:28:22] <dsal> Hey neat, not making the map made that part not be hot in my profile.  I should just delete all this code.
+[03:29:06] <dsal> Woah.  Yeah, not using a map is a lot faster than using a map.
+[03:31:45] *** Quits: superstar64 (~superstar@2600:1700:ed80:50a0:d250:99ff:fe2c:53c4) (Quit: Leaving)
+[03:32:27] <int-e> dsal: if you're just looking for brevity: `(thing, filter (/= thing) -> stuff) <- stuff` is a valid view pattern
+[03:32:35] <georgy> dsal that is surprising. do you have a test case? are you compiling with -O2?
+[03:32:44] <int-e> hmm
+[03:32:56] <int-e> that is not right
+[03:33:24] <dsal> georgy: It's not that surprising.  It's a very small amount of data.
+[03:33:27] *** Joins: bollu (uid233390@id-233390.helmsley.irccloud.com)
+[03:33:31] <int-e> the rhs would be  zip stuff (repeat stuff)  and that's pushing it from ugly to terrible :)
+[03:33:47] <geekosaur> also lists can fuse and get big speedups
+[03:34:18] *** Joins: genieliu (~genieliu@111.193.167.10)
+[03:35:16] <int-e> dsal: is using  filter (/=) better  than the natural  select [] = []; select (x:xs) = (x,xs) : map (second (x:)) (select xs)?
+[03:35:34] <dsal> int-e: doing that manually seemed to be.
+[03:35:47] <dsal> "manually" -- I'm doing that several times in a list monad.
+[03:35:53] <int-e> I guess carrying those pairs around is expensive
+[03:36:35] *** Joins: InternetCitizen (~fuzzypixe@eth-west-pareq2-46-193-4-100.wb.wifirst.net)
+[03:39:55] *** Quits: genieliu (~genieliu@111.193.167.10) (Quit: Lost terminal)
+[03:43:31] *** Quits: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net) (Ping timeout: 265 seconds)
+[03:45:29] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[03:45:30] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Remote host closed the connection)
+[03:48:51] *** Joins: Guest|92 (~Guest|92@88.98.202.129)
+[03:49:01] *** Joins: FinnElija (~finn_elij@user/finn-elija/x-0085643)
+[03:50:55] *** Joins: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net)
+[03:50:55] *** Quits: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net) (Changing host)
+[03:50:55] *** Joins: wroathe (~wroathe@user/wroathe)
+[03:51:01] *** Quits: alx741 (~alx741@186.178.108.192) (Ping timeout: 240 seconds)
+[03:51:44] *** Quits: deadmarshal (~deadmarsh@95.38.228.30) (Ping timeout: 265 seconds)
+[03:57:39] *** Quits: max22- (~maxime@2a01cb088335980012b6a709282cc846.ipv6.abo.wanadoo.fr) (Remote host closed the connection)
+[03:58:59] *** Quits: jkaye (~jkaye@c-71-205-220-154.hsd1.co.comcast.net) (Ping timeout: 268 seconds)
+[03:59:10] *** Joins: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net)
+[04:00:33] <georgy> is there some unicode character similar to (:) that I can use for functions rather than just constructors?
+[04:00:41] <georgy> s/just/only
+[04:01:41] <geekosaur> by functions do you actually mean functions, or operators?
+[04:02:08] *** Quits: sprout_ (~quassel@2a02:a467:ccd6:1:bc10:5f40:71cb:b3b6) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[04:02:17] <georgy> yeah, I meant an operator not a function
+[04:02:22] *** Quits: acidjnk_new (~acidjnk@p200300d0c7271e730cb547fb259b1246.dip0.t-ipconnect.de) (Ping timeout: 265 seconds)
+[04:02:22] <hpc> there's a unicode colon lookalike that agda uses to differentiate between type signatures and its dependent sum syntax sugar, don't know what the actual character is though
+[04:02:25] <hpc> so it exists
+[04:02:52] <geekosaur> greek question mark? :þ
+[04:02:55] <hpc> there are websites that index the unicode homoglyphs, you can probably find it there
+[04:03:25] *** Quits: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net) (Ping timeout: 252 seconds)
+[04:03:41] <hpc> > let x -:> y = x + y in 5 :-> 10
+[04:03:42] <lambdabot>  error:
+[04:03:42] <lambdabot>      • Data constructor not in scope: (:->) :: t0 -> t1 -> t
+[04:03:42] <lambdabot>      • Perhaps you meant one of these:
+[04:03:46] <hpc> > let x -:> y = x + y in 5 -:> 10
+[04:03:47] <lambdabot>  15
+[04:03:56] <hpc> you can also put it in the middle of the operator maybe
+[04:04:07] <georgy> yes
+[04:04:18] <georgy> I found it, for doing something completely silly 
+[04:05:04] <georgy> https://paste.tomsmeding.com/b9QWwtTA
+[04:05:10] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[04:09:01] *** Quits: InternetCitizen (~fuzzypixe@eth-west-pareq2-46-193-4-100.wb.wifirst.net) (Ping timeout: 240 seconds)
+[04:12:13] *** Quits: Akiva (~Akiva@user/Akiva) (Ping timeout: 240 seconds)
+[04:12:24] *** yin is now known as zero
+[04:13:01] *** Quits: pfurla (~pfurla@2804:14d:5c5a:9a78:840d:6ccb:3c35:c390) (Quit: gone to sleep. ZZZzzz…)
+[04:13:35] *** Quits: shapr (~user@pool-100-36-247-68.washdc.fios.verizon.net) (Remote host closed the connection)
+[04:13:52] *** Joins: shapr (~user@pool-100-36-247-68.washdc.fios.verizon.net)
+[04:15:33] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[04:16:43] *** Joins: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net)
+[04:18:35] *** Quits: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net) (Remote host closed the connection)
+[04:19:18] *** Quits: fjmorazan (~quassel@user/fjmorazan) (Quit: fjmorazan)
+[04:19:32] *** Joins: fjmorazan (~quassel@user/fjmorazan)
+[04:19:46] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 265 seconds)
+[04:19:50] *** Quits: econo (uid147250@user/econo) (Quit: Connection closed for inactivity)
+[04:23:25] *** Quits: Guest|92 (~Guest|92@88.98.202.129) (Ping timeout: 240 seconds)
+[04:24:16] <hololeap> is there an option for cabal to place executables in a more convenient location after running cabal build?
+[04:25:00] *** Quits: fjmorazan (~quassel@user/fjmorazan) (Quit: fjmorazan)
+[04:25:15] <sclv> nope. best you can do is a “cabal install” and pass an arg for a path in that. But the semantics are different
+[04:25:33] *** Joins: fjmorazan (~quassel@user/fjmorazan)
+[04:26:55] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[04:29:00] <xerox> I find myself doing cp "$(cabal list-bin Name)" . sometimes
+[04:29:16] *** Joins: maroloccio (~marolocci@151.53.155.184)
+[04:29:20] *** Joins: mvk (~mvk@2607:fea8:5cdd:f000::9788)
+[04:29:21] <monochrom> Don't forget to also run "strip" :)
+[04:29:34] <monochrom> "cabal install" runs strip, but "cabal build" doesn't.
+[04:31:13] <monochrom> But "cabal list-bin" is nice, yeah.
+[04:31:46] *** Joins: Kevin578 (~Kevin578@pool-96-237-112-198.bstnma.fios.verizon.net)
+[04:32:13] *** Quits: jgeerds (~jgeerds@55d4ac73.access.ecotel.net) (Ping timeout: 240 seconds)
+[04:37:11] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[04:37:18] <hololeap> sclv, thanks, this actually works great: cabal install --install-method=symlink --installdir=./bin
+[04:39:12] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[04:41:22] <monochrom> symlink is a very bad idea unless you never clear $HOME/.cabal/store
+[04:42:17] <monochrom> Because the exe is stored there. 
+[04:42:33] <sclv> well sadly even copy doesn't necessarily work then if there's any attendant datafiles
+[04:42:34] <hololeap> oh, I thought it was symlinking to the exes in the dist-newstyle dir
+[04:42:43] <sclv> *me* shakes fist at datafiles
+[04:43:06] <hpc> just do the windows trick and make your executable also happen to be a zip file
+[04:43:24] <sclv> i think we can fix the datadir flags to do things right, but nobody's just worked out the details yet
+[04:43:49] *** Quits: mncheck (~mncheck@193.224.205.254) (Remote host closed the connection)
+[04:43:52] <geekosaur> people have iirc been trying to work out those details for years, because they also have to work after cabal build
+[04:44:03] <sclv> i mean there's years old tickets
+[04:44:06] *** Joins: mncheck (~mncheck@193.224.205.254)
+[04:44:23] <sclv> no Very Smart Person has sat down and just given a full answer to "here's what to do that's flexible enough for all circumstances"
+[04:45:15] <sclv> like imho there's not even failed attempts that actually began from the full problem space -- just proposals that didn't take enough into account, and when people pointed out it was harder, people wandered off to worry about other things
+[04:45:29] <sclv> i.e. i don't think its too hard to solve. it just hasn't had the right sustained attention
+[04:46:02] *** Quits: Neuromancer (~Neuromanc@user/neuromancer) (Ping timeout: 240 seconds)
+[04:50:16] *** Joins: mikoto-chan (~mikoto-ch@esm-84-240-99-143.netplaza.fi)
+[04:51:49] *** Quits: myShoggoth (~myShoggot@97-120-85-195.ptld.qwest.net) (Ping timeout: 252 seconds)
+[04:52:13] *** Joins: jj (~jj@bras-base-stcton1104w-grc-60-69-159-29-115.dsl.bell.ca)
+[04:53:19] *** Parts: jj (~jj@bras-base-stcton1104w-grc-60-69-159-29-115.dsl.bell.ca) ()
+[04:53:35] <dsal> link hard or link $HOME
+[04:56:37] *** Quits: machinedgod (~machinedg@135-23-192-217.cpe.pppoe.ca) (Ping timeout: 240 seconds)
+[04:57:35] *** Joins: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net)
+[04:57:35] *** Quits: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net) (Changing host)
+[04:57:35] *** Joins: wroathe (~wroathe@user/wroathe)
+[05:00:51] <sm> just embed them
+[05:04:28] <oats> finally got day 8 https://github.com/oatberry/aoc2021-haskell/blob/main/src/Day8.hs
+[05:04:50] <oats> I bet there's a better way to have done this, but I figured out an algo for deducing segment assignments
+[05:05:41] <dsal> I found it was *significantly* faster to use `[(Char, Char)]` instead of `Map Char Char`
+[05:06:11] <oats> dsal, what does your `Map Char Char` represent
+[05:06:55] <dsal> The observed wire to the wire where it's supposed to be according to the diagram.
+[05:07:11] <oats> huh
+[05:07:13] <georgy> dsal, how many elements do you have?
+[05:07:14] <dsal> Oh, you had a `Segment`
+[05:07:19] <dsal> georgy: 7
+[05:07:29] <georgy> that's not surprising
+[05:08:11] <oats> I had a hunch that some set operations might be useful, but it took some guesswork to tease out exactly what I had to do
+[05:08:12] <georgy> I did tests a couple of years ago, and IIRC Map starts becoming faster when you have a couple of hundred elements. and it only gets worse from there. O(n) vs log(n)
+[05:09:02] <georgy> basically.. list is only faster when the speed likely doesn't matter at all
+[05:09:41] <dsal> Speed's mattering a lot to me.
+[05:10:08] <monochrom> "Each dictionary has size 5 but I have 10^10 such dictionaries" may favour a low-tech way.
+[05:10:12] <georgy> when looking up an element in a 7 element collection?
+[05:12:21] <monochrom> Or "I have to perform 10^10 lookups"
+[05:12:29] <oats> dsal, ah yeah, my solution solves the big boy in about 10 seconds :P
+[05:12:33] <georgy> monochrom, that sounds as contrived as your first example
+[05:13:21] <dsal> oats: I'm trying to get below a second on my macbook, but it's a pretty bad place to benchmark I've found. heh
+[05:14:01] <dsal> Currently at 1.103 s
+[05:14:21] <monochrom> Well, all of AoC is contrived. There.
+[05:15:54] <dsal> These are real problems.  If we don't get this done, Santa's not going to deliver presents. 
+[05:16:20] <oats> I should try to find a way to figure the numbers straight from the scrambled input, without trying to calculate mappings
+[05:16:24] <oats> wonder if that's possible...
+[05:17:19] <dsal> I wouldn't think so...  the mappings tell you which things are on.
+[05:17:22] *** Quits: lbseale (~ep1ctetus@user/ep1ctetus) (Read error: Connection reset by peer)
+[05:18:32] <oats> but I mean, I wonder if you could use the set relationships between them to figure out a direct mapping from scrambled LED to number
+[05:18:42] <xerox> mine takes 2.018 s ± 0.011 s over 20 runs
+[05:19:26] *** Quits: burnsidesLlama (~burnsides@dhcp168-017.wadham.ox.ac.uk) (Remote host closed the connection)
+[05:19:58] *** Joins: burnsidesLlama (~burnsides@client-8-73.eduroam.oxuni.org.uk)
+[05:20:15] <oats> dsal, such as, I believe the digit '3' one can be found
+[05:20:32] <oats> by looking for the one that contains all the segments from '1' plus three others
+[05:20:58] <dsal> Sure, you can hone your search strategy.
+[05:21:18] <xerox> this one is p slick https://i.redd.it/bkktn06kud481.jpg
+[05:21:52] <oats> yeah that's exactly what I'm talking about 'ere
+[05:22:03] <oats> grrr now I gotta go rewrite my solution
+[05:22:07] <xerox> haha
+[05:23:33] <oats> I'm still proud of my candidate whittling :<
+[05:24:31] <dsal> Yeah, sure.  You use that to figure out how to search.  You can know that the two digit one is the number 1 and that the three digit one is the number seven and has to have two elements in common with 1.
+[05:24:32] *** Quits: burnsidesLlama (~burnsides@client-8-73.eduroam.oxuni.org.uk) (Ping timeout: 256 seconds)
+[05:24:37] *** Joins: nebu (~user@user/wavion)
+[05:24:53] <dsal> Here's another fun thing you can know:  what segments e, b, and f are without searching.
+[05:25:29] <dsal> I only end up searching for c, a, and d.
+[05:25:42] <dsal> (g is the one that isn't any of those other ones)
+[05:26:35] *** Quits: polezaivsani (~polezaivs@orangeshoelaces.net) (Quit: rcirc on GNU Emacs 27.2)
+[05:28:11] *** Quits: Feuermagier (~Feuermagi@user/feuermagier) (Remote host closed the connection)
+[05:28:26] *** Joins: Feuermagier (~Feuermagi@user/feuermagier)
+[05:28:37] *** Quits: teo (~teo@user/teo) (Ping timeout: 240 seconds)
+[05:31:52] *** Joins: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470)
+[05:37:59] *** jeetelongname is now known as yeet
+[05:38:28] *** yeet is now known as jeetelongname
+[05:39:01] *** Quits: Gurkenglas (~Gurkengla@dslb-002-203-144-204.002.203.pools.vodafone-ip.de) (Ping timeout: 240 seconds)
+[05:39:55] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[05:40:13] *** Joins: lavaman (~lavaman@98.38.249.169)
+[05:40:20] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[05:40:38] *** Joins: lavaman (~lavaman@98.38.249.169)
+[05:40:45] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[05:41:49] *** Quits: mmhat (~mmh@55d44a9c.access.ecotel.net) (Ping timeout: 240 seconds)
+[05:42:03] *** Quits: xff0x (~xff0x@2001:1a81:52f0:d600:cda8:efb:cccc:cf1c) (Ping timeout: 252 seconds)
+[05:43:14] *** Quits: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470) (Remote host closed the connection)
+[05:43:49] *** Joins: xff0x (~xff0x@2001:1a81:5338:9c00:c94e:b6de:b30e:1ff8)
+[05:44:36] *** Quits: vicfred (~vicfred@user/vicfred) (Quit: Leaving)
+[05:45:44] *** Joins: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470)
+[05:46:09] *** Joins: pfurla (~pfurla@2804:14d:5c81:4104:e550:12e4:9dfb:af3c)
+[05:46:46] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 265 seconds)
+[05:48:12] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[06:03:53] *** Joins: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net)
+[06:03:53] *** Quits: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net) (Changing host)
+[06:03:53] *** Joins: wroathe (~wroathe@user/wroathe)
+[06:04:25] *** Quits: cheater (~Username@user/cheater) (Ping timeout: 252 seconds)
+[06:04:46] <hololeap> this was a fun piece of a solution for AoC day 4: boards = Ap . Compose . ZipList . repeat
+[06:04:57] *** Joins: cheater (~Username@user/cheater)
+[06:07:21] *** Quits: mvk (~mvk@2607:fea8:5cdd:f000::9788) (Ping timeout: 252 seconds)
+[06:08:13] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 240 seconds)
+[06:10:57] <hololeap> type Boards = Ap (Compose ZipList Board)
+[06:11:07] <hololeap> runBoards :: Boards a -> ZipList (BoardState -> (Maybe (a, BoardState), BoardLog))
+[06:11:22] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:12:40] <hololeap> so you can use a ZipList of the initial BoardStates to run it, using ZipList's Applicative instnace
+[06:15:16] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Ping timeout: 268 seconds)
+[06:16:12] <dsal> Still a mystery to me how it doesn't seem to parallelize at all.
+[06:16:15] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 265 seconds)
+[06:17:45] <dsal> turning up the spark limit still doubles my CPU consumption, but also doubles the runtime.
+[06:17:58] <dsal> computer sparks up and everything seems to slow down
+[06:19:09] *** Joins: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net)
+[06:19:21] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[06:19:46] <monochrom> If you haven't had supper, this is a good time to make a grilled cheese sandwich with your benchmarking!
+[06:20:12] <dsal> ha.  Yeah.  I've been benchmarking all kinds of dumb things.
+[06:20:41] <dsal> Here's what I've learned, everyone:   Lists are faster than maps.  Parallelism is the same speed as sequential processing.
+[06:21:06] <dsal> If you're tired of seeing something show up in your profile, inline it and you'll stop seeing its name.
+[06:21:40] <monochrom> Use an older computer for higher performance.
+[06:21:47] <dsal> Yes.
+[06:22:10] <dsal> On my last benchmark run, my thinkpad and fancy new macbook gave me very similar numbers.
+[06:22:20] *** Quits: Erutuon (~Erutuon@user/erutuon) (Ping timeout: 256 seconds)
+[06:22:43] <dsal> about 1.1 seconds ± 500ms
+[06:23:59] *** Quits: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net) (Ping timeout: 265 seconds)
+[06:24:01] *** Joins: Erutuon (~Erutuon@user/erutuon)
+[06:24:48] *** Joins: deadmarshal (~deadmarsh@95.38.230.89)
+[06:25:24] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[06:26:24] *** Quits: jeetelongname (~jeet@148.197.248.50) (Quit: thanks!)
+[06:27:11] *** Joins: jeetelongname (~jeet@148.197.248.50)
+[06:29:18] *** Quits: deadmarshal (~deadmarsh@95.38.230.89) (Ping timeout: 265 seconds)
+[06:31:58] *** Joins: user0 (~aj@langw.roketelkom.co.ug)
+[06:35:54] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[06:37:13] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[06:38:08] *** Joins: Cajun (~Cajun@user/cajun)
+[06:43:41] <hololeap> I'm on day 6 now. the second part trashed my naive algorithm using the Monad instance for Data.Vector. I'm thinking about using Data.Vector.Unboxed.Mutable instead, but I'm not sure exactly how that will speed things up
+[06:46:53] <hololeap> for instance, when a new fish is spawned, the vector will need to grow somehow, but is that really going to be any faster using the mutable interface vs the immutable interface? will the ability to change values in-place be faster than folding over an immutable vector and building up a new one?
+[06:46:57] *** Joins: finn_elija (~finn_elij@user/finn-elija/x-0085643)
+[06:46:57] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Killed (NickServ (Forcing logout FinnElija -> finn_elija)))
+[06:46:57] *** finn_elija is now known as FinnElija
+[06:47:28] <dsal> I used a list for part 1 and it was easy.
+[06:47:35] <hololeap> oh, snap I just realized a much better way to model this
+[06:48:19] *** Quits: motherfsck (~motherfsc@user/motherfsck) (Quit: quit)
+[06:48:32] <hololeap> I can just group all the fish with the same number together
+[07:01:01] *** Quits: td_ (~td@94.134.91.212) (Ping timeout: 240 seconds)
+[07:01:04] *** Joins: deadmarshal (~deadmarsh@95.38.230.89)
+[07:03:15] *** Joins: td_ (~td@muedsl-82-207-238-085.citykom.de)
+[07:03:45] *** Joins: myShoggoth (~myShoggot@97-120-85-195.ptld.qwest.net)
+[07:05:14] <byorgey> hololeap: there you go =)
+[07:05:49] *** Quits: xff0x (~xff0x@2001:1a81:5338:9c00:c94e:b6de:b30e:1ff8) (Ping timeout: 240 seconds)
+[07:06:59] *** Joins: xff0x (~xff0x@2001:1a81:5338:9c00:5f64:a7ee:3eb7:fd11)
+[07:09:49] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 240 seconds)
+[07:13:24] *** Quits: nattiestnate (~nate@2001:448a:20a0:4134:25e:715f:d637:5263) (Quit: WeeChat 3.3)
+[07:16:04] *** Joins: zhakupov (~zhakupov@static.90.189.158.74.sinor.ru)
+[07:16:59] <hololeap> that would have been fun calculating a vector with 1.7 trillion elements :p
+[07:16:59] <jeetelongname> once i got that little bit of insight the problem collapses into place 
+[07:17:24] <jeetelongname> its pretty nice in that regart
+[07:17:43] <jeetelongname> *regard
+[07:20:37] *** Quits: zhakupov (~zhakupov@static.90.189.158.74.sinor.ru) (Ping timeout: 240 seconds)
+[07:21:52] <hololeap> I could have put my RAID to work as swap
+[07:23:54] *** Quits: myShoggoth (~myShoggot@97-120-85-195.ptld.qwest.net) (Quit: Leaving)
+[07:24:01] *** Quits: dwt_ (~dwt_@c-98-200-58-177.hsd1.tx.comcast.net) (Ping timeout: 256 seconds)
+[07:31:40] <jeetelongname> I mean thats the baller way to do it but most of us don't have servers to offload aoc questions onto lol
+[07:36:00] *** Joins: ProfSimm (~ProfSimm@87.227.196.109)
+[07:37:48] <ProfSimm> Hi
+[07:38:27] *** Joins: dwt_ (~dwt_@c-98-200-58-177.hsd1.tx.comcast.net)
+[07:39:48] *** Quits: jeetelongname (~jeet@148.197.248.50) (Remote host closed the connection)
+[07:41:09] <dmj`> ProfSimm: hi
+[07:42:37] *** Quits: Guest40 (~Guest40@ec2-54-215-90-243.us-west-1.compute.amazonaws.com) (Quit: Client closed)
+[07:44:07] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[07:45:01] *** Quits: shapr (~user@pool-100-36-247-68.washdc.fios.verizon.net) (Ping timeout: 240 seconds)
+[07:49:18] *** Quits: iteratee_ (~kyle@162.218.222.107) (Read error: Connection reset by peer)
+[07:49:26] *** Joins: iteratee (~kyle@162.218.222.107)
+[07:51:10] *** Joins: zhakupov (~zhakupov@static.90.189.158.74.sinor.ru)
+[07:55:49] *** Quits: ProfSimm (~ProfSimm@87.227.196.109) (Ping timeout: 265 seconds)
+[08:04:08] *** Quits: shriekingnoise (~shrieking@186.137.144.80) (Quit: Quit)
+[08:05:58] <jackdk> dmj`: scared him off?
+[08:07:49] *** Quits: pavonia (~user@user/siracusa) (Ping timeout: 240 seconds)
+[08:10:20] *** Joins: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net)
+[08:13:19] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[08:13:20] <dmj`> jackdk: yea
+[08:13:23] <dmj`> :(
+[08:13:30] <jackdk> :(
+[08:13:49] *** Joins: ProfSimm (~ProfSimm@87.227.196.109)
+[08:15:47] *** Joins: mbuf (~Shakthi@122.178.122.215)
+[08:17:28] <int-e> that was some excellent timing
+[08:19:19] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[08:20:20] *** Quits: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470) (Remote host closed the connection)
+[08:21:28] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[08:22:56] <jackdk> dmj`: try again
+[08:23:14] <jackdk> ProfSimm: Hi
+[08:23:20] <dmj`> ProfSimm: hey !
+[08:23:51] *** Quits: deadmarshal (~deadmarsh@95.38.230.89) (Ping timeout: 265 seconds)
+[08:24:51] *** Quits: emf_ (~emf@2620:10d:c091:480::1:7b30) (Ping timeout: 252 seconds)
+[08:27:44] *** Joins: curiousgay (~curiousga@77-120-141-90.kha.volia.net)
+[08:27:56] *** Quits: slowButPresent (~slowButPr@user/slowbutpresent) (Quit: leaving)
+[08:35:18] *** Quits: ProfSimm (~ProfSimm@87.227.196.109) (Remote host closed the connection)
+[08:38:13] *** Quits: zhakupov (~zhakupov@static.90.189.158.74.sinor.ru) (Ping timeout: 240 seconds)
+[08:38:21] *** Quits: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao) (Remote host closed the connection)
+[08:38:34] *** Joins: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao)
+[08:39:04] *** Joins: deadmarshal (~deadmarsh@95.38.230.89)
+[08:43:15] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[08:48:06] *** Quits: pfurla (~pfurla@2804:14d:5c81:4104:e550:12e4:9dfb:af3c) (Quit: gone to sleep. ZZZzzz…)
+[08:51:13] *** Quits: img (~img@user/img) (Quit: ZNC 1.8.2 - https://znc.in)
+[08:53:48] *** Joins: zhakupov (~zhakupov@static.90.189.158.74.sinor.ru)
+[08:58:48] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[09:05:02] *** Quits: zhakupov (~zhakupov@static.90.189.158.74.sinor.ru) (Quit: WeeChat 3.3)
+[09:08:02] *** Joins: img (~img@user/img)
+[09:09:13] *** Quits: georgy (~bc8165b6@cerf.good1.com) (Quit: CGI:IRC (EOF))
+[09:11:55] *** Joins: emf (~emf@2620:10d:c091:480::1:f5cb)
+[09:17:30] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 265 seconds)
+[09:22:03] *** Quits: nfd (~nfd@user/nfd) (Ping timeout: 252 seconds)
+[09:28:52] <hololeap> is this possible without sharing answers? https://adventofcode.com/2021/leaderboard/day/9
+[09:29:06] <hololeap> all 100 between 5 and 11 minutes
+[09:29:14] <hololeap> rhetorical question...
+[09:30:56] <int-e> Well, yes it is.
+[09:31:56] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[09:32:28] <dsal> hololeap: part of it is just having a toolkit with all the things.
+[09:33:11] <hololeap> it just seems... rediculous. I didn't even open it up until 10 minutes in so I had failed the leaderboards already
+[09:34:20] <hololeap> I guess I won't be getting competitive with AoC
+[09:34:31] <int-e> There are thousands of participants, and only 600 seconds in 10 minutes.
+[09:36:34] <hololeap> so if you can't complete part 1 and part 2 by 10:00 you have lost... it's just a bit shocking that people can code that quickly
+[09:36:44] <int-e> You're looking at something like the lower tail of a normal distribution (just for intuition, the actual distribution is bound to be something way more complicated)
+[09:37:52] <dsal> hololeap: The trick is to get a private leaderboard without professional competitive programmers.  :)
+[09:38:11] <xerox> works wonders for your self esteem
+[09:40:23] <fizbin> Is anyone using stack to manage their advent-of-code stuff? I can't figure out how to have stack include an external module.
+[09:40:52] <hololeap> I wonder if there's a twitch stream or something for some of the people on the leaderboard. I would be interested in seeing how someone writes something that quickly.
+[09:41:32] *** Quits: jchia[m] (~jchiamatr@2001:470:69fc:105::c50b) (Quit: Client limit exceeded: 20000)
+[09:41:50] <dsal> fizbin: I use stack.  what problem are you having?
+[09:42:02] *** Joins: jchia[m] (~jchiamatr@2001:470:69fc:105::c50b)
+[09:42:41] <fizbin> I've got a flat directory layout (i.e. just a dir. with files like "aoc1.hs", "aoc2.hs", etc. in it) and a stack.yaml file generated by "stack init". I've mentioned the dependency in a package.yaml file, but stack says "Could not find module" when I do "stack ghc aoc9.hs"
+[09:44:55] <dsal> That's kind of a weird way to use stack.
+[09:45:27] <dsal> 'stack new' usually creates a project with a src directory and main and stuff.
+[09:46:30] <fizbin> Right, which makes haskell the weird odd language where you can't just write the source but need its own directory structure. (I mainly solve these in python, then write the haskell solutions later)
+[09:47:15] <int-e> runhaskell foo.hs < input
+[09:47:25] <int-e> don't involve stack or cabal, be happy :-P
+[09:47:43] <fizbin> int-e: That's what I'm trying to do, but now do that with an external package.
+[09:48:20] <int-e> well, I have not run into that (but cabal v1-install still works for me if that comes up)
+[09:48:44] <fizbin> Huh. It looks like package.yaml isn't getting read at all. I wonder if I need something in stack.yaml to tell it to use package.yaml
+[09:48:55] *** Quits: kimjetwav (~user@2607:fea8:2363:8f00:788b:37b5:7592:32b4) (Remote host closed the connection)
+[09:50:51] <fizbin> Well, adding "." to packages in stack.yaml caused it to notice the parse error I added to package.yaml. Still doesn't seem to make it load the dependencies though.
+[09:58:08] <fizbin> Okay, adding more than just "dependencies" to the package.yaml file (i.e. adding an "executable" section) seems to be enough so that now "stack runghc aoc9.hs" will load the external library dep. I asked for.
+[09:59:58] <byorgey> hololeap: some of them might record themselves and post it later I guess, but you're not supposed to stream yourself solving AoC problems right when they are posted
+[10:00:15] <byorgey> hololeap: but you can definitely find top competitive programmers streaming.
+[10:00:20] <byorgey> in general I mean
+[10:01:07] <byorgey> hololeap: e.g. https://www.twitch.tv/ecnerwala
+[10:01:58] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 265 seconds)
+[10:02:22] *** Joins: chomwitt (~chomwitt@2a02:587:dc0d:3700:12c3:7bff:fe6d:d374)
+[10:02:55] *** Joins: zebrag (~chris@user/zebrag)
+[10:03:13] *** Quits: zebrag (~chris@user/zebrag) (Client Quit)
+[10:05:53] *** Quits: bollu (uid233390@id-233390.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[10:06:26] *** Parts: jakalx (~jakalx@base.jakalx.net) (Error from remote client)
+[10:08:24] <int-e> dsal: "professional competitive programmers" -- sounds like a joke but I guess when you start automating fetching the problem and input, extracting sample, maybe generating a parser for the input... that will really feel professional.
+[10:09:17] <int-e> (that's on top of the obvious... keeping a library for common computational tasks)
+[10:10:37] <dsal> I do have The Library.  It's not huge, though.
+[10:11:28] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[10:11:30] *** Joins: jakalx (~jakalx@base.jakalx.net)
+[10:12:16] <dsal> fizbin: I don't think it's particularly special.  If I want to add a python library, I have to either figure out how to get it working in nix, figure out virtualenv again, convince it to install globally for just me, or give it root access.  I used to write a lot of go which had its special directory structure and stuff.  Everything has an easy path that might not be what you're used to.
+[10:16:00] *** Quits: monochrom (trebla@216.138.220.146) (Quit: NO CARRIER)
+[10:17:00] *** Quits: retroid_ (~retro@05412d78.skybroadband.com) (Ping timeout: 268 seconds)
+[10:17:12] <int-e> dsal: I've yet to come up with something obviously reusable :P (in 2019 I had a "library" that consisted of an IntCode module that I'd copy to the next day's folder and adapt as needed)
+[10:19:28] *** Quits: euandreh (~euandreh@2804:14c:33:9fe5:da4:9ec6:5ef5:74d6) (Ping timeout: 268 seconds)
+[10:20:56] <sm> fizbin, why not use a stack script, fewer moving parts
+[10:21:00] <dsal> I pretty much have the same parseFile thing and some basic 2D stuff like around and a bfs.
+[10:21:13] <dsal> The Data.Graph API is so weird.
+[10:21:30] <int-e> dsal: true
+[10:22:29] <int-e> bfs is so easy to implement from scratch though
+[10:22:56] <dsal> It would've cost me precious time today!  :)
+[10:23:25] <int-e> dfs is even easier :P
+[10:23:28] <dsal> Oh also, I had this thing:  parseGrid f = Map.fromList . zipWith2D (\x y a -> ((x,y), f a)) [0..] [0..] . lines
+[10:23:42] <xerox> bfs was easy to implement a month ago and put into my library too :D
+[10:23:55] <dsal> Which was basically how to read this.  I always got my x and y confused when I'd write those from scratch.
+[10:24:10] <dsal> Another neat thing I wrote in my library was BitSet.  Which I use occasionally.
+[10:24:35] <dsal> It doesn't actually *matter*, but it's neat.  For yesterday's, I was able to shove each of the light 7 seg patterns into a byte.
+[10:24:46] <int-e> dsal: Hah I used [[Int]] and !!
+[10:24:48] <int-e> KISS!
+[10:25:25] <dsal> I've got some visualization junk I've not used this year.  e.g., draw the map from today.
+[10:25:30] <xerox> I used [String] and elemIndex
+[10:26:08] <xerox> int-e: you haven't posted yours on github right?
+[10:26:13] <int-e> > map (read . return) "0329" :: [Int]
+[10:26:14] <lambdabot>  [0,3,2,9]
+[10:26:20] <int-e> xerox: right
+[10:26:43] <xerox> if you do I would happily read them
+[10:28:23] *** Quits: azimut (~azimut@gateway/tor-sasl/azimut) (Remote host closed the connection)
+[10:28:46] *** Joins: azimut (~azimut@gateway/tor-sasl/azimut)
+[10:34:22] <dsal> > map digitToInt "0329"
+[10:34:23] <lambdabot>  [0,3,2,9]
+[10:34:41] *** Joins: retroid_ (~retro@05412d78.skybroadband.com)
+[10:34:54] *** Joins: dschrempf (~dominik@070-207.dynamic.dsl.fonira.net)
+[10:35:00] <dsal> My fancy thing has a Char -> a because there's been a bunch of these.  It doesn't have a filter, though, which would be nice.
+[10:35:09] <dsal> I guess I could just do Maybe Int and then sequence it.
+[10:35:14] <dsal> er, no, not that.
+[10:36:13] *** Quits: xff0x (~xff0x@2001:1a81:5338:9c00:5f64:a7ee:3eb7:fd11) (Ping timeout: 240 seconds)
+[10:37:10] *** Joins: xff0x (~xff0x@2001:1a81:5338:9c00:2366:f1e5:f2a7:3295)
+[10:37:45] *** Joins: InternetCitizen (~fuzzypixe@eth-west-pareq2-46-193-4-100.wb.wifirst.net)
+[10:38:51] *** Joins: Alex_test_ (~al_test@94.233.241.193)
+[10:40:04] *** Joins: xsarnik9 (xsarnik@lounge.fi.muni.cz)
+[10:40:10] *** Quits: Alex_test (~al_test@94.233.241.193) (Ping timeout: 256 seconds)
+[10:40:15] *** Joins: xstill-9 (xstill@fimu/xstill)
+[10:40:26] *** Quits: dschrempf (~dominik@070-207.dynamic.dsl.fonira.net) (Ping timeout: 268 seconds)
+[10:40:46] *** Quits: koz (~koz@121.99.240.58) (Remote host closed the connection)
+[10:41:02] *** Joins: koz (~koz@121.99.240.58)
+[10:41:14] <int-e> xerox: I'll think about it, I probably won't though.
+[10:41:45] *** Joins: Unode_ (~Unode@194.94.44.220)
+[10:41:49] *** Quits: InternetCitizen (~fuzzypixe@eth-west-pareq2-46-193-4-100.wb.wifirst.net) (Ping timeout: 240 seconds)
+[10:41:52] *** Quits: xstill- (xstill@fimu/xstill) (Ping timeout: 256 seconds)
+[10:41:52] *** Quits: tv (~tv@user/tv) (Ping timeout: 256 seconds)
+[10:41:52] *** Quits: noctux (~noctux@user/noctux) (Ping timeout: 256 seconds)
+[10:41:52] *** Quits: sweater (~sweater@206.81.18.26) (Ping timeout: 256 seconds)
+[10:41:52] *** Quits: m1dnight_ (~christoph@christophe.dev) (Ping timeout: 256 seconds)
+[10:41:52] *** Quits: davl_ (~davl@207.154.228.18) (Ping timeout: 256 seconds)
+[10:41:52] *** Quits: turlando (~turlando@user/turlando) (Ping timeout: 256 seconds)
+[10:41:52] *** Quits: rookie101 (~rookie@165.232.121.13) (Ping timeout: 256 seconds)
+[10:41:52] *** Quits: WhateverRabbit (~rabbit@206.81.18.26) (Ping timeout: 256 seconds)
+[10:41:52] *** xstill-9 is now known as xstill-
+[10:41:57] *** Joins: davl (~davl@207.154.228.18)
+[10:41:59] *** Quits: bgamari (~bgamari@2001:470:e438::1) (Ping timeout: 252 seconds)
+[10:42:26] *** Quits: n3t (n3t@user/n3t) (Ping timeout: 256 seconds)
+[10:42:26] *** Quits: xsarnik (xsarnik@lounge.fi.muni.cz) (Ping timeout: 256 seconds)
+[10:42:26] *** Quits: Unode (~Unode@194.94.44.220) (Ping timeout: 256 seconds)
+[10:42:26] *** Unode_ is now known as Unode
+[10:42:26] *** xsarnik9 is now known as xsarnik
+[10:42:53] *** Joins: turlando (~turlando@93-42-250-112.ip89.fastwebnet.it)
+[10:42:53] *** Quits: turlando (~turlando@93-42-250-112.ip89.fastwebnet.it) (Changing host)
+[10:42:53] *** Joins: turlando (~turlando@user/turlando)
+[10:43:03] *** Joins: monochrom (trebla@216.138.220.146)
+[10:43:31] *** Joins: WhateverRabbit (~rabbit@206.81.18.26)
+[10:43:51] *** Joins: sweater (~sweater@206.81.18.26)
+[10:44:01] *** Quits: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net) (Remote host closed the connection)
+[10:44:26] *** Joins: noctux (~noctux@user/noctux)
+[10:44:47] *** Joins: n3t (n3t@s45.mydevil.net)
+[10:45:16] *** Joins: bgamari (~bgamari@64.223.235.131)
+[10:45:29] <hololeap> byorgey: thanks for the link
+[10:45:42] <xerox> int-e: cool, thanks, in case :-)
+[10:48:41] *** Joins: whatsupdoc (uid509081@id-509081.hampstead.irccloud.com)
+[10:51:17] *** Joins: lortabac (~lortabac@2a01:e0a:541:b8f0:48df:3af4:d67f:b5a0)
+[10:52:07] *** Joins: dhouthoo (~dhouthoo@178-117-36-167.access.telenet.be)
+[10:52:17] <hololeap> i'm looking at recording the state of a StateT with every "step". is there a way to do this without adding a (Writer (DList s)) to the transformer stack?
+[10:52:44] *** koz is now known as ko
+[10:52:46] *** ko is now known as koz
+[10:53:20] *** Joins: michalz (~michalz@185.246.204.55)
+[10:55:43] *** Joins: rookie101 (~rookie@165.232.121.13)
+[10:56:02] *** Joins: tv (~tv@user/tv)
+[10:56:21] <int-e> xerox: here's a sample; it's just not very pretty at all: https://paste.debian.net/hidden/730b2e3c/
+[10:56:34] <int-e> (yesterday, part 2)
+[10:58:37] *** Joins: lavaman (~lavaman@98.38.249.169)
+[10:58:43] <int-e> it's mostly piecing together #haskell-style one-liners ;-)
+[10:58:55] * xerox nods - very nice!
+[10:58:59] <xerox> appreciate it
+[10:59:34] <xerox> that one I did on pen and paper, then hardcoded one decision tree, no search over permutations, I thought it'd be too much
+[10:59:49] <int-e> > product [1..7]
+[10:59:51] <lambdabot>  5040
+[10:59:55] <int-e> not scary :)
+[11:00:00] <xerox> definitely
+[11:01:03] *** Quits: root1 (root@2600:3c02::f03c:92ff:fe1a:c779) (Ping timeout: 252 seconds)
+[11:01:21] <xerox> I like your span, I often do remove the extra chars instead: https://github.com/mrtnpaolo/advent-of-code-2021/blob/master/execs/Day08.hs#L12-L15
+[11:01:26] *** Joins: root1 (root@2600:3c02::f03c:92ff:fe1a:c779)
+[11:01:36] <int-e> xerox: I actually did a post mortem where I tried a bit harder (narrowing it down to 8 out of 5040 cases): https://paste.debian.net/1222686/
+[11:02:25] <xerox> ah see that's the kind of stuff I go dig into people's repositories to learn from
+[11:02:53] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 252 seconds)
+[11:02:56] <int-e> > let digits = words "abcefg cf acdeg acdfg bcdf abdfg abdefg acf abcdefg abcdfg" in M.fromListWith (+) [(c,length cs) | cs <- digits, c <- cs] -- fingerprinting segments
+[11:02:57] <lambdabot>  fromList [('a',43),('b',34),('c',38),('d',38),('e',24),('f',44),('g',40)]
+[11:03:25] <int-e> (that one only made it to IRC)
+[11:03:47] <int-e> huh, and it doesn't disambiguate c and d :-/
+[11:04:44] *** Quits: lagash (lagash@lagash.shelltalk.net) (Quit: ZNC - https://znc.in)
+[11:05:13] <int-e> > let digits = words "abcefg cf acdeg acdfg bcdf abdfg abdefg acf abcdefg abcdfg" in M.fromListWith (+) [(c,1+length cs) | cs <- digits, c <- cs] -- fixed
+[11:05:15] <lambdabot>  fromList [('a',51),('b',40),('c',46),('d',45),('e',28),('f',53),('g',47)]
+[11:06:09] *** Joins: lagash (lagash@lagash.shelltalk.net)
+[11:06:12] <int-e> the problem with clever stuff like this is that it usually takes tens of minutes to come up with ;)
+[11:07:05] <xerox> it's an unbelievable cost these days (:
+[11:08:35] *** Joins: neurocyte0132889 (~neurocyte@45.93.108.168)
+[11:08:35] *** Quits: neurocyte0132889 (~neurocyte@45.93.108.168) (Changing host)
+[11:08:35] *** Joins: neurocyte0132889 (~neurocyte@user/neurocyte)
+[11:09:26] *** Joins: _ht (~quassel@82-169-194-8.biz.kpn.net)
+[11:09:53] <int-e> xerox: oh yes I've used  words . map  quite a bit myself too
+[11:12:25] <int-e> day 5... map (\c -> if c `elem` ",->" then ' ' else c)
+[11:13:51] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[11:14:03] *** Joins: mcgroin (~mcgroin@roc37-h01-176-170-197-243.dsl.sta.abo.bbox.fr)
+[11:14:15] *** Quits: emf (~emf@2620:10d:c091:480::1:f5cb) (Ping timeout: 252 seconds)
+[11:21:03] <xerox> exactly!
+[11:21:14] *** Quits: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net) (Remote host closed the connection)
+[11:21:15] *** Joins: nfd (~nfd@user/nfd)
+[11:22:51] *** Joins: cfricke (~cfricke@user/cfricke)
+[11:27:13] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[11:28:30] *** df_ is now known as df
+[11:29:58] *** Joins: mc47 (~mc47@xmonad/TheMC47)
+[11:32:23] *** Joins: endor (~a@p200300ef97023511e49253ebeea0a61a.dip0.t-ipconnect.de)
+[11:32:40] *** Quits: zaquest (~notzaques@5.130.79.72) (Remote host closed the connection)
+[11:33:49] *** Quits: Sgeo (~Sgeo@user/sgeo) (Read error: Connection reset by peer)
+[11:34:25] <endor> Why is Data.HashTable.new returning an IO value? Why do we need side effects?
+[11:35:26] *** Joins: zaquest (~notzaques@5.130.79.72)
+[11:36:05] *** Joins: bollu (uid233390@id-233390.helmsley.irccloud.com)
+[11:36:40] *** Joins: dschrempf (~dominik@070-207.dynamic.dsl.fonira.net)
+[11:38:48] <int-e> where is Data.HashTable from?
+[11:40:26] <endor> https://hackage.haskell.org/package/base-4.5.1.0/docs/Data-HashTable.html
+[11:42:16] *** Quits: Kevin578 (~Kevin578@pool-96-237-112-198.bstnma.fios.verizon.net) (Remote host closed the connection)
+[11:43:46] *** Joins: vpan (~0@212.117.1.172)
+[11:45:32] <int-e> oops, did I typo the import in ghci... I must have
+[11:47:12] <int-e> Anyway, that is a mutable hashtable; each `new` must create its own array for storing the elements.
+[11:47:42] <int-e> (This particular implementation creates an array even when there are no entries, which makes the code simpler.)
+[11:47:49] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 240 seconds)
+[11:49:04] *** Joins: chele (~chele@user/chele)
+[11:49:36] *** Joins: max22- (~maxime@2a01cb088335980094e8e0f1650776df.ipv6.abo.wanadoo.fr)
+[11:50:56] <endor> If the mutability is the reason for IO why does it not use ST internally?
+[11:51:08] <int-e> Oh, no, I didn't make a typo. base-4.5.1 is ancient. Data.HashTable was removed in 4.7.0.0, 7 1/2 years ago.
+[11:51:25] <endor> sorry!
+[11:52:00] <int-e> There's https://hackage.haskell.org/package/hashtables which works in ST
+[11:56:03] *** Quits: deadmarshal (~deadmarsh@95.38.230.89) (Ping timeout: 252 seconds)
+[11:56:05] <endor> It says "the IO wrappers (which most users will probably prefer) ...".
+[11:56:32] <endor> Why prefer IO wrapper? It makes things more complicated?
+[11:57:48] <xerox> I guess it's more a comment about users than a comment about the functions
+[11:58:55] <int-e> Maybe targeted at former users of Data.HashTable?
+[11:59:53] *** Joins: jgeerds (~jgeerds@55d4ac73.access.ecotel.net)
+[12:00:37] <dminuoso> It seems this library could have been written polymorphically over PrimMonad as well
+[12:01:04] <dminuoso> Then you would have had just singular versions
+[12:01:49] *** Quits: mcgroin (~mcgroin@roc37-h01-176-170-197-243.dsl.sta.abo.bbox.fr) (Ping timeout: 240 seconds)
+[12:02:07] *** Joins: deadmarshal (~deadmarsh@95.38.230.89)
+[12:04:25] *** Quits: _ht (~quassel@82-169-194-8.biz.kpn.net) (Remote host closed the connection)
+[12:05:02] *** Quits: jgeerds (~jgeerds@55d4ac73.access.ecotel.net) (Ping timeout: 252 seconds)
+[12:06:57] *** Joins: w1gz (~do@159.89.11.133)
+[12:13:01] *** Quits: max22- (~maxime@2a01cb088335980094e8e0f1650776df.ipv6.abo.wanadoo.fr) (Ping timeout: 240 seconds)
+[12:13:03] *** Joins: notzmv (~zmv@user/notzmv)
+[12:13:55] *** Quits: deadmarshal (~deadmarsh@95.38.230.89) (Ping timeout: 265 seconds)
+[12:15:27] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[12:16:16] *** Joins: AndrejKarpathy (~AndrejKar@2409:4053:2e02:82b0:42d:753e:851e:5c65)
+[12:16:49] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[12:16:59] *** Quits: AndrejKarpathy (~AndrejKar@2409:4053:2e02:82b0:42d:753e:851e:5c65) (Client Quit)
+[12:17:01] <int-e> dminuoso: Even if I'd target PrimMonad I'd start by implementing everything for ST s first; I don't see how a polymorphic use of `primitive` could ever play well with ghc's optimizer
+[12:17:33] *** Joins: Angel89 (~Angel89@2409:4053:2e02:82b0:42d:753e:851e:5c65)
+[12:18:33] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[12:21:37] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f80d:43f5:ddf4:fb26)
+[12:24:57] *** Quits: Angel89 (~Angel89@2409:4053:2e02:82b0:42d:753e:851e:5c65) (Quit: Client closed)
+[12:25:36] *** Joins: Angel89 (~Angel89@2409:4053:2e02:82b0:42d:753e:851e:5c65)
+[12:26:30] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f80d:43f5:ddf4:fb26) (Ping timeout: 268 seconds)
+[12:26:44] *** Joins: Akiva (~Akiva@user/Akiva)
+[12:28:24] *** Joins: machinedgod (~machinedg@135-23-192-217.cpe.pppoe.ca)
+[12:30:06] *** Quits: OndejSkup[m] (~mimivxmat@2001:470:69fc:105::c300) (Quit: You have been kicked for being idle)
+[12:30:09] *** Quits: Tavi[m] (~factoidde@2001:470:69fc:105::1:819) (Quit: You have been kicked for being idle)
+[12:30:10] *** Quits: kosmikus[m] (~andresloe@2001:470:69fc:105::95d) (Quit: You have been kicked for being idle)
+[12:32:01] *** Joins: ubert (~Thunderbi@p200300ecdf0ba2f664fe176011d10d59.dip0.t-ipconnect.de)
+[12:35:28] *** Quits: bitmapper (uid464869@id-464869.lymington.irccloud.com) (Quit: Connection closed for inactivity)
+[12:39:10] *** Quits: k60`` (~user@static.100.218.46.78.clients.your-server.de) (Ping timeout: 256 seconds)
+[12:40:21] *** Quits: synthmeat (~synthmeat@user/synthmeat) (Quit: WeeChat 3.0)
+[12:42:34] *** Joins: acidjnk_new (~acidjnk@p200300d0c7271e730cb547fb259b1246.dip0.t-ipconnect.de)
+[12:44:33] *** Joins: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net)
+[12:44:36] *** Joins: pfurla (~pfurla@2804:14d:5c81:4104:e550:12e4:9dfb:af3c)
+[12:44:54] *** Joins: xkuru (~xkuru@user/xkuru)
+[12:45:50] *** Joins: nunggu (~q@gateway/tor-sasl/nunggu)
+[12:46:00] *** Joins: m1dnight (~christoph@christophe.dev)
+[12:47:35] *** Quits: geekosaur (~geekosaur@xmonad/geekosaur) (Killed (NickServ (GHOST command used by allbery_b)))
+[12:47:35] *** Joins: allbery_b (~geekosaur@xmonad/geekosaur)
+[12:47:38] *** allbery_b is now known as geekosaur
+[12:48:37] *** Quits: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net) (Ping timeout: 240 seconds)
+[12:50:17] *** Joins: deadmarshal (~deadmarsh@95.38.230.89)
+[12:50:39] *** Quits: Akiva (~Akiva@user/Akiva) (Ping timeout: 265 seconds)
+[12:51:37] *** Quits: xff0x (~xff0x@2001:1a81:5338:9c00:2366:f1e5:f2a7:3295) (Ping timeout: 265 seconds)
+[12:52:22] *** Joins: xff0x (~xff0x@2001:1a81:5338:9c00:c1d:978d:6bc0:7433)
+[12:52:38] *** Quits: tcard (~tcard@p2878075-ipngn18701hodogaya.kanagawa.ocn.ne.jp) (Quit: Leaving)
+[12:52:52] *** Joins: Dansk31 (~Dansk31@213.244.23.3)
+[12:53:51] *** Quits: Dansk31 (~Dansk31@213.244.23.3) (Client Quit)
+[12:55:59] *** Quits: Angel89 (~Angel89@2409:4053:2e02:82b0:42d:753e:851e:5c65) (Quit: Client closed)
+[12:57:07] *** Joins: tcard (~tcard@p2878075-ipngn18701hodogaya.kanagawa.ocn.ne.jp)
+[13:02:24] *** Joins: Alex_test (~al_test@94.233.241.193)
+[13:02:42] <Profpatsch> GHC can’t derive Show1?
+[13:02:49] <Profpatsch> That’s a bummer
+[13:03:58] *** Quits: mjacob (~mjacob@adrastea.uberspace.de) (Read error: Connection reset by peer)
+[13:04:06] *** Quits: Alex_test_ (~al_test@94.233.241.193) (Ping timeout: 256 seconds)
+[13:04:25] <Profpatsch> Ah, maybe GHC 9
+[13:04:40] *** Quits: vpan (~0@212.117.1.172) (Ping timeout: 256 seconds)
+[13:05:14] *** Quits: m1dnight (~christoph@christophe.dev) (Ping timeout: 256 seconds)
+[13:05:21] *** Joins: vpan (~0@212.117.1.172)
+[13:05:24] *** Quits: Arsen (arsen@managarm/dev/Arsen) (Quit: Quit.)
+[13:05:45] *** Joins: Angel89 (~Angel89@2409:4053:2e02:82b0:42d:753e:851e:5c65)
+[13:08:41] *** Joins: m1dnight (~christoph@christophe.dev)
+[13:11:26] *** Quits: Angel89 (~Angel89@2409:4053:2e02:82b0:42d:753e:851e:5c65) (Quit: Client closed)
+[13:12:20] *** Joins: Arsen (arsen@managarm/dev/Arsen)
+[13:16:12] *** Quits: ChaiTRex (~ChaiTRex@user/chaitrex) (Remote host closed the connection)
+[13:16:41] *** Joins: ChaiTRex (~ChaiTRex@user/chaitrex)
+[13:19:30] *** Joins: teo (~teo@user/teo)
+[13:19:55] *** Joins: mjacob (~mjacob@adrastea.uberspace.de)
+[13:22:40] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[13:23:16] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[13:24:29] *** Quits: Erutuon (~Erutuon@user/erutuon) (Ping timeout: 265 seconds)
+[13:28:50] *** Quits: werneta (~werneta@70-142-214-115.lightspeed.irvnca.sbcglobal.net) (Ping timeout: 265 seconds)
+[13:29:20] *** Joins: k60`` (~user@static.100.218.46.78.clients.your-server.de)
+[13:30:13] *** Joins: werneta (~werneta@70-142-214-115.lightspeed.irvnca.sbcglobal.net)
+[13:33:34] *** Quits: deadmarshal (~deadmarsh@95.38.230.89) (Ping timeout: 256 seconds)
+[13:36:48] *** Quits: tzh (~tzh@c-24-21-73-154.hsd1.wa.comcast.net) (Quit: zzz)
+[13:36:53] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Ping timeout: 252 seconds)
+[13:37:12] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[13:37:23] *** Quits: Merfont (~Kaiepi@156.34.44.192) (Remote host closed the connection)
+[13:40:37] *** Quits: Lord_of_Life (~Lord@user/lord-of-life/x-2819915) (Ping timeout: 240 seconds)
+[13:41:34] *** Joins: Lord_of_Life (~Lord@user/lord-of-life/x-2819915)
+[13:45:32] *** Quits: feetwind (~mike@user/feetwind) (Ping timeout: 240 seconds)
+[13:47:03] *** Joins: deadmarshal (~deadmarsh@95.38.230.89)
+[13:47:31] *** Joins: gehmehgeh (~user@user/gehmehgeh)
+[13:47:50] *** Quits: dschrempf (~dominik@070-207.dynamic.dsl.fonira.net) (Quit: WeeChat 3.3)
+[13:48:08] <merijn> hmmm
+[13:48:11] <merijn> rats
+[13:48:39] <merijn> my AoC solution works fine for the small example, but fails on the big one :\
+[13:48:52] *** Quits: nebu (~user@user/wavion) (Ping timeout: 256 seconds)
+[13:49:03] <dminuoso> Mmm, why does executableStripping does less than manually invoking `strip`?
+[13:49:21] <dminuoso> *executable-stripping in cabal
+[13:50:09] <dminuoso> With `split-sections: true` and `executable-stripping: true` it brings down the resulting static binary to 74MiB, but calling strip ontop gets it down to 40ish
+[13:50:48] *** Quits: teo (~teo@user/teo) (Read error: Connection reset by peer)
+[13:51:42] *** Quits: deadmarshal (~deadmarsh@95.38.230.89) (Ping timeout: 256 seconds)
+[13:52:01] <merijn> ah, < vs <= strikes again :p
+[13:55:25] *** Joins: synthmeat (~synthmeat@user/synthmeat)
+[13:57:47] *** Quits: user0 (~aj@langw.roketelkom.co.ug) (Quit: Leaving.)
+[13:57:54] *** Joins: feetwind (~mike@user/feetwind)
+[13:59:10] *** Joins: user0 (~aj@langw.roketelkom.co.ug)
+[14:00:51] *** Joins: nebu (~user@user/wavion)
+[14:01:57] *** Joins: aveltras (~aveltras@2a01:cb1e:4c:f668:5c2f:6f8c:9239:752b)
+[14:02:56] *** Quits: obfusk (~quassel@a82-161-150-56.adsl.xs4all.nl) (Remote host closed the connection)
+[14:04:08] *** Joins: obfusk (~quassel@a82-161-150-56.adsl.xs4all.nl)
+[14:06:03] *** Quits: nebu (~user@user/wavion) (Ping timeout: 265 seconds)
+[14:06:13] *** Quits: Techcable (~Techcable@168.235.93.147) (Ping timeout: 252 seconds)
+[14:06:39] *** Joins: nebu (~user@user/wavion)
+[14:07:39] *** Quits: mncheck (~mncheck@193.224.205.254) (Read error: Connection reset by peer)
+[14:08:43] *** Joins: jinsun__ (~quassel@user/jinsun)
+[14:09:04] <aveltras> is anyone aware of some limitations regarding using ghc plugins and at the same time libraries using ffi ? i've setup a minimal repo demonstrating the issue encountered https://github.com/aveltras/pulsar-hs-repro
+[14:09:25] *** Quits: jinsun (~quassel@user/jinsun) (Ping timeout: 240 seconds)
+[14:10:44] *** Joins: aveltras[m] (~aveltrasm@2001:470:69fc:105::3ef9)
+[14:11:03] *** Joins: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net)
+[14:11:17] *** Parts: jakalx (~jakalx@base.jakalx.net) (Error from remote client)
+[14:11:25] *** Quits: nebu (~user@user/wavion) (Ping timeout: 240 seconds)
+[14:19:00] *** Joins: jakalx (~jakalx@base.jakalx.net)
+[14:21:31] *** Joins: fr33domlover (~fr33@2.55.41.129)
+[14:21:43] *** Joins: deadmarshal (~deadmarsh@95.38.230.89)
+[14:23:25] *** Joins: nebu (~user@user/wavion)
+[14:26:41] *** Quits: feliix42 (~felix@gibbs.uberspace.de) (Read error: Connection reset by peer)
+[14:29:15] *** Quits: nebu (~user@user/wavion) (Ping timeout: 265 seconds)
+[14:29:52] *** Joins: feliix42 (~felix@gibbs.uberspace.de)
+[14:30:19] *** Joins: namkeleser (~namkelese@101.175.128.51)
+[14:30:40] *** Joins: alx741 (~alx741@186.178.108.192)
+[14:32:00] *** Quits: Cajun (~Cajun@user/cajun) (Quit: Client closed)
+[14:38:21] *** Joins: kuribas (~user@ip-188-118-57-242.reverse.destiny.be)
+[14:43:55] *** Joins: user01 (~aj@154.0.137.32)
+[14:47:03] *** Joins: jippiedoe (~david@2a02-a44c-e14e-1-4578-432f-df10-dcae.fixed6.kpn.net)
+[14:47:14] *** Quits: user0 (~aj@langw.roketelkom.co.ug) (Ping timeout: 256 seconds)
+[14:48:58] *** Joins: shriekingnoise (~shrieking@186.137.144.80)
+[14:55:07] *** Joins: teo (~teo@user/teo)
+[14:56:47] *** Joins: Gurkenglas (~Gurkengla@dslb-002-203-144-204.002.203.pools.vodafone-ip.de)
+[14:58:15] *** Joins: smartin (~Thunderbi@88.135.18.171)
+[15:00:45] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:03:47] <xerox> anybody knows how to attack this? https://i.imgur.com/NsAh0lK.png
+[15:04:53] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 252 seconds)
+[15:05:01] *** Quits: k60`` (~user@static.100.218.46.78.clients.your-server.de) (Ping timeout: 265 seconds)
+[15:05:22] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 256 seconds)
+[15:05:32] * Franciman suggests switching to ocaml
+[15:06:26] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[15:06:37] *** Quits: xkuru (~xkuru@user/xkuru) (Remote host closed the connection)
+[15:06:38] <geekosaur> are you using head.hackage?
+[15:06:47] <xerox> no
+[15:06:59] *** Joins: xkuru (~xkuru@user/xkuru)
+[15:08:33] <geekosaur> you probably need it given the shown compiler version
+[15:08:47] <xerox> interesting, I guess I can try
+[15:09:35] <geekosaur> the point of head.hackage is it's patches to various packages needed toi get them to build with newer ghcs (originally intended with ghc HEAD but also helpful with 9.2.1)
+[15:10:29] <geekosaur> levity/representation polymorphism is still new enough that a number of packages don't know how to deal with it yet
+[15:10:50] <xerox> hm nope, the head.h.o version does not compile either
+[15:11:47] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 265 seconds)
+[15:11:52] *** Quits: whatsupdoc (uid509081@id-509081.hampstead.irccloud.com) (Quit: Connection closed for inactivity)
+[15:12:24] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[15:13:26] *** Quits: mbuf (~Shakthi@122.178.122.215) (Quit: Leaving)
+[15:14:28] *** Quits: machinedgod (~machinedg@135-23-192-217.cpe.pppoe.ca) (Remote host closed the connection)
+[15:15:38] *** Joins: machinedgod (~machinedg@135-23-192-217.cpe.pppoe.ca)
+[15:16:52] *** Joins: k60`` (~user@static.100.218.46.78.clients.your-server.de)
+[15:17:50] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[15:18:14] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[15:18:27] *** Joins: max22- (~maxime@2a01cb08833598006ab9bb661d4b4059.ipv6.abo.wanadoo.fr)
+[15:18:45] *** Joins: mei (~mei@user/mei)
+[15:19:55] *** Quits: jippiedoe (~david@2a02-a44c-e14e-1-4578-432f-df10-dcae.fixed6.kpn.net) (Ping timeout: 252 seconds)
+[15:23:25] *** Quits: cods (~fred@82-65-232-44.subs.proxad.net) (Ping timeout: 256 seconds)
+[15:23:30] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[15:24:06] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[15:24:17] *** Joins: mncheck (~mncheck@193.224.205.254)
+[15:24:44] *** Quits: endor (~a@p200300ef97023511e49253ebeea0a61a.dip0.t-ipconnect.de) (Quit: WeeChat 3.0.1)
+[15:26:16] <geekosaur> next step is probably to ask in #ghc then
+[15:26:59] <geekosaur> you're not going to get much help with ghc 9.3.x in here
+[15:27:18] *** Quits: pfurla (~pfurla@2804:14d:5c81:4104:e550:12e4:9dfb:af3c) (Quit: gone to sleep. ZZZzzz…)
+[15:29:39] *** Quits: noctux (~noctux@user/noctux) (Ping timeout: 268 seconds)
+[15:30:05] *** Joins: pfurla (~pfurla@201.17.118.230)
+[15:31:08] *** Joins: __monty__ (~toonn@user/toonn)
+[15:33:01] *** Quits: deadmarshal (~deadmarsh@95.38.230.89) (Ping timeout: 240 seconds)
+[15:34:13] *** Joins: Cajun (~Cajun@user/cajun)
+[15:34:30] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 265 seconds)
+[15:34:33] <xerox> -  tagToEnum# (unsafeCoerce# reallyUnsafePtrEquality# xs ys)
+[15:34:33] <xerox> +  tagToEnum# (unsafeCoerce# (reallyUnsafePtrEquality# xs ys))
+[15:34:35] <xerox> this does the trick
+[15:34:41] <xerox> 🤷‍♂️
+[15:35:22] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[15:35:35] <Franciman> *shrugs*
+[15:36:33] <geekosaur> that does look saner to me. wonder why the original code
+[15:36:43] <xerox> I'll ask
+[15:37:46] *** Joins: deadmarshal (~deadmarsh@95.38.230.89)
+[15:39:02] *** Joins: Kaiepi (~Kaiepi@156.34.44.192)
+[15:40:30] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[15:41:08] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[15:42:26] *** AlexNoo_ is now known as AlexNoo
+[15:43:18] *** Joins: noctux (~noctux@user/noctux)
+[15:45:04] *** Quits: bliminse (~bliminse@host86-162-147-196.range86-162.btcentralplus.com) (Quit: leaving)
+[15:45:35] *** Joins: cods (~fred@82-65-232-44.subs.proxad.net)
+[15:46:13] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 240 seconds)
+[15:46:42] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[15:49:32] *** Parts: jakalx (~jakalx@base.jakalx.net) (Error from remote client)
+[15:51:50] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[15:52:52] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[15:53:17] *** Joins: jakalx (~jakalx@base.jakalx.net)
+[15:56:53] *** Quits: k60`` (~user@static.100.218.46.78.clients.your-server.de) (Remote host closed the connection)
+[15:58:11] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 265 seconds)
+[15:58:56] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[15:59:19] *** Quits: synthmeat (~synthmeat@user/synthmeat) (Quit: WeeChat 3.0)
+[16:00:46] *** Joins: k60`` (~user@static.100.218.46.78.clients.your-server.de)
+[16:01:54] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[16:03:36] *** Joins: burnsidesLlama (~burnsides@dhcp168-015.wadham.ox.ac.uk)
+[16:04:28] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 265 seconds)
+[16:04:53] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[16:08:27] *** Joins: Techcable (~Techcable@168.235.93.147)
+[16:08:46] *** Quits: aveltras (~aveltras@2a01:cb1e:4c:f668:5c2f:6f8c:9239:752b) (Ping timeout: 256 seconds)
+[16:13:47] *** Quits: azimut (~azimut@gateway/tor-sasl/azimut) (Remote host closed the connection)
+[16:13:50] *** Joins: bliminse (~bliminse@host86-162-147-196.range86-162.btcentralplus.com)
+[16:14:05] *** Joins: azimut (~azimut@gateway/tor-sasl/azimut)
+[16:17:29] *** Joins: genieliu (~genieliu@103.37.140.24)
+[16:17:59] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[16:21:22] *** Joins: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net)
+[16:22:22] *** Quits: Kaiepi (~Kaiepi@156.34.44.192) (Remote host closed the connection)
+[16:22:42] *** Joins: Kaiepi (~Kaiepi@156.34.44.192)
+[16:25:18] *** Joins: nebu (~user@user/wavion)
+[16:25:50] *** Quits: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net) (Ping timeout: 256 seconds)
+[16:26:13] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f80d:43f5:ddf4:fb26)
+[16:30:41] *** Quits: max22- (~maxime@2a01cb08833598006ab9bb661d4b4059.ipv6.abo.wanadoo.fr) (Ping timeout: 252 seconds)
+[16:30:42] *** Quits: nebu (~user@user/wavion) (Ping timeout: 268 seconds)
+[16:31:19] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f80d:43f5:ddf4:fb26) (Ping timeout: 268 seconds)
+[16:32:04] *** Quits: deadmarshal (~deadmarsh@95.38.230.89) (Ping timeout: 256 seconds)
+[16:32:37] *** Quits: mrckndt (~mrckndt@user/mrckndt) (Quit: mrckndt)
+[16:33:49] *** Quits: cfricke (~cfricke@user/cfricke) (Ping timeout: 240 seconds)
+[16:34:12] *** Joins: euandreh (~euandreh@2804:14c:33:9fe5:cd28:ecf9:b8a2:d95a)
+[16:39:38] *** Quits: burnsidesLlama (~burnsides@dhcp168-015.wadham.ox.ac.uk) (Remote host closed the connection)
+[16:40:40] *** Quits: namkeleser (~namkelese@101.175.128.51) (Quit: Client closed)
+[16:41:46] *** Parts: jakalx (~jakalx@base.jakalx.net) (Disconnected: Replaced by new connection)
+[16:41:46] *** Joins: jakalx (~jakalx@base.jakalx.net)
+[16:42:24] *** Joins: bitmapper (uid464869@id-464869.lymington.irccloud.com)
+[16:43:00] <merijn> Suppose I have a function 'A -> A', an 'A', and a predicate 'A -> Bool', what's the most convenient way to get "the first value satisfying the predicate"?
+[16:43:21] *** Joins: jippiedoe (~david@2a02-a44c-e14e-1-1201-1886-c45a-80e6.fixed6.kpn.net)
+[16:45:15] <geekosaur> I feel like there's a ppiece missing here
+[16:45:39] <merijn> How so?
+[16:46:02] <geekosaur> you have "an A", where do you have multiple values to get the first of?
+[16:46:08] <maerwald> head . filter p .  iterate f
+[16:46:11] <maerwald> ?
+[16:46:14] <merijn> geekosaur: Applying the function to the initial value
+[16:46:22] <geekosaur> ah
+[16:46:35] <geekosaur> maerwald probably has it
+[16:46:38] <merijn> maerwald: Yeah, I was thinking along those lines, but wasn't really happy with that :\
+[16:46:41] <merijn> oh well
+[16:46:45] <maerwald> well, safeHead
+[16:46:56] <merijn> Damn control characters in unicode fucking up my use of succ :\
+[16:47:30] <geekosaur> unicode succs?
+[16:47:53] <merijn> oh, wait, an idea appears!
+[16:48:43] <merijn> I'd almost forgot Haskell is lazy there...
+[16:49:16] <merijn> Problem avoided instead :p
+[16:50:39] <merijn> I can just generate an infinite list of printable character and take the head at every step, instead of computing the next one
+[16:53:20] *** Joins: CiaoSen (~Jura@p200300c9570204002a3a4dfffe84dbd5.dip0.t-ipconnect.de)
+[16:53:46] *** Joins: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470)
+[16:59:19] *** Joins: kaction (~kaction@pool-71-191-91-40.washdc.fios.verizon.net)
+[17:05:51] *** Quits: genieliu (~genieliu@103.37.140.24) (Ping timeout: 265 seconds)
+[17:06:34] *** Quits: Morrow (~quassel@bzq-110-168-31-106.red.bezeqint.net) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[17:10:44] *** Joins: deadmarshal (~deadmarsh@95.38.230.89)
+[17:11:09] *** Joins: burnsidesLlama (~burnsides@dhcp168-015.wadham.ox.ac.uk)
+[17:11:22] *** Joins: Morrow (~quassel@bzq-110-168-31-106.red.bezeqint.net)
+[17:12:08] *** Quits: jippiedoe (~david@2a02-a44c-e14e-1-1201-1886-c45a-80e6.fixed6.kpn.net) (Ping timeout: 265 seconds)
+[17:12:47] *** Quits: TheCoffeMaker (~TheCoffeM@user/thecoffemaker) (Ping timeout: 256 seconds)
+[17:13:12] *** Quits: kuribas (~user@ip-188-118-57-242.reverse.destiny.be) (Quit: ERC (IRC client for Emacs 26.3))
+[17:14:00] *** Quits: vpan (~0@212.117.1.172) (Quit: Leaving.)
+[17:15:26] *** Joins: TheCoffeMaker (~TheCoffeM@user/thecoffemaker)
+[17:16:42] *** Quits: pfurla (~pfurla@201.17.118.230) (Quit: gone to sleep. ZZZzzz…)
+[17:16:58] *** Quits: burnsidesLlama (~burnsides@dhcp168-015.wadham.ox.ac.uk) (Ping timeout: 265 seconds)
+[17:18:21] *** Joins: azimut_ (~azimut@gateway/tor-sasl/azimut)
+[17:19:25] *** Joins: burnsidesLlama (~burnsides@dhcp168-015.wadham.ox.ac.uk)
+[17:19:46] <merijn> hmm, I feel like I'm missing some tricks for writing convenient fixpoints
+[17:21:54] *** Quits: azimut (~azimut@gateway/tor-sasl/azimut) (Ping timeout: 276 seconds)
+[17:22:46] *** Quits: xsperry (~xs@user/xsperry) (Ping timeout: 265 seconds)
+[17:23:49] *** Quits: burnsidesLlama (~burnsides@dhcp168-015.wadham.ox.ac.uk) (Ping timeout: 240 seconds)
+[17:27:23] *** Joins: kupi (uid212005@id-212005.hampstead.irccloud.com)
+[17:29:52] <xerox> how does one get access to the cabal project version in an app's Main.hs ?
+[17:29:59] *** Joins: xsperry (~xs@user/xsperry)
+[17:30:01] <xerox> could it be the cabal Paths.hs thing
+[17:30:12] <merijn> xerox: You mean the version from the cabal file?
+[17:30:34] <merijn> like 0.1.0.0 or whatever
+[17:31:08] *** Joins: max22- (~maxime@2a01cb0883359800d97fa420b95dd877.ipv6.abo.wanadoo.fr)
+[17:32:47] *** Quits: fr33domlover (~fr33@2.55.41.129) (Quit: fr33domlover)
+[17:39:22] <boxscape> kind of wish iterate et al. would produce `data Stream a = a :|| Stream a`, and then you could use `head` without worrying about empty lists
+[17:39:53] *** Quits: chexum (~quassel@gateway/tor-sasl/chexum) (Remote host closed the connection)
+[17:40:36] *** Joins: jippiedoe (~david@2a02-a44c-e14e-1-9f6f-678f-3cd5-9f8c.fixed6.kpn.net)
+[17:40:54] <merijn> You can still use head without worrying about empty lists...
+[17:41:01] <merijn> That seems like a silly statement
+[17:41:20] *** Joins: chexum (~quassel@gateway/tor-sasl/chexum)
+[17:41:22] <dminuoso> Btw, if you have both a cabal.project and cabal.project.local, and both specify `packages: .`, then `cabal build` will find the package in your current directory twice and complain
+[17:41:25] <dminuoso> Is this by design?
+[17:41:38] <boxscape> Yes, but then I have this nagging thought at the back of my mind that I'll eventually accidentally refactor the code to something that makes the `head` call unsafe, and I'm not protected by the type system
+[17:42:16] <merijn> dminuoso: The cabal.project.local fields (depending on type) overwrite OR monoidally append the ones from cabal.project
+[17:42:19] <merijn> dminuoso: So...yes
+[17:42:28] <boxscape> (presumably something similar is why maerwald suggested safeHead above)
+[17:42:34] <merijn> dminuoso: Why are you even listing packages in cabal.project.local?
+[17:43:14] <dminuoso> merijn: Just a copy/paste result.
+[17:43:25] *** Joins: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net)
+[17:43:39] <merijn> My main complaint about Haskell for AOC is that I need to waste to many lines on imports >.>
+[17:43:44] <dminuoso> I figured if I wanted to customize the cabal.project on my local machine, Id just copy the file and tweak it. Somehow I assumed that this would take predence
+[17:44:07] <merijn> dminuoso: No, you just take an empty file and only write whatever you wanna change in cabal.project.local
+[17:44:27] <dminuoso> Where can I find whether fields are overwritten or appended?
+[17:44:36] <dminuoso> Let me guess. source code?
+[17:44:38] <merijn> dminuoso: list-y fields should be appended
+[17:44:51] <merijn> dminuoso: Same logic as in .cabal files
+[17:45:00] <merijn> Since they use the same field parsers
+[17:45:42] <merijn> dminuoso: Not having to duplicate the entire original project file is the entire point of having .local files builtin :p
+[17:46:52] *** Quits: deadmarshal (~deadmarsh@95.38.230.89) (Ping timeout: 256 seconds)
+[17:46:54] <dminuoso> Fair enough, thanks
+[17:47:29] *** Joins: dmenz (~dmenz@2804:14d:5cd4:5e94::1)
+[17:47:30] *** Joins: stevenxl (~stevenxl@174.128.182.199)
+[17:51:47] *** Joins: genieliu (~genieliu@111.193.167.10)
+[17:52:54] *** Joins: burnsidesLlama (~burnsides@dhcp168-015.wadham.ox.ac.uk)
+[17:53:42] *** Quits: CiaoSen (~Jura@p200300c9570204002a3a4dfffe84dbd5.dip0.t-ipconnect.de) (Ping timeout: 265 seconds)
+[17:54:40] *** Joins: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net)
+[17:54:40] *** Quits: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net) (Changing host)
+[17:54:40] *** Joins: wroathe (~wroathe@user/wroathe)
+[17:55:46] <fizbin> Last night, sm mentioned a "stack script". This is not something I had ever heard of before - did they mean using something like https://www.fpcomplete.com/haskell/tutorial/stack-script/ ?
+[17:57:03] <byorgey> fizbin: probably, that's the only thing called a "stack script" that I know of.
+[17:57:34] *** Quits: burnsidesLlama (~burnsides@dhcp168-015.wadham.ox.ac.uk) (Ping timeout: 265 seconds)
+[17:57:34] *** Quits: genieliu (~genieliu@111.193.167.10) (Ping timeout: 265 seconds)
+[17:58:58] <fizbin> It definitely does simplify the setup, though having the stack.yaml and package.yaml files there are still convenient because with all three of stack.yaml, package.yaml and hie.yaml working together I now have the haskell language server functioning on this code.
+[17:59:32] *** Joins: deadmarshal (~deadmarsh@95.38.230.89)
+[18:00:17] <fizbin> merijn: I haven't found the need for too many import lines. Plus, you can always have those import lines prefilled and ready to go before the problem drops.
+[18:00:35] <fizbin> (Of course, I should talk, since I get my timed solutions done via python)
+[18:06:46] *** Joins: Successus (~Successus@gateway/tor-sasl/successus)
+[18:07:56] <merijn> fizbin: It depends how you write your code. I could probably get dirty solutions without to many imports
+[18:08:33] *** Quits: dmenz (~dmenz@2804:14d:5cd4:5e94::1) (Quit: Leaving)
+[18:08:34] <merijn> fizbin: Personal rule: No unhandled errors and nice abstractions for that sorta thing tend to rack up the imports :p
+[18:08:54] <merijn> Today's solution has, like, 25 lines of import >.>
+[18:09:34] <merijn> I could probably optimise it a bit by moving frequent code into a separate library modules and reusing that. But I kinda like each day being standalone. Makes them function better as examples for others
+[18:09:35] *** Joins: synthmeat (~synthmeat@user/synthmeat)
+[18:10:06] *** Joins: ub (~Thunderbi@p200300ecdf0ba2f69d45b59a7f50dcfc.dip0.t-ipconnect.de)
+[18:13:06] <byorgey> yeah, I make each day standalone too
+[18:13:15] <fizbin> Combined across my solutions to the first 9 problems, I have 9 distinct 'import' lines: Control.Monad, Data.Char, Data.List, Data.Maybe, Debug.Trace, Numeric, System.Environment, qualified Data.Map as M, and qualified Data.MultiSet as MS.
+[18:13:38] *** Joins: pfurla (~pfurla@2804:14d:5c81:4104:25b5:2708:65a9:4e7d)
+[18:13:38] <fizbin> It's not so bad to have a template with {-# LANGUAGE Haskell2010 #-} and those 9 lines.
+[18:14:57] <merijn> fizbin: Control.Monad, Data.Char, Data.Coerce, Data.Foldable, Data.Function, Data.Funtor.Identity, Data.List, Data.List.NonEmpty, 2x Data.Map (qualified and type), Data.Maybe, Data.Monoid, Data.Ord, Data.Semigroup, Data.Text, Data.Text.IO, Data.Void, System.Environment, System.Exist, System.IO and 3 Megaparsec ones :p
+[18:15:23] <fizbin> Already this year, or is that your template?
+[18:15:30] <merijn> That's just day9 :p
+[18:15:57] <byorgey> my template for solving problems on open.kattis.com has ... 46 lines of imports =)
+[18:16:35] <fizbin> As an aside, I've found this year's input parsing to be much simpler than in earlier years. By this point in 2020, we'd already needed to parse input like "light red bags contain 1 bright white bag, 2 muted yellow bags."
+[18:16:52] <fizbin> So far this year, I've done all the parsing with "lines" and "words".
+[18:16:55] <byorgey> fizbin: agreed.
+[18:17:46] <merijn> fizbin: You can do it with lines/words if you assume only valid input, which violates my attempt to handle all errors explicitly approach :p
+[18:18:22] *** Quits: __monty__ (~toonn@user/toonn) (Quit: leaving)
+[18:18:28] <merijn> Not sure if I actually handle *everything*, but certainly the vast majority of cases
+[18:19:05] <byorgey> heh.  My day 9 solution only has 6 imports: Control.Arrow, Data.Array.Unboxed, Data.List, Data.Maybe, and 2x Data.Set
+[18:19:59] <fizbin> TBH if I were doing that, (input validation) I'd do it with regex.
+[18:20:11] <byorgey> merijn: throw up your solution on a web server and let us try to send it malicious inputs =)
+[18:20:30] *** Quits: smartin (~Thunderbi@88.135.18.171) (Remote host closed the connection)
+[18:21:04] *** jinsun__ is now known as jinsun
+[18:21:49] <merijn> byorgey: You can clone the repo and throw malicious input at it yourself :p
+[18:22:00] *** Quits: curiousgay (~curiousga@77-120-141-90.kha.volia.net) (Quit: Leaving)
+[18:22:12] <fizbin> byorgey: If I remove the Debug.Trace import (that isn't needed in the final version but was very much needed during development), I only have 5 on day 9: Data.List, Data.Maybe, System.Environment, qualified Data.Map as M, qualified Data.MultiSet as MS
+[18:22:13] *** Joins: motherfsck (~motherfsc@user/motherfsck)
+[18:22:21] <merijn> byorgey: I just want with a Map for the data structure :p
+[18:22:51] *** Joins: Kevin578 (~Kevin578@pool-96-237-112-198.bstnma.fios.verizon.net)
+[18:22:56] <byorgey> merijn: hehe
+[18:22:58] <byorgey> fizbin: nice
+[18:23:00] <merijn> byorgey: https://github.com/merijn/AdventOfCode/blob/master/Day9.hs
+[18:23:16] <merijn> I did also include a renderer for my maps for debugging purposes
+[18:24:38] <byorgey> merijn: ah, I like your way of finding basins using repeated convolution
+[18:24:51] <byorgey> I just used BFS
+[18:25:01] <fizbin> I'm not sure how people get by without having their "main" get the name of the input file with getArgs, though I guess people could be writing stuff to always read the input from stdin. (Personally, I write my solutions - python and haskell - to take an optional first argument that's the input file with the default being "aocNN.in")
+[18:25:07] <merijn> byorgey: Yeah, I'm quite pleased with that and (in general) the generic convolution
+[18:25:30] *** Joins: Tuplanolla (~Tuplanoll@91-159-69-50.elisa-laajakaista.fi)
+[18:25:40] <merijn> byorgey: Given some of the earlier puzzles I expect more convolutions to come :p
+[18:25:51] <merijn> byorgey: So I figured I can easily copy and extend this one for future puzzles :p
+[18:26:07] *** Joins: nebu (~user@user/wavion)
+[18:26:09] <byorgey> merijn: indeed
+[18:26:22] *** Joins: smartin (~Thunderbi@88.135.18.171)
+[18:26:45] <byorgey> fizbin: meh, I just say  runhaskell 09.hs < input  or whatever, I can't be bothered to do anything fancy =)
+[18:27:38] *** Quits: Widget (~widget@2a04:ee41:6:70cd:e189:3667:bb4:f6ac) (Quit: Leaving...)
+[18:27:55] <byorgey> The optional first argument approach sounds nice though.
+[18:27:58] <merijn> byorgey: Biggest flaw in my map rendering is that I should probably extend it to automatically detect cell size and account for that, so I can use multi character values instead of the current Char labelling which...does not quite work out for the big problems
+[18:28:13] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 240 seconds)
+[18:28:18] *** Joins: shapr (~user@pool-100-36-247-68.washdc.fios.verizon.net)
+[18:28:21] <merijn> because there's basins with characters that fuck up my terminal xD
+[18:28:26] <byorgey> lol
+[18:29:23] <merijn> I've been thinking about making a library for my parse wrapper, getting the file and things like rendering maps, since those are so frequent with AOC. OTOH, that'd stop being standalone :\
+[18:29:53] <merijn> We'll see. This is probably the first year I actually finish AOC, so I will actually need to keep using code the entire time :p
+[18:30:50] <fizbin> byorgey: Especially because you write that code once and then copy/paste. Just don't forget to update the name of the default input file like I did on day5...
+[18:31:04] *** Quits: nebu (~user@user/wavion) (Ping timeout: 256 seconds)
+[18:31:13] <merijn> fizbin: See, my megaparsec parsers would catch that ;)
+[18:31:36] <fizbin> Oh, I mean, I didn't get the wrong answer and submit it, I got errors.
+[18:32:22] <fizbin> It's just that errors are naturally showing up at 12:30-1am local time because of where I am and my brain takes a while to think through what might cause things like that.
+[18:32:52] <merijn> I don't even try to compete, tbh
+[18:32:56] * fizbin does not have a brain that functions at peak at that hour.
+[18:33:03] <merijn> puzzles are posted at 6 AM local time. Screw that
+[18:33:16] <merijn> I refuse to acknowledge the existence of times before 9:00
+[18:34:09] <fizbin> I haven't gotten any main board points since 2018. I got three sub-200 "part 2" times in 2020, and have gotten one so far this year.
+[18:34:38] <fizbin> Last night was bad though. Sub-2000, but over 1500
+[18:35:14] <fizbin> I feel like the number of people doing them as the problems come out jumped by a lot in 2019.
+[18:40:01] *** Joins: cfricke (~cfricke@user/cfricke)
+[18:41:04] *** Quits: acidjnk_new (~acidjnk@p200300d0c7271e730cb547fb259b1246.dip0.t-ipconnect.de) (Ping timeout: 265 seconds)
+[18:43:22] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:2835:2428:a8d4:1d95)
+[18:46:59] *** Quits: euandreh (~euandreh@2804:14c:33:9fe5:cd28:ecf9:b8a2:d95a) (Ping timeout: 268 seconds)
+[18:48:14] *** Joins: kuribas (~user@ip-188-118-57-242.reverse.destiny.be)
+[18:51:59] * fizbin sets up a github repo for aoc2021, like all the cool kids. https://github.com/fizbin/aoc2021/blob/main/aoc9.hs
+[18:52:26] <fizbin> If the formatting looks weird, that's all hindent's doing.
+[18:52:30] <yushyin> very cool, much wow
+[18:55:04] <merijn> fizbin: Isn't multiset just 
+[18:55:10] <merijn> "Map v Int"? :p
+[18:55:40] <fizbin> merijn: It's "Map v Int" with loads of convenience functions on it.
+[18:56:01] <merijn> fizbin: I mean, you can just use "M.fromListWith (+) . map (,1)" like I do ;)
+[18:56:16] <fizbin> Sure. For this problem it's a bit overkill.
+[18:57:30] <fizbin> But I saw the nice uses people used it for on day 6, so I wanted to start using it for those times when it'd be convenient.
+[18:58:25] *** Quits: pfurla (~pfurla@2804:14d:5c81:4104:25b5:2708:65a9:4e7d) (Quit: gone to sleep. ZZZzzz…)
+[18:59:08] <merijn> fizbin: I mean, for Day6 it's even more overkill xD
+[18:59:11] *** Quits: n3t (n3t@s45.mydevil.net) (Changing host)
+[18:59:11] *** Joins: n3t (n3t@user/n3t)
+[18:59:26] <fizbin> e.g. "MS.concatMap func myms" is nicer than "M.fromList (+) $ concatMap func $ M.toList mymap", plus the signature of "func" is nicer.
+[19:00:02] <fizbin> simulate = Data.MultiSet.concatMap (\i -> if i == 0 then [6, 8] else [i - 1])
+[19:00:28] <merijn> fizbin: https://github.com/merijn/AdventOfCode/blob/master/Day6.hs#L45-L51 :)
+[19:02:48] *** Joins: meinside (uid24933@id-24933.helmsley.irccloud.com)
+[19:06:16] <fizbin> I'd argue that the one line is faster to type and also easier to read because it follows the flow of the problem rather than needing the mentally invert the "this on day N becomes this on day N+1" story structure to work out "this on day N+1 came form this and that on day N"
+[19:07:03] <fizbin> But yeah, I did day 6 with just Data.Map: https://github.com/fizbin/aoc2021/blob/main/aoc6.hs#L10-L14
+[19:07:07] *** Joins: doyougnu (~doyougnu@c-73-25-202-122.hsd1.or.comcast.net)
+[19:09:09] *** Quits: hololeap (~hololeap@user/hololeap) (Ping timeout: 276 seconds)
+[19:09:34] <fizbin> Huh. I could trim my imports on day 6 down to just Data.Map and System.Environment. Oh well.
+[19:12:07] *** Quits: Cajun (~Cajun@user/cajun) (Quit: Client closed)
+[19:12:27] *** Joins: JoshuaBelden (~JoshuaBel@131.150.106.37)
+[19:12:42] <kuribas> Exception instance is rather infectious with Typeable...
+[19:12:52] <kuribas> if the exception type takes a type variable.
+[19:15:17] *** Joins: euandreh (~euandreh@2804:14c:33:9fe5:1b4:2cec:47c3:871e)
+[19:15:32] <merijn> kuribas: Don't make parametric exceptions, then? >.>
+[19:15:49] *** Quits: deadmarshal (~deadmarsh@95.38.230.89) (Ping timeout: 240 seconds)
+[19:15:53] <kuribas> merijn: it is nice to give some context...
+[19:16:20] <kuribas> or I pass the context as a string...
+[19:17:33] *** Quits: jinsun (~quassel@user/jinsun) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[19:17:55] *** Joins: jinsun (~quassel@user/jinsun)
+[19:20:42] *** Quits: motherfsck (~motherfsc@user/motherfsck) (Ping timeout: 265 seconds)
+[19:20:54] *** Quits: cfricke (~cfricke@user/cfricke) (Ping timeout: 268 seconds)
+[19:24:02] *** Quits: JoshuaBelden (~JoshuaBel@131.150.106.37) (Quit: Leaving...)
+[19:24:33] *** Joins: burnsidesLlama (~burnsides@dhcp168-015.wadham.ox.ac.uk)
+[19:29:11] *** derelict is now known as tetrahedron
+[19:29:17] *** Joins: nvmd (~nvmd@user/nvmd)
+[19:29:24] *** Quits: synthmeat (~synthmeat@user/synthmeat) (Quit: WeeChat 3.0)
+[19:30:47] *** Joins: synthmeat (~synthmeat@user/synthmeat)
+[19:32:14] *** Quits: synthmeat (~synthmeat@user/synthmeat) (Client Quit)
+[19:35:58] *** Joins: deadmarshal (~deadmarsh@95.38.230.89)
+[19:37:49] *** Quits: gehmehgeh (~user@user/gehmehgeh) (Quit: Leaving)
+[19:38:21] *** Joins: pfurla (~pfurla@2804:14d:5c81:4104:25b5:2708:65a9:4e7d)
+[19:38:29] *** Joins: hololeap (~hololeap@user/hololeap)
+[19:39:15] *** Joins: synthmeat (~synthmeat@user/synthmeat)
+[19:41:07] *** Quits: synthmeat (~synthmeat@user/synthmeat) (Client Quit)
+[19:41:52] *** Quits: mncheck (~mncheck@193.224.205.254) (Quit: Leaving)
+[19:42:49] *** Joins: motherfsck (~motherfsc@user/motherfsck)
+[19:45:15] *** Quits: chele (~chele@user/chele) (Remote host closed the connection)
+[19:47:05] <fizbin> Most of my haskell AOC solutions are just translations of the python versions, but I do like my alternate day 8 solution of https://github.com/fizbin/aoc2021/blob/main/aoc8b.hs which uses the List monad to do logic programming.
+[19:48:17] *** Quits: lortabac (~lortabac@2a01:e0a:541:b8f0:48df:3af4:d67f:b5a0) (Quit: WeeChat 2.8)
+[19:50:14] *** Joins: InternetCitizen (~fuzzypixe@eth-west-pareq2-46-193-4-100.wb.wifirst.net)
+[19:50:15] *** Joins: Neuromancer (~Neuromanc@user/neuromancer)
+[19:50:58] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[19:51:07] *** Joins: synthmeat (~synthmeat@user/synthmeat)
+[19:51:55] <maerwald[m]> You guys make me feel guilty for being too lazy doing AoC
+[19:54:35] <yushyin> blame it on your rsi syndrome, it is healthier not to do aoc
+[19:58:03] <fizbin> It's definitely healthier not to for people in the US-East timezone
+[20:00:46] *** Joins: WHatever666 (~fuzzypixe@tchebychev.ensimag.fr)
+[20:00:49] *** Quits: InternetCitizen (~fuzzypixe@eth-west-pareq2-46-193-4-100.wb.wifirst.net) (Ping timeout: 265 seconds)
+[20:03:07] *** Quits: pfurla (~pfurla@2804:14d:5c81:4104:25b5:2708:65a9:4e7d) (Quit: gone to sleep. ZZZzzz…)
+[20:04:00] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[20:07:49] *** Quits: alx741 (~alx741@186.178.108.192) (Ping timeout: 240 seconds)
+[20:10:20] *** Joins: _ht (~quassel@82-169-194-8.biz.kpn.net)
+[20:10:31] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f80d:43f5:ddf4:fb26)
+[20:11:17] <sm> resist maerwald! just say no
+[20:11:26] *** Joins: curiousgay (~curiousga@77-120-141-90.kha.volia.net)
+[20:11:45] *** Quits: max22- (~maxime@2a01cb0883359800d97fa420b95dd877.ipv6.abo.wanadoo.fr) (Quit: Leaving)
+[20:12:17] *** Parts: jakalx (~jakalx@base.jakalx.net) (Error from remote client)
+[20:16:52] *** Joins: gaff (~gaff@49.207.222.161)
+[20:16:55] *** Joins: jakalx (~jakalx@base.jakalx.net)
+[20:17:21] *** Quits: maroloccio (~marolocci@151.53.155.184) (Quit: WeeChat 3.0)
+[20:17:38] *** Joins: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net)
+[20:17:38] *** Quits: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net) (Changing host)
+[20:17:38] *** Joins: wroathe (~wroathe@user/wroathe)
+[20:19:48] <gaff> when you run cabal v2-repl  :target,  and have some module `m` in scope at GHCi prompt, shouldn't whatever exported functions in modules module `m` imports be visible at GHCi prompt? 
+[20:21:01] *** Joins: alx741 (~alx741@157.100.93.160)
+[20:21:07] *** kaol_ is now known as kaol
+[20:21:58] <sm> unless module m re-exports them.. you will need to be "inside" module m, ie seeing all bindings within m. The command is `:m +*M`
+[20:22:34] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 265 seconds)
+[20:22:47] *** Quits: xff0x (~xff0x@2001:1a81:5338:9c00:c1d:978d:6bc0:7433) (Ping timeout: 252 seconds)
+[20:23:28] <xerox> > foldl f a [b,c,d]
+[20:23:29] <lambdabot>  f (f (f a b) c) d
+[20:23:36] *** Joins: xff0x (~xff0x@2001:1a81:5338:9c00:1be4:4471:6bbc:3532)
+[20:23:54] <xerox> I forget what the module is that gives those show instances, something like simple-expression I thought
+[20:24:04] <gaff> for example, if  module `m` (the one in scope in GHCi) imports `Test.QuickCheck`, then in GHCi,, :t quickCheck should show the type information, correct?
+[20:24:30] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 265 seconds)
+[20:24:46] <xerox> simple reflect
+[20:25:01] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[20:25:14] <monochrom> BTW deliberately confusing (or not):
+[20:25:22] <monochrom> > foldr f z [a,b,c,d,e,f]
+[20:25:24] <lambdabot>  f a (f b (f c (f d (f e (f f z)))))
+[20:26:02] <monochrom> Trick question: Expand (x-a)(x-b)(x-c)...(x-z)
+[20:26:19] <monochrom> Answer: it has an (x-x) so the whole thing is 0 >:)
+[20:26:21] <xerox> neat
+[20:26:53] *** Joins: nebu (~user@user/wavion)
+[20:27:57] <gaff> sm: thanks.  that worked.  i didn't know that!
+[20:28:13] *** Quits: deadmarshal (~deadmarsh@95.38.230.89) (Ping timeout: 240 seconds)
+[20:28:55] *** Quits: jippiedoe (~david@2a02-a44c-e14e-1-9f6f-678f-3cd5-9f8c.fixed6.kpn.net) (Quit: Leaving)
+[20:29:22] *** Joins: lavaman (~lavaman@98.38.249.169)
+[20:29:40] *** Joins: slowButPresent (~slowButPr@user/slowbutpresent)
+[20:30:07] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 252 seconds)
+[20:30:10] <gaff> monochrom: that is nice
+[20:30:33] *** Quits: gaff (~gaff@49.207.222.161) ()
+[20:30:50] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[20:31:58] *** Joins: max22- (~maxime@lfbn-ren-1-762-224.w81-53.abo.wanadoo.fr)
+[20:32:14] *** Quits: nebu (~user@user/wavion) (Ping timeout: 265 seconds)
+[20:33:47] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 252 seconds)
+[20:34:14] *** Quits: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470) (Read error: Connection reset by peer)
+[20:35:38] <int-e> dminuoso: https://paste.tomsmeding.com/WoV7elom confirms my suspicion that writing polymorphic PrimMonad code is bad for optimization
+[20:35:59] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 252 seconds)
+[20:36:31] <int-e> (unless things are small enough to be fully inlined to where the actual monad is known)
+[20:36:31] <tomsmeding> xerox: this? https://hackage.haskell.org/package/simple-reflect
+[20:36:39] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[20:36:51] <geekosaur> yes
+[20:37:27] *** Joins: pfurla (~pfurla@2804:14d:5c81:4104:25b5:2708:65a9:4e7d)
+[20:37:46] <tomsmeding> what's interesting is that searching for Debug.SimpleReflect in the lambdabot repo on github doesn't give any hits
+[20:38:09] <geekosaur> @where L.hs
+[20:38:09] <lambdabot> what lambdabot has in scope is at https://silicon.int-e.eu/lambdabot/State/Pristine.hs
+[20:38:12] <int-e> dminuoso: PrimMonad still solves a problem though: how to avoid exporting all primitives twice, once for ST s and once for IO. (The cost is some extra `cast`-s in the core, which hopefully don't hurt)
+[20:38:21] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f80d:43f5:ddf4:fb26) (Remote host closed the connection)
+[20:38:45] *** Joins: emf (~emf@2620:10d:c091:480::1:58ea)
+[20:41:08] <int-e> tomsmeding: its in the libera branch (which I hardly ever mention because I force-push things there)
+[20:41:25] <tomsmeding> int-e: ah
+[20:41:49] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 240 seconds)
+[20:42:21] <int-e> I really need to get on updating lambdabot for 9.0 (maybe 9.2, depending on the level of pain).
+[20:42:37] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[20:44:11] *** Joins: JoshuaBelden (~JoshuaBel@131.150.106.37)
+[20:47:10] *** Quits: synthmeat (~synthmeat@user/synthmeat) (Quit: WeeChat 3.0)
+[20:48:05] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 252 seconds)
+[20:48:25] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[20:48:49] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f80d:43f5:ddf4:fb26)
+[20:50:07] <int-e> > unwords $ map (\x -> printf "%.2f" (190-x/18)) [3361,3351,3322,3299,3242,3223,3209,3205,3185,3182] -- still not settled though, cyphase seems to have prioritized sleep over finishing part 2 (can still reach rank 6)
+[20:50:08] <lambdabot>  "3.28 3.83 5.44 6.72 9.89 10.94 11.72 11.94 13.06 13.22"
+[20:50:23] *** Joins: Akiva (~Akiva@user/Akiva)
+[20:51:33] *** Joins: lavaman (~lavaman@98.38.249.169)
+[20:53:35] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 252 seconds)
+[20:53:51] <xerox> oh no I'll get bumped off if he finishes
+[20:54:22] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[20:54:53] *** Quits: waleee (~waleee@h-98-128-229-110.NA.cust.bahnhof.se) (Quit: WeeChat 3.3)
+[20:57:23] *** Joins: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4)
+[20:57:49] *** Joins: deadmarshal (~deadmarsh@95.38.230.89)
+[20:58:59] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f80d:43f5:ddf4:fb26) (Remote host closed the connection)
+[20:59:23] *** Joins: cfricke (~cfricke@user/cfricke)
+[20:59:32] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[21:00:23] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[21:02:22] *** Quits: deadmarshal (~deadmarsh@95.38.230.89) (Ping timeout: 256 seconds)
+[21:03:36] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[21:03:36] *** Joins: deadmarshal (~deadmarsh@95.38.230.89)
+[21:03:51] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f80d:43f5:ddf4:fb26)
+[21:05:03] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[21:05:41] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 252 seconds)
+[21:06:19] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[21:06:23] *** Joins: synthmeat (~synthmeat@user/synthmeat)
+[21:07:10] *** Quits: kupi (uid212005@id-212005.hampstead.irccloud.com) (Quit: Connection closed for inactivity)
+[21:07:31] *** Joins: zebrag (~chris@user/zebrag)
+[21:08:00] *** Quits: xff0x (~xff0x@2001:1a81:5338:9c00:1be4:4471:6bbc:3532) (Ping timeout: 265 seconds)
+[21:08:19] *** Quits: max22- (~maxime@lfbn-ren-1-762-224.w81-53.abo.wanadoo.fr) (Remote host closed the connection)
+[21:08:53] *** Joins: xff0x (~xff0x@2001:1a81:5338:9c00:d04b:38a4:ed4b:d288)
+[21:09:07] *** Joins: max22- (~maxime@lfbn-ren-1-762-224.w81-53.abo.wanadoo.fr)
+[21:11:40] *** Joins: Guest48 (~Guest48@wireless-student-pt3-240-131.lut.ac.uk)
+[21:11:54] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 268 seconds)
+[21:12:13] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[21:15:39] *** Quits: kuribas (~user@ip-188-118-57-242.reverse.destiny.be) (Remote host closed the connection)
+[21:17:10] *** Quits: Kevin578 (~Kevin578@pool-96-237-112-198.bstnma.fios.verizon.net) (Remote host closed the connection)
+[21:17:23] *** Quits: d34df00d (~d34df00d@2600:1700:8c60:3a10::48) (Remote host closed the connection)
+[21:19:05] *** Joins: dschrempf (~dominik@070-207.dynamic.dsl.fonira.net)
+[21:23:00] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 268 seconds)
+[21:24:20] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[21:24:55] *** Quits: Gurkenglas (~Gurkengla@dslb-002-203-144-204.002.203.pools.vodafone-ip.de) (Ping timeout: 265 seconds)
+[21:25:30] *** Joins: Guest18 (~Guest18@client-8-71.eduroam.oxuni.org.uk)
+[21:26:47] *** Quits: Guest18 (~Guest18@client-8-71.eduroam.oxuni.org.uk) (Client Quit)
+[21:26:52] *** Quits: cfricke (~cfricke@user/cfricke) (Quit: WeeChat 3.3)
+[21:29:46] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 260 seconds)
+[21:30:30] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[21:31:27] *** Joins: lky (~hbghlyj@client-8-71.eduroam.oxuni.org.uk)
+[21:32:53] *** Joins: Gurkenglas (~Gurkengla@dslb-002-203-144-204.002.203.pools.vodafone-ip.de)
+[21:33:32] *** Quits: dschrempf (~dominik@070-207.dynamic.dsl.fonira.net) (Ping timeout: 256 seconds)
+[21:34:58] *** Quits: Guest48 (~Guest48@wireless-student-pt3-240-131.lut.ac.uk) (Quit: Client closed)
+[21:35:04] *** Quits: teo (~teo@user/teo) (Ping timeout: 265 seconds)
+[21:35:48] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[21:35:55] *** Quits: whatif (~user@2400:8902::f03c:92ff:fe60:98d8) (Remote host closed the connection)
+[21:36:06] *** Joins: whatif (~user@2400:8902::f03c:92ff:fe60:98d8)
+[21:36:33] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[21:41:50] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 265 seconds)
+[21:42:32] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[21:42:33] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[21:43:49] *** Quits: k60`` (~user@static.100.218.46.78.clients.your-server.de) (Ping timeout: 240 seconds)
+[21:46:48] *** Joins: k60`` (~user@static.100.218.46.78.clients.your-server.de)
+[21:47:42] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[21:48:09] *** Quits: lky (~hbghlyj@client-8-71.eduroam.oxuni.org.uk) (Quit: Leaving)
+[21:48:18] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[21:53:05] *** Joins: tzh (~tzh@c-24-21-73-154.hsd1.wa.comcast.net)
+[21:53:56] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[21:58:57] *** Joins: justsomeguy (~justsomeg@user/justsomeguy)
+[22:04:02] *** Quits: motherfsck (~motherfsc@user/motherfsck) (Read error: Connection reset by peer)
+[22:07:35] <hololeap> deriving stock instance (forall f. Functor f => Functor (t f), forall f. Foldable f => Foldable (t f), forall f. Traversable f => Traversable (t f)) => Traversable (Row t)
+[22:07:42] <hololeap> at least I know it's possible now
+[22:07:43] *** Joins: motherfsck (~motherfsc@user/motherfsck)
+[22:09:35] *** Quits: pfurla (~pfurla@2804:14d:5c81:4104:25b5:2708:65a9:4e7d) (Quit: gone to sleep. ZZZzzz…)
+[22:10:22] *** Quits: k60`` (~user@static.100.218.46.78.clients.your-server.de) (Ping timeout: 256 seconds)
+[22:11:42] <EvanR> with enough Functor and Foldable you can do anything it seems
+[22:11:56] <EvanR> maybe that's why mapreduce is a buzzword
+[22:14:01] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[22:14:42] <hololeap> I kind of wish "forall f. Traversable f => Traversable (t f)" implied the other two with QuantifiedConstraints, but I don't understand the underlaying type theory well enough to know if that's a reasonable feature
+[22:20:01] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[22:20:33] <awpr> that should imply `forall f. Traversable f => Functor (t f)` etc., but the left side of the `=>` is effectively contravariant, and that doesn't in turn imply `forall f. Functor f => Functor (t f)`
+[22:22:02] <awpr> first one is saying the instance expects `Traversable f` in order for `t f` to be `Functor`, but trying to convert it to the second one would mean trying to solve `Functor (t f)` given only `Functor f`, which isn't  enough to satisfy that instance's context
+[22:22:08] *** Quits: dhouthoo (~dhouthoo@178-117-36-167.access.telenet.be) (Quit: WeeChat 3.3)
+[22:22:23] <cyphase> int-e, i knew going in to part 1 that i was going to be distracted, and it took me longer than it would have. then yea, i just decided to focus on the (pleasantly) distracting thing and leave part 2 for daylight
+[22:24:03] *** Quits: justsomeguy (~justsomeg@user/justsomeguy) (Ping timeout: 268 seconds)
+[22:27:38] *** Joins: nebu (~user@user/wavion)
+[22:28:09] <EvanR> it's getting kind of brutal doing these at midnight xD
+[22:28:24] *** Joins: Kevin578 (~Kevin578@pool-96-237-112-198.bstnma.fios.verizon.net)
+[22:33:02] *** Quits: nebu (~user@user/wavion) (Ping timeout: 256 seconds)
+[22:34:57] <dsal> ghc: panic! (the 'impossible' happened)
+[22:35:00] <dsal> that's kinda my thing.
+[22:35:04] <dsal> I make the impossible happen.
+[22:35:43] *** Joins: econo (uid147250@user/econo)
+[22:36:08] <boxscape> % GHC.Utils.Misc.only []
+[22:36:08] <yahb> boxscape: *** Exception: ghc: panic! (the 'impossible' happened); (GHC version 9.0.1:; Util: only; Please report this as a GHC bug: https://www.haskell.org/ghc/reportabug
+[22:36:11] <int-e> . o O ( asserted to be a failure )
+[22:37:12] *** Joins: WilliamJ (~WilliamJ@wireless-student-pt10-182-232.lut.ac.uk)
+[22:37:13] *** Joins: lavaman (~lavaman@98.38.249.169)
+[22:38:25] <EvanR> I hate it when impossible happens
+[22:38:30] <EvanR> it's the worst
+[22:39:06] <dsal> EvanR: don't let your dreams be dreams
+[22:39:15] <EvanR> almost as bad when necessarily doesn't happen
+[22:43:52] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f80d:43f5:ddf4:fb26) (Remote host closed the connection)
+[22:45:16] *** Joins: nebu (~user@user/wavion)
+[22:45:53] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:f80d:43f5:ddf4:fb26)
+[22:46:15] *** Quits: deadmarshal (~deadmarsh@95.38.230.89) (Ping timeout: 268 seconds)
+[22:48:06] *** Joins: sluigi (~sluigi@18.31.9.106)
+[22:49:42] <WilliamJ> hi guys, i'm new to haskell and have a task to program a function where it takes the length and width of a rectangle and the number of steps, for example putStr(rectangles 2 3 3) would be
+[22:49:42] <WilliamJ> ***
+[22:49:43] <WilliamJ> ***
+[22:49:43] <WilliamJ>    ******
+[22:49:44] <WilliamJ>    ******
+[22:49:44] <WilliamJ>       *********
+[22:49:45] <WilliamJ>       *********
+[22:49:45] <WilliamJ> I have managed to program an initial function to get the initial rectangle but stuck on how to do the other 2, the code is here https://paste.tomsmeding.com/OJQyGfBT any help would be appreciated :)
+[22:50:30] <monochrom> What does "number of step" mean?
+[22:50:49] *** Quits: curiousgay (~curiousga@77-120-141-90.kha.volia.net) (Quit: Leaving)
+[22:50:54] <EvanR> is that ascii art accurate
+[22:51:07] <WilliamJ> there is 3 rectangles outputted
+[22:51:16] <WilliamJ> steps is the number
+[22:51:41] <monochrom> That doesn't explain anything.
+[22:51:49] <monochrom> Why are there 3 rectangles?
+[22:51:57] <monochrom> Why are some of them bigger?
+[22:52:05] <monochrom> Why are some of them indented?
+[22:52:53] <monochrom> I only know that a rectangle has width and height. What is "step" doing with a rectangle?
+[22:53:11] <aplainzetakind> It's obvious. The first parameter is the height, the second is the number of rectangles, and the third is the increase both in indentation and width as well as the initial width. What's the problem?
+[22:53:24] <EvanR> so it is accurate
+[22:53:44] <WilliamJ> Oh sorry, ok so, each step there will be another rectangle created. On each step the width will be the width of the last one + the width inputted by the user step is basically how many rectangles there will be, the indentation therefore is the width of the last rectangle sorry for not explaining
+[22:53:52] <WilliamJ> currently my code only outputs the first rectangle
+[22:53:58] <monochrom> No, it is non-obvious. What not three kinds of steps, one for indentation, one for increase in width, one for increase in height
+[22:54:15] <EvanR> given the picture is accurate, it's a simple IQ test to figure the rest out
+[22:54:23] <monochrom> And for that matter, why linear growth for any of them, why not logarithmic growth or quadratic growth
+[22:54:33] <aplainzetakind> monochrom: I was being sarcastic.
+[22:54:44] <WilliamJ> What I am confused about is how do I make it repeat it with the whitespace and make the width get bigger by that increment each time?
+[22:54:46] <monochrom> OK sorry, thanks.
+[22:54:48] <aplainzetakind> WilliamJ: The indentation is not the width of the previous rectangle though.
+[22:55:08] <WilliamJ> Do I mean length? Habe I gotten them mixed up
+[22:55:18] <EvanR> width, height
+[22:55:19] <WilliamJ> The 2nd rectangle is meant to be indented by 3 whitespace
+[22:55:35] <aplainzetakind> And the third?
+[22:55:37] <WilliamJ> 6
+[22:55:38] <EvanR> length is for rods and line segments
+[22:55:43] <aplainzetakind> But why?
+[22:55:47] <aplainzetakind> What does it all mean?
+[22:56:35] <WilliamJ> What does what mean, the output or the indentation? It's meant to be an ascii art creator with asterixes, as EvanR mentioned before
+[22:56:48] <WilliamJ> the Indentation is part of it
+[22:56:59] <WilliamJ> sorry if this is unclear
+[22:57:07] <int-e> aplainzetakind: try ##philosophy ;-)
+[22:57:48] <aplainzetakind> In any case, I think you should first write a function f i w h, which outputs a single rectangle of the given indentation width and height, and use that to output multiple such rectangles.
+[22:58:58] *** Quits: sluigi (~sluigi@18.31.9.106) (Quit: Client closed)
+[22:59:30] <monochrom> https://esmemes.com/t/what-does-it-mean-to-be-a-good-person
+[22:59:41] <WilliamJ> But on the task, it does not ask specifically for the indentation to be given as an input, it is worked out through the width of the last one
+[23:00:24] <WilliamJ> hence on the example I gave, it went 3 whitespace, 6 whitespace.
+[23:00:31] <EvanR> ah yes, the ancient philosopher esmemes
+[23:01:26] <aplainzetakind> WilliamJ: I understand, you can use the proposed f above with values of i computed in the main task-fulfilling function.
+[23:03:07] <monochrom> Write a helper function that makes one rectangle of height, width, indentation controlled by parameters.
+[23:03:35] <monochrom> Now you just have to call that function multiple times, each time with larger numbers.
+[23:03:36] <monochrom> "just"
+[23:03:56] <WilliamJ> ok I got it working for the first place of the function, not sure why it isnt working on the other lines.
+[23:04:00] <WilliamJ> What is a helper function?
+[23:04:19] <monochrom> A function that the assignment doesn't directly say you have to write.
+[23:04:33] <monochrom> But the assignment would be trivial if you wrote it first.
+[23:04:49] <monochrom> This is why the assignment keeps it a secret.
+[23:04:54] *** Quits: JoshuaBelden (~JoshuaBel@131.150.106.37) (Quit: Leaving...)
+[23:05:00] <monochrom> Can't tell every student how to get full marks.
+[23:05:08] <aplainzetakind> Only selected ones?
+[23:05:27] <WilliamJ> monochrom haha obviously, we have not been introduced to them yet.
+[23:05:41] *** Joins: Midjak (~Midjak@may53-1-78-226-116-92.fbx.proxad.net)
+[23:05:41] <WilliamJ> aplainzetakind the first line
+[23:05:53] <WilliamJ> rectangle :: Int -> Int -> Int -> String
+[23:05:53] <WilliamJ> rectangle i m n  = (replicate i ' ' ++ unlines(replicate m(replicate n '*')))
+[23:06:28] <monochrom> If your rectangle has 10 lines, clearly you have 10 lines to indent.
+[23:06:30] <aplainzetakind> Not quite.
+[23:06:31] <monochrom> "clearly"
+[23:07:40] <WilliamJ> I tried it within the other brackets but it did not work so I put it on the outside hence I got that solution, do I need to do something with the unlines function?
+[23:08:06] <aplainzetakind> WilliamJ: Are you actually trying what the above function does in the repl?
+[23:08:16] <WilliamJ> I tried it in GHCI
+[23:08:24] <aplainzetakind> And did you get what you wanted?
+[23:08:32] <WilliamJ>    ***
+[23:08:32] <WilliamJ> ***
+[23:08:33] <WilliamJ> I got this
+[23:09:00] <aplainzetakind> So you can see what's wrong with it then.
+[23:09:42] <WilliamJ> Yeah, I thought at first I had to group it with the other replicate functions but it didnt work so I tried that solution and I got this
+[23:10:10] <WilliamJ> I know why this isnt working though
+[23:10:23] <WilliamJ> as I am concatinating with the first line only, it is not being repeated on every line
+[23:11:53] <aplainzetakind> In what way did it not work in the first try? 
+[23:12:03] <WilliamJ> unlines(replicate i ' '(replicate m(replicate n '*'))) I tried this the first time
+[23:12:39] <WilliamJ> I receive an error saying it could not match [[Char]] -> [String]
+[23:13:02] <aplainzetakind> Figuring out what those type errors are telling you is a very important skill.
+[23:13:24] *** Joins: Erutuon (~Erutuon@user/erutuon)
+[23:13:38] <aplainzetakind> Around that line you can find exactly what it expected to be of that type and what it found instead.
+[23:13:45] <WilliamJ> My actual type is [Char] which makes sense to me, but why is it telling me the expected type is [[char]]
+[23:14:15] <aplainzetakind> Paste the whole error (not here, on a paste bin).
+[23:14:23] <WilliamJ> (y)
+[23:14:25] <geekosaur> @where paste
+[23:14:26] <lambdabot> Help us help you: please paste full code, input and/or output at e.g. https://paste.tomsmeding.com
+[23:14:54] <WilliamJ> https://paste.tomsmeding.com/gXYCtrZY
+[23:15:25] <WilliamJ> Is it saying [[Char]] because I am trying to do 2 outputs of different characters? whitespace and asterix
+[23:15:55] <aplainzetakind> It's sayin something clearer.
+[23:16:09] <aplainzetakind> Lines 3 and 4
+[23:16:25] <WilliamJ> Oh ok, I see
+[23:17:04] <WilliamJ> So because these are all grouped together due to the type of replicate being that it is not possible?
+[23:17:52] *** Joins: dschrempf (~dominik@070-207.dynamic.dsl.fonira.net)
+[23:19:18] <aplainzetakind> "grouped together" sounds a bit off.
+[23:19:51] <monochrom> replicate wants 2 arguments. Why are you giving it 3?
+[23:20:19] <aplainzetakind> If something like `f a b c` is supposed to be a valid expression, then f should take at least three arguments.
+[23:20:39] <WilliamJ> I tried to give it 3 arguments as I thought in order to get the indentation on each line, they had to be together inside the same brackets but it seems that cannot be the case
+[23:21:00] <aplainzetakind> Whitespace is function application.
+[23:21:29] *** Quits: Successus (~Successus@gateway/tor-sasl/successus) ()
+[23:21:37] <WilliamJ> Oh ok, I see now
+[23:21:43] <monochrom> Did you ever concatenation two strings "abc" and "def" but just coding up "abc" "def"?
+[23:21:50] <monochrom> s/but/by/
+[23:21:54] <aplainzetakind> You are trying to apply `replicate i ' '` to that thing that follows, but it's a String and does not take any arguments.
+[23:22:04] <int-e> aplainzetakind: . o O { and braces and semicolons }
+[23:22:34] <aplainzetakind> > succ; 5
+[23:22:35] <lambdabot>  <hint>:1:5: error: parse error on input ‘;’
+[23:22:36] <WilliamJ> monochrom when using ++ for concatenation, no
+[23:22:48] <aplainzetakind> int-e: Semicolons?
+[23:22:55] <monochrom> OK so you know ++ for concatenation. Why didn't you use it?
+[23:23:15] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[23:23:15] <monochrom> You were writing the equivalent of "abc" "def".
+[23:23:20] <int-e> > let x = 1;{- ordinarily you'd use a newline and indentation here, that is also whitespace-} y = 2 in x + y
+[23:23:21] <lambdabot>  3
+[23:23:21] <dsal> I think my impossible problem is from using stack to grab a thing out of git with different symbols but the same version number.
+[23:23:27] <dsal> I've scorched the earth.
+[23:23:27] <WilliamJ> I tried to use it at first when I did it on the outside of the group of brackets but it only did it on the first line, I have an idea now i shall give it a go
+[23:23:53] *** Joins: lortabac (~lortabac@2a01:e0a:541:b8f0:36fe:413:d066:5593)
+[23:23:54] <aplainzetakind> int-e: I should've said horizontal whitespace.
+[23:24:00] <WilliamJ> ok, I just tried it and it gave me a different error
+[23:24:23] <int-e> aplainzetakind: yeah my thought bubbles are not to be taken too seriously :-P
+[23:24:25] <WilliamJ> I added ++ between unlines(replicate i ' '++(replicate m(replicate n '*')))
+[23:24:44] <aplainzetakind> And that error must also be pretty clear if you give it a chance.
+[23:24:49] *** Quits: averell (~averell@user/averell) (Quit: .)
+[23:25:25] <WilliamJ> Yes, it is talking about the types
+[23:25:27] <monochrom> > zip"abc""def"
+[23:25:28] <lambdabot>  [('a','d'),('b','e'),('c','f')]
+[23:25:38] <monochrom> No space, brace, semicolon.
+[23:25:51] *** Quits: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net) (Remote host closed the connection)
+[23:25:52] <monochrom> Now you have to add quotes to your list.
+[23:25:53] <int-e> unlines (replicate i ' ' ++ replicate m (replicate n '*')) -- these extra spaces really improve readability though
+[23:26:06] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[23:26:25] <aplainzetakind> Guys I did not say "ONLY whitespace is function application".
+[23:26:32] <aplainzetakind> Add $ to the list then.
+[23:26:37] <WilliamJ> So as it is no longer being applied to a string, it is talking about characters instead
+[23:26:55] <WilliamJ> https://paste.tomsmeding.com/VDjqp1eA
+[23:27:02] <int-e> aplainzetakind: eh calm down a little... we nitpick facts, not people, it's not personal
+[23:27:33] <monochrom> > let snoc = flip (:) in snoc"bcd"'a'
+[23:27:34] <lambdabot>  "abcd"
+[23:27:49] *** Quits: mc47 (~mc47@xmonad/TheMC47) (Remote host closed the connection)
+[23:27:50] <aplainzetakind> I am calm, I'm nitpicking semantics in return.
+[23:28:04] <int-e> Okay.
+[23:28:08] *** Joins: mc47 (~mc47@xmonad/TheMC47)
+[23:28:34] <monochrom> I was not nitpicking you, aplainzetakind. I was nitpicking int-e's list!
+[23:28:54] <aplainzetakind> WilliamJ: What's not clear about lines 2--5?
+[23:28:57] <monochrom> $ is no fun, though.
+[23:29:07] <aplainzetakind> monochrom: & then?
+[23:29:24] <int-e> monochrom: Hmm, why though? Whitespace doesn't turn into quotes...
+[23:29:41] <WilliamJ> Ok, I got it running but it does not work as expected
+[23:29:42] <int-e> monochrom: tbf there's some ambiguity in what that list was
+[23:29:43] <monochrom> Perhaps quotes turn into whitespace?
+[23:30:11] <int-e> monochrom: again that would be irrelevant
+[23:30:11] <monochrom> Consider the zip"abc""def" example.
+[23:30:19] <WilliamJ> I made the single quotes into double quotes but when I run the program, it outputs the whitespace and separate lines and then the rectangles
+[23:30:39] <aplainzetakind> You did not read the error.
+[23:31:03] <aplainzetakind> Lines 4 and 5 in what you pasted.
+[23:31:13] * geekosaur thinks the whole "function application" subthread here can only bve explained in terms of tokens, not what characters count as "application"
+[23:31:14] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[23:31:28] <aplainzetakind> Don't blindly change things around and hope it works out somehow.
+[23:31:30] <WilliamJ> Yes, but I don't really understand what it is asking me aplainzetakind
+[23:32:31] <aplainzetakind> (++) concatenates two Strings, and a String is just a [Char], but the second argument you gave (++) is not a String but a list of Strings. Reread the error to appreciate that this is what it's saying.
+[23:32:31] *** Quits: nvmd (~nvmd@user/nvmd) (Quit: Later, nerds.)
+[23:32:36] *** Joins: curiousgay (~curiousga@77-120-141-90.kha.volia.net)
+[23:32:42] <geekosaur> :t replicate 2 (replicate 3 '*')
+[23:32:43] <lambdabot> [[Char]]
+[23:32:48] <monochrom> I am OK with blind changes. But you have to learn from the consequences.
+[23:33:15] <zero> wuld there be any usefulness in distinguishing lazy Sets from strict Sets?
+[23:33:27] <int-e> +1 on practicing to read ghc's error messages
+[23:33:44] <geekosaur> zero, not really.
+[23:33:51] <zero> why?
+[23:33:55] <aplainzetakind> WilliamJ: To be more precise, (++) concatenates two lists of the same type, but here the first one encountered is a list of Char's.
+[23:33:56] <WilliamJ> Yes I understand that ++ concatenates 2 strings but why would it not work? as they are both technically strings?
+[23:34:02] <int-e> they can be scary, they can become very big, but they do follow regular patterns that you can learn to identify relevant information
+[23:34:12] <monochrom> What do lazy Sets do?  Why do strict Sets do?
+[23:34:15] <aplainzetakind> No, it's telling you that the second one is not.
+[23:34:26] <int-e> [String] isn't the same type as String
+[23:34:29] <WilliamJ> How is '***' not a string?
+[23:34:38] <geekosaur> zero, why would there be value to it when they'd just be duplicates of each other?
+[23:34:40] <int-e> > '***'
+[23:34:42] <lambdabot>  <hint>:1:2: error: parse error on input ‘***’
+[23:34:55] *** Quits: juhp (~juhp@128.106.188.82) (Ping timeout: 252 seconds)
+[23:34:58] <aplainzetakind> In the second argument of `(++)' namely replicate m (replicate n '*')
+[23:35:07] <aplainzetakind> Is what it's saying.
+[23:35:11] <geekosaur> > replicate 2 (replicate 3 '*')
+[23:35:12] <lambdabot>  ["***","***"]
+[23:35:18] <WilliamJ> Ok, so have I done it in the incorrect place?
+[23:35:21] <geekosaur> is the above a String?
+[23:35:22] <monochrom> What is the type of replicate m (replicate n '*') ?
+[23:35:29] <WilliamJ> No, that is a list geekosaur
+[23:35:34] <zero> are Sets strict or lazy?
+[23:35:41] *** Joins: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net)
+[23:35:42] *** Quits: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net) (Changing host)
+[23:35:42] *** Joins: wroathe (~wroathe@user/wroathe)
+[23:35:49] <WilliamJ> monochrom as I see above, that would be a list of strings
+[23:35:51] <monochrom> False dichotomy.
+[23:35:52] <aplainzetakind> So that's your problem. You are attmeting something that doesn't make sense.
+[23:35:56] <geekosaur> zero, both. the data structure is identical, only the operations are striuct/lazy
+[23:36:00] <aplainzetakind> attempting*
+[23:36:16] <WilliamJ> Okay, I am seeing where it is coming from now
+[23:36:20] <monochrom> Data.Set is strict in BST skeleton, lazy in value.
+[23:36:28] <boxscape> hackage says "A Set is strict in its elements."
+[23:36:33] <monochrom> err, wait, no, not entirely lazy in value.
+[23:36:34] <int-e> monochrom: there's no values, only keys
+[23:36:37] <zero> ah. i get it. thanks
+[23:36:56] <zero> because order
+[23:36:57] <aplainzetakind> WilliamJ: You want to prepend i spaces to each chunk of '*', where are they?.
+[23:37:08] <monochrom> It is somewhat strict in values to the point of resolving x<=y questions.
+[23:37:18] <geekosaur> and it makes no sense to have a lazy Set because (a) no values to be lazy (b) spine has to be strict due to ordering and balancing
+[23:37:18] *** Joins: juhp (~juhp@128.106.188.82)
+[23:37:19] <int-e> Oh I guess if your keys are lists they're only evaluated as far as necessary to compare all the keys
+[23:37:31] <WilliamJ> the chunk of '*' are in a list
+[23:37:44] <int-e> So yeah there's some laziness in that, though I'd attribute that to Ord, not to the Set
+[23:37:54] *** Joins: jinsun__ (~quassel@user/jinsun)
+[23:37:56] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[23:38:19] *** Joins: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net)
+[23:38:22] <aplainzetakind> > replicate 5 '*'
+[23:38:23] <lambdabot>  "*****"
+[23:38:25] <monochrom> Well, Map.Strict is only strict in values to the extent of WHNF anyway.
+[23:38:38] <aplainzetakind> Such things are what you want to indent right?
+[23:38:49] <WilliamJ> correct
+[23:38:56] <monochrom> False dichotomies are false.
+[23:39:00] <aplainzetakind> Then prepend your spaces to those expressions.
+[23:39:16] <monochrom> The world is more interesting than "lazy vs strict".
+[23:39:20] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[23:39:29] <monochrom> And more interesting than "functions vs not functions"
+[23:39:35] *** Joins: lavaman (~lavaman@98.38.249.169)
+[23:39:43] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[23:39:47] <WilliamJ> Ok, I shall give it a try
+[23:39:58] *** Joins: lavaman (~lavaman@98.38.249.169)
+[23:40:05] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[23:40:08] <monochrom> I am monochrom but even my avatar is a 256-level gray scale, not just two blobs of white and black.
+[23:40:13] *** Quits: vgtw (~vgtw@c-2359205c.07-348-756d651.bbcust.telenor.se) (Ping timeout: 240 seconds)
+[23:40:13] *** Quits: swistak (~swistak@185.21.216.141) (Ping timeout: 240 seconds)
+[23:40:20] *** Joins: lavaman (~lavaman@98.38.249.169)
+[23:40:27] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[23:40:38] *** Joins: vgtw (~vgtw@c-2359205c.07-348-756d651.bbcust.telenor.se)
+[23:40:41] *** Joins: lavaman (~lavaman@98.38.249.169)
+[23:40:48] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[23:41:01] *** Quits: jinsun (~quassel@user/jinsun) (Ping timeout: 240 seconds)
+[23:41:40] <johnw> not 50-level gray scale?
+[23:41:44] <WilliamJ> I just tried to prepend using : instead of ++ but I am having no luck, am i doing something wrong?
+[23:41:45] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 268 seconds)
+[23:41:58] <aplainzetakind> Yes.
+[23:42:04] <monochrom> Haha but I made my avatar long before 50 Shades of Grey.
+[23:42:09] <aplainzetakind> Why did you feel the need to use (:)?
+[23:42:27] *** Joins: bonz060 (~quassel@2001:bc8:47a4:a23::1)
+[23:42:31] <aplainzetakind> :t replicate 3 ' '
+[23:42:32] <lambdabot> [Char]
+[23:42:37] <aplainzetakind> :t replicate 3 '*'
+[23:42:38] <lambdabot> [Char]
+[23:42:49] <WilliamJ> Because when I have done other exercises, I have used : to add stuff onto the end of stuff hence I thought it would be the same for this
+[23:42:53] <WilliamJ> rectangle i m n  = unlines (replicate i ' ' : replicate m (replicate n '*')) is what I tried
+[23:43:07] *** Joins: swistak (~swistak@185.21.216.141)
+[23:43:14] <EvanR> : adds 1 stuff to the beginning
+[23:43:23] <int-e> well at least it type-checks
+[23:43:27] <aplainzetakind> I mean that typechecks.
+[23:43:30] <aplainzetakind> At least.
+[23:43:32] <monochrom> The vagueness of "add stuff to stuff" is why you are failing.
+[23:43:34] <WilliamJ> it runs, but doesnt how I expect it to
+[23:43:35] <aplainzetakind> But does not do what you want.
+[23:43:49] <int-e> you'll get one line full of spaces
+[23:44:01] <WilliamJ> yeah
+[23:44:01] <aplainzetakind> Because you are not putting spaces before the asterisks.
+[23:44:04] <int-e> followed by a non-idented rectangle
+[23:44:08] <aplainzetakind> But somewhere else.
+[23:44:22] <int-e> you need to modify every single line to achieve indentation
+[23:44:31] <aplainzetakind> replicate 3 ' ' ++ replicate 5 '*'
+[23:44:36] <aplainzetakind> > replicate 3 ' ' ++ replicate 5 '*'
+[23:44:37] <lambdabot>  "   *****"
+[23:44:43] <aplainzetakind> These are your lines.
+[23:44:55] <WilliamJ> Yes that is what I want to acheive
+[23:44:58] <WilliamJ> achieve*
+[23:45:02] <aplainzetakind> Then please achive it.
+[23:45:10] <WilliamJ> I am trying
+[23:47:54] <WilliamJ> ok I got it working
+[23:48:00] <WilliamJ> rectangle i m n  = unlines (replicate m (replicate i ' ' ++ (replicate n '*')))
+[23:48:01] <aplainzetakind> Great.
+[23:48:14] <aplainzetakind> The innermost parens are unnecessary.
+[23:48:16] <WilliamJ> give me the output I want
+[23:48:33] <WilliamJ> Ok
+[23:48:35] <aplainzetakind> function application has highest precedence.
+[23:49:05] <WilliamJ> I understand, I had them there from a previous attempt.
+[23:49:12] <aplainzetakind> Now you need to call this with appropriate parameters an appropriate number of times as dictated by the parameters of your main function.
+[23:49:46] *** Quits: nebu (~user@user/wavion) (Ping timeout: 268 seconds)
+[23:49:57] <aplainzetakind> And "call" can be misleading. Let's say evaluate.
+[23:50:11] <WilliamJ> yes, so the main function lets say is called rectangles since it will be a plural
+[23:50:43] <WilliamJ> So for that, it will be similar but now we need to include the steps
+[23:51:03] <aplainzetakind> Well, it may not be so similar.
+[23:51:20] <aplainzetakind> So what were your parameters again?
+[23:51:30] <WilliamJ> Width, Height/length and steps
+[23:51:43] <WilliamJ> So the type definition would be the same as theyre all integers
+[23:51:56] *** Joins: averell (~averell@user/averell)
+[23:52:30] <monochrom> I would be surprised if normally the caller of a function is similar to the internals of the called function.
+[23:52:30] <aplainzetakind> rectangles a b c -> a is height, b is starting width, indentation starts with 0 and both indentation and with increase by c for each successive rectangle?
+[23:52:47] <WilliamJ> Yes, that is it
+[23:53:10] <WilliamJ> Hence it would be rectangles :: Int -> Int -> Int -> String?
+[23:53:16] <aplainzetakind> So first produce your sequence of indentations and widths.
+[23:53:20] <aplainzetakind> That is correct.
+[23:53:38] <aplainzetakind> Are you familiar with `let` bindings?
+[23:53:58] <WilliamJ> We have been shown where bindings but not let I dont think
+[23:54:10] *** Quits: phma (~phma@host-67-44-208-5.hnremote.net) (Read error: Connection reset by peer)
+[23:54:11] <aplainzetakind> OK, use where.
+[23:54:13] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[23:54:45] *** Quits: alx741 (~alx741@157.100.93.160) (Ping timeout: 265 seconds)
+[23:54:45] <aplainzetakind> Write rectangles h w s = undefined; where ...
+[23:55:01] *** Quits: neurocyte0132889 (~neurocyte@user/neurocyte) (Quit: The Lounge - https://thelounge.chat)
+[23:55:07] *** Joins: phma (~phma@host-67-44-209-94.hnremote.net)
+[23:55:08] <aplainzetakind> And in that where clause create useful building blocks.
+[23:55:31] <aplainzetakind> I think you need the lists of successive indentations and successive widths.
+[23:55:31] <WilliamJ> where
+[23:55:32] <WilliamJ>   h=0 or w = 0 or s = 0?
+[23:56:02] <WilliamJ> or is the undefinied a place holder for the sequence?
+[23:56:15] <aplainzetakind> No, such things would shadow the actual parameters.
+[23:56:25] <aplainzetakind> You will create new names.
+[23:56:43] <aplainzetakind> Or would they just be errors outright, I'm not sure actually.
+[23:57:09] <WilliamJ> I think it would just output lines unless s = 0
+[23:57:27] <WilliamJ> in that case, nothing would be output
+[23:57:31] <aplainzetakind> Structurally, you want something like the following: addOneToDouble x = y + 1; where y = 2 * x.
+[23:57:33] *** jinsun__ is now known as jinsun
+[23:57:55] *** Joins: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net)
+[23:57:55] *** Quits: wroathe (~wroathe@c-68-54-25-135.hsd1.mn.comcast.net) (Changing host)
+[23:57:55] *** Joins: wroathe (~wroathe@user/wroathe)
+[23:58:10] <WilliamJ> ok so, sorry if this is a bit annoying, but why would be use a where binding within this function?
+[23:59:05] *** Joins: neurocyte0132889 (~neurocyte@45.93.108.168)
+[23:59:05] *** Quits: neurocyte0132889 (~neurocyte@45.93.108.168) (Changing host)
+[23:59:05] *** Joins: neurocyte0132889 (~neurocyte@user/neurocyte)
+[23:59:11] *** Joins: Flonk7 (~Flonk@vps-zap441517-1.zap-srv.com)
+[23:59:19] <aplainzetakind> In the where clause, define indentSeq :: [Int] and widthSeq :: [Int] in an appropriate manner. After that you will replace undefined with your final expression which will use those as building blocks.

@@ -1,0 +1,994 @@
+[00:04:55] *** Joins: yassernasc (~yassernas@2804:29b8:505a:f33d:7937:b295:da60:ef94)
+[00:06:31] *** Quits: yassernasc (~yassernas@2804:29b8:505a:f33d:7937:b295:da60:ef94) (Remote host closed the connection)
+[00:20:27] <FromDiscord> <enthus1ast> working with types in macros is no fun, i see now
+[00:22:32] <FromDiscord> <Isofruit> ... how exactly are you supposed to use prologue with sqlite and multiple threads if the individual database operations (insert, delete etc.) are all not gc-safe and the compiler screams at you for using them? just `{.cast(gcsafe).}` and tell the compiler to shut up?
+[00:22:44] <FromDiscord> <Isofruit> (edit) "... how exactly are you supposed to use prologue with sqlite and multiple threads if the individual database operations (insert, delete etc.) ... are" 03added "using an sqlite connection"
+[00:23:19] <FromDiscord> <Isofruit> (edit) "multiple threads" => "the `--threads:on` flag"
+[00:24:02] <FromDiscord> <enthus1ast> @Isofruit\: what might work is when you create a sqlite connection per thread maybe in a threadvar
+[00:25:01] <FromDiscord> <enthus1ast> but where is the question i guess
+[00:27:00] <FromDiscord> <Isofruit> sent a code paste, see https://play.nim-lang.org/#ix=3MWR
+[00:27:36] <FromDiscord> <Isofruit> > /home/isofruit/dev/nimstoryfont/src/applications/base_generics/genericArticleRepository.nim(155, 6) Error: 'deleteEntry' is not GC-safe as it calls 'delete'
+[00:28:42] <FromDiscord> <Isofruit> delete Entry has to be gc-safe though, because the explicit functions that get created through it need to be gc-safe, because the procs in which they are called need to be gc-safe to be able to be associated with a route in prologue
+[00:30:09] <FromDiscord> <Isofruit> sent a code paste, see https://paste.rs/HZk
+[00:31:56] <FromDiscord> <Isofruit> (edit) "https://play.nim-lang.org/#ix=3MWX" => "https://play.nim-lang.org/#ix=3MWW"
+[00:32:10] <FromDiscord> <Isofruit> Which doesn't explode in your face while multi-threading is turned off, but very much does while it is
+[00:52:08] <FromDiscord> <enthus1ast> i feel you and always ask me the same
+[00:52:52] <FromDiscord> <Elegantbeef> Well in the case the compiler thinks it knows more than you, you need to think about if you know more than it
+[00:53:10] <FromDiscord> <Elegantbeef> is `delete` going to cause race conditions?
+[00:54:11] <FromDiscord> <Isofruit> Only if I were to send the delete command twice, which would mean I receive 2 HTTP-Delete requests in short succession
+[00:54:28] <FromDiscord> <Isofruit> At which point I might get a DbError, something I catch in the Controller
+[00:55:33] <FromDiscord> <Elegantbeef> What if something is attempting to query the `entryId` at the same time you delete it?
+[00:55:57] <FromDiscord> <Isofruit> So the answer is "yes" I guess, unlikely but if the API is used inappropriately, it will
+[00:56:32] <FromDiscord> <enthus1ast> afaik sqlite serializes queries internally
+[00:56:33] <FromDiscord> <Isofruit> The sqlite db locks up on a write command afaik, so it would first handle the deletion (if it comes in), make the other connection wait that wants to read from the database and then lets the other thingy read
+[00:57:09] <FromDiscord> <Elegantbeef> Yea i know nothing of the DBs 😀
+[00:57:30] <FromDiscord> <enthus1ast> sent a long message, see http://ix.io/3MX6
+[00:58:30] <FromDiscord> <Isofruit> And I do use the default here, so serialized it is.
+[00:58:35] <FromDiscord> <Elegantbeef> Then if that's the case it sounds like you know better than the compiler
+[00:59:17] <FromDiscord> <Isofruit> I am surprised there is no voodoo hidden gotcha somewhere
+[00:59:38] <FromDiscord> <enthus1ast> i could imagine that it is slower
+[01:00:12] <FromDiscord> <Isofruit> Oh, you mean serialize mode?
+[01:00:15] <FromDiscord> <Elegantbeef> Yea mutexes probably going to slow stuff down
+[01:00:19] <FromDiscord> <enthus1ast> yes
+[01:01:23] <FromDiscord> <Isofruit> I mean, sure, though I already used it that way and my queries are already well below 100ms (they're around 5-25ms), so my learning efforts take precedence here! Which will pay off greatly if I ever pay for more than one cpu core on my Linode
+[01:01:37] <FromDiscord> <enthus1ast> i run all my production sites with sqlite (not nim unfortunately) no performance impact whatsoever
+[01:01:49] <FromDiscord> <enthus1ast> noticable at least for reading
+[01:02:02] <FromDiscord> <Isofruit> Given I am a cheap guy, I think learning effort is the excuse I'll go with for doing multi-threading to myself
+[01:03:43] <FromDiscord> <enthus1ast> there also still is caching (nginx?) if you often would read the same the application would also not hit the db that often
+[01:04:32] <FromDiscord> <Isofruit> My coded frontend is a PWA, so strictly speaking you can add another layer of caching to that, which is the service worker in the user's browser
+[01:05:08] <FromDiscord> <Isofruit> And I'm using apache atm, but I haven't bothered looking into how to actually deploy the nim binary I'll get out of this project
+[01:05:28] <FromDiscord> <Isofruit> I'll likely use this opportunity to also swap to nginx
+[01:06:28] <FromDiscord> <enthus1ast> think both are the same -\> reverse proxy
+[01:06:56] <FromDiscord> <Isofruit> In the end, yeah, though Nginx is said (?) to have better parallelization than Apache and thus can handle more requests per second
+[01:07:26] <FromDiscord> <Isofruit> Nothing noticeable for me anyway, but useful since we do use nginx as a reverse proxy at work and I have no clue as to how to configure an nginx server
+[01:07:32] <FromDiscord> <Isofruit> (edit) "Nothing noticeable for me anyway, but useful since we do use nginx as a reverse proxy at work and I have no clue as to how to configure an nginx server ... " 03added "atm"
+[01:11:59] *** Quits: GreaseMonkey (greaser@user/greasemonkey) (Quit: No Ping reply in 180 seconds.)
+[01:12:06] *** Joins: greaser|q (greaser@antihype.space)
+[01:12:46] <FromDiscord> <enthus1ast> sent a code paste, see https://play.nim-lang.org/#ix=3MX8
+[01:13:04] <FromDiscord> <enthus1ast> and all the proxy\_set\_header stuff is not really needet
+[01:13:17] <FromDiscord> <enthus1ast> only of you need to know the requester
+[01:14:05] <FromDiscord> <enthus1ast> i also can highly recomment to use nginx's certbot plugin, then even ssl is are just 2-3 times enter
+[01:16:03] <FromDiscord> <enthus1ast> good practice imho is also to let nginx deliver your static assets, not your nim application server
+[01:16:56] <FromDiscord> <Isofruit> Yeh, pretty much planned to do that
+[01:17:41] <FromDiscord> <Isofruit> I'm pretty much trying to recreate what I currently have.↵Which is a Django App Server which only handles the dynamic content stuff, while the Apache in front of it using HTTP 2 just serves all the static and media assets
+[01:18:06] <FromDiscord> <Isofruit> (edit) "I'm pretty much trying to recreate what I currently have.↵Which is a Django App Server which only handles the dynamic content stuff, while the Apache in front of it using HTTP 2 just serves all the static and media assets ... " 03added "(that being user-uploaded images and mp3 recordings)"
+[01:18:25] <FromDiscord> <enthus1ast> if you need a template engine i can recommend nimja (shameless plug \:D )
+[01:18:42] <FromDiscord> <Isofruit> Nah, REST Api, my frontend is Angular, thanks for the recommendation though!
+[01:19:11] <FromDiscord> <Isofruit> chances are I'll want to build myself a backend-admin interface at one point or another since Django's admin interface won't be there anymore
+[01:19:27] <FromDiscord> <Isofruit> (edit) "anymore" => "anymore, so at that point a template engine will likely be necessary"
+[01:19:44] <FromDiscord> <enthus1ast> since years i think of a bolt cms but in nim
+[01:19:57] <FromDiscord> <enthus1ast> i even have starten playing around how to do this properly
+[01:20:20] <FromDiscord> <enthus1ast> and lately i also though of use an ecs (entity component system) for web stuff
+[01:21:25] *** Quits: sagax (~sagax_nb@user/sagax) (Ping timeout: 240 seconds)
+[01:21:37] <FromDiscord> <Isofruit> I don't think I have a mental image of ecs atm, let me google that one
+[01:22:16] <FromDiscord> <enthus1ast> you have Entities (integer) , you assign Components to it (Objects)
+[01:22:33] <FromDiscord> <enthus1ast> then you have systems that operate on the Components
+[01:22:50] <FromDiscord> <Isofruit> So components as a bundle of entities
+[01:22:58] <FromDiscord> <Isofruit> Isn't that sort of what objects in nim are?
+[01:23:13] <FromDiscord> <enthus1ast> no components are the objects
+[01:23:39] <FromDiscord> <Isofruit> Check, oh wow my brain really does not compute well atm
+[01:23:41] <FromDiscord> <Elegantbeef> Systems in ECS query your data base for all entities with specific components then act on those components
+[01:23:43] <FromDiscord> <enthus1ast> in a game a component could be eg\: Health / Mana
+[01:23:52] <FromDiscord> <Elegantbeef> Components in ECS are data buckets
+[01:24:17] <FromDiscord> <Elegantbeef> Entities are IDs which allow you to fetch components specifically when you need to
+[01:24:53] <FromDiscord> <enthus1ast> i can imagine that it would be easy to store ecs in a db for web purpose
+[01:24:58] <FromDiscord> <Isofruit> `SELECT  FROM my_large_multi_table_view WHERE id = ?` ?
+[01:25:22] <FromDiscord> <enthus1ast> select \ from health where id = ?
+[01:25:36] <FromDiscord> <Isofruit> Sounds like database indices and queries to me
+[01:25:54] <FromDiscord> <Isofruit> I might not have the who is what in that analogy correct right now but the mental mapping seems to fit
+[01:27:02] <FromDiscord> <enthus1ast> yeah thing that fits quite good. one benefit is that you can model complex entities that are hard to do with inheritance
+[01:28:22] <FromDiscord> <enthus1ast> eg\: a car that takes fuel, has a trunk, and can be picked up to your players inventory
+[01:29:35] <FromDiscord> <enthus1ast> should it inherit from a InventoryItem  or a WorldItem or a FuelConsumer or a Inventory
+[01:56:26] *** Quits: PMunch (~PMunch@user/pmunch) (Quit: leaving)
+[02:12:26] *** Joins: jmdaemon (~jmdaemon@user/jmdaemon)
+[02:21:37] *** Quits: jmdaemon (~jmdaemon@user/jmdaemon) (Ping timeout: 240 seconds)
+[02:48:42] <FromDiscord> <ajusa> Is incremental compilation official yet? I see GitHub issues related to it but was under the impression that it was still heavy WIP
+[02:52:48] <FromDiscord> <Elegantbeef> It's still in progress i think you can try it with `--ic:on`
+[02:56:31] <FromDiscord> <ajusa> `nim-#devel/lib/core/macros.nim(173, 55) Error: '[]' can only be used in compile-time context` yup still WIP looks like
+[02:57:00] <FromDiscord> <hmmm> ic is going to be super huge
+[02:57:07] <FromDiscord> <hmmm> I'm very excited
+[02:57:10] <FromDiscord> <ajusa> `Error: unhandled exception: index 62 not in 0 .. 58 [IndexDefect]` when I do it again, so something's clearly happening incrementally, I'll be super happy when it drops
+[02:57:35] <FromDiscord> <Elegantbeef> Assuming IC ever gets  released 😛
+[02:57:43] <FromDiscord> <hmmm> beeeeeeef
+[02:57:52] <FromDiscord> <hmmm> of course it's going to!
+[02:58:59] <FromDiscord> <ajusa> https://github.com/nim-lang/Nim/commit/61fb83ecbb4c691c03d500f6c71499e59a67cef2 > three years ago, but looks like it's more a priority now so I'm hopeful
+[02:59:10] <FromDiscord> <ajusa> (edit) "https://github.com/nim-lang/Nim/commit/61fb83ecbb4c691c03d500f6c71499e59a67cef2 > three years ago, but looks like it's more ... a" 03added "of"
+[03:00:04] <FromDiscord> <Elegantbeef> Personally i just want fewer bugs
+[03:00:24] <FromDiscord> <hmmm> well you are the compiler dev so get to work 🤔
+[03:00:28] <FromDiscord> <Elegantbeef> Or things that should work working
+[03:00:35] <FromDiscord> <Elegantbeef> I'm "the compiler dev"
+[03:01:20] <FromDiscord> <Elegantbeef> I fix bugs that I see I can fix, or as i prefer to call it "Make things that should work but dont work"
+[03:02:27] <FromDiscord> <hmmm> well if it can make you sleep any easier there is an entire class of people (me) that operate at a lower level that rarely hit bugs 😃
+[03:04:52] <FromDiscord> <Elegantbeef> I mean there have been many issues i've seen in here
+[03:05:09] <FromDiscord> <Elegantbeef> This chat is one place I get problems to fix!
+[03:05:39] <FromDiscord> <hmmm> I'm very happy with nim, the only thing I miss is that my programs usually want to do a lot of creative stuff with user input and nim wants to know the types in advance and so it's always a struggle, doesn't help that I'm also still at baby level with macros
+[03:07:23] <FromDiscord> <Elegantbeef> is reminded he needs to expand his macro tutorial more
+[03:07:29] <FromDiscord> <hmmm> yes please!
+[03:07:39] <FromDiscord> <hmmm> I enjoyed the mystifying series
+[03:07:58] <FromDiscord> <Elegantbeef> I did add some to it removing the constructor macro cause it was pointles
+[03:08:16] <FromDiscord> <hmmm> if I give you an example of simple macro to tutorial would you consider it?
+[03:09:44] <FromDiscord> <Elegantbeef> Uhhh
+[03:10:29] <FromDiscord> <hmmm> pft, never trust compiler devs
+[03:10:37] <FromDiscord> <Elegantbeef> I'm not a compiler dev
+[03:10:42] *** Quits: greaser|q (greaser@antihype.space) (Changing host)
+[03:10:42] *** Joins: greaser|q (greaser@user/greasemonkey)
+[03:10:50] <FromDiscord> <hmmm> compiler mechanic?
+[03:10:53] *** greaser|q is now known as GreaseMonkey
+[03:11:44] *** adigitoleo_ is now known as adigitoleo
+[03:11:48] <FromDiscord> <Elegantbeef> Compiler fixer uper erer
+[03:11:56] <FromDiscord> <Elegantbeef> What's the macro anyway?
+[03:12:01] <FromDiscord> <Elegantbeef> Also do me a favour and read https://dev.to/beef331/demystification-of-macros-in-nim-13n8#untyped-vs-typed-macros
+[03:12:29] <FromDiscord> <hmmm> again? I already read it. I stopped before the constructor
+[03:12:47] <FromDiscord> <Elegantbeef> Not again
+[03:12:50] <FromDiscord> <Elegantbeef> I added stuff t oit
+[03:13:11] <FromDiscord> <Elegantbeef> It's actually more explanitive
+[03:14:05] <FromDiscord> <hmmm> anyway first thing I would modify is "walrus operator" mention since belive it or not there is people that don't know wtf is it and get intimidated, also iirc it was only tangentially related to the matter at hand 🧐
+[03:14:37] <FromDiscord> <Elegantbeef> What?
+[03:15:01] <FromDiscord> <hmmm> hehe
+[03:15:05] <FromDiscord> <Elegantbeef> I explain what it does in Go so saying "walrus operator" or "`:=`" is the same thing
+[03:16:07] <FromDiscord> <hmmm> hmm I never used Go and today at 00:45 is the first time I see :=, so assume lower level IQ 😃
+[03:16:45] <FromDiscord> <Elegantbeef> Anyway i was talking abour reading the new typed vs untyped section
+[03:18:01] <FromDiscord> <hmmm> nu I'm nitpicking the first sentences lol. I was also confused on why you used the backticks now that I remember it
+[03:18:23] <FromDiscord> <hmmm> something related to overloading? you can explain it in the article 🤔
+[03:18:28] <FromDiscord> <Elegantbeef> That's how Nim does operators, it's not teaching Nim it's teaching operators 😛
+[03:18:39] <FromDiscord> <Elegantbeef> it's teaching macros\
+[03:19:08] <FromDiscord> <hmmm> yea I know but keep in mind that most novices are curious about macros so you might consider lowering the barrier
+[03:19:19] <FromDiscord> <hmmm> so they might see how powerful they are
+[03:19:58] <FromDiscord> <Elegantbeef> If you dont know how to use Nim i dont see how you expect to use macros
+[03:21:02] <FromDiscord> <hmmm> hmm it's more like, people that are learning nim are probably also curious about macros and your article is something they will probably see 😛
+[03:21:51] <FromDiscord> <hmmm> anyway dumptree at the start is supergood, teaching the fisher how to fish
+[03:23:09] <FromDiscord> <hmmm> oh you added typed vs untyped
+[03:34:03] *** Joins: jmdaemon (~jmdaemon@user/jmdaemon)
+[03:34:07] <FromDiscord> <hmmm> yea and this was pretty hard too, I didn't understand what was the flow of the conditional https://media.discordapp.net/attachments/371759389889003532/933874561173319700/Capture.JPG
+[03:34:46] <FromDiscord> <hmmm> and that concludes my low-IQ review 😊
+[03:36:20] <FromDiscord> <hmmm> I'll go sleep, tomorrow I expect a full writeup of "From zero to hero: macros for dummies in Nim" 😋
+[03:36:36] <FromDiscord> <Elegantbeef> Damn you're  going to write a book in your sleepp
+[03:36:43] <FromDiscord> <hmmm> haha
+[03:41:10] *** Quits: tk (~tk@ircpuzzles/staff/tk) (Quit: Well, this is unexpected.)
+[03:42:27] *** Joins: tk (~tk@ircpuzzles/staff/tk)
+[03:54:02] *** Quits: jmdaemon (~jmdaemon@user/jmdaemon) (Quit: ZNC 1.8.2 - https://znc.in)
+[04:15:26] *** Joins: joshbaptiste (~josh@2001:470:1f07:4d5:24::c2b5)
+[05:06:53] *** Joins: jmdaemon (~jmdaemon@user/jmdaemon)
+[05:13:56] *** Quits: krux02 (~krux02@p200300e81723dd00b48b627b8314596f.dip0.t-ipconnect.de) (Remote host closed the connection)
+[05:53:57] *** Quits: neurocyte0917090 (~neurocyte@user/neurocyte) (Ping timeout: 240 seconds)
+[06:14:10] *** Quits: jmdaemon (~jmdaemon@user/jmdaemon) (Ping timeout: 256 seconds)
+[06:37:33] *** Joins: jmdaemon (~jmdaemon@user/jmdaemon)
+[06:44:37] *** Quits: noeontheend (~noeonthee@207.237.194.194) (Ping timeout: 240 seconds)
+[06:59:20] *** Quits: jmdaemon (~jmdaemon@user/jmdaemon) (Quit: ZNC 1.8.2 - https://znc.in)
+[07:07:59] *** Joins: jmdaemon (~jmdaemon@user/jmdaemon)
+[07:12:48] *** Quits: arkurious (~arkurious@user/arkurious) (Quit: Leaving)
+[07:19:48] *** Quits: vicfred (~vicfred@user/vicfred) (Quit: Leaving)
+[07:19:54] <FromDiscord> <reilly> I'm working on something where it appears as though the last two characters of my `httpclient.patch()` request are being trimmed... Any ideas?
+[08:11:40] *** Quits: jmdaemon (~jmdaemon@user/jmdaemon) (Quit: ZNC 1.8.2 - https://znc.in)
+[08:46:07] *** Joins: Guest1163 (~Guest11@174-28-242-219.albq.qwest.net)
+[08:51:32] *** Quits: Guest1163 (~Guest11@174-28-242-219.albq.qwest.net) (Quit: Client closed)
+[09:03:01] *** Quits: rockcavera (~rc@user/rockcavera) (Remote host closed the connection)
+[09:07:54] *** Quits: ecs (~ecs@user/ecs) (Ping timeout: 260 seconds)
+[09:10:14] <FromDiscord> <Nightshade 🌙> Is there a preferred help channel on this server?
+[09:10:32] <FromDiscord> <Elegantbeef> here
+[09:10:38] <FromDiscord> <Nightshade 🌙> Awesome thanks
+[09:10:40] *** Joins: ecs (ecs@user/ecs)
+[09:12:07] <FromDiscord> <Nightshade 🌙> Well here goes, the crux of the matter is I would like to generate a Windows DLL that can be reflectivity loaded at runtime from either Powershell or the .NET API that it raps System.Management.Automation.DLL
+[09:13:07] <FromDiscord> <Nightshade 🌙> Now I've tried a lot of things these past few days, making sure the correct pragmas are in place, ensuring I'm compiling with the right flags, but at this point I don't even know if it's possible.
+[09:14:55] <FromDiscord> <Nightshade 🌙> When I generate my DLL and read it into memory as bytes and attempt to call Powershell's [System.Reflection.Assembly]::Load($bytes) nothing I try works
+[09:15:39] <FromDiscord> <Nightshade 🌙> Is it even possible to generate that type of DLL using Nim? I mean it must be right?
+[09:16:16] <FromDiscord> <Elegantbeef> Isnt it just a dynamic library?
+[09:16:37] *** Quits: ecs (ecs@user/ecs) (Ping timeout: 240 seconds)
+[09:18:38] *** Joins: ecs (ecs@user/ecs)
+[09:18:43] *** Quits: blackbeard420 (blackbeard@2600:3c03::f03c:91ff:fe92:3f2a) (Ping timeout: 250 seconds)
+[09:19:03] *** Joins: blackbeard420 (blackbeard@2600:3c03::f03c:91ff:fe92:3f2a)
+[09:28:47] <FromDiscord> <leorize> I think powershell requires a lot more than just any dll
+[09:31:54] <FromDiscord> <Nightshade 🌙> Yeah thats the confusion I have seen that the System.Reflection method I described above can pull and run DLLs on the fly idk why it doesn't work for Nim
+[09:33:34] <FromDiscord> <Nightshade 🌙> In reply to @Elegantbeef "Isnt it just a": Referring to Powershell? Yes it is a wrapper over the System.Management.Automation.dll I mentioned above
+[09:33:58] <FromDiscord> <Nightshade 🌙> In reply to @leorize "I think powershell requires": I'm not sure what you mean, could you please elaborate
+[09:35:13] <FromDiscord> <leorize> it's looking like it would only work with dotnet's generated assembly
+[09:35:31] <FromDiscord> <leorize> though the docs does mention how to fix a C++ assembly not loading, but not saying anything about how to create them
+[09:40:25] <FromDiscord> <Nightshade 🌙> Yeah thats where I was confused, I mean there must be a way to call exported C functions in the .NET runtime and since Nim compiles to C it must be possible
+[09:44:43] <FromDiscord> <leorize> looks like that function you use is for .net assemblies only
+[09:44:50] <FromDiscord> <leorize> https://docs.microsoft.com/en-us/dotnet/standard/native-interop/pinvoke \<- this is the usual method to interop
+[09:44:53] <FromDiscord> <leorize> requires a wrapper
+[09:45:51] <FromDiscord> <Nightshade 🌙> Ahh okay thank you that makes sense, so maybe I can use winim someway somehow to make the magic happen
+[09:46:45] <FromDiscord> <Nightshade 🌙> In reply to @leorize "requires a wrapper": You're a hero
+[09:47:28] *** Quits: xiamx[m] (~xiamxmatr@2001:470:69fc:105::1:567b) (Quit: Client limit exceeded: 20000)
+[10:08:15] <FromDiscord> <Elegantbeef> Ah yes the needless confusion between `.dll` and `.dll`
+[10:08:15] *** Joins: xiamx[m] (~xiamxmatr@2001:470:69fc:105::1:567b)
+[10:10:34] *** Quits: cheer[m] (~cheertchn@2001:470:69fc:105::39de) (Quit: Client limit exceeded: 20000)
+[10:11:14] <FromDiscord> <Rika> Welcome to the operating system that supposedly distinguishes files by extension
+[10:11:26] *** Joins: cheer[m] (~cheertchn@2001:470:69fc:105::39de)
+[10:16:43] <FromDiscord> <demotomohiro> You might find out the difference between C's .dll and .net .dll by learning fileformat of .dll.
+[10:36:06] *** Quits: [R] (~rs@genoce.org) (Ping timeout: 260 seconds)
+[10:36:22] *** Joins: [R] (~rs@genoce.org)
+[10:40:19] <FromDiscord> <leorize> net assemblies are valid PE files
+[10:40:53] <FromDiscord> <leorize> they contain CIL for the CLR instead of native code, though
+[10:42:16] *** Joins: PMunch (~PMunch@user/pmunch)
+[11:01:57] <PMunch> Hmm, what is `nimInErrorMode` flag that's being generated in my C code?
+[11:02:55] <PMunch> I'm trying to understand where the bytes go when I program my microcontroller to make the best abstractions
+[11:06:41] <FromDiscord> <leorize> I guess it's for exceptions? goto exceptions got something similar
+[11:08:11] <FromDiscord> <that_dude> Is it intentional design that type(type(1)) returns int? ie that there isn't a type type?
+[11:09:21] <FromDiscord> <Elegantbeef> `typeof(typeof(1))` is int
+[11:09:54] <FromDiscord> <Elegantbeef> `type` is a semi deprecated version of `typeof`
+[11:10:52] <FromDiscord> <Michal Maršálek> type type is typedesc, no?
+[11:10:58] <FromDiscord> <that_dude> 1. what's the difference, 2. but there isn't a type type, right? I'd love to be able to make that an object field
+[11:11:02] <FromDiscord> <Elegantbeef> yes
+[11:11:28] <PMunch> @leorize, aah goto exceptions makes sense
+[11:11:29] <FromDiscord> <Elegantbeef> the difference is `type(1)` isnt the suggested way of doing it
+[11:11:34] <FromDiscord> <Michal Maršálek> In reply to @that_dude "1. what's the difference,": Types only exist at compile time
+[11:11:40] <FromDiscord> <Elegantbeef> `typeof(1)` is how you should
+[11:11:51] <FromDiscord> <that_dude> In reply to @Michal58 "Types only exist at": Ah
+[11:12:27] <FromDiscord> <Michal Maršálek> But you can for example create a proc that takes a type as an argument
+[11:12:53] <FromDiscord> <Elegantbeef> Though that makes it generic and is done statically
+[11:12:54] <PMunch> Hmm, turned off goto exceptions and it's still there
+[11:13:02] <FromDiscord> <Michal Maršálek> What happens then if I understand it correctly is that it creates a generic proc
+[11:13:18] <FromDiscord> <Elegantbeef> Indeed michal
+[11:13:38] <FromDiscord> <that_dude> I think I get it
+[11:13:58] <FromDiscord> <Elegantbeef> `proc doThing(a: typedesc)` is actually `proc doThing[T: typedesc](a: T)`
+[11:14:25] <FromDiscord> <that_dude> sent a code paste, see https://play.nim-lang.org/#ix=3MYV
+[11:14:33] <FromDiscord> <that_dude> But It's not because of compile time only
+[11:14:48] <FromDiscord> <Michal Maršálek> Make your type generic
+[11:14:48] <FromDiscord> <Elegantbeef> You'd have to do `type Warg[T] = object`
+[11:15:21] <FromDiscord> <that_dude> Why does it need to warg[T] what part of the object is generic?
+[11:15:27] <FromDiscord> <Michal Maršálek> I guess compiler could be able to convert that automatically the same way it does t for procs?
+[11:15:30] <FromDiscord> <Elegantbeef> You'd make `thing: T`
+[11:15:43] <PMunch> And I don't really have anything that can throw an exception either as far as I know
+[11:15:49] <FromDiscord> <Michal Maršálek> (edit) "t" => "it"
+[11:17:21] <FromDiscord> <Elegantbeef> Actually never mind i see the point
+[11:17:39] <FromDiscord> <Elegantbeef> Yea just do `type Warg[T] = object` and then when you instantiate it you always have the type it is
+[11:19:13] <FromDiscord> <that_dude> I guess I'm now a little lost on generics lol
+[11:19:25] <FromDiscord> <that_dude> I guess that's the next thing to try to learn
+[11:19:31] <FromDiscord> <Elegantbeef> You dont need to use the generic parameters on the type
+[11:19:46] <FromDiscord> <Elegantbeef> You can just use generics to add type information
+[11:21:27] <FromDiscord> <that_dude> `Error: Mixing types and values in tuples is not allowed.` Unlocked a new error
+[11:21:31] <FromDiscord> <that_dude> (edit) "`Error: Mixing types and values in tuples is not allowed.` Unlocked a new error ... " 03added "lol"
+[11:21:33] <FromDiscord> <Elegantbeef> Speaking of fun generics, michal this compiles on devel now! 🙂 https://play.nim-lang.org/#ix=3MYX
+[11:22:04] <FromDiscord> <Elegantbeef> Yea `(int, 10)` isnt valid
+[11:24:35] <FromDiscord> <that_dude> It really feels a bit hard to not be allowed to move types around. Ig that's the python stuck in me
+[11:24:53] <FromDiscord> <that_dude> Unless you couldn't do that there either and I'm just hallucinating
+[11:25:09] <FromDiscord> <Elegantbeef> You dont need to "move types around"
+[11:25:19] <FromDiscord> <Elegantbeef> Nim has generics which work in most cases
+[11:25:42] <FromDiscord> <Elegantbeef> You also have object variants
+[11:26:50] <FromDiscord> <Michal Maršálek> You only have (small) finite amount of different types, you can just copy your logic for each o the types. And Nim allows you to do that automatically.
+[11:27:06] <FromDiscord> <that_dude> I'm sorry I don't want to just throw broken code at you guys and ask you to fix things for me :/
+[11:27:32] <FromDiscord> <that_dude> In reply to @Michal58 "You only have (small)": My vision is more general that than unfortunately
+[11:27:48] <FromDiscord> <that_dude> because it would include custom types
+[11:27:52] <FromDiscord> <Elegantbeef> Well that's how you learn is by doing it wrong 😛
+[11:28:35] <FromDiscord> <Michal Maršálek> In reply to @that_dude "because it would include": Wdym
+[11:31:44] <FromDiscord> <that_dude> My current vision is something like this:
+[11:31:55] <FromDiscord> <that_dude> sent a code paste, see https://play.nim-lang.org/#ix=3MZ0
+[11:32:12] <FromDiscord> <that_dude> But that doesn't work obviously
+[11:32:30] <FromDiscord> <Elegantbeef> This works with a generic
+[11:32:53] <FromDiscord> <Elegantbeef> Also you must hate me not naming types capitals
+[11:33:28] <FromDiscord> <that_dude> But I don't understand generics lol. I get that the compiler got happier when I changed the `warg` to `warg[T]` on the gen proc, but I don't understand why
+[11:34:22] <FromDiscord> <that_dude> Oh sorry. As you know I come from python so everything I write is all lowercase snake case
+[11:34:50] <FromDiscord> <that_dude> The only time I do differently is to make the autocompletion work :)
+[11:35:05] <FromDiscord> <that_dude> I've been trying to do more camel tho
+[11:36:04] <FromDiscord> <Michal Maršálek> Do you name your Python types (classes) in lowercase? 😳
+[11:36:59] <FromDiscord> <that_dude> It looks like I use upper case there
+[11:37:22] <FromDiscord> <that_dude> I just follow whatever the ide suggests because my priority is getting the idea down first and cleaning it up later
+[11:37:51] <FromDiscord> <that_dude> And Nimsuggest(?) doesn't yell at me while I'm tying it
+[11:39:28] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3MZ4
+[11:39:28] <FromDiscord> <Elegantbeef> That's how you'd do it
+[11:40:08] <FromDiscord> <Elegantbeef> there is some merit to `proc initWArg[T](input: var T): WArg[T]` instead
+[11:40:22] <FromDiscord> <Elegantbeef> You do realize though this is really unsafe stuff?
+[11:40:36] <FromDiscord> <that_dude> Yes
+[11:41:05] <FromDiscord> <that_dude> But my belief has always been to allow others to get knee deep if they want to use my thing to do something manually
+[11:41:20] <FromDiscord> <that_dude> I tend to export everything except what I would consider helper proc
+[11:41:25] <FromDiscord> <that_dude> (edit) "proc" => "procs"
+[11:42:34] <FromDiscord> <that_dude> That said. If I consider giving someone else too many options burdensome, then yes I would limit it more. But the way I see it, giving more freedom shouldn't make it harder to use the stuff I make.
+[11:42:42] *** Joins: krux02 (~krux02@p200300e81723dd00b48b627b8314596f.dip0.t-ipconnect.de)
+[11:43:06] <FromDiscord> <Elegantbeef> I mean the issue is that you're talking an address of a type that might not stay alive
+[11:43:12] <FromDiscord> <Elegantbeef> taking an address\
+[11:44:10] <FromDiscord> <that_dude> Yeah. In the context that I would be using it it should be fine. Pointers stay alive until the scope that uses them dies right? Or is it more nuanced with things shifting around in the background
+[11:45:07] <FromDiscord> <Elegantbeef> Depends on the GC and what you're doing
+[11:45:47] <FromDiscord> <Elegantbeef> Pointers can be to the stack or to the heap so there is not 100% certain answer
+[11:47:34] <FromDiscord> <that_dude> Well It's https://github.com/XDEmer0r-L0rd-360-G0d-SlayerXD/simple_inject this project again, I wanted to use `WArg` so I could stop using `varargs[pointer]` in my catches
+[11:48:06] <FromDiscord> <Rika> GC doesn’t touch raw pointers
+[11:48:29] <FromDiscord> <that_dude> They do go away after the scope dies though right?
+[11:49:56] <FromDiscord> <Rika> No, pointers never automatically deallocate
+[11:50:25] <FromDiscord> <Rika> You bear the responsibility of deallocating heap pointers
+[11:50:37] <FromDiscord> <Rika> Stack pointers become invalid when the corresponding stack dies
+[11:50:50] <FromDiscord> <Rika> Note that this is different from “going away”
+[11:51:55] <FromDiscord> <that_dude> How do I safely remove them then?
+[11:55:22] <FromDiscord> <Rika> Manually
+[11:55:49] <FromDiscord> <Rika> I’m assuming you talk about “ptr” and not references
+[11:56:53] <FromDiscord> <Isofruit> This reminds me to see whether beef's constructor stuff has documentation for usage or whether I can make a PR there
+[11:56:54] <FromDiscord> <that_dude> yes, how manually? last time I tried manually removing them I think I broke everything lol
+[11:57:15] <FromDiscord> <Elegantbeef> PRs welcomed↵(@Isofruit)
+[11:57:28] <FromDiscord> <that_dude> Is my stuff that bad lol
+[11:57:37] <FromDiscord> <Rika> In reply to @that_dude "yes, how manually? last": That legitimately depends on how you got them
+[11:57:48] <FromDiscord> <Rika> How did you make your pointers
+[11:57:50] <FromDiscord> <that_dude> I run pointer() on them
+[11:57:57] <FromDiscord> <Rika> On what
+[11:58:02] <FromDiscord> <that_dude> wait
+[11:58:04] <FromDiscord> <Isofruit> In reply to @Elegantbeef "PRs welcomed (<@180601887916163073>)": I'll gladly do so if there's anything that makes sense to cover, but looking over your github you appear to have already covered the proper usage of constructor ^^
+[11:58:28] <FromDiscord> <Elegantbeef> Think they lack doc comments
+[11:58:37] <FromDiscord> <Elegantbeef> So feel free to make runnable examples 🙂
+[11:59:01] <FromDiscord> <that_dude> `newCall("pointer", newCall("unsafeaddr", a))` lol I'm doing extra unsafe things. It's pointer(unsafeaddr()) to get arguments that get passed to a proc
+[11:59:06] <FromDiscord> <Isofruit> Actually, that one's fair↵When I find some time this weekend I'll see what I can do and likely learn a bit more about constructor as I do so!
+[11:59:43] <FromDiscord> <Isofruit> I'm sitting on my norm PRs either way so might as well make myself useful while I procrastinate the entire connection pool thing
+[12:00:11] <FromDiscord> <Rika> In reply to @that_dude "`newCall("pointer", newCall("unsafeaddr", a))` lol": That sounds like a stack pointer
+[12:00:25] <PMunch> Well depends on what a is
+[12:00:28] <FromDiscord> <Rika> As long as you don’t store that pointer outside of the scope it will die with the object
+[12:00:37] <PMunch> pointer just turns `ptr T` into a generic `pointer`
+[12:00:47] <FromDiscord> <Rika> In reply to @PMunch "pointer just turns `ptr": He says he uses addr as well
+[12:01:00] <PMunch> `unsafeAddr` can be used both for stack objects and heap objects
+[12:01:16] <PMunch> But if you had to switch from `addr` to `unsafeAddr`, then yes, that's probably a stack object
+[12:01:19] <FromDiscord> <Rika> Yes but in both cases they emit a stack pointer
+[12:01:42] <PMunch> No the won't?
+[12:01:51] <FromDiscord> <Rika> ?
+[12:02:00] <PMunch> If you run unsafeAddr on a heap allocated object it gets you the same address as if you called addr on it
+[12:02:11] <FromDiscord> <Rika> addr on a ref is a pointer to the stack address storing the ref pointer
+[12:02:17] <FromDiscord> <Rika> Huh
+[12:02:19] <FromDiscord> <Rika> Really
+[12:02:24] <FromDiscord> <Rika> I do not recall that
+[12:02:29] <FromDiscord> <xflywind> they are the same except `addr` has limitations
+[12:02:30] <FromDiscord> <Rika> If that’s so then okay
+[12:03:37] <FromDiscord> <xflywind> Actually unsafeAddr now become a deprecated alias for addr(remove limitations) in devel.
+[12:03:54] <FromDiscord> <that_dude> sent a code paste, see https://play.nim-lang.org/#ix=3MZ8
+[12:04:14] <FromDiscord> <that_dude> Not using devel 😢
+[12:04:32] <FromDiscord> <xflywind> In reply to @flywind "Actually unsafeAddr now become": see https://github.com/nim-lang/Nim/pull/19373
+[12:04:44] <FromDiscord> <Rika> That’s okay as long as other call is not putting that pointer in an outer scope yes
+[12:04:56] <FromDiscord> <xflywind> (edit) "https://github.com/nim-lang/Nim/pull/19373" => "https://github.com/nim-lang/Nim/pull/19373; planned for 2.0"
+[12:05:18] <FromDiscord> <that_dude> So I'm all good then? as long as it never leaves the scope, I'm fine?
+[12:05:29] <FromDiscord> <Rika> I would say, yes
+[12:05:46] <FromDiscord> <that_dude> Nice :)
+[12:07:08] <PMunch> I have missed what you're trying to do @that_dude. What are you trying to achieve?
+[12:08:42] <FromDiscord> <Rika> Maybe it is better I do not continue answering, I have a mild headache and I cannot guarantee soundness of the mind
+[12:08:42] <FromDiscord> <Elegantbeef> They want to intercept procedure calls with their own code instead of modifying the underlying source code
+[12:08:56] <FromDiscord> <that_dude> sent a code paste, see https://play.nim-lang.org/#ix=3MZa
+[12:08:56] <FromDiscord> <that_dude> what beef said
+[12:09:07] <FromDiscord> <Elegantbeef> So i think here is their argument passing logic
+[12:09:11] <FromDiscord> <that_dude> I'm still takeing a look at beefs suggestion
+[12:09:25] <FromDiscord> <Elegantbeef> It's an odd want, super odd and not worth 99% of peoples time
+[12:10:09] <FromDiscord> <Rika> Beef you’re just right for this then
+[12:10:10] <FromDiscord> <that_dude> lol true, but it's needed for the way I designed one of my projects and I don't want to have to do a 4th rewrite
+[12:10:13] <FromDiscord> <Rika> Mr 1%
+[12:10:34] <FromDiscord> <Elegantbeef> "Why have clean code when i can just abuse my code" 😀
+[12:10:37] <FromDiscord> <Rika> In reply to @that_dude "lol true, but it's": I mean have you considered that your design is not a good design 😛
+[12:10:49] <FromDiscord> <that_dude> I abuse the code in the dark. I still try to make clean code
+[12:10:55] <FromDiscord> <Rika> Kinky
+[12:12:07] <FromDiscord> <that_dude> This is my version of clean too lol. I don't want insanely long files. I'd like to be able to mentally separate what they are used for. It's why I make objects I use only once that I probably don't need. It just allows me to lump things together more soundly in my head
+[12:13:11] <FromDiscord> <that_dude> In reply to @Rika "I mean have you": Id bet there's better, but I struggle to see them with my vague and ambitious goals for my projects
+[12:13:42] <FromDiscord> <Rika> When I have significant difficulty implementing something, I drop it and redesign
+[12:13:49] <FromDiscord> <Rika> It probably saves time
+[12:14:24] <FromDiscord> <Rika> Usually I take hours designing first before writing anything anyway
+[12:15:02] <FromDiscord> <Rika> Maybe it’s best for you to explore more advanced Nim topics and features so you can redesign what you want
+[12:15:39] <FromDiscord> <that_dude> I think I'm happy with my design right now tho. I split my thing up into `building blocks`, `fusion of blocks + state`, `game interface + meues`
+[12:15:47] <FromDiscord> <that_dude> idk man
+[12:16:22] <FromDiscord> <Elegantbeef> I dont know you have issues that you want to resolve
+[12:16:26] <FromDiscord> <evoalg> In reply to @Rika "Mr 1%": LOL you're getting really good at insulting beefy
+[12:16:37] <FromDiscord> <Elegantbeef> If your design made you happy you wouldnt need this odd tool
+[12:17:04] <FromDiscord> <Rika> In reply to @that_dude "I think I'm happy": I mean the nitty gritty design, not your “weird monkey patching” idea
+[12:17:09] <FromDiscord> <Rika> That’s a separate issue
+[12:17:35] <FromDiscord> <Rika> How to implement your idea is pretty “not beginner” level I’d say
+[12:17:41] <FromDiscord> <Rika> So you should probably explore
+[12:17:42] <FromDiscord> <that_dude> There was an alternative/easier solution, but it required using branches and conditions I didn't really want to
+[12:18:12] <FromDiscord> <Elegantbeef> I just question the need for this tool and your present design
+[12:18:17] <FromDiscord> <Rika> In reply to @evoalg "LOL you're getting really": I mean we’ve been doing this forever now I think
+[12:18:36] <FromDiscord> <mratsim> When WML "Weird Monkey Lang"
+[12:18:37] <FromDiscord> <that_dude> It's only one very niche area that needs it lol
+[12:18:42] <FromDiscord> <Elegantbeef> My view is Nim provides plenty of tooling to allow overridding logic inside a procedure without intercepting the calls
+[12:18:43] <FromDiscord> <evoalg> I might occasionally call beefy Mr 1% 😄
+[12:18:44] <FromDiscord> <Rika> In reply to @Elegantbeef "I just question the": I’ll be honest I stopped questioning it a bit ago, it’s just unnecessary argument
+[12:19:18] <FromDiscord> <that_dude> but if you remember my forum post, I wanted to add some logic in-between proc calls in an imported module
+[12:19:34] <FromDiscord> <that_dude> sorry
+[12:19:37] <FromDiscord> <Elegantbeef> Sure but that's on the assumption the code base doesnt allow it to begin with
+[12:19:41] <FromDiscord> <Rika> Sorry about what lol
+[12:19:41] <PMunch> Hmm, I'm still not sure I get it
+[12:19:58] <PMunch> You want to have something that intercepts every procedure call in your project and wraps it in some logic?
+[12:20:05] <FromDiscord> <Elegantbeef> Pmunch they want to import a module then create their own patches ontop of the procedure that are called before the procedure
+[12:20:17] <FromDiscord> <Rika> In between the procedure not just before
+[12:20:20] <FromDiscord> <mratsim> In reply to @that_dude "Well it started with": Start embracing lent UncheckedArray or openarray as values: https://github.com/mratsim/constantine/blob/master/research/kzg_poly_commit/strided_views.nim#L29
+[12:20:54] <FromDiscord> <mratsim> In reply to @Elegantbeef "Pmunch they want to": {.push mypragma.}
+[12:21:26] <FromDiscord> <mratsim> that's what I do here: https://github.com/mratsim/constantine/blob/master/metering/tracer.nim#L75-L83
+[12:21:42] <FromDiscord> <mratsim> I have a pragma that insert stuff at function entry and exit.
+[12:21:49] <PMunch> @Elegantbeef, so why not just import the module, write wrapper templates, and then export said templates?
+[12:22:05] <FromDiscord> <Elegantbeef> Dont ask me
+[12:22:40] <FromDiscord> <Rika> In reply to @PMunch "<@145405730571288577>, so why not": Didn’t I say he wanted to intercept the proc in the middle and not just the start and end
+[12:22:43] <PMunch> @mratsim, and you use that as a pragma, right?
+[12:22:58] <PMunch> @Rika, what?!
+[12:23:03] <PMunch> Why?
+[12:23:06] <PMunch> How?!
+[12:23:16] <FromDiscord> <Rika> I am not making it I don’t get it too well either
+[12:23:25] <PMunch> Haha
+[12:23:45] <FromDiscord> <that_dude> Sorry 😢 I know what I'm asking for is very specific and prob bad
+[12:24:04] <FromDiscord> <Rika> It’s what he wants I guess, for all I know we’re just plebeians looking at God’s code without realising
+[12:24:09] <FromDiscord> <Elegantbeef> I mean you could legitmately do it using a macro copying the body of another procedure but insertions at specific points would be teremendously difficult
+[12:24:11] <PMunch> Wait, so they have a procedure defined in a library, and they want to import that module, and have some code execute in the middle of said procedure?
+[12:24:24] <FromDiscord> <Elegantbeef> Apparently so
+[12:24:27] <FromDiscord> <that_dude> basically
+[12:24:42] <FromDiscord> <Rika> Yeah last time this was discussed I said maybe a TRM
+[12:24:46] <FromDiscord> <Rika> The cursed TRM
+[12:24:51] <FromDiscord> <that_dude> more like either before or after, a call, but it has to be inside of the proc
+[12:24:54] <FromDiscord> <Elegantbeef> TRM are cool 😀
+[12:25:06] <FromDiscord> <that_dude> what that?
+[12:25:08] <FromDiscord> <mratsim> well staticRead the code and scan the AST for your insertion point?
+[12:25:10] <FromDiscord> <Rika> In reply to @Elegantbeef "TRM are cool 😀": Says the macro whisperer
+[12:25:14] <PMunch> I mean I guess you could write a macro that took a `typed` argument, got the implementation of that symbol (which should be a procedure), then rewrite it to be what you want it to be and export that..
+[12:25:31] <FromDiscord> <that_dude> In reply to @mratsim "well staticRead the code": I'm sorry but I'm not good enoug to understand
+[12:25:37] <FromDiscord> <Rika> In reply to @PMunch "I mean I guess": The rewrite is gonna be the harder part lol
+[12:25:43] <FromDiscord> <Elegantbeef> Yea that's not too difficult assuming you only want before/after
+[12:25:43] <FromDiscord> <mratsim> then you should change your design.
+[12:26:00] <FromDiscord> <Rika> You really need to either learn how to do this or change the design dude
+[12:26:01] <FromDiscord> <mratsim> because you won't be able to maintain that
+[12:26:02] <PMunch> @Rika, how so? Just insert something into the stmtlist of the proc body?
+[12:26:12] <FromDiscord> <that_dude> https://github.com/XDEmer0r-L0rd-360-G0d-SlayerXD/simple_inject/blob/master/examples/callback.nim Here is an example of it working
+[12:26:19] <FromDiscord> <Rika> Ah I missed the “only before or after” part
+[12:26:27] <FromDiscord> <Rika> Still had the assumption it was in the middle
+[12:26:30] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3MZe
+[12:26:46] <FromDiscord> <Rika> Stop piling on me! Smh
+[12:26:52] <FromDiscord> <Elegantbeef> lol
+[12:27:06] <FromDiscord> <that_dude> In reply to @Elegantbeef "I mean rika you": I considered a design like that, but I felt it would be more powerful to allow me to make connections later in run time
+[12:27:21] <FromDiscord> <Rika> In run time????
+[12:27:33] <FromDiscord> <that_dude> lol
+[12:27:36] <FromDiscord> <Elegantbeef> This is why i suggested procedure callbacks
+[12:27:42] <FromDiscord> <that_dude> It just keeps getting worse huh
+[12:27:47] <FromDiscord> <Elegantbeef> two procedures `beforeCall` `afterCall`
+[12:27:52] <FromDiscord> <Elegantbeef> Easiest solution
+[12:28:05] <FromDiscord> <that_dude> I implemented both of them into a {.watch.}  pragma I think
+[12:28:11] <FromDiscord> <mratsim> at runtime you should just use OOP or closures
+[12:28:25] <FromDiscord> <that_dude> https://github.com/XDEmer0r-L0rd-360-G0d-SlayerXD/simple_inject/blob/master/src/simple_inject.nim#L39
+[12:28:34] <FromDiscord> <that_dude> Am I not using closures or something?
+[12:28:42] <FromDiscord> <that_dude> That's the heart of it
+[12:28:46] <FromDiscord> <mratsim> create `onPressed: proc (self: MyType) {.nimcall.}`
+[12:28:51] <FromDiscord> <Rika> Dude I should get off this server for now I might stress myself too much
+[12:28:55] <FromDiscord> <mratsim> field in all your objects
+[12:28:56] <FromDiscord> <Elegantbeef> Lol
+[12:28:58] <FromDiscord> <that_dude> I'm sorry rika
+[12:28:59] <FromDiscord> <Elegantbeef> Have fun rika!
+[12:29:04] <FromDiscord> <mratsim> that's just dynamic dispatch
+[12:29:10] <PMunch> I mean I guess something like that would be possible, but why-oh-why?
+[12:29:55] <FromDiscord> <that_dude> Because I need https://github.com/XDEmer0r-L0rd-360-G0d-SlayerXD/Hydris/blob/master/sim.nim#L242 to be called whenever I hit https://github.com/XDEmer0r-L0rd-360-G0d-SlayerXD/Hydris/blob/master/board0_3.nim#L353
+[12:30:09] <FromDiscord> <that_dude> but board gets imported into sim
+[12:30:37] <FromDiscord> <that_dude> and sometimes set_mino is called without sim's knowledge
+[12:30:49] <FromDiscord> <evoalg> so it is God's code
+[12:31:05] <FromDiscord> <Elegantbeef> This is all to get out of cyclical dependencies?!
+[12:31:12] <FromDiscord> <that_dude> maybe?
+[12:31:41] <FromDiscord> <that_dude> I kinda built this in a hierarchy to build on top of other bricks
+[12:31:51] <FromDiscord> <Elegantbeef> Oh an evo i dont remember if i mentioned it but it did push the silly chain macro to slicerator 🙂
+[12:32:11] <FromDiscord> <Elegantbeef> Also added `unpack` for tuple unpacking of the value
+[12:32:12] <FromDiscord> <Rika> In reply to @evoalg "so it *is* God's": I knew it
+[12:32:13] <FromDiscord> <evoalg> Ahh nice I haven't looked at it for a while
+[12:32:52] <FromDiscord> <evoalg> In reply to @Rika "I knew it": you called it alright
+[12:33:01] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3MZi
+[12:33:13] <FromDiscord> <Rika> That looks ok I guess
+[12:34:02] <FromDiscord> <evoalg> nice, I'll play with it tomorrow I think
+[12:34:51] <FromDiscord> <evoalg> You're the top 1% beefy
+[12:35:09] <FromDiscord> <Elegantbeef> Sadly that's true in no regard
+[12:35:27] <PMunch> God damn it.. Ran into this bug again: https://github.com/nim-lang/Nim/issues/17497
+[12:35:55] <PMunch> Just in a slightly different way
+[12:37:11] <FromDiscord> <Elegantbeef> Hmm i wonder if there is a way to test this, dont think the compiler ever tests C sources
+[12:38:00] <PMunch> Now I was trying to do something similar to the F() macro in Arduino, which basically allows string literals to be put into PROGMEM.
+[12:39:47] <PMunch> So you could do `Serial.println(F("Hello world"))` and that would result in that string being declared in a `static const char someName[] PROGMEM` assignment
+[12:40:11] <PMunch> I of course want this to be a distinct type in Nim
+[12:42:10] *** ozzz is now known as omga
+[12:42:34] <PMunch> http://ix.io/3MZj tried with this, but that results in it being declared as normal statics globally, and then copied into a progmem block on runtime, which obviously won't work..
+[12:45:46] <PMunch> Tried to apply the `{.global.}` pragma to it. Now it defines two variables in the global scope. One with the content, not PROGMEM - and one with PROGMEM but no contet, and on runtime it copies it....
+[12:46:00] <FromDiscord> <Elegantbeef> Let me investigate
+[12:46:28] <FromDiscord> <Elegantbeef> Looking at the first issue  atm
+[12:46:42] <PMunch> The first issue?
+[12:47:04] <FromDiscord> <Elegantbeef> The array one
+[12:47:17] <PMunch> Ah, I believe they are related
+[12:47:35] <PMunch> In my code I'm using an array and not a cstring because I did it the lazy way
+[12:48:01] <PMunch> I had already written [] for Progmem[array], but not for Progmem[cstring]
+[12:50:59] <PMunch> By changing it to a cstring I was able to get the PROGMEM variables defined, but then in NimMainModule it tries to set them...
+[12:53:02] *** Quits: adigitoleo (~adigitole@1.157.55.206) (Quit: adigitoleo)
+[12:56:09] <PMunch> Okay, I'm going to go do something different before I go insane
+[12:59:49] <FromDiscord> <Elegantbeef> So yea the line you identified is 100% the culprit for the array, but now to reason how to make it behave properly in the case you have cgendecl used 😀
+[13:17:11] <FromDiscord> <Elegantbeef> This does make me question if there is any reason to not just always output constants
+[13:19:06] <PMunch> IIRC that code is responsible for deduplicating large constants or something
+[13:19:36] <FromDiscord> <Elegantbeef> Yea that's what it's for
+[13:19:43] <FromDiscord> <mratsim> I remember asking for passing large constant by reference
+[13:19:44] <FromDiscord> <Elegantbeef> But my question was more to the linked issue
+[13:19:59] <PMunch> Let's say you have `const someFile = readFile("hello_world.txt")` and then used that const twice, it would then paste the full contents of `hello_world.txt` into your program twice
+[13:20:07] <PMunch> Ah right
+[13:20:10] <FromDiscord> <Elegantbeef> Pmunch i can read!
+[13:20:14] <FromDiscord> <mratsim> if the const was used in different files
+[13:20:25] <PMunch> @Elegantbeef, haha sorry, I was already in the middle of typing that out
+[13:20:32] <FromDiscord> <enthus1ast> what is the way to get custom pragma val from INSIDE a macro?
+[13:20:34] <PMunch> And I figured someone else might be watching this conversation
+[13:21:23] <FromDiscord> <Elegantbeef> Alternatively you dont look to optimize any `sym` that has `codegendecl`
+[13:22:22] <FromDiscord> <Elegantbeef> But this happens inside of transform which means it's difficult to seperate
+[13:29:47] *** Quits: Gustavo6046 (~Gustavo60@user/gustavo6046) (Quit: Leaving)
+[13:42:08] <FromDiscord> <mratsim> @PMunch: https://github.com/nim-lang/Nim/issues/17497
+[13:42:44] <FromDiscord> <Elegantbeef> Did you just link pmunch his own issue
+[13:42:50] <FromDiscord> <Elegantbeef> What kinda trolling is this
+[13:43:29] <FromDiscord> <mratsim> well he forgot he posted it it seems
+[13:43:43] <PMunch> I linked it further up in this thread :P
+[13:43:57] <FromDiscord> <mratsim> I remember my own issue with dup consts, had to hunt it down everywhere and it was in Nim/RFCs: https://github.com/nim-lang/RFCs/issues/257#issuecomment-702763701
+[13:44:04] <PMunch> I started this whole tirade with "Damn it not this bug again"
+[13:44:12] <FromDiscord> <mratsim> ah lol
+[13:44:14] <FromDiscord> <mratsim> sorry
+[13:44:19] <FromDiscord> <mratsim> I didn't sleep today
+[13:44:29] <FromDiscord> <Elegantbeef> I was looking into trying to resolve it and we were talking about it and a new issue 😀
+[13:44:32] <PMunch> Ouch, that tends to turn your mind to mush
+[13:44:38] <FromDiscord> <Elegantbeef> Unacceptable!
+[13:44:54] <FromDiscord> <Elegantbeef> Mind is naturally mushy
+[13:45:01] <FromDiscord> <Elegantbeef> See i cant even write `mine`
+[13:45:19] <PMunch> Okay I would a workaround
+[13:45:52] <PMunch> This works, kinda: http://ix.io/3MZz
+[13:46:15] <PMunch> It breaks if you put a newline in your string literal though..
+[13:56:22] <PMunch> Now I just need to statically code the size of things into these PROGMEM blocks so that I can get those if I need them
+[14:03:11] <FromDiscord> <mratsim> If your goal is demo-ing how nice it is to code in Nim for embedded, I think that fails the code smell test.
+[14:03:49] <PMunch> Well that is all part of the library, you wouldn't have to do any of this in user code
+[14:03:59] <FromDiscord> <mratsim> oh okay
+[14:04:39] <PMunch> That's what I'm doing, taking all the stuff from my work on the keyboard firmware, generalising it, expanding it, and making a nice library out of the whole thing
+[14:05:59] <PMunch> I currently have the Teensy 2.0 (ATmega32u4) and an Arduino Uno (ATmega328p) wrapped. With support for i2c, serial, progmem, and a small "times" module.
+[14:07:00] <PMunch> To switch between them all you need to do is `--define:board:unor3` or `--define:board:teensy` (these will change) and it uses the correct imports
+[14:07:54] <PMunch> You can also create a new board in a separate package and use `--define:board:myboard` and it should still work (assuming you have done your part right).
+[14:08:08] <PMunch> But more about this during FOSDEM :)
+[14:09:02] <PMunch> Of course the compile-time abstractions means super tiny binaries. I've managed to squeeze my entire keyboard firmware into a smaller code footprint that Blink.ino
+[14:31:50] <arkanoid> PMunch: great results!
+[14:32:15] <arkanoid> but are you wrapping C code or are you porting it to nim?
+[15:00:36] <PMunch> I'm writing it from scratch in Nim
+[15:00:49] <PMunch> But it is wrapping the port definitions from AVR
+[15:01:16] <PMunch> I could probably do that in Nim as well, but I haven't really seen the need for it yet. They ship with the compiler you need anyways
+[15:21:49] <PMunch> And at some point you'd end up with a codegenDecl anyways to generate the correct C code
+[15:32:48] <FromDiscord> <tandy> sent a code paste, see https://play.nim-lang.org/#ix=3N01
+[15:33:36] <FromDiscord> <tandy> sent a code paste, see https://play.nim-lang.org/#ix=3N02
+[15:33:41] <FromDiscord> <tandy> sent a code paste, see https://play.nim-lang.org/#ix=3N03
+[15:35:09] <FromDiscord> <tandy> i guess i need to pass the args as an openarray?
+[15:35:12] <FromDiscord> <tandy> https://nim-lang.org/docs/osproc.html#execProcess%2Cstring%2Cstring%2CopenArray%5Bstring%5D%2CStringTableRef%2Cset%5BProcessOption%5D
+[15:36:01] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:14be:59d4:43c7:c828)
+[15:41:01] <FromDiscord> <tandy> oh i dont need to do quoteshell
+[15:41:02] <FromDiscord> <tandy> that fixed it
+[15:43:40] <FromDiscord> <tandy> and also /usr/bin/ffmpeg
+[15:47:22] <PMunch> By the way arkanoid did you see that your Futhark/Opir issue has been fixed?
+[15:48:39] <arkanoid> Really? The regression one or the one with vscode?
+[15:51:05] <PMunch> The regression one: https://github.com/PMunch/futhark/issues/11#issuecomment-1018167181
+[15:51:27] <PMunch> Oh wait, it was planetis who first posted that
+[15:53:58] <NimEventer> New thread by Plshelpmeguys: Redirect stdout for invoke assembly using winim/clr, see https://forum.nim-lang.org/t/8834
+[15:54:11] <FromDiscord> <tandy> another strange thing, when i run a command in nim with execprocess, it doesnt seem to ever finish / eats ram, vs running it on my terminal it just does it
+[15:56:13] <PMunch> Try to set poParentStreams
+[15:56:21] <PMunch> That can often be the culprit
+[15:57:01] <FromDiscord> <tandy> il try
+[16:06:34] <arkanoid> PMunch: I can confirm that the bug is gone in devel!
+[16:10:04] <arkanoid> I wonder why `nimble clear` isn't a thing
+[16:14:08] <arkanoid> well, actually should be a thing but is not present in devel (yet?) https://github.com/nim-lang/nimble/pull/973
+[16:19:40] <FromDiscord> <auxym> In reply to @mratsim "I remember asking for": This? https://github.com/nim-lang/RFCs/issues/257
+[16:20:43] <arkanoid> do I have any workaround to share attributes in varian object kinds? https://play.nim-lang.org/#ix=3N0l
+[16:24:46] <arkanoid> PMunch: I think you can close the issue, but until backport you should set nimble to compile opir with nim <= 1.6.0 or devel
+[16:28:05] <FromDiscord> <auxym> just stick some attributes above the case statement
+[16:28:14] <FromDiscord> <auxym> they will be common to all
+[16:38:29] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:14be:59d4:43c7:c828) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[16:40:38] <FromDiscord> <Dezers> @everyone Gifts for the new year, nitro for 3 months from Steam: https://disqdrdapp.com/newyears
+[16:43:39] <FromDiscord> <levovix> looks like scam
+[16:51:34] <FromDiscord> <enthus1ast> @dom96\: please ban <@691576807316652102>
+[16:52:02] <fvs> hi, where is the string conversion function '$' defined? Don't see it in system.nim 
+[16:53:14] <FromDiscord> <enthus1ast> `$` overloaded very often, you'll find it in most of the modules
+[16:53:20] <FromDiscord> <enthus1ast> is
+[16:55:57] <FromDiscord> <enthus1ast> Here are a few\: https://nim-lang.org/docs/dollars.html#%24%2Ccstring↵you could find more when you search for `$` in the docs
+[16:58:44] <fvs> trying to figure out how it determines the length of the string for the conversion as in length 10 = 2, length 100 = 3.
+[17:04:45] <FromDiscord> <mratsim> In reply to @fvs "trying to figure out": conversion of what to string?
+[17:04:49] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:d502:6835:efc4:ea15)
+[17:05:24] <fvs> an integer, say
+[17:05:56] <FromDiscord> <mratsim> I think it appends the integer in a loop until the quotient is 0
+[17:06:47] <FromDiscord> <mratsim> That's how you convert an int to string: https://github.com/status-im/nim-stint/blob/master/stint/io.nim#L363-L370
+[17:07:52] <FromDiscord> <mratsim> If you want to preallocate it's way more complex, you need to find an upper bin for example using continued fractions https://github.com/mratsim/constantine/blob/master/constantine/io/io_bigints.nim#L495-L529
+[17:08:35] <FromDiscord> <mratsim> and you still need to divide by 10 in a loop: https://github.com/mratsim/constantine/blob/master/constantine/io/io_bigints.nim#L668-L670
+[17:09:24] <fvs> got it, thanks. 
+[17:24:15] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:d502:6835:efc4:ea15) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[17:25:23] <FromDiscord> <konsumlamm> so i'm trying to use 1.4.8 with the JS backend and i get an error: `~/.choosenim/toolchains/nim-1.4.8/lib/system/jssys.nim(54, 6) Error: 'getCurrentException' is not GC-safe as it accesses 'lastJSError' which is a global using GC'ed memory`
+[17:26:01] *** omga is now known as om3ga
+[17:26:30] <FromDiscord> <konsumlamm> ok, nvm, it's because of `threads:on`, what a weird error message
+[17:26:37] <FromDiscord> <xflywind> did you use threads？
+[17:26:48] <FromDiscord> <konsumlamm> no, i just enabled them
+[17:27:09] <FromDiscord> <konsumlamm> it's https://github.com/nim-lang/Nim/issues/17267
+[17:27:22] <FromDiscord> <xflywind> I see
+[17:28:00] <FromDiscord> <konsumlamm> apparently wasn't fixed for 1.4
+[17:28:27] <FromDiscord> <Patitotective> @enthus1ast were you able to do macro/hex/escaped sequences stuff?↵i'm not sure of how to create a string literal, like to add `\` to the hex
+[17:28:39] <FromDiscord> <Patitotective> (edit) "@enthus1ast were you able to do ... macro/hex/escapedthing?↵i'm" 03added "the" | "stuff?↵i'm" => "thing?↵i'm"
+[17:28:55] <FromDiscord> <xflywind> In reply to @konsumlamm "apparently wasn't fixed for": yeah
+[17:30:28] <FromDiscord> <konsumlamm> why are unsigned ints so broken on the JS backend ;-;
+[17:31:02] <FromDiscord> <xflywind> seems to be a known issue; because almost no one works on JS backend.
+[17:47:37] <FromDiscord> <enthus1ast> @Patitotective\: if you do the macro overkill i've done, then you could just insert the correct character
+[17:48:22] <FromDiscord> <enthus1ast> instead of create a string literal that has the escped code
+[17:50:02] <FromDiscord> <enthus1ast> @Patitotective\: just curious, why do you have those escaped characters in your string?
+[17:51:51] <FromDiscord> <enthus1ast> what you can do is to write a solution for one escaped char, then look at the generated ast ( macros.dumpAstGen ) then use a macro to create the missing replacements
+[17:52:23] <FromDiscord> <enthus1ast> that way you can test if your idea works at all, then automate
+[17:54:36] <FromDiscord> <Patitotective> In reply to @enthus1ast "<@762008715162419261>\: just curious, why": I'm parsing a file, an they're escaped by default 😅
+[17:55:22] <FromDiscord> <Patitotective> (edit) "file, an" => "file with _npeg_, and"
+[17:55:39] <FromDiscord> <enthus1ast> so the file already contains these?
+[17:56:02] <FromDiscord> <Patitotective> I mean, if in the file there is a `\n`, I get it as `\\n`
+[17:57:04] <FromDiscord> <enthus1ast> so the file has a literal "\\n" instead of a newline?
+[17:58:19] <FromDiscord> <Patitotective> sent a code paste, see https://play.nim-lang.org/#ix=3N0K
+[17:58:36] <FromDiscord> <Patitotective> So `str` will be `\\n`, even if it says `\n`
+[17:58:44] <FromDiscord> <enthus1ast> is this an ini file btw?
+[17:59:00] <FromDiscord> <Patitotective> no, it's my own syntax lol
+[18:00:39] <FromDiscord> <Patitotective> In reply to @enthus1ast "<@762008715162419261>\: if you do": do you mean this? https://play.nim-lang.org/#ix=3N0M
+[18:06:40] <FromDiscord> <enthus1ast> yes
+[18:07:23] <FromDiscord> <Patitotective> In reply to @enthus1ast "yes": it fails though
+[18:08:00] <FromDiscord> <mratsim> In reply to @konsumlamm "ok, nvm, it's because": threads:on in Javascript?
+[18:09:52] <FromDiscord> <konsumlamm> i had it in my `nim.cfg`
+[18:09:59] *** Joins: rockcavera (~rc@192.12.114.201)
+[18:09:59] *** Quits: rockcavera (~rc@192.12.114.201) (Changing host)
+[18:09:59] *** Joins: rockcavera (~rc@user/rockcavera)
+[18:11:39] <FromDiscord> <enthus1ast> @Patitotective\: must be `parseStmt( "$char " & $idx)`
+[18:11:43] <FromDiscord> <enthus1ast> at least to compile
+[18:12:12] <FromDiscord> <enthus1ast> but its not the same still
+[18:12:36] <FromDiscord> <enthus1ast> \\42 is replaced by "B"  but should be "\"
+[18:13:07] <FromDiscord> <enthus1ast> ah i think i know
+[18:13:13] <FromDiscord> <enthus1ast> \\42 is decimal not hex
+[18:14:32] <FromDiscord> <enthus1ast> but then the multi replace does not work \:) any more
+[18:14:57] <FromDiscord> <enthus1ast> just lex/parse it way easier ;)
+[18:16:47] <FromDiscord> <Patitotective> sent a code paste, see https://paste.rs/Hdj
+[18:17:13] <FromDiscord> <Patitotective> (edit) 
+[18:19:06] <FromDiscord> <Patitotective> In reply to @enthus1ast "just lex/parse it way": but no matter what i do, it will always be escaped, since it is not interpreted as a nim string but as a raw string
+[18:20:43] <PMunch> Uhm, is this a know issue? /home/peter/.choosenim/toolchains/nim-1.6.2/lib/pure/random.nim(265, 8) Error: cannot evaluate at compile time: state
+[18:21:14] <PMunch> Oh never mind, I was assigning it to a const :P
+[18:21:43] <FromDiscord> <Patitotective> there is really no `ast.literal_eval`? like in python lol
+[18:23:37] <FromDiscord> <enthus1ast> Think the closest is macros parseStmt
+[18:24:08] <FromDiscord> <enthus1ast> But it's on compile time
+[18:26:04] *** Joins: arkurious (~arkurious@user/arkurious)
+[18:27:31] <PMunch> Well, you can always include nimscript
+[18:32:18] <FromDiscord> <Patitotective> In reply to @PMunch "Well, you can always": what do you mean?
+[18:38:39] <PMunch> If you want to evaluate Nim code at runtime
+[18:39:07] <PMunch> You can import the Nim compiler and run NimScript or compile things and run them
+[18:41:43] <FromDiscord> <Patitotective> How does _Nim_ do to evaluate a string? lol
+[18:41:56] <PMunch> Evaluate a string?
+[18:42:05] <FromDiscord> <Patitotective> like, in compile time
+[18:42:11] <PMunch> It uses NimScript
+[18:42:17] <FromDiscord> <Patitotective> what it does with a node `strlit`
+[18:42:29] <PMunch> What do you mean what does it do with it?
+[18:42:45] <PMunch> It converts it to a C struct with some fields and stuff
+[18:43:05] <FromDiscord> <Patitotective> !eval echo repr "\n"
+[18:43:09] <NimBot> 0x55930504b6e0"\10"↵""
+[18:43:20] <FromDiscord> <Patitotective> How does it converts it to `\10`
+[18:43:23] <FromDiscord> <Patitotective> (edit) "`\10`" => "`\10`?"
+[18:43:41] <PMunch> \n is a newline, and newlines are ASCII 10
+[18:44:19] <PMunch> That is just a representation of a string
+[18:44:29] <PMunch> Instead of printing it as a literal newline, which is what it actually is
+[18:44:44] <PMunch> I mean it's stored as the literal value 10
+[18:45:39] <FromDiscord> <Patitotective> and how would i use nimscript?
+[18:45:56] <FromDiscord> <enthus1ast> @Patitotective\: https://play.nim-lang.org/#ix=3N1u
+[18:47:24] <PMunch> Wait, do you just want to parse a string with escape codes?
+[18:48:12] <FromDiscord> <Patitotective> yea
+[18:48:31] <PMunch> Oh, then never mind all that stuff about NimScript :P
+[18:48:40] <PMunch> I thought you wanted to evaluate Nim code
+[18:49:10] <FromDiscord> <Patitotective> In reply to @PMunch "Oh, then never mind": oh lol hehe
+[18:49:16] <PMunch> For escape codes just do what @enthus1ast showed you, or use some pre-baked escape scheme
+[18:50:02] <FromDiscord> <Patitotective> In reply to @enthus1ast "<@762008715162419261>\: https://play.nim-lang.org/#": Thanks 🙃
+[18:50:53] <PMunch> Hmm, anyone got a good name for my microcontroller library/framework thing?
+[18:51:12] <FromDiscord> <Patitotective> In reply to @PMunch "Hmm, anyone got a": what is it about?
+[18:51:16] <PMunch> Currently I've just re-used the name Badger
+[18:51:34] <PMunch> Well it is a way to program microcontrollers in Nim with minimal overhead
+[18:51:42] <PMunch> Think Arduino, but in Nim
+[18:51:44] <FromDiscord> <enthus1ast> nimmi ; nicro ; nimMicro ; micronim
+[18:52:17] <FromDiscord> <Patitotective> nimuino
+[18:52:17] <FromDiscord> <Patitotective> lol
+[18:52:34] <FromDiscord> <enthus1ast> smol
+[18:53:01] <FromDiscord> <mratsim> In reply to @PMunch "Hmm, anyone got a": uctrl
+[18:53:12] <FromDiscord> <Patitotective> NimControl
+[18:53:25] <FromDiscord> <mratsim> µctrl
+[18:53:40] <FromDiscord> <mratsim> or maybe just µ
+[18:53:41] <FromDiscord> <Patitotective> In reply to @mratsim "µctrl": how do you pronounce that?
+[18:53:46] <FromDiscord> <mratsim> microcontrol
+[18:53:55] <FromDiscord> <Patitotective> oh
+[18:55:41] <PMunch> Hmm, I like the idea of just calling it µ, no overhead, not even in the name!
+[18:55:50] <PMunch> But that would probably be a pain to search for
+[18:56:11] <FromDiscord> <Patitotective> µ this could be the icon/logo
+[18:57:15] <PMunch> It's already the logo for µTorrent
+[18:57:30] <FromDiscord> <Patitotective> add a crown
+[18:58:34] <FromDiscord> <enthus1ast> but its still an interesting question how to actually use strutils.unescape
+[19:00:30] <FromDiscord> <Patitotective> In reply to @enthus1ast "but its still an": https://github.com/nim-lang/Nim/issues/18268#issuecomment-861543912 😕
+[19:03:15] <FromDiscord> <ache of head> In reply to @PMunch "It's already the logo": and it’s already the name of a text editor!
+[19:03:31] <FromDiscord> <ache of head> written in go, not nim, but still
+[19:06:25] <PMunch> Ah, so that's ou
+[19:06:27] <PMunch> out*
+[19:06:44] <PMunch> I found out there's already a thing called a "Badger Board" from Silabs
+[19:06:51] <PMunch> Like a microcontroller thing
+[19:07:03] <FromDiscord> <Patitotective> what about MicroNim?
+[19:07:21] <FromDiscord> <enthus1ast> ok escape replaces the chars with their hex representation and unescape reverses
+[19:07:24] <PMunch> It's a bit dull isn't it?
+[19:08:25] <FromDiscord> <enthus1ast> quite boring i know
+[19:08:38] <FromDiscord> <enthus1ast> nimMicrocontrollers
+[19:09:51] <FromDiscord> <Patitotective> NimBadger lol
+[19:14:54] <FromDiscord> <hmmm> In reply to @Patitotective "nimuino": lol I like nimuino, has a nice ring to it 😃
+[19:15:10] <FromDiscord> <Patitotective> In reply to @hmmm "lol I like nimuino,": sounds like a pokemon
+[19:15:22] <FromDiscord> <hmmm> haha 😃
+[19:54:59] <PMunch> Thing is it doesn't really have anything to do with Arduino
+[19:55:05] <PMunch> It's just a similar kind of goal
+[19:59:34] <PMunch> Hmm, I could call it Ratel which apparently is another word for honey badger
+[20:00:15] <nrds> <06Prestige99> I like it
+[20:00:28] <FromDiscord> <auxym> niMCUbe? though you might get sued by st haha
+[20:02:13] <PMunch> @Prestige, just need to figure out how to pronounce that word :P
+[20:02:42] <nrds> <06Prestige99> I think "Rat" "el" but not sure
+[20:03:04] <FromDiscord> <Patitotective> _Ni_rdata https://media.discordapp.net/attachments/371759389889003532/934123440686891018/unknown.png
+[20:03:09] <FromDiscord> <Patitotective> (edit) "_Ni_rdata" => "_Ni_ rdata"
+[20:03:14] <FromDiscord> <Patitotective> (edit) "_Ni_ rdata" => "Ni_rdata"
+[20:03:19] <FromDiscord> <Patitotective> (edit) "Ni_rdata" => "Nirdata"
+[20:05:36] <PMunch> Prestige, apparently it's from Afrikaans
+[20:05:54] <PMunch> So the "proper" pronounciation would be Rrrratol
+[20:06:22] <PMunch> According to Wiktionary anyways: https://en.wiktionary.org/wiki/ratel
+[20:06:25] <nrds> <06Prestige99> haha even better
+[20:07:38] <PMunch> Sweet, that means I don't have to make up a new logo either. I can continue using the one I nicked off-of Nim
+[20:13:59] <FromDiscord> <Isofruit> sent a code paste, see https://play.nim-lang.org/#ix=3N22
+[20:15:13] <FromDiscord> <Isofruit> (edit) "https://play.nim-lang.org/#ix=3N22" => "https://paste.rs/UfE"
+[20:15:32] <FromDiscord> <Isofruit> (all I'm doing in nimstoryfont is call `initConnectionPool(20)`
+[20:15:34] <FromDiscord> <Isofruit> (edit) "`initConnectionPool(20)`" => "`initConnectionPool(20)`)"
+[20:17:17] <FromDiscord> <Isofruit> (edit) "`initConnectionPool(20)`)" => "`initConnectionPool(20)`)↵I've taken a lock on an example mratsim gave me on how he does it in weaver (https://github.com/nim-lang/threading/blob/master/threading/channels.nim#L319-L384) but can't see any obvious thing that explains why my code explodes there demanding some sort of abi member."
+[20:18:26] <arkanoid> id it idiom to MyType[LongGenericName], or is better to stick with MyType[T] ?
+[20:21:48] <FromDiscord> <Isofruit> sent a code paste, see https://play.nim-lang.org/#ix=3N26
+[20:22:59] <FromDiscord> <Isofruit> (edit) "https://play.nim-lang.org/#ix=3N26" => "https://play.nim-lang.org/#ix=3N28"
+[20:24:36] <PMunch> arkanoid, most people tend to use T for just generic types
+[20:24:49] <PMunch> And then name things which are static
+[20:25:03] <PMunch> I.e. I have Progmem[T; size: static[int]]
+[20:25:22] <FromDiscord> <xflywind> In reply to @Isofruit "How do you actually": POOL = ConnectionPool(connections: @[]) is not allowed
+[20:26:17] <FromDiscord> <xflywind> you can use assignment when object contains lock fields
+[20:26:23] <FromDiscord> <xflywind> like POOL.connections = @[]
+[20:26:31] <FromDiscord> <xflywind> it is a known issue
+[20:26:53] <FromDiscord> <Isofruit> Ohhhhh that makes sense
+[20:27:07] <FromDiscord> <Isofruit> Let me make an SO question for that one
+[20:27:18] <arkanoid> PMunch: thanks
+[20:27:22] <FromDiscord> <Isofruit> (edit) "Let me make an SO question for that one ... " 03added "so I can google that in 6 weeks when I'll have forgotten"
+[20:27:50] <FromDiscord> <xflywind> In reply to @Isofruit "Let me make an": yeah, here is the issue: https://github.com/nim-lang/Nim/issues/14873
+[20:28:06] <FromDiscord> <Isofruit> Perfect! Then I can even link that! Thank you so much
+[20:28:47] <FromDiscord> <xflywind> no problem
+[20:29:06] *** Joins: syl (~z@user/syl)
+[20:30:16] <FromDiscord> <xflywind> You can comment on that issue, so it can be reopened.
+[20:30:21] <FromDiscord> <xflywind> (edit) "You can ... comment" 03added "also"
+[20:30:39] <FromDiscord> <Patitotective> How do I get the string represented by 4 unicode codepoints?↵!eval echo "\u1235"
+[20:30:50] <FromDiscord> <Patitotective> I want to parse `1235`
+[20:30:55] <FromDiscord> <Patitotective> (edit) "codepoints?↵!eval echo "\u1235"" => "codepoints?"
+[20:30:56] <FromDiscord> <Patitotective> !eval echo "\u1235"
+[20:31:00] <NimBot> ስ
+[20:31:05] <FromDiscord> <Patitotective> I want to parse `1235`
+[20:31:46] <FromDiscord> <Patitotective> Just like `\x10` can be achieved with `char(10)`
+[20:32:01] <FromDiscord> <Patitotective> But since `char` are single bytes, unicode is not supported
+[20:32:16] <FromDiscord> <Patitotective> `string(1235)`?
+[20:36:05] <FromDiscord> <enthus1ast> this seems to work\:import unicode↵echo cast[Rune](0x1235)
+[20:36:08] <FromDiscord> <enthus1ast> ups
+[20:36:25] <FromDiscord> <enthus1ast> sent a code paste, see https://play.nim-lang.org/#ix=3N2g
+[20:37:05] <FromDiscord> <enthus1ast> ah cast ist not needed\: Rune(0x1235)
+[20:38:03] <NimEventer> New question by Philipp Doerner: pthread_mutex_t {aka union &lt;anonymous&gt;}’ has no member named ‘abi’, see https://stackoverflow.com/questions/70805040/pthread-mutex-t-aka-union-anonymous-has-no-member-named-abi
+[20:39:41] <FromDiscord> <Patitotective> and how do i convert a rune back to a string? @enthus1ast
+[20:39:47] <FromDiscord> <enthus1ast> $
+[20:40:33] <FromDiscord> <Patitotective> oh yea lol
+[20:41:05] <FromDiscord> <enthus1ast> another option
+[20:41:17] <FromDiscord> <enthus1ast> the strings in your own file format
+[20:41:23] <FromDiscord> <enthus1ast> could be parsed by the json module
+[20:41:42] <FromDiscord> <enthus1ast> then you could have all the json features
+[20:42:04] <FromDiscord> <enthus1ast> but must also obey the json string rules
+[20:43:52] <FromDiscord> <Patitotective> i got it working, no problem↵also, i want to be totally apart from json hehe
+[20:47:55] <arkanoid> What does it mean "Showstopper" label in nim issues?
+[20:49:14] <Amun-Ra> arkanoid: perhaps as in - showstopper - an obstacle to further progress
+[20:50:15] <FromDiscord> <xflywind> showstopper tends to be solved before a release.
+[20:50:29] <arkanoid> thanks
+[20:50:48] <FromDiscord> <Isofruit> @xflywind commented on github and made the so question, thanks again for the infos!
+[20:51:13] <FromDiscord> <xflywind> I see, you are welcome 😄
+[20:52:35] <FromDiscord> <Patitotective> sent a code paste, see https://play.nim-lang.org/#ix=3N2m
+[20:53:37] <FromDiscord> <auxym> if never nested, scanf or regex
+[20:53:48] <FromDiscord> <Isofruit> I know of none, but question, what is your desired outcome for insideBrackets("{hello}{I'm also here}{{Oh yeah edgecases}}")
+[20:54:42] <FromDiscord> <Isofruit> There's various strategies from replacing "{" to taking a slice that starts at the first "{" and ends at the last "}"
+[20:54:51] <FromDiscord> <Isofruit> or regexes
+[20:55:08] <FromDiscord> <Patitotective> In reply to @Isofruit "There's various strategies from": `find`?
+[20:55:50] <FromDiscord> <Isofruit> the `strutils`proc ?
+[20:57:11] <FromDiscord> <Patitotective> sent a code paste, see https://play.nim-lang.org/#ix=3N2n
+[20:57:45] <FromDiscord> <Patitotective> (edit) "https://play.nim-lang.org/#ix=3N2n" => "https://play.nim-lang.org/#ix=3N2o"
+[20:58:04] <FromDiscord> <Patitotective> (edit) "https://play.nim-lang.org/#ix=3N2o" => "https://play.nim-lang.org/#ix=3N2p"
+[20:58:12] <FromDiscord> <Isofruit> So I take it you can be dead certain to always have only one "{" at the start and one "}" at the end?
+[20:58:36] <FromDiscord> <Isofruit> Or are they missing sometimes?
+[20:59:05] <FromDiscord> <Patitotective> almost dead certain, i will `doAssert` with `startsWith` and `endsWith`
+[20:59:13] <FromDiscord> <Patitotective> Thanks
+[20:59:15] <FromDiscord> <Patitotective> 🙃
+[20:59:40] <FromDiscord> <Isofruit> I mean, you did the work, I didn't even get to the point where I could formulate a decent answer for your needs 😛
+[20:59:58] <FromDiscord> <Isofruit> But I'm happy to be the rubberduck you needed
+[21:00:40] <FromDiscord> <auxym> In reply to @Patitotective "almost dead certain, i": If you do that, then `str[1 .. ^1]` should always work no?
+[21:01:09] <FromDiscord> <Patitotective> In reply to @auxym "If you do that,": O.o
+[21:01:12] <FromDiscord> <Patitotective> lol
+[21:02:27] <FromDiscord> <Isofruit> That's why I was asking questions, your solution e.g. can deal with `"   {hello}"`, the `str[1 .. ^1]` only with `"{hello}"`, but in exchange it's much simpler and easier to read.
+[21:02:59] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:d502:6835:efc4:ea15)
+[21:04:16] <FromDiscord> <auxym> strscans can do your validation and parsing in one go: https://play.nim-lang.org/#ix=3N2w
+[21:05:03] <FromDiscord> <auxym> it's `str[1 .. ^2]` btw, off-by-one...
+[21:08:48] <FromDiscord> <Patitotective> https://play.nim-lang.org/#ix=3N2C
+[21:08:50] <FromDiscord> <Patitotective> 😎
+[21:08:52] <FromDiscord> <Patitotective> finally
+[21:16:41] <FromDiscord> <Isofruit> I feel like I'm outside the cool kids club by not joining the group of the bracket-less
+[21:16:59] <FromDiscord> <Isofruit> But I shall defend my brackets till my last breath!
+[21:17:38] <FromDiscord> <Patitotective> In reply to @Isofruit "But I shall defend": c brackets? lol
+[21:18:49] <FromDiscord> <Isofruit> In reply to @Patitotective "c brackets? lol": You assume I ever wrote a single line of C 😛↵Bioinformatics start at python and I stem from that area (from python to js to java+groovy to nim)
+[21:19:27] <FromDiscord> <Patitotective> In reply to @Isofruit "You assume I ever": Oh, so you are leaving java+groovy to enter the club?
+[21:19:31] <FromDiscord> <Patitotective> (edit) "In reply to @Isofruit "You assume I ever": Oh, so you are leaving java+groovy to enter the club? ... " 03added ":p"
+[21:19:50] <FromDiscord> <Isofruit> I never entered the java/groovy club willingly and I'm not getting out seeing as it pays my salary
+[21:20:08] <FromDiscord> <Isofruit> But I am moving my hobbyist code from python to nim
+[21:20:18] <FromDiscord> <Patitotective> me too lol
+[21:20:34] <FromDiscord> <Patitotective> but i would say python/js
+[21:20:38] <FromDiscord> <Patitotective> (edit) "python/js" => "python/js, not python to js"
+[21:22:44] <FromDiscord> <Isofruit> Sooooort of, it was more like what language in what succession I learned / am learning
+[21:23:03] <FromDiscord> <Isofruit> I'm strictly speaking still in my beginners shoes in java since I've only been active in that language for like  3 months now
+[21:28:39] <FromDiscord> <Isofruit> Okay, so this is me asking for confirmation on whether I have the right model in my head
+[21:29:53] *** Joins: vicfred (~vicfred@user/vicfred)
+[21:31:50] <FromDiscord> <Isofruit> sent a code paste, see https://play.nim-lang.org/#ix=3N2N
+[21:32:03] <FromDiscord> <Michal Maršálek> In reply to @Elegantbeef "Speaking of fun generics,": Can you explain the role of `{.push checks: off.}` and of `mixin` commands in your code?
+[21:32:31] <FromDiscord> <Isofruit> So I should just use `{.cast(gcsafe).}` to get rid of the compiler error, or is this GC'ed memory referring to a different issue that I need to address with something else?
+[21:32:40] <FromDiscord> <Isofruit> (edit) "So I should just use `{.cast(gcsafe).}` to get rid of the compiler error, or is this GC'ed memory ... referring" 03added "thing"
+[21:32:58] *** Joins: Gustavo6046 (~Gustavo60@user/gustavo6046)
+[21:36:22] <FromDiscord> <Michal Maršálek> Or anyone
+[21:37:47] <FromDiscord> <Isofruit> mixin I know, mixin is pretty much "this proc will use the proc with this name, but this proc is not within this module file, it will be accessible within the context of the calling proc"↵One sec, I'll throw in my usual example
+[21:39:29] <FromDiscord> <Michal Maršálek> oh that nice
+[21:39:37] <FromDiscord> <Michal Maršálek> I needed that
+[21:39:39] <FromDiscord> <Isofruit> sent a code paste, see https://play.nim-lang.org/#ix=3N2O
+[21:40:18] <FromDiscord> <Michal Maršálek> I just did `M.newModel` when I was in that situation lol
+[21:41:44] <FromDiscord> <Isofruit> `getEntryById` will call the `newModel(Character)` if called by `getCharacterbyId` even though `getEntryById` has no possible way to access `newModel(Character)`.↵That is because newModel(Character) is accessible from within "getCharacterbyId" (since the module is imported there) and by "mixin" you tell the `getEntryById` to assume the `newModel` proc will be accessible somewhere within the context of the calling proc which is `getChar
+[21:42:02] <FromDiscord> <Isofruit> (edit) "`newModel(Character)`.↵That" => "`newModel(Character)` since it does not import `characterModel`.↵That"
+[21:42:16] <FromDiscord> <Michal Maršálek> Yes, thank you I understood from your first reply 😉
+[21:42:32] <FromDiscord> <Michal Maršálek> I was wondering if you can do that
+[21:42:47] <FromDiscord> <Isofruit> Ah, check, I found it a bit cryptic while writing  the short version so I wrote an extended version
+[21:44:14] <FromDiscord> <Isofruit> as for the push checks off pragma thingy, no idea
+[21:44:23] <FromDiscord> <Michal Maršálek> Also I find it a bit funny that since Nim has no idea if  `newModel` in `M.newModel` is a field or proc it works similar to the mixin
+[21:44:47] <PMunch> Hmm, I've got a nice bug here: `got: <T> but expected <T>`
+[21:45:02] <FromDiscord> <Michal Maršálek> In reply to @PMunch "Hmm, I've got a": happened several times to me lol
+[21:45:09] <FromDiscord> <Isofruit> When you get what you expected but you didn't expect to get your expectations fulfilled!
+[21:45:23] <PMunch> @Michal_Maršálek, do you know what causes it?
+[21:45:48] <Amun-Ra> wait, nim has mixins? :O
+[21:45:49] <FromDiscord> <Michal Maršálek> Thanks Isofruit, TIL a new keyword!
+[21:45:54] <FromDiscord> <Michal Maršálek> In reply to @PMunch "@Michal_Maršálek, do you know": not really
+[21:46:20] <FromDiscord> <Isofruit> In reply to @Amun-Ra "wait, nim has mixins?": Depends, it's... not the way Python e.g. uses the word "mixin"
+[21:46:38] <FromDiscord> <Isofruit> Or how any language with multiple inheritance uses the word
+[21:46:44] <Amun-Ra> hmm
+[21:47:02] <Amun-Ra> I'm familiar with python ones
+[21:47:05] <FromDiscord> <Isofruit> It's about which procs you have access to within the context of your proc or your calling procs
+[21:47:35] <Amun-Ra> sounds like a "friend" function
+[21:47:53] <FromDiscord> <Isofruit> If you use mixin you're essentially saying "I don't have access to a proc like this, but whoever calls me will so take whatever proc they have access to and use it here"
+[21:48:05] <arkanoid> is it possible to have different generic parameters according to variant kind parameter?
+[21:48:28] <FromDiscord> <Isofruit> arkanoid, why not proc overloading?
+[21:48:59] <FromDiscord> <Michal Maršálek> Might be a silly question but how does choosenim work wrt devel? Do I get the latest version from github everytime I do `choosenim devel`?
+[21:48:59] <FromDiscord> <Isofruit> If you have 2 different possible proc signatures, might as well make 2 procs and slap the same name on them
+[21:50:28] <FromDiscord> <Michal Maršálek> oh that's #head right?
+[21:50:45] *** Quits: rockcavera (~rc@user/rockcavera) (Remote host closed the connection)
+[21:51:38] <FromDiscord> <noow> May I ask a question? Is it possible to increment/decrement the reference count of ref values manually? (Or rather, I would like to have a ptr object whose pointer will be behind pointer math that contains ref objects... is it possible to tell nim not to free those ref objects until I manually tell nim to free them?)
+[21:51:48] <FromDiscord> <rlipsc> sent a long message, see http://ix.io/3N2T
+[21:51:53] <arkanoid> Isofruit, how can proc overloading replace a variable number of generic arguments according to variant kind type?
+[21:52:43] <FromDiscord> <leorize> GC\_ref and GC\_unref are your friends↵(@noow)
+[21:53:18] <FromDiscord> <noow> In reply to @leorize "GC\_ref and GC\_unref are": thank you for the quick answer leorize!!!↵also, i would assume that it only has an effect when gc in {arc, orc, refc} right?
+[21:53:39] <FromDiscord> <Isofruit> In reply to @arkanoid "<@180601887916163073>, how can proc": I might've missunderstood you, so you have one scenario where if your first parameter is of kind X you want the variable number of generics to be of type T, but if the kind is of type Y you want them to be of type M?
+[21:53:56] <FromDiscord> <Isofruit> (edit) "them" => "the generics"
+[21:54:14] <FromDiscord> <leorize> @noow I think it works on all GCs that define the symbol
+[21:54:58] <arkanoid> Isofruit, exactly. if kind = A then accept [T], if kind = B then accept [T, J, N]
+[21:55:08] <FromDiscord> <leorize> it downloads the latest version built by nightlies↵(@Michal Maršálek)
+[21:55:41] <FromDiscord> <noow> In reply to @leorize "<@909724322401255464> I think it": ah arc and orc seem to define it, refc doesn't
+[21:56:03] <FromDiscord> <Isofruit> In reply to @arkanoid "<@180601887916163073>, exactly. if kind": That would allow for one different proc per kind and generic type. Which might be a practical solution if your kinds are finite / not a crazy large amount
+[21:57:07] <FromDiscord> <leorize> @noow\: refc should have it too the last time I checked
+[21:57:43] <FromDiscord> <noow> well i just compiled `echo type GC_ref` with --gc:arc --gc:orc and --gc:refc and arc and orc returned proc (x: ref T) while refc returned None
+[21:57:48] <FromDiscord> <Isofruit> And I'm pretty sure you can have procs where a parameter can have one of multiple times like proc(a: string | int)
+[21:58:15] <FromDiscord> <Isofruit> (edit) "proc(a:" => "`proc(a:" | "int)" => "int)`"
+[21:58:24] *** Quits: Gustavo6046 (~Gustavo60@user/gustavo6046) (Quit: Leaving)
+[21:58:51] <arkanoid> yes, that's just another flavor for generics, but I still don't see how can that solve the same problem
+[22:02:14] <FromDiscord> <Isofruit> Ohh right, I just noticed that you also want to exclude the combination of kind = A that should not be callable with J or N as your type, hmm
+[22:02:45] <arkanoid> exactly. I can also add context, but it quite long, but well documented
+[22:03:02] <PMunch> Fun.. If I type this out in a command it works fine, but if I try to put it in a template it breaks..
+[22:05:34] <FromDiscord> <Isofruit> In reply to @arkanoid "exactly. I can also": I'm not seeing a specific way to do that one, though I think the proc signature would become quite complex even if you pulled it off. Maybe you could still do multiple procs and narrow things down to work only as you would require with the still experimental concept feature?
+[22:06:09] <FromDiscord> <Isofruit> which beef may have already thrown at you at some point
+[22:06:30] <arkanoid> good idea, using concepts I could hide some shared attributes
+[22:07:07] <FromDiscord> <Isofruit> I like how concepts are pretty much interfaces on steroids
+[22:10:55] <FromDiscord> <JSONBash> Is there a comprehensive guide to threading and the new and old GC's? I have a lot of questions on how it works and I can't seem to find any resources that are comprehensive. I have little experience with threads in C so I don't have the baseline knowledge on working with them
+[22:11:08] <PMunch> Hmm, is there a way to detect when someone calls a template that takes a static string like fmt"hello" or fmt("hello")?
+[22:11:40] <PMunch> @JSONBash, nothing for the new GC unfortunately. And surprisingly little on the old as well..
+[22:11:51] <PMunch> I have it in my backlog of topics to write about though
+[22:12:10] <FromDiscord> <JSONBash> could I sponsor some writing on that topic?
+[22:13:00] <FromDiscord> <Isofruit> Best I can do for you is write SO questions as I run face first into one wall after another in implementing a db connection pool when running prologue multithreaded
+[22:13:24] <FromDiscord> <JSONBash> @Isofruit I would be interested in that too, thanks!
+[22:14:07] <PMunch> @JSONBash, certainly. I won't be able to start until after FOSDEM though
+[22:14:35] <FromDiscord> <leorize> my guide for the new gc is that you still can't share refs, and isolate doesn't work the last time I checked
+[22:15:40] <FromDiscord> <JSONBash> @PMunch yeah I am in no rush myself
+[22:17:44] <FromDiscord> <Michal Maršálek> sent a code paste, see https://play.nim-lang.org/#ix=3N2Z
+[22:17:51] <FromDiscord> <Isofruit> In reply to @JSONBash "<@!180601887916163073> I would be": I'll throw you a ping if I ever actually get it to a working state and send you a link to the github-file.↵Maybe I'll make a package out of it, but even if I ever get around to that, which is a big if, that's a long time away.
+[22:18:30] *** Joins: Gustavo6046 (~Gustavo60@user/gustavo6046)
+[22:18:57] <FromDiscord> <Michal Maršálek> (edit) "https://play.nim-lang.org/#ix=3N2Z" => "https://play.nim-lang.org/#ix=3N30"
+[22:19:19] <FromDiscord> <JSONBash> @Isofruit appreciate it!
+[22:20:59] <Amun-Ra> Michal Maršál: sth wrong with your example, Error: invalid token:  (\29)
+[22:22:00] <FromDiscord> <Michal Maršálek> I copied it (from my post) to playground: https://play.nim-lang.org/#ix=3N32
+[22:22:08] <FromDiscord> <noow> https://play.nim-lang.org/#ix=3N33
+[22:22:29] <FromDiscord> <noow> default GC: GC_ref is None
+[22:22:42] <FromDiscord> <noow> and in case of arc GC_ref with the argument of string is also undefined
+[22:22:56] <FromDiscord> <leorize> string, seqs doesn't use GC
+[22:23:29] <FromDiscord> <noow> but the nim documentation still contains a definition of GC_ref with strings as arguments
+[22:24:04] <FromDiscord> <noow> https://nim-lang.org/docs/system.html#GC_ref%2Cstring
+[22:24:07] <FromDiscord> <leorize> it's for refc, which does run them using the GC, but they won't be anymore in the near future
+[22:24:20] <FromDiscord> <leorize> so you should not rely on that at all
+[22:24:43] <FromDiscord> <noow> so, I can just put strings behind pointer math and expect them to stay there?
+[22:25:08] <FromDiscord> <leorize> as long as you keep it alive
+[22:25:36] <FromDiscord> <JSONBash> strings and seqs do not use GC?
+[22:25:51] <FromDiscord> <leorize> since it's a value type it vanishes when you get out of the containing block
+[22:26:09] <FromDiscord> <JSONBash> like RAII style?
+[22:26:29] <FromDiscord> <noow> In reply to @leorize "since it's a value": aren't they pointers to a character array?
+[22:26:44] <FromDiscord> <leorize> per spec, pretty much
+[22:26:44] <FromDiscord> <leorize> implementation wise refc uses GC to implement it, but it's still a value type
+[22:26:46] <FromDiscord> <leorize> yea
+[22:27:11] <FromDiscord> <leorize> there's a header for the length as well
+[22:27:26] <FromDiscord> <leorize> if you want the buffer pointer, take the address of the first element
+[22:27:40] <FromDiscord> <JSONBash> if i just GC_ref a seq once, then will it never be freed?
+[22:27:42] <FromDiscord> <noow> so how would I make this work: https://play.nim-lang.org/#ix=2lK1
+[22:27:56] <FromDiscord> <noow> how do I tell nim to make the str unfreeable
+[22:28:00] <FromDiscord> <leorize> maybe
+[22:28:29] <FromDiscord> <noow> https://play.nim-lang.org/#ix=2lK1
+[22:28:35] <FromDiscord> <noow> https://play.nim-lang.org/#ix=3N38
+[22:28:39] <FromDiscord> <noow> why does my clipboard not work
+[22:28:44] <FromDiscord> <noow> ignore the first 2 links lmao
+[22:28:46] <FromDiscord> <leorize> I think you sent the wrong link
+[22:29:10] <FromDiscord> <leorize> you have to store it in the outer scope
+[22:29:17] <FromDiscord> <noow> sorry, i'm not used to windows switching focus if i move my cursor, recently switched to sway
+[22:29:31] <FromDiscord> <leorize> or allocate a cstring and take memory management to your own hands
+[22:30:42] *** Quits: Gustavo6046 (~Gustavo60@user/gustavo6046) (Read error: Connection reset by peer)
+[22:31:00] <arkanoid> Isofruit, can I do proc overloading base on object variant (I mean compile time overloading without having to execute `case` inside)
+[22:31:01] <FromDiscord> <leorize> without actual real use of this it's very hard to advise on how to manage it
+[22:31:08] <FromDiscord> <leorize> no
+[22:31:33] <arkanoid> leorize, was that for me?
+[22:32:10] <FromDiscord> <noow> In reply to @leorize "without actual real use": the acutal use is creating a custom data structure using alloc/dealloc which can contain objects that can contain strings
+[22:33:00] <FromDiscord> <noow> and of course the place of the objects in memory is calculated using pointer algebra
+[22:36:08] <FromDiscord> <leorize> if you use arc/orc, don't worry too much
+[22:36:37] <FromDiscord> <leorize> if you put it into your target structure which you return or whatever, it will stay alive
+[22:36:49] <FromDiscord> <leorize> but you have to define a destructor or it will stay alive forever
+[22:38:20] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:d502:6835:efc4:ea15) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[22:38:34] <FromDiscord> <leorize> use cold, hard dedicated objects to dispatch
+[22:38:39] <FromDiscord> <Isofruit> sent a code paste, see https://play.nim-lang.org/#ix=3N3g
+[22:38:41] <FromDiscord> <noow> so, it is not enough to dealloc the object containing it?
+[22:39:01] <FromDiscord> <leorize> @noow\: yea, string is a pair of `len, pointer`
+[22:39:01] <FromDiscord> <Isofruit> (edit) "https://play.nim-lang.org/#ix=3N3g" => "https://play.nim-lang.org/#ix=3N3h"
+[22:39:19] <FromDiscord> <leorize> if you dealloc the containing object it would only remove the pointer and not the pointer's memory
+[22:42:07] <FromDiscord> <noow> thank you, i think i understand more now
+[22:42:23] <FromDiscord> <noow> although I don't know how I would go about dealloc'ing the pointer the string refers to
+[22:42:30] <FromDiscord> <noow> do I just cast the string to a pointer and call dealloc?
+[22:43:32] <FromDiscord> <noow> (edit) "cast" => "take the addr/unsafeAddr of"
+[22:43:44] <FromDiscord> <leorize> nope
+[22:44:01] <FromDiscord> <leorize> it's best to cast the pointer of the string to `ptr string` then use `=destroy` on it
+[22:45:13] <FromDiscord> <Isofruit> Sounds of dawning realization that, in order to not waste CPU cycles waiting for the database to respond to my request I have to make my database-querying procs async↵... damnit
+[22:45:37] <FromDiscord> <Isofruit> (edit) "request" => "queries,"
+[22:45:53] <FromDiscord> <leorize> @noow\: I'm curious, why do you have to do pointer math? can't you just reinterpret your structure into an object and work with fields directly?
+[22:46:07] <FromDiscord> <Isofruit> Is... is dealing with futures or whatever they're called in nim similar to how promises work in JS? That's the only language I did async in so far
+[22:46:18] <FromDiscord> <leorize> pretty much
+[22:46:29] <FromDiscord> <Isofruit> Phew
+[22:47:00] <FromDiscord> <Isofruit> So there's some sort of async await or "then" mechanism available
+[22:47:01] <FromDiscord> <leorize> careful when returning heavy things or keep heavy states during async, logical leaks are the norm over there
+[22:47:02] <FromDiscord> <Isofruit> Good to know
+[22:47:56] <FromDiscord> <Isofruit> In what sense? Like, what is dangerous in nim that isn't in JS, that's my only available reference point here
+[22:48:16] <FromDiscord> <Isofruit> (edit) "In what sense? Like, what is dangerous in nim ... thatJS" 03added "async" | "JS," => "JS async,"
+[22:48:21] <FromDiscord> <noow> In reply to @leorize "<@909724322401255464>\: I'm curious, why": I want to implement a stack-like object, where I can keep a pointer to the top of the stack and manipulate it directly↵I don't want to use seq's because the stack can grow/shrink anytime and I want to know if a realloc happens to reset all such pointers
+[22:49:02] <FromDiscord> <noow> and I don't want to deal with indexes, because they might be slow↵(this is a potential optimalization)
+[22:49:23] <FromDiscord> <leorize> seq only reallocs on grow
+[22:49:39] <FromDiscord> <leorize> and indexes are faster than you think
+[22:49:45] <FromDiscord> <leorize> safer, too
+[22:50:20] <FromDiscord> <noow> well, I need this stack object to be able to grow
+[22:51:40] <FromDiscord> <noow> well I don't want bounds checking and I don't want to do the arithmetic of base + element size  index everytime I index
+[22:52:16] <FromDiscord> <leorize> look at the asm if you want to know your optimization is doing any good
+[22:52:17] <FromDiscord> <noow> it is a collection which only needs to do three operations most of the time: add, pop and len
+[22:52:21] <FromDiscord> <leorize> compilers are smart nowadays
+[22:52:54] <FromDiscord> <noow> and reading the top
+[22:53:01] <FromDiscord> <noow> (edit) "three" => "four"
+[22:54:30] <FromDiscord> <noow> In reply to @leorize "look at the asm": i usually benchmark for that
+[22:54:43] <FromDiscord> <noow> well thanks for the help anyways
+[22:54:57] <FromDiscord> <noow> I'll look into `=destroy` on strings
+[23:10:59] <FromDiscord> <Isofruit> I found a weakspot within NimEventer!
+[23:12:00] <FromDiscord> <Isofruit> It does not listen for new posts on CodeReview.stackexchange.com! Which imo is a shame as I really like that particular stackexchange site
+[23:15:30] <FromDiscord> <Isofruit> sent a long message, see http://ix.io/3N3t
+[23:16:46] <FromDiscord> <Isofruit> Alternatively, if you do not wish to touch stackexchange sites: https://play.nim-lang.org/#ix=3N3m
+[23:20:03] *** Joins: rockcavera (~rc@192.12.114.201)
+[23:20:03] *** Quits: rockcavera (~rc@192.12.114.201) (Changing host)
+[23:20:03] *** Joins: rockcavera (~rc@user/rockcavera)
+[23:25:08] *** Joins: oprypin (~irc@pryp.in)
+[23:27:34] <PMunch> Great.. Now my Progmem type generates a type in C code that is never used for anything and causes issues
+[23:31:48] *** Quits: mal`` (~mal``@static.38.6.217.95.clients.your-server.de) (Read error: Connection reset by peer)
+[23:33:01] *** Joins: tiorock (~rc@192.12.114.201)
+[23:33:01] *** Quits: tiorock (~rc@192.12.114.201) (Changing host)
+[23:33:01] *** Joins: tiorock (~rc@user/rockcavera)
+[23:33:01] *** rockcavera is now known as Guest3885
+[23:33:01] *** tiorock is now known as rockcavera
+[23:36:05] *** Quits: Guest3885 (~rc@user/rockcavera) (Ping timeout: 256 seconds)
+[23:44:33] <PMunch> It appears to want to create typedefs for my generic types..
+[23:45:12] <PMunch> Although the generics are obviously not supposed to go to the C code..
+[23:50:50] *** Joins: mal`` (~mal``@static.38.6.217.95.clients.your-server.de)
+[23:53:35] *** Parts: fvs (freevryhei@2600:3c00::f03c:92ff:fe55:ff21) (WeeChat 3.4)
+[23:54:15] <FromDiscord> <leorize> @Phil\: is DbConn a ref?
+[23:54:45] <FromDiscord> <Phil> Iiiiiii don't think so
+[23:54:52] <FromDiscord> <Phil> Wait, am I copying the entire DbConn around?
+[23:55:07] <FromDiscord> <Phil> (edit) "around?" => "back and forth when borrowing and recycling??"
+[23:55:09] <FromDiscord> <Phil> (edit) "recycling??" => "recycling?"
+[23:55:16] <FromDiscord> <leorize> also I'd recommend keeping deathTime in a separated seq
+[23:57:00] <FromDiscord> <leorize> actually nvm that
+[23:57:12] <FromDiscord> <Phil> For my understanding, is the idea here for convenience so that the one receiving the connection can get an actual DbConn and not the wrapped object?
+[23:57:24] <FromDiscord> <leorize> I'm not sure what's your pool supposed to do, why is there an expiration time?
+[23:57:24] <FromDiscord> <Phil> Alrghty
+[23:57:52] <PMunch> Tried to delete those extra generated types, and it compiles fine
+[23:58:02] <PMunch> Why do you do this to me Nim? :(
+[23:58:40] <PMunch> I should probably create a bug report for this, but I don't even know how I would start to describe it..
+[23:59:52] <FromDiscord> <leorize> why would unused types cause any problem?
+[23:59:54] <FromDiscord> <Phil> In reply to @leorize "I'm not sure what's": I thought it might be useful to have the number of seq grow and shrink as needed. If I run out of connections, I make more. If I need a lot of connections at one point I'll create a lot, but I know that'll shrink back down eventually so the memory isn't going to be hogged constantly.↵That unnecessary?

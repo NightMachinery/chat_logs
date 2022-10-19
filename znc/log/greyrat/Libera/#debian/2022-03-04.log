@@ -1,0 +1,1129 @@
+[00:00:25] <Poster> is the docker host able to reach resources on the other end of the ipsec link?
+[00:00:38] <TomyWork> no
+[00:00:59] <TomyWork> docker host?
+[00:01:04] <TomyWork> docker container you mean?
+[00:01:14] <Poster> not the container, the system running docker software and establishing the ipsec link
+[00:01:21] <TomyWork> yes
+[00:01:42] *** Joins: spare (~7r3eidahn@user/spareproject)
+[00:02:46] <Poster> ok if that's not working there is a bigger problem, I am not very strong with ipsec to help troubleshooting but if the docker host isn't working on it's own, the container(s) don't have a working path to ride
+[00:03:29] <TomyWork> like i said, the docker host has connectivity to targets on the other end of the ipsec link
+[00:05:41] <Poster> I am just not sure what address would be used in terms of masquerading
+[00:07:31] <TomyWork> i might have an indication as to where the issue lies
+[00:07:55] <TomyWork> I told wireshark to filter for ARP instead of for the target host that I'm trying
+[00:08:15] <TomyWork> it says "Who has 172.17.0.1? Tell 172.17.0.2"
+[00:09:12] <Poster> that's all expected on your docker0 interface
+[00:09:46] *** Joins: \\Mr_C\\ (~mrc@cpe-75-187-191-230.neo.res.rr.com)
+[00:10:02] <TomyWork> but no one answers
+[00:10:23] *** Joins: guiverc (~guiverc@ubuntu/member/guiverc)
+[00:10:56] <Poster> :(
+[00:12:30] <Poster> ok apparently there is an iptables policy module for ipsec https://twobit.org/2010/11/03/managing-ipsec-packet-with-iptables/
+[00:12:50] *** Joins: c7s (~c7s@user/c7s)
+[00:12:58] <TomyWork> 2010, uhhh
+[00:13:55] <Poster> it works on a Debian 11 host
+[00:14:33] <TomyWork> I'm using strongswan, I'm pretty sure it already does something like this
+[00:15:04] <TomyWork> otherwise i wouldnt be able to reach anything on the other side
+[00:15:50] <Poster> you're trying to forward with the docker container, the docker host is input/output
+[00:16:10] <Poster> plus the other side probably doesn't have a return route to the docker container, so some type of masquerade or SNAT is needed
+[00:17:46] *** Quits: lepke (~quassel@user/lepke) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[00:18:01] <TomyWork> to the other side it needs to look like everything is coming from my vpn ip
+[00:18:02] *** Joins: Scotty_Trees (~Scotty_Tr@c-73-197-200-207.hsd1.nj.comcast.net)
+[00:18:13] <Poster> yes, I just don't know what that would be
+[00:18:50] *** Joins: lepke (~quassel@user/lepke)
+[00:19:19] <TomyWork> i know my vpn ip
+[00:19:22] <Poster> you may try #networking ; I don't think your issue is really debian specific
+[00:20:07] *** Quits: Twig (~Twig@static-198-54-134-102.cust.tzulo.com) (Remote host closed the connection)
+[00:21:26] *** Quits: lepke (~quassel@user/lepke) (Client Quit)
+[00:21:35] *** Quits: Fausto (~dante@gateway/tor-sasl/filohuhum) (Ping timeout: 240 seconds)
+[00:22:29] *** Joins: lepke (~quassel@user/lepke)
+[00:23:20] <TomyWork> maybe
+[00:24:43] <TomyWork> I just don't get this... there's a route "172.17.0.0/16 dev eth0 proto kernel scope link src 172.17.0.2", which should match 172.17.0.1, yet I get "No route to host" with "nc -vz 172.17.0.1 1234"
+[00:25:16] *** Joins: Brigo_ (~Brigo@130.182.60.213.dynamic.reverse-mundo-r.com)
+[00:25:18] *** Quits: Scotty_Trees (~Scotty_Tr@c-73-197-200-207.hsd1.nj.comcast.net) (Quit: Someone is using the microwave again...)
+[00:26:34] <Poster> do you have any -j REJECT rules?  I believe the active response icmp host unreachable will return that error
+[00:26:34] *** Quits: ede (~ede@user/ede) (Remote host closed the connection)
+[00:26:57] *** Joins: ede (~ede@user/ede)
+[00:27:44] *** Joins: Scotty_Trees (~Scotty_Tr@c-73-197-200-207.hsd1.nj.comcast.net)
+[00:27:50] <TomyWork> yes, 4. all of them match "-[io] virbr[03]"
+[00:28:14] <TomyWork> -A FORWARD -[io] virbr[03] -j REJECT --reject-with icmp-port-unreachable
+[00:28:32] *** Joins: sh00p (~z@89-253-71-70.customers.ownit.se)
+[00:28:49] <TomyWork> that probably has more to do with qemu/kvm than docker
+[00:34:53] <TomyWork> Poster, if I try stuff out, it wont get persisted, right? So I could just delete those 4 rules to see if they do anything
+[00:35:35] <TomyWork> and it should be back on the next reboot at the latest, right?
+[00:36:40] <TomyWork> iptables-save | grep REJECT | sed 's/-A/iptables -D/' | bash # :D
+[00:37:20] <TomyWork> nah that didn't help
+[00:37:55] <TomyWork> still No route to host when trying to access 172.17.0.1
+[00:38:17] *** Quits: Linux77 (~7Linux7@2804:d45:8c08:9300:76d0:2bff:fe7a:f3a4) (Quit: Leaving)
+[00:39:32] <Poster> yeah something related to docker services is putting them there
+[00:39:43] <Poster> do you see the packet leaving with tcpdump?
+[00:39:48] <Poster> the reject could be happening from the other side
+[00:39:54] <TomyWork> no, it doesn't get beyond ARP
+[00:40:17] <Poster> well yeah if there's no arp reply that would be an indication that the host is unreachable
+[00:40:18] <TomyWork> it can't ARP so it's not even sending a packet
+[00:41:18] *** Quits: spare (~7r3eidahn@user/spareproject) (Remote host closed the connection)
+[00:43:03] *** Quits: yinglaoxiong (~hlam@user/yinglaoxiong) (Quit: leaving)
+[00:45:24] *** Quits: janubo_ (~janubo@2804:18:5824:41f3:196f:6982:4fbf:30f) (Ping timeout: 240 seconds)
+[00:46:06] *** Joins: easyriders (~easyrider@xb9b5df82.cust.hiper.dk)
+[00:47:39] *** Quits: mtn (~mtn@98.97.127.52) (Quit: Konversation terminated!)
+[00:48:47] *** Joins: sobkas (~sobkas@95.175.17.217)
+[00:49:39] *** Quits: ax562 (~ax562@user/ax562) (Quit: Leaving)
+[00:50:26] *** Quits: phunyguy (~blaahchm@ubuntu/member/phunyguy) (Quit: Goodbye cruel world!)
+[00:51:06] *** Joins: phunyguy (~blaahchm@ubuntu/member/phunyguy)
+[00:51:12] *** Quits: Darius10467 (~getting@user/Darius10467) (Ping timeout: 250 seconds)
+[00:54:36] *** Quits: mannequin (uid453465@id-453465.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[00:54:37] *** Quits: phuninformatique (~beaver@user/pong) (Remote host closed the connection)
+[00:54:39] *** Quits: Daniel (toolz@daniel.ro) (Ping timeout: 250 seconds)
+[00:55:09] *** Joins: janubo (~janubo@2804:18:4803:4b74:7d9d:42c9:ffac:a7a2)
+[00:56:02] *** Quits: thiras (~thiras@user/thiras) (Ping timeout: 240 seconds)
+[00:57:01] *** Joins: Seto_Kaiba (~hunterkll@2001:470:8b06:100:2958:1194:aedf:1fa3)
+[00:57:05] *** Joins: beaver (~beaver@user/pong)
+[00:57:31] <TomyWork> ok I'm giving up for today. my phone died and i need to that to get into the vpn ^^
+[00:57:45] <TomyWork> thanks for the help :)
+[00:57:53] <Poster> np; gl
+[00:57:57] *** Quits: TomyWork (~TomyLobo@p200300e80f158200bdaa2a965951a208.dip0.t-ipconnect.de) (Quit: Leaving)
+[00:59:29] *** Joins: Texou (~Texou@2a01:e34:eca5:6740:fcc4:3d8b:f7e3:59bd)
+[00:59:32] *** Quits: Hunterkll (~hunterkll@remote.kisaracorporation.com) (Killed (NickServ (GHOST command used by Seto_Kaiba!~hunterkll@2001:470:8b06:100:2958:1194:aedf:1fa3)))
+[00:59:34] *** Seto_Kaiba is now known as Hunterkll
+[01:03:32] *** Joins: Seto_Kaiba (~hunterkll@2001:470:8b06:100:2958:1194:aedf:1fa3)
+[01:03:48] *** Quits: Hunterkll (~hunterkll@2001:470:8b06:100:2958:1194:aedf:1fa3) (Killed (NickServ (GHOST command used by Seto_Kaiba)))
+[01:03:52] *** Seto_Kaiba is now known as Hunterkll
+[01:04:59] *** Joins: janubo_ (~janubo@191.190.32.76)
+[01:05:30] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Ping timeout: 250 seconds)
+[01:08:32] *** Quits: DirkS (~DirkSt@user/dirkst) (Ping timeout: 240 seconds)
+[01:09:00] *** Quits: janubo (~janubo@2804:18:4803:4b74:7d9d:42c9:ffac:a7a2) (Ping timeout: 240 seconds)
+[01:09:39] *** Joins: thiras (~thiras@user/thiras)
+[01:16:46] *** Quits: coconut (~coconut@user/coconut) (Quit: Leaving)
+[01:22:30] *** Quits: leighbb (~leighbb@user/leighbb) (Quit: Leaving)
+[01:25:10] *** Joins: DirkS (~DirkSt@user/dirkst)
+[01:28:17] *** Quits: rwp (~invalid@havoc.proulx.com) (Ping timeout: 240 seconds)
+[01:30:26] *** Joins: rwp (~invalid@havoc.proulx.com)
+[01:31:43] *** Quits: sdisavona (~Esse@pc-lapini.ifac.cnr.it) (Remote host closed the connection)
+[01:32:40] *** Quits: rafael (~rafael@user/rafael) (Quit: Ping timeout (120 seconds))
+[01:32:59] *** Quits: bgs (~bgs@cpe-212-85-160-171.cable.telemach.net) (Ping timeout: 256 seconds)
+[01:32:59] *** Joins: rafael (~rafael@user/rafael)
+[01:33:56] *** Joins: bgs (~bgs@cpe-212-85-160-171.cable.telemach.net)
+[01:35:31] *** Quits: easyriders (~easyrider@xb9b5df82.cust.hiper.dk) (Ping timeout: 256 seconds)
+[01:37:17] *** Quits: DirkS (~DirkSt@user/dirkst) (Ping timeout: 240 seconds)
+[01:44:35] *** Quits: jstolarek (~jstolarek@staticline-31-183-165-217.toya.net.pl) (Ping timeout: 256 seconds)
+[01:46:44] *** Quits: shibboleth (~shibbolet@user/shibboleth) (Quit: shibboleth)
+[01:52:21] *** Joins: arinov_ (~arinov@213.194.126.155)
+[01:52:55] *** Quits: karabaja4 (~karabaja4@dh207-94-36.xnet.hr) (Remote host closed the connection)
+[01:53:50] *** Joins: Darius10467 (~getting@user/Darius10467)
+[01:56:05] *** Joins: DirkS (~DirkSt@user/dirkst)
+[01:56:26] *** Quits: lepke (~quassel@user/lepke) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[01:57:29] *** Joins: lepke (~quassel@user/lepke)
+[01:58:11] *** Joins: stateless (~Thunderbi@2603:9000:7100:dda3:0:d08a:1c0b:6f20)
+[01:59:05] *** Joins: karabaja4 (~karabaja4@dh207-94-36.xnet.hr)
+[02:03:18] *** Quits: greyrat_ (~greyrat@ip202.ip-51-178-215.eu) (Bye)
+[02:03:38] *** Joins: greyrat (~greyrat@ip202.ip-51-178-215.eu)
+[02:03:51] *** Joins: mooff (mooff@awful.cooking)
+[02:04:01] *** Quits: ueberall (ueberall_l@user/ueberall) (Remote host closed the connection)
+[02:04:25] *** Joins: ueberall (~ueberall@user/ueberall)
+[02:05:17] *** Quits: stw (~stwalkers@wikimedia/stwalkerster) (Ping timeout: 240 seconds)
+[02:05:19] *** Joins: zaratustra (~zaratustr@idlerpg/player/zaratustra)
+[02:05:26] *** Joins: Scotty_Trees2 (~Scotty_Tr@c-73-197-200-207.hsd1.nj.comcast.net)
+[02:05:27] *** Server sets mode: +cnrt 
+[02:05:38] *** Joins: towo-home_ (~quassel@31.214.144.87)
+[02:05:51] *** Quits: zaratustra_ (~zaratustr@idlerpg/player/zaratustra) (Ping timeout: 268 seconds)
+[02:06:27] *** Joins: stw (~stwalkers@wikimedia/stwalkerster)
+[02:07:37] *** Quits: michaelni (~michael@213-47-68-29.cable.dynamic.surfer.at) (Ping timeout: 240 seconds)
+[02:08:07] *** Quits: Scotty_Trees (~Scotty_Tr@c-73-197-200-207.hsd1.nj.comcast.net) (Ping timeout: 256 seconds)
+[02:09:42] *** Quits: ddsys (~ddsys@user/ddsys) (Quit: Leaving)
+[02:09:56] *** Quits: scr (scr@user/scr) (Ping timeout: 245 seconds)
+[02:10:16] *** Quits: towo-home (~quassel@31.214.144.87) (Remote host closed the connection)
+[02:11:52] *** Quits: LucaTM (~LucaTM@user/lucatm) (Quit: Textual IRC Client: www.textualapp.com)
+[02:16:28] *** Joins: scr (scr@user/scr)
+[02:19:48] *** Joins: ddsys (~ddsys@user/ddsys)
+[02:20:36] *** Joins: michaelni (~michael@213-47-68-29.cable.dynamic.surfer.at)
+[02:24:15] *** Quits: Jimmy_H (~Jimmy_H@119.123.70.121) (Ping timeout: 256 seconds)
+[02:24:18] *** Joins: sheepduck (~sheepduck@user/sheepduck)
+[02:29:50] *** Quits: xx (~xx@user/xx) (Ping timeout: 260 seconds)
+[02:31:37] *** Quits: ice9 (~ice9@user/ice9) (Ping timeout: 256 seconds)
+[02:44:12] *** Quits: NetEcho (~NetEcho@user/netecho) (Ping timeout: 240 seconds)
+[02:47:01] *** Joins: blackout69 (~blackout6@37.183.230.121)
+[02:47:56] *** Joins: dvs (~hibbard@cwv.teksavvy.com)
+[02:51:34] *** Quits: ssiyad (~ssiyad@user/ssiyad) (Read error: Connection reset by peer)
+[02:51:42] *** Joins: ssiyad (~ssiyad@user/ssiyad)
+[02:51:49] *** Joins: jhutchins (~jonathan@136.34.196.147)
+[02:54:33] *** Joins: tieinv (~tieinv@user/tieinv)
+[02:55:34] *** Quits: arinov_ (~arinov@213.194.126.155) (Ping timeout: 250 seconds)
+[02:58:10] *** Joins: brentaarnold (~brentaarn@24.112.92.157)
+[03:01:34] *** Quits: dvs (~hibbard@cwv.teksavvy.com) (Remote host closed the connection)
+[03:06:20] *** Joins: CEP (~CEP@user/cep)
+[03:07:00] *** Joins: jaggz (~jaggz@user/jaggz)
+[03:07:46] *** Parts: blackout69 (~blackout6@37.183.230.121) ()
+[03:13:13] *** Quits: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it) (Read error: Connection reset by peer)
+[03:15:15] *** Quits: ttys000 (~ttys000@user/ttys000) (Read error: Connection reset by peer)
+[03:17:37] *** Joins: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it)
+[03:18:52] *** Joins: Linux77 (~7Linux7@2804:d45:8c08:9300:ead8:83e5:3ff3:b0a6)
+[03:19:43] *** Joins: robot56 (~robot56@cpe989d5ddfedd4-cm989d5ddfedd2.cpe.net.cable.rogers.com)
+[03:20:13] *** Quits: psionic (~psionic@user/psionic) (Ping timeout: 240 seconds)
+[03:21:10] *** Quits: falk689 (~falk689-q@gateway/tor-sasl/falk689) (Remote host closed the connection)
+[03:21:25] *** Joins: falk689 (~falk689-q@gateway/tor-sasl/falk689)
+[03:21:32] *** Joins: ttys000 (~ttys000@user/ttys000)
+[03:25:45] *** Quits: Brigo_ (~Brigo@130.182.60.213.dynamic.reverse-mundo-r.com) (Ping timeout: 256 seconds)
+[03:32:08] *** Quits: dashs (~dashs@dashs.denver.co.us) (Quit: Leaving)
+[03:32:36] *** Quits: Haudegen (~quassel@178.115.237.87.static.drei.at) (Ping timeout: 240 seconds)
+[03:34:03] *** Joins: monkey_ (~user@190.104.116.153)
+[03:38:04] *** Joins: codebam (~codebam@user/codebam)
+[03:38:58] <codebam> can someone tell me where this package builds from? I'm trying to make an rpm build for this https://github.com/arkane-systems/genie/tree/master/debian
+[03:39:24] <codebam> I don't understand how it builds
+[03:40:02] <codebam> all I see is the dependencies in control
+[03:41:19] <Khepra> ,i genie
+[03:41:20] <judd> No package named 'genie' was found in bullseye/amd64.
+[03:43:25] <Khepra> codebam: the rules file is for building
+[03:44:18] <codebam> Khepra: oh okay, thank you
+[03:45:25] *** Quits: lepke (~quassel@user/lepke) (Ping timeout: 240 seconds)
+[03:45:26] *** beaver is now known as Guest01
+[03:46:09] *** Joins: lepke (~quassel@user/lepke)
+[03:48:58] *** Quits: robot56 (~robot56@cpe989d5ddfedd4-cm989d5ddfedd2.cpe.net.cable.rogers.com) (Quit: Client closed)
+[03:50:22] *** Quits: Scotty_Trees2 (~Scotty_Tr@c-73-197-200-207.hsd1.nj.comcast.net) (Quit: Someone is using the microwave again...)
+[03:50:30] *** Quits: itsalexjones (~itsalexjo@82.4.99.241) (Read error: Connection reset by peer)
+[03:51:15] *** Quits: codebam (~codebam@user/codebam) (Ping timeout: 256 seconds)
+[03:52:04] *** Joins: AliasAlreadyTake (~Alias@user/alias)
+[03:52:35] *** Quits: Guest01 (~beaver@user/pong) (Quit: Reconnecting)
+[03:53:05] *** Joins: Guest01 (~beaver@user/pong)
+[03:53:41] *** Quits: Guest01 (~beaver@user/pong) (Client Quit)
+[03:54:10] *** Joins: Guest01 (~beaver@user/pong)
+[03:54:23] *** Joins: codebam (~codebam@user/codebam)
+[03:54:41] *** Quits: Alias (~Alias@user/alias) (Ping timeout: 256 seconds)
+[04:12:37] *** Quits: sobkas (~sobkas@95.175.17.217) (Quit: sobkas)
+[04:13:06] *** Quits: iobus (uid144366@id-144366.tinside.irccloud.com) (Quit: Connection closed for inactivity)
+[04:13:49] *** Quits: stateless (~Thunderbi@2603:9000:7100:dda3:0:d08a:1c0b:6f20) (Quit: stateless)
+[04:14:43] *** Joins: shtrb (~shtrb@user/shtrb)
+[04:15:16] *** Quits: RhinosF1 (uid339563@miraheze/RhinosF1) (Quit: Connection closed for inactivity)
+[04:18:00] *** Joins: jdccdevel (~jdccdevus@S0106e4f4c60bb5ec.ed.shawcable.net)
+[04:21:25] <jdccdevel> Anyone know how to get Dolby Digital output setup on a HDMI/DP port? (It looks like I need to setup the A52 alsa plugin, but all the docs I've been able to find seem really out of date.)
+[04:22:05] <shtrb> did you manage to get dolby output on other ports ?
+[04:24:07] *** Quits: HelloShitty (~psysc0rpi@bl20-171-222.dsl.telepac.pt) (Ping timeout: 256 seconds)
+[04:24:09] *** Quits: schizo (~schizo@user/schizo) (Ping timeout: 250 seconds)
+[04:24:29] *** Joins: schizo (~schizo@user/schizo)
+[04:26:55] <shtrb> jdccdevel, ^
+[04:27:44] <jdccdevel> shtrb: The PC is connected to a AV receiver, and the DisplaPort connection is the only digital audio out. PCM Works, but it doesn't have enough bandwidth for 5.1 channel PCM.
+[04:28:21] *** Quits: monkey_ (~user@190.104.116.153) (Ping timeout: 256 seconds)
+[04:29:35] <jdccdevel> i.e. Stereo works, but 5.1 cuts out randomly due to lack of audio bandwidth. Encoding the sound as Dolby Digital should fix that.
+[04:30:21] *** Joins: kjetilho (~kjetilho@irssi/user/kjetilho)
+[04:31:54] <kjetilho> hey, I'm trying to use mail.mailutils to send a simple mail with an attachment, but I can't make it work with an introductory text to the attachment.
+[04:32:40] <kjetilho> it uses the specified content/type for the preamble or what you would call it as well.
+[04:32:45] <greycat> Take some pity on us and tell us what "mail.mailutils" is.  What programming language is it associated with, or are you using it with?
+[04:33:08] <kjetilho> it's the version of mail(1) which is packaged in mailutils
+[04:33:44] <greycat> so https://manpages.debian.org/bullseye/mailutils/mail.mailutils.1.en.html ?
+[04:33:53] <kjetilho> yeah
+[04:34:28] <greycat> does   echo "this is the body" | mail.mailutils -A somefile somerecipient@address   work?
+[04:36:10] <kjetilho> not really.  it does make a text/plain part with "this is the body", but it doesn't have a content-disposition
+[04:36:32] *** Joins: Scotty_Trees (~Scotty_Tr@c-73-197-200-207.hsd1.nj.comcast.net)
+[04:36:54] <kjetilho> sorry, it sets content-disposition, but it sets it to attachment
+[04:36:54] *** Quits: flokuehn (~flokuehn@87.123.247.86) (Ping timeout: 272 seconds)
+[04:37:18] <greycat> *shrug* then use a different tool, and/or file a bug report against this one
+[04:37:36] <kjetilho> any suggestions for a different tool?
+[04:38:01] <greycat> mutt, s-nail
+[04:38:11] *** Quits: Scotty_Trees (~Scotty_Tr@c-73-197-200-207.hsd1.nj.comcast.net) (Remote host closed the connection)
+[04:38:26] <kjetilho> hrm.
+[04:38:34] *** Joins: flokuehn (~flokuehn@87.123.247.36)
+[04:38:41] <kjetilho> it seems "wrong" to use mutt from cron :)
+[04:38:50] <kjetilho> but that's not really rational
+[04:39:18] <greycat> one of the mailx variants should also be viable
+[04:39:35] <jdccdevel> kjetiho: If you're looking for something really specific formatting wise, it may be simpler to write a custom program in some scripting language to get exactly what you want.
+[04:40:44] <jdccdevel> Emails sent from the command line tend to be pretty basic in my experience.
+[04:41:20] <greycat> the result of my own battle against Debian's scriptable mail user agents is shown here:  https://wiki.debian.org/NewInStretch#Upgrade_issues
+[04:41:22] <kjetilho> mutt seems pretty limited on the command line
+[04:41:48] *** Quits: AngryTom (~tom@a89-183-34-229.net-htp.de) (Remote host closed the connection)
+[04:41:57] *** Quits: p_quarles (~pquarles@c-71-231-200-50.hsd1.wa.comcast.net) (Ping timeout: 256 seconds)
+[04:42:01] <jelly> what is it you're missing in mutt cli
+[04:42:09] <kjetilho> it set "Content-Type: text/csv; charset=iso-8859-1"
+[04:42:41] <kjetilho> so the first part it guessed right from my filename, but why latin1?  I'm in a UTF-8 locale.
+[04:43:17] <greycat> presumably because you didn't use any characters outside of Latin-1
+[04:43:21] <jelly> I don't remember if it scans the whole content or not
+[04:43:40] *** Quits: tieinv (~tieinv@user/tieinv) (Quit: Out!)
+[04:44:18] <kjetilho> yeah, actually it does convert UTF-8 to Latin1 correctly.
+[04:44:20] <jelly> mutt tries reasonably hard to use more efficient charset for inline text parts, I did not know it would do that for attachments as well
+[04:44:41] <kjetilho> but Thunderbird does not convert it back to UTF-8 when I save it :-p
+[04:45:21] <kjetilho> I'm not sure if I would call that a bug in Thunderbird or not.
+[04:45:24] *** Joins: dvs (~hibbard@cwv.teksavvy.com)
+[04:45:33] <kjetilho> I guess it is, for all text/* mime types
+[04:45:38] *** Quits: scr (scr@user/scr) (Ping timeout: 260 seconds)
+[04:45:39] <greycat> it's worth mentioning that just because you are "in the UTF-8 locale" doesn't mean the file you're attaching is written in the UTF-8 charset
+[04:45:55] <kjetilho> yeah, but it is
+[04:47:11] <jelly> kjetilho, see if setting send_charset to precisely "utf-8" works around that
+[04:47:28] <jelly> on the mutt, sending end
+[04:47:41] <kjetilho> I need a muttrc for that?
+[04:48:22] <jelly> that would be nice but you can also mutt -e 'set send_charset="utf-8"' ...
+[04:48:30] *** Quits: Darius10467 (~getting@user/Darius10467) (Quit: Lost terminal)
+[04:48:58] <kjetilho> woohoo!
+[04:49:03] <jelly> as shown in mutt(1)
+[04:49:25] <kjetilho> yeah, I just didn't understand "configuration command"
+[04:49:26] <kjetilho> thanks!
+[04:49:35] *** Guest01 is now known as beaver
+[04:49:56] *** Quits: sm0x (~sm0x@gateway/tor-sasl/sm0x) (Ping timeout: 240 seconds)
+[04:49:56] *** Quits: drbeco (~beco@user/beco) (Read error: Connection reset by peer)
+[04:51:46] <kjetilho> while I have all this wisdom on tap - can I specify Reply-To somehow?
+[04:52:04] <greycat> I've been using an environment variable for that.
+[04:52:52] <greycat> it's on the work machines, and I don't have access to those right at this moment, so I can't look it up
+[04:55:04] *** Joins: drbeco (~beco@user/beco)
+[04:55:55] *** Joins: sm0x (~sm0x@gateway/tor-sasl/sm0x)
+[04:56:22] <kjetilho> looks like I can use my_hdr for this
+[04:57:42] *** Joins: scr (scr@user/scr)
+[04:57:43] <jelly> I use -H file for more complex messages.  Guess -e 'my_hdr ...' would work
+[04:58:33] *** Joins: tieinv (~tieinv@user/tieinv)
+[04:59:17] <kjetilho> yep, it now works exactly like I want it to
+[04:59:23] <kjetilho> thanks a lot!
+[04:59:44] *** Quits: shtrb (~shtrb@user/shtrb) (Quit: Leaving)
+[05:01:37] *** Quits: lepke (~quassel@user/lepke) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[05:02:29] *** Joins: lepke (~quassel@user/lepke)
+[05:05:45] *** Quits: janubo_ (~janubo@191.190.32.76) (Ping timeout: 256 seconds)
+[05:06:49] *** Quits: beaver (~beaver@user/pong) (Quit: Reconnecting)
+[05:07:18] *** Joins: beaver (~beaver@user/pong)
+[05:07:26] *** Quits: beaver (~beaver@user/pong) (Client Quit)
+[05:07:49] *** Quits: thiras (~thiras@user/thiras) (Remote host closed the connection)
+[05:08:37] *** Joins: thiras (~thiras@user/thiras)
+[05:08:55] *** Joins: monkey_ (~user@190.104.116.153)
+[05:08:57] *** Joins: beaver (~beaver@user/pong)
+[05:10:14] *** Quits: \\Mr_C\\ (~mrc@cpe-75-187-191-230.neo.res.rr.com) (Quit: (Read error: Connection reset by beer, You Phuq With Me, You Phuq With The B0rg.0rg))
+[05:11:03] *** Quits: Metamorphosis (uid451146@user/metamorphosis) (Quit: Connection closed for inactivity)
+[05:13:13] *** Parts: jdccdevel (~jdccdevus@S0106e4f4c60bb5ec.ed.shawcable.net) (Leaving)
+[05:15:28] *** Quits: u^A|debian (~allberto@118.101.149.188) (Remote host closed the connection)
+[05:16:55] *** Joins: junebug (~junebug@2600:1700:3db0:2540:4831:30a2:4b08:ee24)
+[05:17:24] *** Quits: tieinv (~tieinv@user/tieinv) (Quit: Leaving)
+[05:17:39] *** Quits: codebam (~codebam@user/codebam) (Ping timeout: 256 seconds)
+[05:19:45] *** Joins: codebam (~codebam@user/codebam)
+[05:22:30] *** Quits: diogenes_ (~diogenes_@user-94-254-184-238.play-internet.pl) (Remote host closed the connection)
+[05:22:58] *** Joins: diogenes_ (~diogenes_@user-94-254-184-238.play-internet.pl)
+[05:23:31] *** Joins: p_quarles (~pquarles@c-24-19-207-176.hsd1.wa.comcast.net)
+[05:27:26] *** Quits: rpthms (~rpthms@user/rpthms) (Remote host closed the connection)
+[05:27:49] *** Joins: cdown_ (~cdown@188.214.11.14)
+[05:30:03] *** Joins: rpthms (~rpthms@user/rpthms)
+[05:32:44] *** Quits: Awaru (Awaru@gateway/vpn/airvpn/awaru) (Read error: Connection reset by peer)
+[05:33:25] *** Joins: Awaru (Awaru@gateway/vpn/airvpn/awaru)
+[05:33:44] *** Quits: ZMR (~patreides@200.91.83.229) (Ping timeout: 250 seconds)
+[05:33:47] *** Joins: stateless (~Thunderbi@2603:9000:7100:dda3:0:d08a:1c0b:6f20)
+[05:35:57] *** Quits: thiras (~thiras@user/thiras) (Ping timeout: 240 seconds)
+[05:36:17] *** Quits: monkey_ (~user@190.104.116.153) (Ping timeout: 240 seconds)
+[05:36:20] *** Quits: sh00p (~z@89-253-71-70.customers.ownit.se) (Ping timeout: 250 seconds)
+[05:40:14] *** Quits: scr (scr@user/scr) (Ping timeout: 272 seconds)
+[05:47:50] *** Quits: cdown_ (~cdown@188.214.11.14) (Ping timeout: 272 seconds)
+[05:49:28] *** Quits: cedb (~ced@user/ouestbillie) (Quit: WeeChat 3.4)
+[05:50:54] *** Joins: cedb (~ced@user/ouestbillie)
+[05:52:09] *** Quits: dez (uid92154@user/dez) (Quit: Connection closed for inactivity)
+[05:52:41] *** Joins: scr (scr@user/scr)
+[05:55:30] *** Joins: Aeilxyz (uid391113@user/aeilxyz)
+[05:57:00] *** Quits: stateless (~Thunderbi@2603:9000:7100:dda3:0:d08a:1c0b:6f20) (Quit: stateless)
+[05:58:08] *** Joins: malloy (~jimery@116.30.220.175)
+[06:02:25] *** Quits: bogus (~bogus@200-130-144-85.ftth.glasoperator.nl) (Quit: Es ist mir Wurst!)
+[06:02:56] *** Joins: bogus (~bogus@200-130-144-85.ftth.glasoperator.nl)
+[06:06:25] *** Joins: hbautista (~hbautista@187.171.75.219)
+[06:07:34] *** Joins: stateless (~Thunderbi@2603:9000:7100:dda3:0:d08a:1c0b:6f20)
+[06:07:47] *** Quits: stateless (~Thunderbi@2603:9000:7100:dda3:0:d08a:1c0b:6f20) (Client Quit)
+[06:09:13] *** Joins: brm_ (~brm@182.253.209.150)
+[06:09:47] *** Quits: scr (scr@user/scr) (Ping timeout: 256 seconds)
+[06:10:22] *** Quits: hbautista (~hbautista@187.171.75.219) (Client Quit)
+[06:10:45] *** Joins: cdown_ (~cdown@188.214.11.14)
+[06:16:59] *** Joins: sinaowolabi_ (~SinaOwola@160.152.12.253)
+[06:17:09] *** Quits: ikowasz (~ikowasz@178235191078.dynamic-4-waw-k-3-3-0.vectranet.pl) (Ping timeout: 256 seconds)
+[06:21:13] *** Joins: scr (scr@user/scr)
+[06:21:20] *** Quits: radu242407821 (~radu242@pool-96-250-220-83.nycmny.fios.verizon.net) (Read error: Connection reset by peer)
+[06:22:15] *** Quits: casmajavi (~casmajavi@user/casmajavi) (Ping timeout: 256 seconds)
+[06:26:07] *** Quits: brm_ (~brm@182.253.209.150) (Quit: Leaving.)
+[06:29:05] *** Joins: vakera_pingveno (~dan@2600:1700:21f9:b150::40)
+[06:37:06] *** Joins: janubo (~janubo@2804:14d:2a7a:8aa1:e44a:5e75:c23e:86b1)
+[06:38:33] *** Joins: judsmapp (~user94830@191.190.32.76)
+[06:39:00] *** Quits: beaver (~beaver@user/pong) (Remote host closed the connection)
+[06:41:02] *** Quits: zzzzz28 (~zzzzz28@user/zzzzz28) (Ping timeout: 272 seconds)
+[06:41:44] *** Joins: zzzzz28 (~zzzzz28@user/zzzzz28)
+[06:44:54] *** Joins: lucas-arg (~lucas@2803:9800:b483:80d4:7a93:efb8:d6d9:c590)
+[06:45:03] *** Joins: Seto_Kaiba (~hunterkll@remote.kisaracorporation.com)
+[06:45:15] *** Quits: dada (~dada@92.40.201.39.threembb.co.uk) (Ping timeout: 256 seconds)
+[06:48:16] *** Quits: Hunterkll (~hunterkll@2001:470:8b06:100:2958:1194:aedf:1fa3) (Ping timeout: 250 seconds)
+[06:50:57] *** Quits: junebug (~junebug@2600:1700:3db0:2540:4831:30a2:4b08:ee24) (Ping timeout: 240 seconds)
+[06:54:29] *** Joins: tieinv (~tieinv@user/tieinv)
+[06:54:53] *** Quits: lucas-arg (~lucas@2803:9800:b483:80d4:7a93:efb8:d6d9:c590) (Quit: Leaving)
+[07:15:35] *** Joins: lucas-arg (~lucas@2803:9800:b483:80d4:7a93:efb8:d6d9:c590)
+[07:16:13] <lucas-arg> got problems with gnome shell extensions, dash-to-dock not working properly after fresh debian install... dont know how to debug the issue
+[07:17:54] <jmcnaught> What happens?
+[07:18:03] <sussudio> someone set us up the bomb.
+[07:19:19] <somiaj> lucas-arg: was it working before the install? Did you use your hold $HOME directory? Was this for some other os/debian version?
+[07:20:40] <lucas-arg> debian 11...
+[07:21:12] <lucas-arg> it worked ok... but for some reason its not appearing after reboot, i have to disable it and reenable it to appear
+[07:21:22] *** Quits: greycat (~greg@209.142.155.49) (Quit: Bye)
+[07:23:37] *** Quits: lucas-arg (~lucas@2803:9800:b483:80d4:7a93:efb8:d6d9:c590) (Quit: Leaving)
+[07:27:48] *** Joins: junebug (~junebug@2600:1700:3db0:2540:ad92:b90c:7588:6dd0)
+[07:27:52] *** Parts: codebam (~codebam@user/codebam) (WeeChat 3.4)
+[07:35:04] *** Quits: cryptikulous (~cryptikul@gateway/tor-sasl/cryptikulous) (Quit: cryptikulous)
+[07:36:12] *** Quits: junebug (~junebug@2600:1700:3db0:2540:ad92:b90c:7588:6dd0) (Ping timeout: 240 seconds)
+[07:37:15] *** Joins: archetyp` (~archetyp@55d45ce5.access.ecotel.net)
+[07:40:11] *** Quits: archetyp (~archetyp@55d44c09.access.ecotel.net) (Ping timeout: 256 seconds)
+[07:41:48] *** kline is now known as hitler
+[07:41:52] *** hitler is now known as kline
+[07:44:09] *** Quits: sinaowolabi_ (~SinaOwola@160.152.12.253) (Ping timeout: 256 seconds)
+[07:52:46] *** Quits: janubo (~janubo@2804:14d:2a7a:8aa1:e44a:5e75:c23e:86b1) (Read error: Connection reset by peer)
+[07:53:47] *** Quits: judsmapp (~user94830@191.190.32.76) (Ping timeout: 256 seconds)
+[07:58:44] *** Quits: cdown_ (~cdown@188.214.11.14) (Remote host closed the connection)
+[07:59:35] *** Joins: lucas-arg (~lucas@2803:9800:b483:80d4:7a93:efb8:d6d9:c590)
+[08:00:40] *** Joins: sinaowolabi_ (~SinaOwola@102.134.114.1)
+[08:00:54] <lucas-arg> problem solve in dock-to-dosh startup disabling show mounted devices
+[08:03:59] *** Quits: lucas-arg (~lucas@2803:9800:b483:80d4:7a93:efb8:d6d9:c590) (Client Quit)
+[08:05:22] *** Joins: junebug (~junebug@2600:1700:3db0:2540:29b8:ab07:8bd6:65cf)
+[08:07:52] *** Parts: tieinv (~tieinv@user/tieinv) (Gone!)
+[08:10:04] *** Joins: ironman (~ironman@2405:201:1010:b033:bad0:8910:44c9:da61)
+[08:12:36] *** Quits: dvs (~hibbard@cwv.teksavvy.com) (Remote host closed the connection)
+[08:15:16] *** Quits: Aeilxyz (uid391113@user/aeilxyz) (Quit: Connection closed for inactivity)
+[08:22:56] *** Joins: han-solo (~hanish@user/han-solo)
+[08:29:07] *** Joins: mannequin (uid453465@id-453465.helmsley.irccloud.com)
+[08:30:12] *** Quits: ddsys (~ddsys@user/ddsys) (Quit: Leaving)
+[08:32:53] *** Quits: catbehemoth (~vasyl@bras-base-lnglpq6100w-grc-15-206-172-247-92.dsl.bell.ca) (Quit: WeeChat 3.4)
+[08:35:02] *** Quits: Casper26 (~Casper26@2001:470:8:2d3:ff:ff:ff:ff) (Remote host closed the connection)
+[08:37:34] *** Quits: cdown (~cdown@188.214.11.14) (Ping timeout: 260 seconds)
+[08:38:31] *** Quits: burakcank (~burakcank@has.arrived.and.is.ready-to.party) (Quit: fBNC - https://bnc4free.com)
+[08:40:27] *** Joins: Casper26 (~Casper26@2001:470:8:2d3:ff:ff:ff:ff)
+[08:42:34] *** Joins: Scotty_Trees (~Scotty_Tr@c-73-197-200-207.hsd1.nj.comcast.net)
+[08:48:15] *** Joins: spare (~w4hmzwcml@user/spareproject)
+[08:48:21] *** Joins: elitas (~darius_mu@85.206.185.152)
+[08:49:09] *** Quits: JackFrost (ukikie@libera/staff/unit193) (Read error: Connection reset by peer)
+[08:49:29] *** Quits: elitas (~darius_mu@85.206.185.152) (Remote host closed the connection)
+[08:50:57] *** Quits: sinaowolabi_ (~SinaOwola@102.134.114.1) (Ping timeout: 240 seconds)
+[08:51:37] *** Quits: inode64 (~inode64@2600:4040:4006:1600::f7aa) (Ping timeout: 240 seconds)
+[08:51:39] *** Joins: burakcank (~burakcank@has.arrived.and.is.ready-to.party)
+[08:52:11] *** Joins: JackFrost (~ukikie@libera/staff/unit193)
+[08:53:41] *** Joins: labrador (~labrador@user/labrador)
+[09:00:49] *** Joins: vxwarlock (~Darkcodex@user/vxwarlock)
+[09:13:07] *** Quits: han-solo (~hanish@user/han-solo) (Ping timeout: 256 seconds)
+[09:22:02] *** Quits: grobi (~grobi@user/grobi) (Quit: ᗧ•··ᗣ·•·♝·eat·the·rich·♞·ᗤ•ᗣᗣᗣᗧ•)
+[09:22:57] *** Joins: zer0bitz_ (~zer0bitz@2001:2003:f74d:b800:858f:1c83:7b4e:c545)
+[09:25:10] *** Joins: EdePopede (~ede@user/ede)
+[09:26:23] *** Quits: zer0bitz (~zer0bitz@2001:2003:f74d:b800:71e5:4f52:ed0e:7b4e) (Ping timeout: 252 seconds)
+[09:27:23] *** Quits: ede (~ede@user/ede) (Ping timeout: 268 seconds)
+[09:29:35] *** Joins: inode64 (~inode64@pool-70-106-230-68.clppva.fios.verizon.net)
+[09:30:01] *** Quits: riff-IRC (~riff-IRC@user/riff-irc) (Remote host closed the connection)
+[09:31:16] *** Joins: riff-IRC (~riff-IRC@user/riff-irc)
+[09:38:02] *** Joins: janubo (~janubo@2804:14d:2a7a:8aa1:e44a:5e75:c23e:86b1)
+[09:38:05] *** Quits: janubo (~janubo@2804:14d:2a7a:8aa1:e44a:5e75:c23e:86b1) (Read error: Connection reset by peer)
+[09:38:10] *** Quits: vakera_pingveno (~dan@2600:1700:21f9:b150::40) (Quit: Konversation terminated!)
+[09:45:49] *** Joins: Daniel (toolz@daniel.ro)
+[09:47:07] *** Quits: nssy (~nssy@user/nssy) (Ping timeout: 256 seconds)
+[09:47:32] *** Quits: labrador (~labrador@user/labrador) (Quit: Leaving)
+[09:47:48] *** Joins: labrador (~labrador@user/labrador)
+[09:50:12] *** Quits: junebug (~junebug@2600:1700:3db0:2540:29b8:ab07:8bd6:65cf) (Ping timeout: 240 seconds)
+[10:00:40] *** Joins: Sauvin (~sauvin@about/linux/staff/sauvin)
+[10:01:52] *** Quits: labrador (~labrador@user/labrador) (Remote host closed the connection)
+[10:02:19] *** Joins: labrador (~labrador@user/labrador)
+[10:04:19] *** fling is now known as swing
+[10:06:54] *** swing is now known as fling
+[10:06:56] *** Joins: brm_ (~brm@182.253.209.150)
+[10:12:50] *** Joins: darutoko (~darutoko@37.21.177.133)
+[10:15:35] *** Joins: grobi (~grobi@user/grobi)
+[10:20:08] *** Quits: k8yun_ (~k8yun@user/k8yun) (Quit: Leaving)
+[10:21:43] *** Parts: jaggz (~jaggz@user/jaggz) (Leaving)
+[10:23:41] *** EdePopede is now known as ede
+[10:26:54] *** Joins: sinaowolabi_ (~SinaOwola@102.134.114.1)
+[10:34:20] *** Quits: brm_ (~brm@182.253.209.150) (Quit: Leaving.)
+[10:35:43] *** Joins: brm_ (~brm@182.253.209.150)
+[10:44:20] *** Joins: RhinosF1 (uid339563@miraheze/RhinosF1)
+[10:44:36] *** Quits: Texou (~Texou@2a01:e34:eca5:6740:fcc4:3d8b:f7e3:59bd) (Ping timeout: 240 seconds)
+[10:53:05] *** Quits: brm_ (~brm@182.253.209.150) (Quit: Leaving.)
+[10:59:47] *** Joins: brm_ (~brm@182.253.209.150)
+[11:01:08] *** Quits: beelzebuzz (~rasputin@gateway/tor-sasl/beelzebuzz) (Remote host closed the connection)
+[11:04:35] *** Quits: falk689 (~falk689-q@gateway/tor-sasl/falk689) (Ping timeout: 240 seconds)
+[11:05:45] *** Joins: jstolarek (~jstolarek@staticline-31-183-165-217.toya.net.pl)
+[11:06:21] *** Joins: beelzebuzz (~rasputin@gateway/tor-sasl/beelzebuzz)
+[11:12:49] *** zer0bitz_ is now known as zer0bitz
+[11:24:31] *** Quits: brm_ (~brm@182.253.209.150) (Quit: Leaving.)
+[11:24:57] *** Joins: brm_ (~brm@182.253.209.150)
+[11:27:42] *** Joins: i0e (~is0ke3@user/is0ke3)
+[11:31:49] *** Quits: DarkG (~DarkG@user/darkg) (Excess Flood)
+[11:32:02] *** Joins: DarkG (~DarkG@user/darkg)
+[11:34:47] *** Quits: Awaru (Awaru@gateway/vpn/airvpn/awaru) (Ping timeout: 256 seconds)
+[11:39:19] *** Quits: jstolarek (~jstolarek@staticline-31-183-165-217.toya.net.pl) (Ping timeout: 256 seconds)
+[11:39:28] *** Quits: brm_ (~brm@182.253.209.150) (Quit: Leaving.)
+[11:41:48] *** Joins: Awaru (~Awaru@213.152.187.235)
+[11:41:52] *** Joins: Urawa (~Awaru@213.152.187.235)
+[11:42:02] *** Joins: brm_ (~brm@182.253.209.150)
+[11:46:47] *** Quits: Awaru (~Awaru@213.152.187.235) (Quit: Don't buy plastic, don't eat meat, use your brain!)
+[11:49:37] *** Quits: ironman (~ironman@2405:201:1010:b033:bad0:8910:44c9:da61) (Ping timeout: 240 seconds)
+[11:51:14] *** Quits: brm_ (~brm@182.253.209.150) (Quit: Leaving.)
+[11:57:44] *** Joins: arinov_ (~arinov@213.194.126.155)
+[11:58:33] *** Joins: brm_ (~brm@182.253.209.150)
+[11:59:51] *** Joins: Whatshisface (~jon@user/Whatshisface)
+[12:00:06] *** Quits: profitlich2 (~profitlic@p200300e627063f00485798ecc3ab55e3.dip0.t-ipconnect.de) (Ping timeout: 260 seconds)
+[12:00:48] *** Quits: nssy2 (~nssy@user/nssy) (Remote host closed the connection)
+[12:01:49] *** Joins: yogg (~yogg@cm70-202.liwest.at)
+[12:11:04] *** Joins: xx (~xx@user/xx)
+[12:13:13] *** Joins: Texou (~Texou@2a01:e0a:1ef:5350:d8ae:64c9:3b59:cca2)
+[12:14:09] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 256 seconds)
+[12:15:08] *** Joins: i0e (~is0ke3@user/is0ke3)
+[12:15:10] *** Joins: profitlich2 (~profitlic@p200300e627063f00b539632069fd35f6.dip0.t-ipconnect.de)
+[12:16:19] *** Joins: argonautx (~argonautx@i5E867391.versanet.de)
+[12:19:33] *** Quits: brian- (~brianc@46.7.105.181) (Ping timeout: 256 seconds)
+[12:19:53] <yogg> Hi
+[12:20:17] <Khepra> sussudio: the reference has been noticed, no worries. all your base are belong to us .)
+[12:20:29] *** Joins: brian_ (~brianc@46.7.105.181)
+[12:20:57] *** Quits: sinaowolabi_ (~SinaOwola@102.134.114.1) (Ping timeout: 256 seconds)
+[12:23:32] <yogg> I have 2 ip addresses in the same range (192.168.1.2 and 192.168.1.1 for example -> eth0 and eth0:1) is there a way to prioritize which IP address the outgoing packages use?
+[12:27:11] *** Quits: brian_ (~brianc@46.7.105.181) (Ping timeout: 256 seconds)
+[12:27:12] <somiaj> yogg: this is done via the default route, look at the output of 'ip route'
+[12:28:17] *** Joins: LucaTM (~LucaTM@user/lucatm)
+[12:29:04] <yogg> ahh "...  kernel scope link src 192.168.1.2". Thx. So I only have to change the route entry. This makes things easy
+[12:29:04] *** Joins: brian_ (~brianc@46.7.105.181)
+[12:30:14] <Khepra> yogg: also note that eth0:1 aliasing is deprecated with iproute2
+[12:32:39] *** Joins: nightrider (~nr@208.94.235.43)
+[12:33:12] *** Joins: HelloShitty (~psysc0rpi@bl20-171-222.dsl.telepac.pt)
+[12:33:26] *** Joins: sinaowolabi_ (~SinaOwola@160.152.12.253)
+[12:35:03] *** Joins: Brigo_ (~Brigo@130.182.60.213.dynamic.reverse-mundo-r.com)
+[12:35:30] *** Joins: ironman (~ironman@2405:201:1010:b033:bad0:8910:44c9:da61)
+[12:36:13] <yogg> yea I noticed there where changes in this direction (this is why I use more and more "ip -br a s" instead of "ifconfig"). I have to thest if I can use my floating ip without a ":" alias.
+[12:37:57] *** Quits: scr (scr@user/scr) (Ping timeout: 256 seconds)
+[12:38:55] <Khepra> yogg: you can simply have multiple "iface" stanzas in interfaces(5) for the same interface name.
+[12:40:03] *** Joins: \\Mr_C\\ (~mrc@cpe-75-187-191-230.neo.res.rr.com)
+[12:41:36] <yogg> yea I know that, but I use keepalived for the floating ip (between two boxes) and I'm currently testing if I can use here the interface name without overwriting the ip of the box itself (it currently works with aliasing)
+[12:43:03] <yogg> ok yes this also works with keepalived. thx
+[12:45:06] <Khepra> good to know. otherwise the next step would be perhaps macvlan and multiple virtual NICs, each with its own IP, based on same physical, using systemd-networkd (as I don't know how to do it with interfaces(5))
+[12:45:24] <Khepra> I mean, if keepalived required separate NICs
+[12:49:51] *** Joins: Night-Shade (~Tim@ip1f11e523.dynamic.kabel-deutschland.de)
+[12:53:24] *** Quits: sinaowolabi_ (~SinaOwola@160.152.12.253) (Ping timeout: 240 seconds)
+[12:55:29] *** Joins: scr (scr@user/scr)
+[12:58:31] *** Joins: Hylden (~Hylden@user/hylden)
+[12:59:12] *** Quits: sjoos (~grommel@dhcp-089-099-220-075.chello.nl) (Ping timeout: 250 seconds)
+[12:59:14] *** Joins: sjoos__ (~grommel@dhcp-089-099-220-075.chello.nl)
+[13:01:39] *** Joins: Haohmaru (~Haohmaru@195.24.53.110)
+[13:01:55] *** Quits: driib2 (~driib@185.195.233.145) (Quit: The Lounge - https://thelounge.chat)
+[13:02:18] *** Joins: driib2 (~driib@185.195.233.145)
+[13:03:49] *** Quits: scr (scr@user/scr) (Ping timeout: 240 seconds)
+[13:05:24] *** Quits: lunc (~lunc@user/lunc) (Ping timeout: 240 seconds)
+[13:12:04] *** Joins: Yugi (~hunterkll@2001:470:8b06:100:2958:1194:aedf:1fa3)
+[13:14:14] *** Joins: iobus (uid144366@id-144366.tinside.irccloud.com)
+[13:15:05] *** Quits: Seto_Kaiba (~hunterkll@remote.kisaracorporation.com) (Ping timeout: 256 seconds)
+[13:16:06] *** Quits: c7s (~c7s@user/c7s) (Ping timeout: 250 seconds)
+[13:16:35] *** Quits: lumberjack123 (~alMalsamo@gateway/tor-sasl/almalsamo) (Ping timeout: 240 seconds)
+[13:16:35] *** Quits: lumberjack (~alMalsamo@gateway/tor-sasl/almalsamo) (Ping timeout: 240 seconds)
+[13:18:46] *** Joins: han-solo (~hanish@user/han-solo)
+[13:19:22] *** Joins: Darius10467 (~getting@user/Darius10467)
+[13:20:45] *** Joins: Scotty_Trees2 (~Scotty_Tr@c-73-197-200-207.hsd1.nj.comcast.net)
+[13:23:00] *** Quits: Scotty_Trees (~Scotty_Tr@c-73-197-200-207.hsd1.nj.comcast.net) (Ping timeout: 240 seconds)
+[13:27:05] *** Joins: leighbb (~leighbb@user/leighbb)
+[13:33:54] *** Joins: scr (scr@user/scr)
+[13:34:06] *** Joins: c7s (~c7s@user/c7s)
+[13:37:00] *** Quits: Brigo_ (~Brigo@130.182.60.213.dynamic.reverse-mundo-r.com) (Ping timeout: 240 seconds)
+[13:37:46] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 272 seconds)
+[13:38:27] *** Joins: jstolarek (~jstolarek@staticline-31-183-165-217.toya.net.pl)
+[13:39:32] *** Joins: i0e (~is0ke3@user/is0ke3)
+[13:41:25] *** Quits: scr (scr@user/scr) (Ping timeout: 256 seconds)
+[13:43:34] *** Quits: Aarch64debian (~debianuse@user/Aarch64debian) (Remote host closed the connection)
+[13:43:38] *** Joins: ice9 (~ice9@user/ice9)
+[13:47:37] *** Joins: scr (scr@user/scr)
+[13:52:48] *** Quits: spare (~w4hmzwcml@user/spareproject) (Remote host closed the connection)
+[13:59:18] *** Quits: maledictium (~crux@bl11-67-234.dsl.telepac.pt) (Ping timeout: 272 seconds)
+[14:00:33] *** Joins: maledictium (~crux@dsl-90-228.bl26.telepac.pt)
+[14:01:17] *** Joins: xanio (~xanio@185.136.125.14)
+[14:01:46] <yogg> If I have a routing table like this:
+[14:01:47] <yogg> :~# ip ro ls
+[14:01:47] <yogg> default via 10.255.1.1 dev enp1s0f0 onlink
+[14:01:48] <yogg> 10.255.1.0/24 dev enp1s0f0 proto kernel scope link src 10.255.1.94
+[14:01:48] <yogg> 192.168.1.0/24 dev enp1s0f1 proto 112 scope link src 192.168.1.1
+[14:01:48] *** yogg was kicked by debchange_ (flood detected)
+[14:02:28] *** Joins: yogg (~yogg@cm70-202.liwest.at)
+[14:02:37] <Haohmaru> !give yogg paste
+[14:02:37] * dpkg gives yogg paste
+[14:02:46] <Haohmaru> dpkg come on
+[14:02:47] <dpkg> Haohmaru: I'm not sure, is it larger than a breadbox?
+[14:03:11] <Haohmaru> yogg use a pastebin site... like paste.debian.net
+[14:03:14] <yogg> https://paste.debian.net/1232960/
+[14:03:36] <yogg> If I have a routing table like in the link -> As know the the order is from most specific to least specific (in most cases from buttom to top -> but not in this case). I this case the route to "192.168.1.0/24" with source "192.168.1.1" but I don't know why.
+[14:03:44] <yogg> There must be a rule for such a case which I do not know. Does someone know why the "192.168.1.1" route is used and not the "192.168.1.2"?
+[14:04:39] *** Joins: jimmy399 (~Jimmy@178-164-172-161.pool.digikabel.hu)
+[14:08:23] <kjetilho> it's just undefined.  I think in practice it is chooses the oldest entry (first in list)
+[14:09:16] <kjetilho> perhaps you want policy routing?
+[14:09:24] <yogg> the "192.168.1.1" comes from keepalived and is the younger one
+[14:09:33] <Walex2> yogg: apart from what "kjetilho" says, how do you know which route is being used?
+[14:09:45] <yogg> tcpdump
+[14:09:49] <Walex2> yogg: are you inferring that from the selection of source address?
+[14:09:52] <kjetilho> can also use "ip route get"
+[14:10:30] <Walex2> yogg: because the rules for source address selections are not the same as the rules as those for route selection.
+[14:10:39] <Walex2> yogg: even if related.
+[14:11:00] <yogg> :~# ip route get 192.168.1.213
+[14:11:01] <yogg> 192.168.1.213 dev enp1s0f1 src 192.168.1.1 uid 0
+[14:11:30] <Walex2> yogg: that is as "kjetilho" says "undefined".
+[14:12:05] <kjetilho> with policy routing you can choose a different route based on e.g., your local source port (for return traffic)
+[14:12:07] <Walex2> yogg: but note that the two routes are absolutely equivalent, as they both say that the route to 192.168.1.0/24 is 'enp1s0f1'
+[14:12:16] <kjetilho> s/port/address/ !
+[14:12:58] <yogg> hmm, ok I don't even know how keepalived can add this route (if I try it manually I get an error)
+[14:13:24] <kjetilho> I don't know what proto 112 is, TBH
+[14:13:27] *** Quits: Hylden (~Hylden@user/hylden) (Read error: Connection reset by peer)
+[14:14:04] <Walex2> yogg: try 'ip r g 192.168.1.213 from 192.168.1.1', 'ip r g 192.168.1.213 from 192.168.1.2', 'ip r g 192.168.1.213 from 0.0.0.0'
+[14:14:35] <yogg> https://stackoverflow.com/questions/10259266/what-does-proto-kernel-means-in-unix-routing-table (if i understand it right the proto has nothing to do with priority)
+[14:15:30] <Walex2> yogg: it is where the route came from.
+[14:15:45] <Walex2> who/what added the route
+[14:16:25] *** Quits: malloy (~jimery@116.30.220.175) (Quit: WeeChat 3.0)
+[14:16:53] <Walex2> $ grep -w 112 /etc/protocols
+[14:16:53] <Walex2> vrrp	112	VRRP		# Virtual Router Redundancy Protocol [RFC5798]
+[14:17:06] <kjetilho> ahhh
+[14:17:18] <yogg> https://paste.debian.net/1232963/
+[14:17:31] *** Quits: han-solo (~hanish@user/han-solo) (Killed (NickServ (GHOST command used by han-solo_!~hanish@178.248.114.123)))
+[14:17:57] <Walex2> yogg: I knew what the output would be... :-) I hope it makes clear what is happening.
+[14:18:19] *** Joins: han-solo (~hanish@user/han-solo)
+[14:18:34] <yogg> keepalived adds the route (i have it in the config). It was a test and it woks perfectly for me, but I need to know if it would always work like this
+[14:18:41] <tomreyn> RTPROTO is a routing protocol, though, not a network protocol
+[14:19:02] <tomreyn> see /etc/iproute2/rt_protos
+[14:19:47] <Walex2> tomreyn: ooops
+[14:19:57] <kjetilho> aha, so since 112 is missing from their, ip(8) can't report it
+[14:20:51] <tomreyn> it's not required to define a name, though
+[14:20:55] *** Joins: movah4c (~movah4c@p2e537323.dip0.t-ipconnect.de)
+[14:21:04] <kjetilho> it's a good match anyhow.
+[14:21:51] *** Joins: stateless (~Thunderbi@2603:9000:7100:dda3:0:d08a:1c0b:6f20)
+[14:21:56] <kjetilho> possibly just the Keepalived developer taking a shortcut?
+[14:22:11] <Walex2> yogg: http://linux-ip.net/html/routing-saddr-selection.html
+[14:23:22] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 272 seconds)
+[14:23:55] <kjetilho> interesting - in /etc/iproute2/rt_protos on my Fedora, I find "18      keepalived".  I don't run keepalived on my workstation, though, so I don't know if it actually uses that for proto in the routes it adds.
+[14:25:00] *** Quits: xx (~xx@user/xx) (Quit: xx)
+[14:25:04] *** Joins: i0e (~is0ke3@user/is0ke3)
+[14:25:29] <Walex2> find /usr/include/ -name '*.h' | xargs -d\\n egrep RTPROT_
+[14:25:48] <Walex2> curiously 112 is not listed there either.
+[14:26:52] <yogg> Walex2: ok if I understand it rigth. The src is choosen because of the rules in the last link. But because it is undefined which route is used in this case this also can mix up which meas it can randomly work or not work -> so I need to search for another solution
+[14:26:55] *** Joins: xx (~xx@user/xx)
+[14:28:17] <kjetilho> yogg: yes.  it can be so simple as specifying a metric
+[14:28:21] <Walex2> yogg:  the solution probably is to explicitly specify the source address binding instead of using 0.0.0.0, which most but not all application allow to configure.
+[14:29:13] <kjetilho> Walex2: yes, but that won't help for connections initiated from this host.  then you need policy routing or something else.
+[14:29:21] <Walex2> yogg: there is a long and sad context about that unfortunately.
+[14:29:35] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 256 seconds)
+[14:30:31] *** Joins: zitter (~danilodim@93-57-35-194.ip162.fastwebnet.it)
+[14:30:37] *** jailbreak is now known as Star2023
+[14:30:50] *** Star2023 is now known as jailbreak
+[14:31:26] *** Joins: Midjak (~Midjak@82.66.147.146)
+[14:31:50] *** Joins: itsalexjones (~itsalexjo@82.4.99.241)
+[14:32:00] <Walex2> yogg: it is an ancient debate about node vs. interface address, and I think that most people and in particular most "nodeists" don't understand how IP is supposed to to work (I am an "interfacionist" :->).
+[14:32:27] <Walex2> yogg: the Linux kernel takes a very strong "nodeist" position by default.
+[14:32:57] *** Quits: luke-jr (~luke-jr@user/luke-jr) (Ping timeout: 240 seconds)
+[14:33:56] *** Joins: luke-jr (~luke-jr@user/luke-jr)
+[14:34:06] *** Quits: Miles8of9 (~obrien@93-34-146-223.ip50.fastwebnet.it) (Ping timeout: 260 seconds)
+[14:34:07] <Walex2> yogg: "nodeism" works well until you get special situations like yours...
+[14:35:19] <yogg> the first results I found is that the default metric is 0 so I can't use this aproach (-1 is not allowed I think)
+[14:35:19] <yogg> I think I will run a script if the floating ip switches which does a "ip ro replace ...". this should always work
+[14:36:35] <yogg> Tanks for all the input
+[14:36:43] <yogg> *Thanks for all the input
+[14:37:04] *** Quits: labrador (~labrador@user/labrador) (Quit: Leaving)
+[14:37:25] *** Joins: thiras (~thiras@user/thiras)
+[14:37:30] *** Joins: labrador (~labrador@user/labrador)
+[14:38:13] *** Quits: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it) (Remote host closed the connection)
+[14:39:07] *** Joins: ftobich (~ftobich@debian/ftobich)
+[14:39:30] *** Parts: brm_ (~brm@182.253.209.150) ()
+[14:39:34] *** Quits: jimmy399 (~Jimmy@178-164-172-161.pool.digikabel.hu) (Quit: Pápá...)
+[14:40:02] *** Quits: dselect (~dselect@debian/bot/dselect) (Quit: ouch... that hurt)
+[14:40:34] *** Joins: i0e (~is0ke3@user/is0ke3)
+[14:41:17] *** Joins: dselect (~dselect@debian/bot/dselect)
+[14:42:21] <kjetilho> I don't really understand your setup.  when I use keepalived to manage an address, I add a /32
+[14:43:19] <kjetilho> but Walex2 is dead right about "nodeists" vs. "interfaceists" - it's a struggle when setting up HA.
+[14:45:18] *** Quits: john1_ (~JohnML@ip-037-201-129-030.um10.pools.vodafone-ip.de) (Remote host closed the connection)
+[14:45:48] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 250 seconds)
+[14:46:40] *** Joins: JohnML (~JohnML@ip-037-201-129-030.um10.pools.vodafone-ip.de)
+[14:49:14] *** Joins: i0e (~is0ke3@user/is0ke3)
+[14:49:15] *** Quits: JohnML (~JohnML@ip-037-201-129-030.um10.pools.vodafone-ip.de) (Read error: Connection reset by peer)
+[14:49:25] *** Joins: JohnML (~JohnML@ip-037-201-129-030.um10.pools.vodafone-ip.de)
+[14:50:33] *** Quits: Kuraokami (unit193@libera/staff/unit193) (Ping timeout: 256 seconds)
+[14:54:47] *** Joins: Aarch64debian (~debianpc@user/Aarch64debian)
+[14:55:17] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 240 seconds)
+[14:57:38] *** Joins: i0e (~is0ke3@user/is0ke3)
+[14:57:50] *** Joins: qqqhhh8616 (~qqqhhh@193.138.218.200)
+[14:59:48] *** Quits: qqqhhh861 (~qqqhhh@45.83.220.217) (Ping timeout: 240 seconds)
+[14:59:48] *** qqqhhh8616 is now known as qqqhhh861
+[15:02:40] <Walex2> kjetilho: "manage an address, I add a /32" ahhhh then you will find this post delightful, also as to "nodeists" vs. "interfaceists" :-)
+[15:02:54] * Walex2 looking up the post on his blog
+[15:04:48] <Walex2> http://www.sabi.co.uk/blog/17-two.html?170704#170704
+[15:05:10] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 272 seconds)
+[15:05:10] *** Quits: nyov (~nyov@user/nyov) (Ping timeout: 272 seconds)
+[15:05:58] <Walex2> https://www.sabi.co.uk/blog/16-two.html?161008#161008
+[15:06:14] *** Quits: ironman (~ironman@2405:201:1010:b033:bad0:8910:44c9:da61) (Quit: Leaving)
+[15:06:52] *** Joins: nyov (~nyov@user/nyov)
+[15:07:02] *** Joins: i0e (~is0ke3@user/is0ke3)
+[15:07:46] <Walex2> kjetilho: my approach to "setting up HA" is to bind applications to /32 addresses on "dummy" interfaces, that is to give each host a node address as well as interface address. I think that binding applications to interface addresses is fundamentally fragile.
+[15:09:12] <Walex2> in an ideal world applications would not even be bound to node /32 addresses, but to per-application /32 addresses, at least in some cases.
+[15:09:46] * Walex2 is an extremist "interfaceist".
+[15:10:47] *** Joins: baxmoke (~Guest18@152.115.62.220)
+[15:13:10] *** Joins: Filohuhum (~dante@gateway/tor-sasl/filohuhum)
+[15:14:25] <kjetilho> using lo is recommended practice, I do that.  Haven't used "dummy" since Linux 2.2, there was something fishy with using "lo" back then (but I don't remember the details).
+[15:14:48] <kjetilho> (will read your blog later)
+[15:14:56] <Walex2> kjetilho: yes, it can be 'lo', but it is still a bit fishy :-).
+[15:15:57] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 240 seconds)
+[15:16:35] <Walex2> http://www.sabi.co.uk/blog/12-thr.html?120305#120305
+[15:17:28] <Walex2> https://www.sabi.co.uk/blog/13-two.html?130726#130726 for fun
+[15:17:46] *** Joins: Haudegen (~quassel@178.115.237.87.static.drei.at)
+[15:18:30] *** Joins: i0e (~is0ke3@user/is0ke3)
+[15:19:08] *** Quits: CEP (~CEP@user/cep) (Remote host closed the connection)
+[15:24:26] *** Joins: hid3 (~arnoldas@78.157.71.116)
+[15:25:00] *** Yugi is now known as Hunterkll
+[15:25:41] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 256 seconds)
+[15:26:15] *** Quits: Filohuhum (~dante@gateway/tor-sasl/filohuhum) (Ping timeout: 240 seconds)
+[15:27:59] *** Joins: i0e (~is0ke3@user/is0ke3)
+[15:28:56] *** Joins: Miles8of9 (~obrien@93-34-146-223.ip50.fastwebnet.it)
+[15:30:37] *** Quits: guiverc (~guiverc@ubuntu/member/guiverc) (Ping timeout: 240 seconds)
+[15:31:57] *** Joins: Filohuhum (~dante@gateway/tor-sasl/filohuhum)
+[15:35:01] *** Quits: dpkg (~dpkg@debian/bot/dpkg) (Quit: buh bye!)
+[15:36:05] *** Joins: dpkg (~dpkg@debian/bot/dpkg)
+[15:42:11] *** Joins: dada (~dada@92.40.200.12.threembb.co.uk)
+[15:43:54] *** Quits: zumba_addict (~zumba_add@c-71-194-58-34.hsd1.il.comcast.net) (Quit: Client closed)
+[15:48:21] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 256 seconds)
+[15:50:24] *** Joins: i0e (~is0ke3@user/is0ke3)
+[15:51:37] *** Joins: sh0ne (~sh0ne@2a06:5b00:6fb:2a00:b508:641a:9acd:2179)
+[15:55:53] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 268 seconds)
+[15:57:51] *** Quits: Filohuhum (~dante@gateway/tor-sasl/filohuhum) (Remote host closed the connection)
+[15:59:00] *** Joins: i0e (~is0ke3@user/is0ke3)
+[15:59:59] *** Quits: grobi (~grobi@user/grobi) (Ping timeout: 256 seconds)
+[16:01:44] *** Joins: Filohuhum (~dante@gateway/tor-sasl/filohuhum)
+[16:03:07] *** Joins: orl (~orl@lfbn-nan-1-1251-252.w86-212.abo.wanadoo.fr)
+[16:03:10] <orl> Hi!
+[16:03:24] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 240 seconds)
+[16:03:30] *** Joins: dez (uid92154@user/dez)
+[16:03:36] *** Quits: iobus (uid144366@id-144366.tinside.irccloud.com) (Quit: Connection closed for inactivity)
+[16:05:22] *** Joins: i0e (~is0ke3@user/is0ke3)
+[16:06:27] <orl> I'm trying to debug a software (non-mixer) which crashed only when launched through a studio manager (Raysession), which uses python scripts to launch apps, and some audio standard called NSM to get things working together. I'd like to produce coredump of this app, but I don't find how to do it, as I cannot run the app outside the studio (or it won't crash). I've tried using ulimit -S -c unlimited, and then
+[16:06:29] *** Joins: rsx (~dummy@ppp-188-174-155-234.dynamic.mnet-online.de)
+[16:06:33] <orl> sysctl to define core pattern, but I don't seem to get any coredump.
+[16:07:11] <orl> any idea?
+[16:09:28] *** Quits: Haudegen (~quassel@178.115.237.87.static.drei.at) (Quit: Bin weg.)
+[16:09:33] *** Quits: yogg (~yogg@cm70-202.liwest.at) (Quit: Client closed)
+[16:13:24] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 240 seconds)
+[16:15:14] *** Joins: markb1 (~markb1@2600:1700:eb40:7ecf:ffda:8964:beaf:e5e3)
+[16:15:43] *** Joins: elitas (~darius_mu@85.206.185.152)
+[16:15:52] *** Joins: i0e (~is0ke3@user/is0ke3)
+[16:15:55] *** Quits: elitas (~darius_mu@85.206.185.152) (Read error: Connection reset by peer)
+[16:16:02] <Walex2> orl: then it is likely trapping signals and existing instead of coredumping
+[16:16:43] <Walex2> orl: if Raysession is configurable in that way, replace the name of the suspect executable with that of a shell script that starts it under 'strace'.
+[16:18:10] *** Joins: Brigo_ (~Brigo@130.182.60.213.dynamic.reverse-mundo-r.com)
+[16:18:14] *** Quits: stateless (~Thunderbi@2603:9000:7100:dda3:0:d08a:1c0b:6f20) (Quit: stateless)
+[16:21:33] *** Joins: hans (uid529825@id-529825.helmsley.irccloud.com)
+[16:22:21] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 256 seconds)
+[16:22:45] *** Quits: ftobich (~ftobich@debian/ftobich) (Quit: Leaving)
+[16:24:13] *** Joins: i0e (~is0ke3@user/is0ke3)
+[16:24:35] *** Quits: baxmoke (~Guest18@152.115.62.220) (Quit: Connection closed)
+[16:25:31] *** Joins: monaco (14030@user/monaco)
+[16:28:17] *** Quits: tejr (~tejr@user/tejr) (Remote host closed the connection)
+[16:28:23] *** Quits: zhaoxin (~orangeext@user/orangeextract) (Quit: Leaving)
+[16:30:35] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 256 seconds)
+[16:32:41] *** Joins: i0e (~is0ke3@user/is0ke3)
+[16:33:34] *** Joins: tejr (~tejr@user/tejr)
+[16:33:43] *** Joins: ddsys (~ddsys@user/ddsys)
+[16:38:09] <orl> Walex2: I'm going to try that (but I don't think the segfault is linked to a file, so I'd rather gdb)
+[16:38:24] <orl> Walex2: btw, the scripts are using QProcess to launch the executable
+[16:47:57] *** Quits: arinov_ (~arinov@213.194.126.155) (Ping timeout: 240 seconds)
+[16:48:21] *** Quits: mort (~mort@188.166.114.29) (Quit: Ping timeout (120 seconds))
+[16:49:18] *** Joins: mtn (~mtn@98.97.127.52)
+[16:50:56] *** Quits: ice9 (~ice9@user/ice9) (Ping timeout: 272 seconds)
+[16:51:59] <kjetilho> orl: did you check core(5)?  it has a checklist for reasons
+[16:54:41] *** Quits: Filohuhum (~dante@gateway/tor-sasl/filohuhum) (Remote host closed the connection)
+[16:55:04] *** Joins: Filohuhum (~dante@gateway/tor-sasl/filohuhum)
+[16:55:42] <orl> kjetilho: gonna check that
+[16:58:49] *** Joins: AceSlash (~slash@cosium-fo-152-18.fib.nerim.net)
+[16:59:11] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 256 seconds)
+[17:02:24] *** Joins: i0e (~is0ke3@user/is0ke3)
+[17:03:54] *** Joins: tbalthazar (~tb@153.84-136-217.adsl-dyn.isp.belgacom.be)
+[17:08:49] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 256 seconds)
+[17:09:45] *** Joins: ice9 (~ice9@user/ice9)
+[17:10:48] *** Joins: i0e (~is0ke3@user/is0ke3)
+[17:10:57] *** Joins: netx (~netx@23-24-2-197-static.hfc.comcastbusiness.net)
+[17:11:42] *** Joins: casmajavi (~casmajavi@user/casmajavi)
+[17:16:19] *** Joins: cdown (~cdown@188.214.11.14)
+[17:17:18] *** Joins: milkt_ (~debian@gateway/tor-sasl/milkt)
+[17:18:35] *** Quits: milkt (~debian@gateway/tor-sasl/milkt) (Ping timeout: 240 seconds)
+[17:20:33] *** Joins: lsrtl (~lsrtl@user/lsrtl)
+[17:21:03] *** Quits: tbalthazar (~tb@153.84-136-217.adsl-dyn.isp.belgacom.be) (Quit: WeeChat 3.4)
+[17:21:30] *** Quits: lsrtl (~lsrtl@user/lsrtl) (Max SendQ exceeded)
+[17:21:30] *** Joins: mort (~mort@188.166.114.29)
+[17:21:58] *** Joins: lsrtl (~lsrtl@user/lsrtl)
+[17:22:31] *** Joins: sinaowolabi (~SinaOwola@169.159.107.1)
+[17:22:51] *** Joins: sinaowolabi_ (~SinaOwola@169.159.107.1)
+[17:23:14] *** Quits: lsrtl (~lsrtl@user/lsrtl) (Max SendQ exceeded)
+[17:23:43] *** Joins: lsrtl (~lsrtl@user/lsrtl)
+[17:23:45] *** Joins: vakera_pingveno (~dan@2600:1700:21f9:b150::48)
+[17:26:47] *** Quits: ypszilon (~ypszilon@user/ypszilon) (Quit: ᮮ)
+[17:27:08] *** Joins: ypszilon (~ypszilon@user/ypszilon)
+[17:27:47] *** Joins: fab161 (~fabian@155.133.203.72)
+[17:28:35] *** Joins: Haudegen (~quassel@91.114.49.10)
+[17:28:51] *** Quits: fab161 (~fabian@155.133.203.72) (Client Quit)
+[17:32:21] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 256 seconds)
+[17:34:46] *** Joins: i0e (~is0ke3@user/is0ke3)
+[17:36:04] *** Joins: tieinv (~tieinv@user/tieinv)
+[17:54:35] *** blackop is now known as B|ackOp
+[17:57:29] *** Joins: Kuraokami (unit193@libera/staff/unit193)
+[18:06:15] *** Joins: shtrb (~shtrb@user/shtrb)
+[18:07:52] *** Joins: undt1 (undt@gateway/vpn/protonvpn/undt)
+[18:08:05] *** Quits: tieinv (~tieinv@user/tieinv) (Quit: Out!)
+[18:10:19] *** Quits: undt (undt@gateway/vpn/protonvpn/undt) (Ping timeout: 256 seconds)
+[18:10:35] *** Quits: Filohuhum (~dante@gateway/tor-sasl/filohuhum) (Ping timeout: 240 seconds)
+[18:11:19] *** Joins: undt (undt@gateway/vpn/protonvpn/undt)
+[18:13:16] *** Quits: undt1 (undt@gateway/vpn/protonvpn/undt) (Ping timeout: 272 seconds)
+[18:22:40] *** Quits: greyrat (~greyrat@ip202.ip-51-178-215.eu) (Bye)
+[18:23:01] *** Joins: greyrat_ (~greyrat@ip202.ip-51-178-215.eu)
+[18:23:23] *** Joins: acdcworld (therocker@user/rockworld)
+[18:23:26] *** Joins: magyar_ (~magyar@user/magyar)
+[18:23:32] *** Joins: darutoko- (~darutoko@37.21.177.133)
+[18:23:51] *** Joins: hirish (~hirish@ip85.ip-137-74-20.eu)
+[18:23:53] *** Joins: Iamthehuman (~noname@user/iamthehuman)
+[18:24:01] *** Joins: samuelb (~samuelber@nata01.lip.pt)
+[18:24:04] *** Joins: luna-is-here_ (~quassel@2a02:908:f761:2a3c::a)
+[18:24:18] *** Joins: TrentP_ (~quassel@c-24-20-193-248.hsd1.or.comcast.net)
+[18:24:22] *** Joins: pankid_ (~quassel@pankid.club)
+[18:24:49] *** Server sets mode: +cnrt 
+[18:24:56] *** Joins: yang_ (~yang@fsf/member/yang)
+[18:25:00] *** Joins: nckx_ (~nckx@tobias.gr)
+[18:25:06] *** Joins: stw__ (~stwalkers@wikimedia/stwalkerster)
+[18:25:07] *** Joins: joze_ (~joze@mhna.info)
+[18:25:10] *** Joins: brian__ (~brianc@46.7.105.181)
+[18:25:12] *** Joins: flokuehn_ (~flokuehn@87.123.247.36)
+[18:25:18] *** Joins: PerfDave_ (~grimoire@user/perfdave)
+[18:25:19] *** Joins: finstern1s (~X@23.226.237.192)
+[18:25:22] *** Joins: invra_ (~invra@mail.aletheianature.es)
+[18:25:26] *** Joins: dag__ (~d@user/dag)
+[18:25:28] *** Joins: tolecnal_ (tolecnal@login.xiro.net)
+[18:25:29] *** Joins: jp11_ (~jp@87-198-216-242.ptr.magnet.ie)
+[18:25:30] *** Joins: Solak_ (~solak@86-87-47-28.fixed.kpn.net)
+[18:25:31] *** Joins: somiaj_ (~somiaj@fvwm/admin)
+[18:25:32] *** Joins: Condor (~libera@e1.nixmagic.com)
+[18:25:42] *** Joins: Jack_Grumbler (~jax@user/JackGrumbler)
+[18:25:47] *** Joins: overrider_ (~overrider@user/overrider)
+[18:29:17] *** Quits: slacker_ (scr@user/scr) (Ping timeout: 256 seconds)
+[18:29:52] *** Quits: Haudegen (~quassel@91.114.49.10) (*.net *.split)
+[18:29:52] *** Quits: rsx (~dummy@ppp-188-174-155-234.dynamic.mnet-online.de) (*.net *.split)
+[18:29:52] *** Quits: dpkg (~dpkg@debian/bot/dpkg) (*.net *.split)
+[18:29:52] *** Quits: Aarch64debian (~debianpc@user/Aarch64debian) (*.net *.split)
+[18:29:52] *** Quits: scr (scr@user/scr) (*.net *.split)
+[18:29:52] *** Quits: brian_ (~brianc@46.7.105.181) (*.net *.split)
+[18:29:52] *** Quits: nightrider (~nr@208.94.235.43) (*.net *.split)
+[18:29:52] *** Quits: argonautx (~argonautx@i5E867391.versanet.de) (*.net *.split)
+[18:29:52] *** Quits: DarkG (~DarkG@user/darkg) (*.net *.split)
+[18:29:52] *** Quits: darutoko (~darutoko@37.21.177.133) (*.net *.split)
+[18:29:52] *** Quits: inode64 (~inode64@pool-70-106-230-68.clppva.fios.verizon.net) (*.net *.split)
+[18:29:52] *** Quits: vxwarlock (~Darkcodex@user/vxwarlock) (*.net *.split)
+[18:29:52] *** Quits: bogus (~bogus@200-130-144-85.ftth.glasoperator.nl) (*.net *.split)
+[18:29:52] *** Quits: flokuehn (~flokuehn@87.123.247.36) (*.net *.split)
+[18:29:52] *** Quits: stw (~stwalkers@wikimedia/stwalkerster) (*.net *.split)
+[18:29:52] *** Quits: greyrat (~greyrat@ip202.ip-51-178-215.eu) (*.net *.split)
+[18:29:52] *** Quits: karabaja4 (~karabaja4@dh207-94-36.xnet.hr) (*.net *.split)
+[18:29:52] *** Quits: Iamthehuman1 (~noname@user/iamthehuman) (*.net *.split)
+[18:29:52] *** Quits: gce108 (~gce@user/gce108) (*.net *.split)
+[18:29:52] *** Quits: sn0wflake (~snowflake@k1vzx.com) (*.net *.split)
+[18:29:52] *** Quits: LtL (~debian@user/ltl) (*.net *.split)
+[18:29:52] *** Quits: samuelbernardo (~samuelber@nata02.lip.pt) (*.net *.split)
+[18:29:52] *** Quits: Haxxa (~Haxxa@203-123-96-204.ip4.superloop.com) (*.net *.split)
+[18:29:52] *** Quits: nomad_dw (~nomad@maia.oucs.ox.ac.uk) (*.net *.split)
+[18:29:52] *** Quits: tomg (~tomg@user/tomg) (*.net *.split)
+[18:29:52] *** Quits: digilink (~digilink@user/digilink) (*.net *.split)
+[18:29:52] *** Quits: invra (~invra@mail.aletheianature.es) (*.net *.split)
+[18:29:52] *** Quits: weeb (~libera@e1.nixmagic.com) (*.net *.split)
+[18:29:52] *** Quits: overrider (~overrider@user/overrider) (*.net *.split)
+[18:29:52] *** Quits: flynn (~mcbloch@user/flynn) (*.net *.split)
+[18:29:53] *** Quits: led_belly (~led_belly@37.120.197.46) (*.net *.split)
+[18:29:53] *** Quits: luna-is-here (~quassel@ip-095-223-058-048.um35.pools.vodafone-ip.de) (*.net *.split)
+[18:29:53] *** Quits: jailbreak (ChunkzZ@user/chunkyz) (*.net *.split)
+[18:29:53] *** Quits: sepulchralDrake (~unkown@user/sepulchralDrake) (*.net *.split)
+[18:29:53] *** Quits: n9nes (~n9nes@user/n9nes) (*.net *.split)
+[18:29:53] *** Quits: LeoTh3o- (~theo@delibird.phoxden.net) (*.net *.split)
+[18:29:53] *** Quits: TrentP (~quassel@c-24-20-193-248.hsd1.or.comcast.net) (*.net *.split)
+[18:29:53] *** Quits: joze (~joze@mhna.info) (*.net *.split)
+[18:29:53] *** Quits: DonRichie (~DonRichie@ricl.de) (*.net *.split)
+[18:29:53] *** Quits: JackGrumbler (~jax@user/JackGrumbler) (*.net *.split)
+[18:29:53] *** Quits: LuKaRo (~LuKaRo@p57b157e5.dip0.t-ipconnect.de) (*.net *.split)
+[18:29:53] *** Quits: pankid (~quassel@pankid.club) (*.net *.split)
+[18:29:53] *** Quits: noarb (~noarb@user/noarb) (*.net *.split)
+[18:29:53] *** Quits: quasineutral (~quaisneut@user/quasineutral) (*.net *.split)
+[18:29:53] *** Quits: fstd (~fstd@xdsl-78-34-125-135.nc.de) (*.net *.split)
+[18:29:53] *** Quits: magyar (~magyar@user/magyar) (*.net *.split)
+[18:29:53] *** Quits: XileX (~XileX@dsl-trebng21-b048b4-241.dhcp.inet.fi) (*.net *.split)
+[18:29:53] *** Quits: LiENUS (~quake@108-242-135-2.lightspeed.btrgla.sbcglobal.net) (*.net *.split)
+[18:29:53] *** Quits: PerfDave (~grimoire@user/perfdave) (*.net *.split)
+[18:29:53] *** Quits: jedd (~jedd@203-129-25-127.cb8119.syd.static.aussiebb.net) (*.net *.split)
+[18:29:53] *** Quits: foul_owl (~kerry@23.82.193.89) (*.net *.split)
+[18:29:53] *** Quits: jrjsmrtn (~jrjsmrtn@ip-83-134-41-224.dsl.scarlet.be) (*.net *.split)
+[18:29:53] *** Quits: xet7 (~xet7@user/xet7) (*.net *.split)
+[18:29:53] *** Quits: qoreQyaS (~fnord@foofactory.org) (*.net *.split)
+[18:29:53] *** Quits: jp11 (~jp@87-198-216-242.ptr.magnet.ie) (*.net *.split)
+[18:29:53] *** Quits: phogg (~phogg@user/phogg) (*.net *.split)
+[18:29:53] *** Quits: Spitfire (spitfire@user/Spitfire) (*.net *.split)
+[18:29:53] *** Quits: Arrowmaster (~Arrowmast@user/arrowmaster) (*.net *.split)
+[18:29:53] *** Quits: somiaj (~somiaj@fvwm/admin) (*.net *.split)
+[18:29:53] *** Quits: ml|_ (~ml|@user/ml/x-5298235) (*.net *.split)
+[18:29:53] *** Quits: dasunt (~dasunt@192.249.59.215) (*.net *.split)
+[18:29:53] *** Quits: shann (~quassel@178.33.252.31) (*.net *.split)
+[18:29:53] *** Quits: tolecnal (tolecnal@login.xiro.net) (*.net *.split)
+[18:29:53] *** Quits: tebruno99 (~tebruno99@user/tebruno99) (*.net *.split)
+[18:29:53] *** Quits: Nex8192 (~Nex8192@user/nex8192) (*.net *.split)
+[18:29:53] *** Quits: Solak (~solak@86-87-47-28.fixed.kpn.net) (*.net *.split)
+[18:29:53] *** Quits: raub (~Raub_Voge@cpe-107-15-44-154.nc.res.rr.com) (*.net *.split)
+[18:29:53] *** Quits: finsternis (~X@23.226.237.192) (*.net *.split)
+[18:29:53] *** Quits: yang (~yang@fsf/member/yang) (*.net *.split)
+[18:29:53] *** Quits: hirish_ (~hirish@ip85.ip-137-74-20.eu) (*.net *.split)
+[18:29:53] *** Quits: rockworld (therocker@user/rockworld) (*.net *.split)
+[18:29:53] *** Quits: dracorex (dracorex@all.your.base.are.belong-to.us) (*.net *.split)
+[18:29:53] *** Quits: capl5n (~capl5n@z.einterna.eu) (*.net *.split)
+[18:29:53] *** Quits: Johann (~johann@user/johann) (*.net *.split)
+[18:29:53] *** Quits: dag (~d@user/dag) (*.net *.split)
+[18:29:53] *** Quits: nckx (~nckx@tobias.gr) (*.net *.split)
+[18:29:53] *** Quits: keir (~keir@user/keir) (*.net *.split)
+[18:29:53] *** Quits: kenzie (~kenzie@ns510210.ip-192-99-14.net) (*.net *.split)
+[18:29:53] *** Quits: koolazer (~koo@user/koolazer) (*.net *.split)
+[18:29:53] *** nckx_ is now known as nckx
+[18:29:53] *** vxwarlock_ is now known as vxwarlock
+[18:29:53] *** tebruno996 is now known as tebruno99
+[18:29:53] *** TonyL is now known as DarkG
+[18:29:54] *** DonRichie2 is now known as DonRichie
+[18:29:54] *** quasineutral0 is now known as quasineutral
+[18:29:54] *** acdcworld is now known as rockworld
+[18:29:54] *** dracorex_ is now known as dracorex
+[18:29:57] *** flynn4 is now known as flynn
+[18:29:57] *** kenzie6 is now known as kenzie
+[18:30:12] *** Joins: bogus (~bogus@200-130-144-85.ftth.glasoperator.nl)
+[18:30:50] *** Joins: led_belly_ (~led_belly@37.120.197.46)
+[18:31:08] *** Joins: digilink (~digilink@user/digilink)
+[18:32:39] *** Quits: lepke (~quassel@user/lepke) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[18:33:20] *** Joins: cdown_ (~cdown@163.114.131.1)
+[18:33:32] *** Joins: lepke (~quassel@user/lepke)
+[18:34:07] *** Quits: tercaL (~tercaL@user/tercal) (Remote host closed the connection)
+[18:34:09] *** Joins: scr (scr@user/scr)
+[18:34:53] *** Joins: nomad_dw (~nomad@maia.oucs.ox.ac.uk)
+[18:35:46] *** Quits: cdown (~cdown@188.214.11.14) (Ping timeout: 245 seconds)
+[18:35:48] *** cdown_ is now known as cdown
+[18:36:19] *** Joins: rsx (~dummy@ppp-188-174-155-234.dynamic.mnet-online.de)
+[18:36:50] *** Quits: AimHere (~David@92.238.16.159) (Ping timeout: 268 seconds)
+[18:36:53] *** Joins: xet7 (~xet7@user/xet7)
+[18:36:58] *** Joins: koolazer (~koo@user/koolazer)
+[18:37:08] *** Joins: foul_owl (~kerry@23.82.193.89)
+[18:37:09] *** Joins: karabaja4 (~karabaja4@dh207-94-36.xnet.hr)
+[18:37:10] *** Joins: Johann (~johann@user/johann)
+[18:37:30] *** Joins: Arrowmaster (~Arrowmast@user/arrowmaster)
+[18:37:57] *** Joins: ml|_ (~ml|@user/ml/x-5298235)
+[18:42:02] *** Quits: scr (scr@user/scr) (Ping timeout: 240 seconds)
+[18:42:22] *** Joins: lunc (~lunc@user/lunc)
+[18:44:21] *** Joins: jimmy399 (~Jimmy@178-164-172-161.pool.digikabel.hu)
+[18:46:22] *** Quits: zitter (~danilodim@93-57-35-194.ip162.fastwebnet.it) (Quit: Leaving)
+[18:46:37] *** Quits: junebug (~junebug@2600:1700:3db0:2540:da3:37eb:76e1:ffc0) (Ping timeout: 240 seconds)
+[18:46:59] *** Joins: blacked (~blacked@user/blacked)
+[18:47:04] <blacked> Haohmaru :)
+[18:47:23] *** Joins: scr (scr@user/scr)
+[18:47:28] *** jp11_ is now known as jp11
+[18:47:33] *** Joins: AngryTom (~tom@a89-183-21-189.net-htp.de)
+[18:47:33] <blacked> why dont you gather in #debian-offtopic ? come there
+[18:47:49] *** Joins: incal (~user@c-178e225c.021-67-7570702.bbcust.telenor.se)
+[18:47:51] *** Joins: raub (~Raub_Voge@cpe-107-15-44-154.nc.res.rr.com)
+[18:48:42] <Haohmaru> because i'm at $job
+[18:49:14] *** Joins: AimHere (~David@vpn-fn-229.net.ed.ac.uk)
+[18:50:38] *** Quits: jimmy399 (~Jimmy@178-164-172-161.pool.digikabel.hu) (Quit: Pápá...)
+[18:50:45] <incal> o/ I've heard that for gaming you want/need a 600~800W PSU <https://www.windowscentral.com/be-quiet-pure-power-11-fm-review> but how do I know how many W I need for my use? I think the most resource-intense I do would be compiling and watching multimedia on mpv. can you use powertop(1) for this or some other tool or can it not be measured at the software level? and if it can't, can you estimate it somehow? TIA
+[18:51:53] <jelly> buy a $10 wattmeter and measure.
+[18:51:59] <blacked> Haohmaru: ok come there some time :)
+[18:52:04] *** Parts: blacked (~blacked@user/blacked) ()
+[18:52:58] <shtrb> incal, every device on you pc has wattage, sum all of them and that is the TOP usage you could get
+[18:53:40] <shtrb> incal, I'm using a 150W for video encoding amd compiling :)
+[18:54:36] *** Joins: junebug (~junebug@2600:1700:3db0:2540:78f9:493d:7ef1:f2c7)
+[18:55:22] *** Joins: Aeilxyz (uid391113@user/aeilxyz)
+[18:56:50] *** Joins: k8yun (~k8yun@user/k8yun)
+[18:57:05] *** Urawa is now known as Awaru
+[18:57:41] *** Quits: keir_ (~keir@user/keir) (Quit: I've gone)
+[18:58:00] <incal> shtrb, OK, what's a device? cooler, CPU, fans, GPU, keyboard, motherboard, RAM, SSD?
+[18:58:05] *** Joins: keir (~keir@user/keir)
+[18:58:17] <shtrb> incal, yes
+[18:58:19] *** Joins: TomGray (~quassel@136-24-120-69.cab.webpass.net)
+[18:59:53] <incal> cool, thanks, I'll get to it
+[19:00:17] *** Quits: junebug (~junebug@2600:1700:3db0:2540:78f9:493d:7ef1:f2c7) (Ping timeout: 240 seconds)
+[19:00:19] *** Parts: incal (~user@c-178e225c.021-67-7570702.bbcust.telenor.se) (ERC 5.4.1 (IRC client for GNU Emacs 29.0.50))
+[19:06:23] *** Joins: elkalamar (elkalamar@gateway/vpn/airvpn/elkalamar)
+[19:08:30] *** Joins: grobi (~grobi@user/grobi)
+[19:09:17] *** Quits: shtrb (~shtrb@user/shtrb) (Quit: Leaving)
+[19:12:41] *** Joins: uarka (~uarka@80.175.110.33)
+[19:13:17] *** Quits: Linux77 (~7Linux7@2804:d45:8c08:9300:ead8:83e5:3ff3:b0a6) (Ping timeout: 240 seconds)
+[19:13:52] *** Joins: k8yun_ (~k8yun@user/k8yun)
+[19:13:59] *** Joins: cdown_ (~cdown@188.214.11.14)
+[19:15:11] *** Quits: zmotaj (~zmotaj@user/zmotaj) (Ping timeout: 256 seconds)
+[19:16:06] *** Joins: jimmy399 (~Jimmy@178-164-172-161.pool.digikabel.hu)
+[19:16:37] *** Quits: cdown (~cdown@163.114.131.1) (Ping timeout: 256 seconds)
+[19:16:43] *** Joins: LtL (~debian@user/ltl)
+[19:16:45] *** cdown_ is now known as cdown
+[19:17:08] *** Parts: uarka (~uarka@80.175.110.33) ()
+[19:17:17] *** Quits: k8yun (~k8yun@user/k8yun) (Ping timeout: 240 seconds)
+[19:20:24] *** Joins: liquidsnake (~liquidsna@185.153.177.163)
+[19:21:19] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[19:21:48] *** Joins: beaver (~beaver@user/pong)
+[19:26:53] *** Quits: han-solo (~hanish@user/han-solo) (Quit: leaving)
+[19:27:12] *** Quits: sh0ne (~sh0ne@2a06:5b00:6fb:2a00:b508:641a:9acd:2179) (Quit: Textual IRC Client: www.textualapp.com)
+[19:27:29] *** Joins: dpkg (~dpkg@debian/bot/dpkg)
+[19:29:07] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 256 seconds)
+[19:30:21] *** Quits: toony[m] (~toony@2001:470:69fc:105::8ee) (Quit: You have been kicked for being idle)
+[19:31:21] *** Quits: fjmorazan (~quassel@user/fjmorazan) (Quit: fjmorazan)
+[19:31:35] *** Joins: fjmorazan (~quassel@user/fjmorazan)
+[19:32:36] *** Joins: i0e (~is0ke3@user/is0ke3)
+[19:33:55] *** Joins: han-solo (~han-solo@user/han-solo)
+[19:36:22] *** Quits: fjmorazan (~quassel@user/fjmorazan) (Client Quit)
+[19:36:44] *** Quits: k8yun_ (~k8yun@user/k8yun) (Quit: Leaving)
+[19:36:53] *** Joins: fjmorazan (~quassel@user/fjmorazan)
+[19:37:17] *** Quits: bebop (~sig@dialup-208-98-133-190.fmtc.com) (Quit: Konversation terminated!)
+[19:39:28] *** Joins: bebop (~sig@dialup-208-98-133-190.fmtc.com)
+[19:40:57] *** Quits: TheCreeper2 (~TheCreepe@user/thecreeper) (Remote host closed the connection)
+[19:41:15] *** Joins: TheCreeper2 (~TheCreepe@user/thecreeper)
+[19:41:42] *** Joins: Linux77 (~leonardo@2804:d45:8c08:9300:76d0:2bff:fe7a:f3a4)
+[19:44:40] *** Quits: beaver (~beaver@user/pong) (Remote host closed the connection)
+[19:45:17] *** Joins: beaver (~beaver@user/pong)
+[19:51:11] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 252 seconds)
+[19:52:58] *** Joins: i0e (~is0ke3@user/is0ke3)
+[20:01:43] *** Quits: crabbedhaloablut (~crabbedha@user/crabbedhaloablut) (Remote host closed the connection)
+[20:01:45] *** Quits: aeris (~aeris@user/aeris) (Remote host closed the connection)
+[20:02:01] *** Joins: crabbedhaloablut (~crabbedha@user/crabbedhaloablut)
+[20:03:21] *** Joins: aeris (~aeris@user/aeris)
+[20:05:26] *** Quits: liquidsnake (~liquidsna@185.153.177.163) (Quit: Leaving)
+[20:06:22] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 260 seconds)
+[20:08:14] *** Quits: dpkg (~dpkg@debian/bot/dpkg) (Ping timeout: 252 seconds)
+[20:08:20] *** Joins: i0e (~is0ke3@user/is0ke3)
+[20:09:38] *** Quits: TheCreeper2 (~TheCreepe@user/thecreeper) (Ping timeout: 260 seconds)
+[20:13:27] *** Joins: junebug (~junebug@2600:1700:3db0:2540:b3ce:33e4:7f1c:9233)
+[20:14:36] *** Quits: AssKoala (~asskoala@user/asskoala) (Ping timeout: 240 seconds)
+[20:16:37] *** Joins: AssKoala (~asskoala@user/asskoala)
+[20:19:47] *** Quits: Misotauros (~Misotauro@gateway/vpn/pia/misotauros) (Ping timeout: 256 seconds)
+[20:19:52] *** Joins: befalou (~befalou@gateway/tor-sasl/befalou)
+[20:19:57] *** Quits: ssf (~ssf@titan.koi.net.ar) (Ping timeout: 240 seconds)
+[20:20:50] <jhutchins> On older systems, peak power usage was at boot, when the hard drives were being spun up.  No longer a factor for SSD systems.
+[20:21:06] *** Quits: archetyp` (~archetyp@55d45ce5.access.ecotel.net) (Remote host closed the connection)
+[20:21:43] *** Quits: junebug (~junebug@2600:1700:3db0:2540:b3ce:33e4:7f1c:9233) (Remote host closed the connection)
+[20:21:57] *** Joins: archetyp (~archetyp@55d45ce5.access.ecotel.net)
+[20:22:08] *** Joins: junebug (~junebug@2600:1700:3db0:2540:8136:88ae:5eca:c31b)
+[20:22:25] <mannequin> Tho cpu gets a burst of dara from ssd to process at once
+[20:23:25] *** Joins: craigevil (craig@user/craigevil)
+[20:24:15] *** tomg_ is now known as tomg
+[20:25:32] *** Parts: vxwarlock (~Darkcodex@user/vxwarlock) (Closing Window)
+[20:25:57] *** Joins: ty3r0x (~ty3r0x@user/ty3r0x)
+[20:26:37] *** Joins: vxwarlock (~Darkcodex@user/vxwarlock)
+[20:27:20] *** Quits: orl (~orl@lfbn-nan-1-1251-252.w86-212.abo.wanadoo.fr) (Remote host closed the connection)
+[20:28:02] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 252 seconds)
+[20:28:19] *** Joins: zhaoxin (~orangeext@user/orangeextract)
+[20:28:23] *** Quits: pankid_ (~quassel@pankid.club) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[20:29:46] *** Joins: i0e (~is0ke3@user/is0ke3)
+[20:30:04] *** Joins: pankid (~quassel@pankid.club)
+[20:31:10] *** Joins: spare (~zdpgjxf4b@user/spareproject)
+[20:32:12] *** Quits: elkalamar (elkalamar@gateway/vpn/airvpn/elkalamar) (Quit: Leaving)
+[20:33:02] *** Joins: k8yun (~k8yun@user/k8yun)
+[20:38:32] *** Quits: craigevil (craig@user/craigevil) (Ping timeout: 240 seconds)
+[20:38:56] *** Quits: scr (scr@user/scr) (Ping timeout: 268 seconds)
+[20:42:16] *** Joins: squatch (~squatch@c-71-193-161-16.hsd1.or.comcast.net)
+[20:52:25] *** Joins: phrix (~phrix@185.76.176.43)
+[20:53:17] *** Quits: thiras (~thiras@user/thiras) (Ping timeout: 240 seconds)
+[20:53:18] *** Joins: tradar (~tradar@user/tradar)
+[20:53:42] *** Quits: squatch (~squatch@c-71-193-161-16.hsd1.or.comcast.net) (Ping timeout: 250 seconds)
+[20:55:13] *** Quits: Haohmaru (~Haohmaru@195.24.53.110) ()
+[20:56:46] *** Quits: Anarchic (~Anarchic@getlegit.co.uk) (Quit: ZNC - http://znc.in)
+[20:57:38] *** Quits: phrix (~phrix@185.76.176.43) (Remote host closed the connection)
+[20:57:46] *** Joins: scr (scr@user/scr)
+[20:58:07] *** Joins: Anarchic (~Anarchic@getlegit.co.uk)
+[20:58:35] *** Quits: Anarchic (~Anarchic@getlegit.co.uk) (Remote host closed the connection)
+[20:59:40] *** Joins: Anarchic (~Anarchic@getlegit.co.uk)
+[21:01:17] *** Quits: markb1 (~markb1@2600:1700:eb40:7ecf:ffda:8964:beaf:e5e3) (Ping timeout: 240 seconds)
+[21:02:09] *** Joins: sobkas (~sobkas@95.175.17.217)
+[21:06:03] *** Joins: Misotauros (~Misotauro@gateway/vpn/pia/misotauros)
+[21:06:57] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 240 seconds)
+[21:09:10] *** Joins: i0e (~is0ke3@user/is0ke3)
+[21:12:26] *** Quits: tradar (~tradar@user/tradar) (Quit: tradar)
+[21:13:00] *** Joins: liquidsnake (~liquidsna@185.153.177.163)
+[21:13:09] *** Quits: cdown (~cdown@188.214.11.14) (Ping timeout: 252 seconds)
+[21:13:56] *** Quits: liquidsnake (~liquidsna@185.153.177.163) (Client Quit)
+[21:14:42] *** Quits: movah4c (~movah4c@p2e537323.dip0.t-ipconnect.de) (Quit: movah4c)
+[21:18:15] *** Quits: befalou (~befalou@gateway/tor-sasl/befalou) (Ping timeout: 240 seconds)
+[21:20:52] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 268 seconds)
+[21:22:17] *** Joins: gce108 (~gce@user/gce108)
+[21:22:34] *** Joins: i0e (~is0ke3@user/is0ke3)
+[21:29:48] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 240 seconds)
+[21:30:11] *** Quits: nurupo (~nurupo.ga@user/nurupo) (Quit: nurupo.ga)
+[21:30:26] *** Joins: nurupo (~nurupo.ga@user/nurupo)
+[21:31:40] *** Quits: Awaru (~Awaru@213.152.187.235) (Quit: Use your brain)
+[21:31:55] *** Joins: i0e (~is0ke3@user/is0ke3)
+[21:32:02] *** Joins: alMalsamo (~alMalsamo@gateway/tor-sasl/almalsamo)
+[21:33:05] *** Joins: Awaru (Awaru@gateway/vpn/airvpn/awaru)
+[21:33:25] *** Quits: Texou (~Texou@2a01:e0a:1ef:5350:d8ae:64c9:3b59:cca2) (Ping timeout: 240 seconds)
+[21:35:02] *** Quits: keypusher (keypusher@user/keypusher) (Ping timeout: 260 seconds)
+[21:36:02] *** Quits: ueberall (~ueberall@user/ueberall) (Quit: ZNC)
+[21:37:53] *** Joins: ueberall (ueberall_l@user/ueberall)
+[21:39:00] *** Quits: i0e (~is0ke3@user/is0ke3) (Ping timeout: 240 seconds)
+[21:39:48] *** Quits: netx (~netx@23-24-2-197-static.hfc.comcastbusiness.net) (Quit: Bye)
+[21:40:35] *** Quits: Scotty_Trees2 (~Scotty_Tr@c-73-197-200-207.hsd1.nj.comcast.net) (Quit: Someone is using the microwave again...)
+[21:42:03] *** Joins: janubo (~janubo@2804:14d:2a7a:8aa1:e44a:5e75:c23e:86b1)
+[21:45:48] *** Joins: amacater_ (~amacater@77.97.174.253)
+[21:48:22] *** Joins: nssy (~nssy@user/nssy)
+[21:48:34] *** Joins: CEP (~CEP@user/cep)
+[21:48:44] *** Joins: Scotty_Trees (~Scotty_Tr@c-73-197-200-207.hsd1.nj.comcast.net)
+[21:50:42] *** Quits: janubo (~janubo@2804:14d:2a7a:8aa1:e44a:5e75:c23e:86b1) (Remote host closed the connection)
+[21:51:05] *** Quits: hans (uid529825@id-529825.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[21:51:53] *** Joins: shibboleth (~shibbolet@user/shibboleth)
+[21:54:00] *** Quits: xanio (~xanio@185.136.125.14) (Quit: WeeChat 2.8)
+[21:56:51] *** Joins: sh0ne (~sh0ne@2a06:5b00:6fb:2a00:3ca9:5db3:71e1:e3fc)
+[21:57:56] *** Quits: sh0ne (~sh0ne@2a06:5b00:6fb:2a00:3ca9:5db3:71e1:e3fc) (Client Quit)
+[21:59:59] *** yang_ is now known as yang
+[22:01:47] *** Quits: fling (~fling@user/fling) (Ping timeout: 256 seconds)
+[22:08:39] *** Joins: keypusher (keypusher@user/keypusher)
+[22:09:33] *** Quits: AceSlash (~slash@cosium-fo-152-18.fib.nerim.net) (Quit: Leaving)
+[22:09:52] *** Quits: somiaj_ (~somiaj@fvwm/admin) (Quit: Reconnecting)
+[22:10:04] *** Joins: somiaj (~somiaj@fvwm/admin)
+[22:10:53] *** Joins: befalou (~befalou@gateway/tor-sasl/befalou)
+[22:12:39] *** Quits: labrador (~labrador@user/labrador) (Quit: Leaving)
+[22:14:11] *** Joins: thiras (~thiras@user/thiras)
+[22:16:15] *** Joins: tieinv (~tieinv@user/tieinv)
+[22:17:48] *** Quits: |3ean (~|3ean@user/3ean/x-1246637) (Ping timeout: 240 seconds)
+[22:20:21] *** Quits: rsx (~dummy@ppp-188-174-155-234.dynamic.mnet-online.de) (Quit: rsx)
+[22:23:37] *** Quits: darutoko- (~darutoko@37.21.177.133) (Quit: Leaving)
+[22:24:53] *** Joins: iobus (uid144366@id-144366.tinside.irccloud.com)
+[22:27:17] *** Quits: ice9 (~ice9@user/ice9) (Ping timeout: 256 seconds)
+[22:27:54] *** tolecnal_ is now known as tolecnal
+[22:31:34] *** Quits: befalou (~befalou@gateway/tor-sasl/befalou) (Remote host closed the connection)
+[22:31:38] *** Joins: tarzeau (~alex@mail.aiei.ch)
+[22:31:46] *** Joins: befalou (~befalou@gateway/tor-sasl/befalou)
+[22:32:11] *** Quits: befalou (~befalou@gateway/tor-sasl/befalou) (Remote host closed the connection)
+[22:32:24] *** Quits: beelzebuzz (~rasputin@gateway/tor-sasl/beelzebuzz) (Remote host closed the connection)
+[22:32:58] *** Joins: befalou (~befalou@gateway/tor-sasl/befalou)
+[22:34:15] *** Quits: spare (~zdpgjxf4b@user/spareproject) (Ping timeout: 240 seconds)
+[22:34:34] *** Joins: spare (~zdpgjxf4b@user/spareproject)
+[22:35:29] *** Quits: amacater_ (~amacater@77.97.174.253) (Quit: Leaving)
+[22:37:36] *** Joins: beelzebuzz (~rasputin@gateway/tor-sasl/beelzebuzz)
+[22:38:28] *** Joins: gaussianblue (~gaussianb@78-61-246-87.static.zebra.lt)
+[22:39:41] *** Joins: craigevil (craig@user/craigevil)
+[22:43:45] *** Quits: mtn (~mtn@98.97.127.52) (Quit: Konversation terminated!)
+[22:45:02] *** Quits: ty3r0x (~ty3r0x@user/ty3r0x) (Quit: Konversation terminated!)
+[22:46:26] *** Joins: ty3r0x (~ty3r0x@user/ty3r0x)
+[22:47:19] *** dag__ is now known as dag
+[22:47:19] *** Joins: Haudegen (~quassel@178.115.237.87.static.drei.at)
+[22:49:43] *** Joins: TheCreeper2 (~TheCreepe@user/thecreeper)
+[22:50:17] *** Quits: Sauvin (~sauvin@about/linux/staff/sauvin) (Remote host closed the connection)
+[22:50:21] *** Joins: befalou_ (~befalou@gateway/tor-sasl/befalou)
+[22:50:36] *** Quits: befalou (~befalou@gateway/tor-sasl/befalou) (Remote host closed the connection)
+[22:51:16] *** Quits: spare (~zdpgjxf4b@user/spareproject) (Remote host closed the connection)
+[22:51:36] *** Quits: sinaowolabi_ (~SinaOwola@169.159.107.1) (Ping timeout: 245 seconds)
+[22:51:59] *** Quits: han-solo (~han-solo@user/han-solo) (Quit: leaving)
+[22:53:28] *** Quits: ueberall (ueberall_l@user/ueberall) (Quit: ZNC)
+[22:53:28] *** Joins: Texou (~Texou@2a01:e34:eca5:6740:80cb:40f8:bfe6:fe58)
+[22:54:25] *** Iamthehuman is now known as Iamthehuman1
+[22:55:07] *** Joins: Metamorphosis (uid451146@user/metamorphosis)
+[22:55:52] *** Joins: ueberall (ueberall_l@user/ueberall)
+[22:57:15] *** Quits: xet7 (~xet7@user/xet7) (Quit: Leaving)
+[22:58:45] *** Joins: xet7 (~xet7@user/xet7)
+[22:59:44] *** Joins: lsrtl_ (~lsrtl@user/lsrtl)
+[23:00:29] *** Joins: utsuhorocks (~utsuhoroc@user/utsuhorocks)
+[23:00:46] *** Quits: polyphem (~rod@2a02:810d:840:8754:224e:f6ff:fe5e:bc17) (Ping timeout: 268 seconds)
+[23:01:32] *** Quits: noidea_ (~noidea@66.10.247.251) (Ping timeout: 250 seconds)
+[23:02:12] *** Quits: lsrtl (~lsrtl@user/lsrtl) (Ping timeout: 240 seconds)
+[23:06:52] *** Joins: |3ean (~|3ean@user/3ean/x-1246637)
+[23:06:59] *** Parts: tieinv (~tieinv@user/tieinv) (Leaving)
+[23:13:30] *** Parts: vxwarlock (~Darkcodex@user/vxwarlock) (Closing Window)
+[23:14:44] *** Joins: sh0ne (~sh0ne@2a06:5b00:6fb:2a00:db8:21e3:7cd5:55c5)
+[23:17:43] *** Quits: sh0ne (~sh0ne@2a06:5b00:6fb:2a00:db8:21e3:7cd5:55c5) (Client Quit)
+[23:18:36] *** Quits: junebug (~junebug@2600:1700:3db0:2540:8136:88ae:5eca:c31b) (Ping timeout: 240 seconds)
+[23:19:17] *** Joins: stateless (~Thunderbi@2603:9000:7100:dda3:0:d08a:1c0b:6f20)
+[23:21:55] *** Quits: c10l (~c10l@user/c10l) (Quit: See ya! o/)
+[23:24:27] *** Joins: janubo (~janubo@2804:14d:2a7a:8aa1:e44a:5e75:c23e:86b1)
+[23:24:43] *** Quits: craigevil (craig@user/craigevil) (Quit: leaving)
+[23:24:52] *** Quits: revolt112 (~revolt112@gw.thefirewall.de) (Quit: Bye bye)
+[23:25:38] *** Joins: revolt112 (~revolt112@gw.thefirewall.de)
+[23:27:10] *** Joins: mtn (~mtn@98.97.127.52)
+[23:33:24] *** Quits: janubo (~janubo@2804:14d:2a7a:8aa1:e44a:5e75:c23e:86b1) (Read error: Connection reset by peer)
+[23:35:46] *** Joins: janubo (~janubo@2804:14d:2a7a:8aa1:e44a:5e75:c23e:86b1)
+[23:38:24] *** Joins: Iamthehuman (~noname@user/iamthehuman)
+[23:38:47] *** Quits: Iamthehuman1 (~noname@user/iamthehuman) (Remote host closed the connection)
+[23:39:05] *** Joins: lispy (~lispy@user/lispy)
+[23:45:15] *** Quits: befalou_ (~befalou@gateway/tor-sasl/befalou) (Ping timeout: 240 seconds)
+[23:45:53] *** Joins: amacater_ (~amacater@77.97.174.253)
+[23:49:49] *** Joins: cvemys (~cvemys@user/cvemys)
+[23:50:41] *** Quits: janubo (~janubo@2804:14d:2a7a:8aa1:e44a:5e75:c23e:86b1) (Read error: Connection reset by peer)
+[23:52:17] *** Quits: brentaarnold (~brentaarn@24.112.92.157) (Ping timeout: 240 seconds)
+[23:56:38] *** Quits: TheCreeper2 (~TheCreepe@user/thecreeper) (Remote host closed the connection)
+[23:56:38] *** Joins: monkey_ (~user@190.104.116.153)
+[23:56:40] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Remote host closed the connection)
+[23:56:56] *** Joins: TheCreeper2 (~TheCreepe@user/thecreeper)
+[23:57:01] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[23:57:31] *** Joins: janubo (~janubo@2804:14d:2a7a:8aa1:e44a:5e75:c23e:86b1)
+[23:57:42] *** Quits: ddsys (~ddsys@user/ddsys) (Quit: Leaving)

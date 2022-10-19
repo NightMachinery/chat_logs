@@ -1,0 +1,647 @@
+[00:06:48] *** Joins: wootehfoot (~wootehfoo@user/wootehfoot)
+[00:08:50] *** Joins: rgrinberg (~textual@201.198.177.243)
+[00:20:33] *** Quits: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl) (Read error: Connection reset by peer)
+[00:23:15] *** Quits: xackus (~xackus@6-227.w.knc.pl) (Ping timeout: 264 seconds)
+[00:23:43] *** Quits: novakane (~novakane@user/novakane) (Quit: WeeChat 3.3)
+[00:33:58] *** Quits: nvmd (~nvmd@user/nvmd) (Quit: Later, nerds.)
+[00:36:28] <marler8997> andrewrk, one thing that bothers me is why are we associating "resource cleanup" with invalidation.  What I mean by that is, today if you have a type that has no resource cleanup, then it does no invalidation.  Why is it that when a type has resources that need cleaned do we suddenly feel the need to invalidate it.  If we care about invalidation, why not invalidate all types?
+[00:37:08] <andrewrk> let's say that the resource cleanup means freeing a pointer
+[00:37:40] <andrewrk> that leaves a dangling pointer, right? however if we set the dangling pointer to undefined, we gain safety because the pointer is now 0xaaaaaaa instead of UAF
+[00:38:18] <marler8997> sure, but having to cleanup a resource is not intrinsically associated with usage after free right?
+[00:39:04] <marler8997> in other words, you can have "use after free" on something that doesn't require cleanup right?
+[00:39:34] *** Joins: notapenguin (~ryu@2804:14d:5680:8a2c:75cf:7f59:516a:b801)
+[00:39:49] <marler8997> for example, a "borrowed pointer".  A "borrowed pointer" means you have a pointer, but you're not the one to clean it up
+[00:40:17] <marler8997> do you still invalidate that borrowed pointer after you're done using it?
+[00:41:35] <marler8997> I'm sort of thinking out loud here, trying to understand and I'm not sure what the right conclusion is atm
+[00:41:45] *** Joins: xackus (~xackus@6-227.w.knc.pl)
+[00:43:03] <ifreund> setting stuff to undefined after you stop using it is done for the same purpose as assertions
+[00:43:23] <marler8997> agreed
+[00:43:26] <ifreund> it's a guarentee the programmer is giving to the compiler and other programmers
+[00:43:51] <ifreund> but you don't "have" to use assertions
+[00:43:57] <ifreund> it's just good practice to do so
+[00:44:06] <marler8997> here's one thought I'm having, why would we ever invalidate something inside a "defer", where the scope of that memory is in the same block as defer
+[00:44:18] <marler8997> that's just doing unnecessary work.  Once the block exits, that memory is gone anyway
+[00:44:40] *** Quits: wootehfoot (~wootehfoo@user/wootehfoot) (Read error: Connection reset by peer)
+[00:45:02] <ifreund> I'm sure there's a case where that memory could be accessed by another defer
+[00:46:37] <marler8997> here's a question to ponder on, if we want to invalidate memory after we're done with it, where do we stop?  On the extreme side you could invalidate literally everything, when do you decide that invalidation is worth it?
+[00:47:43] <andrewrk> what do you mean invalidate literally everything? I do not understand your extreme suggestion
+[00:48:01] <marler8997> the question is, what criteria do we use to determine when we should invalidate memory?
+[00:48:16] <marler8997> for example, we could invalidate all primitive types, like integers
+[00:48:40] <marler8997> var i: u32 = 0;  defer i = undefined; ...
+[00:49:05] <ifreund> it's a fuzzy line, I agree
+[00:49:21] <ifreund> deciding what to assert isn't always obvious
+[00:49:33] <marler8997> another point to think about, if invalidation is like an assert, would it make more sense to only do it in debug mode?
+[00:49:46] <ifreund> some particular cases are fairly clear obvious or not obvious IMO
+[00:50:09] <ifreund> marler8997: there's a reason we have 3 different release build modes..
+[00:50:09] <marler8997> I agree it's a fuzzy line, which is why IMO we should leave it up to the programmer
+[00:50:58] <ifreund> we are the programmers of the std
+[00:51:02] <marler8997> "programmer" meaning "end user here".  Why force them to pay that cost, let them decide
+[00:51:44] <ifreund> I think you're also overblowing the cost of setting a few bytes of memory to 0xaa in debug mode
+[00:51:58] <marler8997> it's non-pessimisation programming :)
+[00:51:59] <ifreund> s/debug/safe build modes/
+[00:52:06] <marler8997> don't give the computer extra work it doesn't need to do
+[00:52:20] *** Parts: jmiven (~vpm@pham.algeb.re) (bye)
+[00:52:38] <ifreund> catching bugs is more important than performance
+[00:52:50] <ifreund> it doesn't matter how fast something is if it does the wrong thing
+[00:53:09] <marler8997> it's a balance, not a rule
+[00:54:34] <marler8997> You can catch alot more bugs (or just avoid them) by using a GC or an interpreted language :)  Balance
+[00:54:53] <ikskuh> ifreund: are you sure about ReleaseSafe setting things to 0xAA ?
+[00:55:21] <marler8997> yeah I recall x = undefined get's compiled out?  not sure though
+[00:56:31] <ifreund> ikskuh: yep
+[00:56:47] <marler8997> in my eyes, my proposal is the best of both worlds.  Do invalidation by default, but let programmers opt-out of it
+[00:56:48] <ifreund> foo = undefined is only a noop in release fast/small
+[00:56:58] <ifreund> just like all other safety checks
+[00:57:09] <ifreund> marler8997: we already let programmers opt out by setting the build mode
+[00:57:23] <ifreund> they can even disable runtime safety for just the single function call if they like
+[00:57:39] <ifreund> I do not see this performance motivated argument as valid
+[00:57:40] <marler8997> fd = -1 wouldn't be affected by the build mode
+[00:58:05] <marler8997> but that's a good question, I wonder how much invalidation is affected by build mode in std?
+[00:59:04] <ifreund> sure, you could argue for an `if (std.debug.runtime_safety) fd = -1;`
+[01:01:17] *** Joins: leon-p (~leon-p@2a02:8108:96c0:1810:a0a9:b6ff:fe31:1de)
+[01:02:09] <marler8997> hmmm, SpexGuy is speaking my language here
+[01:04:30] <marler8997> kinda makes me think that all deinit functions should be doing the equivalent of fd = undefined rather than fd = -1
+[01:04:57] <ifreund> fd = -1 is safer
+[01:05:45] <ifreund> it's guarenteed to be invalid if passed to any syscall
+[01:05:59] <marler8997> slightly safer yes but potentially costing Release mode performance
+[01:06:43] *** Quits: notapenguin (~ryu@2804:14d:5680:8a2c:75cf:7f59:516a:b801) (Quit: WeeChat 3.3)
+[01:06:56] <ifreund> check std.debug.runtime_safety then...
+[01:07:10] <marler8997> oh I like that
+[01:07:20] <ifreund> in safe build modes I would be strongly opposed to using anything other than -1 though
+[01:07:29] <marler8997> yeah, best of both worlds
+[01:07:43] <ifreund> :)
+[01:07:51] <marler8997> maybe this would be a good convention all around, i.e. opt_ptr = if (release) undefined else null
+[01:08:01] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Quit: WeeChat 3.3)
+[01:08:04] *** Joins: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl)
+[01:08:21] <ifreund> I don't think that works for most types
+[01:08:32] <marler8997> opt_ptr meaning "an optional ptr"
+[01:09:09] <marler8997> basically, the convention is if there is a "safer" invalidation value than "undefined", use it in safe modes
+[01:10:16] <ifreund> null isn't safer here though, it's a valid value for a variable of type opt_ptr
+[01:10:19] <marler8997> why doesn't File.close invalidate?
+[01:10:37] <ifreund> the fact that -1 isn't a valid fd is kinda special to POSIX 
+[01:10:43] <marler8997> ifreund fair enough, convention still holds though yes?
+[01:11:08] <ifreund> sure, but I think you'll have a hard time applying it to anything other than POSIX fds :P
+[01:11:48] <marler8997> INVALID_HANDLE_VALUE, INVALID_SOCKET (just 2 off the top of my head)
+[01:12:10] <marler8997> :p
+[01:12:47] <ifreund> ah windows stuff, I'm sure you know more about those than I do :D
+[01:13:16] <marler8997> Windows will always be there when you need to think of some off-color use case :)
+[01:24:39] <marler8997> why doesn't ArrayList invalidate in deinit?
+[01:26:55] <ifreund> probably because nobodies implemented it yet
+[01:27:42] *** Joins: livoreno (~livoreno@user/notzmv)
+[01:30:09] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[01:33:53] <andrewrk> setting something to undefined can actually give information to the optimizer in non-safe optimization modes
+[01:34:10] <marler8997> yeah saw that in SpexGuy comment :)
+[01:34:55] <andrewrk> regarding File, I think it might be changing soon to invalidate
+[01:34:58] <andrewrk> it's an old struct
+[01:35:15] <andrewrk> a related situation is that for evented I/O we might want to have it be an intrusive linked list node
+[01:36:00] <marler8997> ifruend found one more case :) https://github.com/ziglang/zig/pull/10209
+[01:37:49] <marler8997> hmm, not having a way to free means that I can't use "const" in some places I wanted to
+[01:38:34] <marler8997> this means that anything you have a type with resources to free, that type needs to be declared mutable
+[01:40:01] <marler8997> for example, I'm pretty sure I use const file alot, won't be able to do that anymore
+[01:40:24] *** Quits: tane (~tane@user/tane) (Quit: Leaving)
+[01:46:51] *** Quits: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl) (Read error: Connection reset by peer)
+[01:58:45] *** Quits: uzer1 (~uzer@dsl-trebng11-54f912-114.dhcp.inet.fi) (Ping timeout: 268 seconds)
+[02:03:21] <marler8997> andrewrk, curious if you concur with : https://github.com/ziglang/zig/issues/6322#issuecomment-977229617
+[02:04:13] <andrewrk> marler8997, yes I do
+[02:05:13] <Franciman> awesome talk by the author of zig, thanks ifreund 
+[02:05:17] <marler8997> ok, does that mean we are leaning away from making File.close invalidate?
+[02:05:22] <Franciman> now I want to copy their ideas in my compiler
+[02:07:07] <andrewrk> marler8997, I think it would be an improvement to make File.close set the state to undefined (and require mutable File structs everywhere)
+[02:08:23] <marler8997> ooo hot take, so why require File to be mutable?
+[02:12:13] <marler8997> or are you just saying that requiring mutable is a consequence of invalidation (not something we want independently)?
+[02:15:56] *** Quits: leon-p (~leon-p@2a02:8108:96c0:1810:a0a9:b6ff:fe31:1de) (Quit: leon-p)
+[02:16:23] *** Quits: freshcoffee (~fresh@user/freshcoffee) (Quit: WeeChat 3.0.1)
+[02:19:43] <marler8997> I'm still unclear about why we are associating invalidation with resource cleanup, this relationship seems arbitrary to me.  There are cases where you may want to invalidate without cleaning resources, and cases where you want to clean resources without invalidating.
+[02:21:04] <marler8997> And obviously we don't want to invalidate everything (i.e. var i = 0; defer i = undefined; ...), so what criteria are we using to determine when invlidation is worth it?
+[02:22:38] <andrewrk> marler8997, my logic is that the safety is valuable, and mutable File struct is a small cost to pay
+[02:23:04] <andrewrk> if you close the file, there is a fd there that is a UAF waiting to happen
+[02:23:41] <andrewrk> if you declare `var i: i32 = 0;` the compiler implicitly inserts `defer i = undefined;` for you
+[02:24:03] <andrewrk> that's what happens when a variable exits scope
+[02:24:17] <marler8997> oh really? so then why do we need to do it inside deinit as well?
+[02:24:35] <andrewrk> in case you use the variable before it exits scope
+[02:24:38] <marler8997> ah
+[02:24:46] <andrewrk> or in case it is heap allocated
+[02:25:00] <andrewrk> or in a struct field
+[02:26:30] <marler8997> my counter argument to mutable file is "mental load" and readability.  Dealing with a mutable struct takes more load then an immutable one.  How does it behave as a field, parameter, reference, etc, with const it's must simpler
+[02:27:53] <marler8997> Also means that any time you use File as a field, you're containing type can also no longer be const
+[02:28:42] *** Joins: Arw (~Arwalk@lfbn-dij-1-163-68.w109-215.abo.wanadoo.fr)
+[02:29:12] <andrewrk> that might be something we need regardless for evented I/O
+[02:29:56] *** Quits: Arw- (~Arwalk@lfbn-dij-1-163-68.w109-215.abo.wanadoo.fr) (Ping timeout: 245 seconds)
+[02:32:23] <marler8997> I'd be remiss if I didn't point out that having close and deinit be separate solves all the issues :)
+[02:33:12] <marler8997> fn deinit(self: *File) void { self.close(); self.* = undefined }
+[02:36:34] <andrewrk> 🤔
+[02:43:46] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 268 seconds)
+[02:45:34] *** Quits: rgrinberg (~textual@201.198.177.243) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[02:45:43] *** Joins: frmdstryr (~jrm@172.58.203.71)
+[02:46:56] <marler8997> does the compiler insert "defer i = undefined" if i is const?
+[02:47:15] *** Quits: ur5us_ (~ur5us@2406:e002:6c7b:2301:f812:b76c:617f:99d7) (Ping timeout: 264 seconds)
+[02:47:57] <andrewrk> it doesn't actually insert it; I'm just describing the rules of the language
+[02:48:11] <andrewrk> but yes it applies to const too
+[02:49:17] <marler8997> ah problem solved, allow "undefined" invalidation on *const T
+[02:54:26] *** Quits: frmdstryr (~jrm@172.58.203.71) (Remote host closed the connection)
+[02:54:41] *** Quits: xackus (~xackus@6-227.w.knc.pl) (Ping timeout: 256 seconds)
+[02:55:18] *** Quits: gioyik (~gioyik@gateway/tor-sasl/gioyik) (Ping timeout: 276 seconds)
+[02:58:11] <marler8997> all those cases you mentioned for denit(), allowing undefined to be assigned to const would allow all those cases to work with const values
+[03:00:23] <andrewrk> what type would be used for the self parameter?
+[03:01:35] <marler8997> *const T
+[03:01:57] *** Joins: gioyik (~gioyik@gateway/tor-sasl/gioyik)
+[03:02:21] <andrewrk> hmmmm. will have to think about allowing writing undefined through that. in practice it would mean that actually 0xaa bytes are not written, and then we don't get safety
+[03:02:50] <andrewrk> it's weird that you could pass a const pointer to a function and have it destroy the object being pointed to
+[03:03:02] <andrewrk> although that is in fact what free() does
+[03:03:12] <Franciman> is an AutoHashMap indexed by u32 a good candidate for memory efficient sparse arrays?
+[03:03:13] <marler8997> and what the compiler does apparently
+[03:03:27] <andrewrk> Franciman, yes
+[03:03:39] <Franciman> thanks andrewrk, sorry, one more question
+[03:03:51] <Franciman> what would be the complexity of random access?
+[03:03:55] <Franciman> is it near O(1)?
+[03:04:08] <andrewrk> yes
+[03:04:14] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[03:04:22] <Franciman> awesome, that's what I am gonna use for my closure implementation then!
+[03:04:25] <Franciman> many thanks
+[03:04:29] <andrewrk> you may also want to consider AutoArrayHashMap which is essentially just an ArrayList with an index
+[03:04:40] <andrewrk> if you want ordered entries, it's a nice data structure
+[03:05:00] <Franciman> my use case is that I want to store escaped captured variables
+[03:05:05] <Franciman> for a closure
+[03:05:50] <andrewrk> marler8997, my point is if you have a pointer to a const local, and then the const local goes out of scope, you have a pointer to undefined memory
+[03:05:54] <Franciman> I'll look into it, too. Thanks!
+[03:07:12] *** Joins: rgrinberg (~textual@201.198.177.243)
+[03:07:49] *** Quits: rgrinberg (~textual@201.198.177.243) (Client Quit)
+[03:10:12] <marler8997> sounds like you're making a distinction between invalidation an undefined memory.  i = undefined is "undefined memory" but not necessarily invalidateion (setting the memory to 0xaa in safe modes)
+[03:11:13] <marler8997> in any case, if we had deinit(self: *const T), I suppose that would mean self.* = undefined would never set the memory to 0xaa, even in safe modes
+[03:11:43] <marler8997> which means we lose some safety
+[03:12:40] <marler8997> so I guess my preference is to go back to my original proposal which is to provide a way to release resources without invalidating...
+[03:13:16] <marler8997> I love my const, don't take my const :'(
+[03:17:03] <andrewrk> your file isn't const though, the state goes from open to closed
+[03:23:12] <cr1901> What is the differenct between zig-cache and ~/.cache/zig?
+[03:23:51] *** Joins: freshcoffee (~fresh@user/freshcoffee)
+[03:26:47] <cr1901> Well, zig-cache is per project, but why both?
+[03:26:47] <marler8997> I don't the having the ability to invalidate something (set it to 0xaa) is more important than the readability that const provides.  If it were, then we should remove const from the language and make all memory mutable so we can invalidate it as soon as it's done being used.
+[03:29:31] <marler8997> as an example, if you have a non-const value, you don't know whether or not you can pass it by value without looking at the definition.  Requiring File to be mutable means that developers will need to know the definition of File to now whether it can be passed by value.
+[03:30:00] *** Joins: ur5us_ (~ur5us@2406:e002:6c7b:2301:f812:b76c:617f:99d7)
+[03:32:13] <marler8997> I should say that my sensibilities are informed by the fact that 99% of all cases where deinit is called in by a "defer" statement where the file lives in the same block on the stack, so invalidation is mostly pointless since there's no way to reference that memory (without some nefarious stack snooping)
+[03:35:10] <andrewrk> cr1901, some stuff is independent of the project details, and so you save time not rebuilding it. For example, compiler_rt for the native host can be shared among all projects
+[03:35:24] <marler8997> IMO invalidation is really only useful for the 1% of cases where lifetimes get more complex than a simple "defer close" block.  So in my mind, supporting const will aid in 99% of cases.
+[03:35:27] <andrewrk> typically, c compilers will ship these files as part of their installation, but zig only ships source
+[03:35:46] *** Quits: paulgrmn_ (~paulgrmn@user/paulgrmn) (Ping timeout: 245 seconds)
+[03:35:59] <cr1901> andrewrk: Ack, it ended up as part of my backups, but compared to sccache and zig-cache, the mem usage is minimal
+[03:36:01] *** Quits: tgschultz (UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[03:36:01] *** Quits: tgschultz_ (AdiIRC@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[03:36:11] <cr1901> So I'm not gonna bother deleting it from the backup
+[03:36:38] <marler8997> delete that shit
+[03:36:41] *** Joins: tgschultz_ (~UserNick@047-034-058-084.res.spectrum.com)
+[03:36:41] *** Joins: tgschultz (~UserNick@047-034-058-084.res.spectrum.com)
+[03:36:53] <marler8997> you're not building enough zig code :)
+[03:36:55] *** Quits: SmileyKeith (~SmileyKei@2601:645:4300:11e2:6c31:9617:c712:1c7e) (Read error: Connection reset by peer)
+[03:37:15] <cr1901> No, probably not... the zig-cache dirs are much larger lol
+[03:37:25] <cr1901> (and are excluded from backups)
+[03:38:47] *** Joins: SmileyKeith (~SmileyKei@c-73-223-223-245.hsd1.ca.comcast.net)
+[03:38:53] *** Quits: bgs (~bgs@upc.si.94.140.92.241.dc.cable.static.telemach.net) (Ping timeout: 265 seconds)
+[03:39:57] *** Joins: bgs (~bgs@upc.si.94.140.92.241.dc.cable.static.telemach.net)
+[03:45:14] <devast8a> Is there any reason we can't violate const and write over const when invalidating?
+[03:45:54] <andrewrk> that's not really const then is it? that's mutable
+[03:46:08] <andrewrk> why's it gotta be so complicated
+[03:46:17] <andrewrk> deinit() is a mutating operation
+[03:47:24] <devast8a> const in Zig means the memory is guaranteed not to change rather than say C++ the value doesn't change but the memory can?
+[04:00:49] <andrewrk> I don't know how to answer that
+[04:02:37] *** Quits: peterhil_ (~peterhil@dsl-hkibng32-54fb56-2.dhcp.inet.fi) (Remote host closed the connection)
+[04:02:52] *** Joins: peterhil_ (~peterhil@dsl-hkibng32-54fb56-2.dhcp.inet.fi)
+[04:04:24] <rom1504> sounds like devast8a is talking about a const pointer in c++, where you can't change the value of the pointer but you can change the memory pointed by the pointer
+[04:04:30] <rom1504> is that a thing in zig?
+[04:06:10] <rom1504> (ie this https://stackoverflow.com/a/1143272/1658314 )
+[04:06:34] *** Joins: rgrinberg (~textual@201.198.177.243)
+[04:08:20] <andrewrk> the language specification concept related here is "aliasing" and it's an area in zig that is not stable yet. there are still some aliasing decisions to be made
+[04:15:15] *** Quits: gioyik (~gioyik@gateway/tor-sasl/gioyik) (Ping timeout: 276 seconds)
+[04:19:12] <rom1504> interesting
+[04:21:57] *** Joins: gioyik (~gioyik@gateway/tor-sasl/gioyik)
+[04:23:57] *** Quits: Swahili (~Swahili@cpc153693-lewi20-2-0-cust508.2-4.cable.virginm.net) (Remote host closed the connection)
+[04:26:57] *** Quits: gioyik (~gioyik@gateway/tor-sasl/gioyik) (Ping timeout: 276 seconds)
+[04:33:32] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Quit: WeeChat 3.3)
+[04:36:46] *** Quits: tgschultz (~UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[04:36:46] *** Quits: tgschultz_ (~UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[04:37:11] *** Joins: tgschultz (AdiIRC@047-034-058-084.res.spectrum.com)
+[04:37:11] *** Joins: tgschultz_ (UserNick@047-034-058-084.res.spectrum.com)
+[04:41:59] *** Joins: gioyik (~gioyik@gateway/tor-sasl/gioyik)
+[04:47:06] *** Quits: gioyik (~gioyik@gateway/tor-sasl/gioyik) (Ping timeout: 276 seconds)
+[04:51:11] *** Joins: qaph (~weechat@user/qaph)
+[04:52:31] *** Quits: kron (~weechat@user/qaph) (Ping timeout: 265 seconds)
+[04:52:34] *** qaph is now known as kron
+[04:58:46] *** Joins: paulgrmn (~paulgrmn@user/paulgrmn)
+[05:08:53] *** Joins: opDispatch (~opDispatc@user/opDispatch)
+[05:09:42] <opDispatch> so zig seems to use the fastcc all convention, right ?
+[05:10:13] <andrewrk> opDispatch, the language does not define what calling convention will be used if unspecified
+[05:11:48] <opDispatch> I've landed on a bug report today with LLVM ir that seemed to use fastcc... so even if it's explicitly set, is there any advantages of fastcc e.g on x86_64 and linux ?
+[05:12:11] <opDispatch> (that was on zig GH)
+[05:12:26] <andrewrk> here is some info: https://llvm.org/docs/LangRef.html#calling-conventions
+[05:13:38] <opDispatch> yes I've read that but other sources seems to say that it's not so useful nowadays. that's why I ask to potential users who would know better, e.g by experience
+[05:14:10] *** Joins: gioyik (~gioyik@gateway/tor-sasl/gioyik)
+[05:14:30] <opDispatch> notably the table in chapter 7 of https://www.agner.org/optimize/calling_conventions.pdf
+[05:17:56] *** Quits: earnestly (~earnest@user/earnestly) (Ping timeout: 268 seconds)
+[05:19:36] *** Quits: gioyik (~gioyik@gateway/tor-sasl/gioyik) (Ping timeout: 276 seconds)
+[05:37:22] *** Quits: tgschultz (AdiIRC@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[05:37:23] *** Quits: tgschultz_ (UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[05:38:07] *** Joins: tgschultz (UserNick@047-034-058-084.res.spectrum.com)
+[05:38:07] *** Joins: tgschultz_ (AdiIRC@047-034-058-084.res.spectrum.com)
+[05:47:23] *** Joins: beta22 (~beta22@2409:8a5c:4c16:3ab0:ad78:66d1:a456:cff7)
+[05:52:17] <marler8997> "deinit() is a mutating operation"...so not a case-by-case basis like SpexGuy suggested?
+[05:56:57] *** Joins: gioyik (~gioyik@gateway/tor-sasl/gioyik)
+[06:02:09] *** Quits: Tekk (~tekk@cpe-76-182-45-53.nc.res.rr.com) (Read error: No route to host)
+[06:02:46] *** Joins: Tekk (~tekk@cpe-76-182-45-53.nc.res.rr.com)
+[06:03:09] *** Quits: gioyik (~gioyik@gateway/tor-sasl/gioyik) (Ping timeout: 276 seconds)
+[06:07:35] *** Parts: opDispatch (~opDispatc@user/opDispatch) (Konversation terminated!)
+[06:12:11] *** Quits: rgrinberg (~textual@201.198.177.243) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[06:12:23] *** Joins: xd1le (~xd1le@user/xd1le)
+[06:19:02] *** Quits: SIben (~SIben@ns3106586.ip-5-135-191.eu) (Ping timeout: 246 seconds)
+[06:19:02] *** Quits: rbino (~rbino@rbino.com) (Ping timeout: 246 seconds)
+[06:19:21] *** Joins: rbino (~rbino@rbino.com)
+[06:20:50] *** Joins: SIben (~SIben@ns3106586.ip-5-135-191.eu)
+[06:31:13] *** Joins: rgrinberg (~textual@201.198.177.243)
+[06:35:40] *** Joins: gioyik (~gioyik@gateway/tor-sasl/gioyik)
+[06:38:22] *** Quits: tgschultz (UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[06:38:22] *** Quits: tgschultz_ (AdiIRC@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[06:38:54] *** Joins: tgschultz_ (AdiIRC@047-034-058-084.res.spectrum.com)
+[06:38:54] *** Joins: tgschultz (UserNick@047-034-058-084.res.spectrum.com)
+[06:40:51] *** Quits: gioyik (~gioyik@gateway/tor-sasl/gioyik) (Ping timeout: 276 seconds)
+[06:43:40] *** Quits: hspak (~hspak@user/hspak) (Quit: The Lounge - https://thelounge.chat)
+[06:48:22] *** Joins: hspak (~hspak@user/hspak)
+[06:54:52] *** Quits: arkurious (~arkurious@user/arkurious) (Quit: Leaving)
+[07:04:11] *** Quits: livoreno (~livoreno@user/notzmv) (Read error: Connection reset by peer)
+[07:15:27] *** Quits: paulgrmn (~paulgrmn@user/paulgrmn) (Ping timeout: 264 seconds)
+[07:19:04] *** Quits: factor (~factor@c-66-30-67-217.hsd1.ma.comcast.net) (Read error: Connection reset by peer)
+[07:30:55] *** Joins: livoreno (~livoreno@user/notzmv)
+[07:36:02] *** Quits: supakeen (~user@python/site-packages/supakeen) (Quit: WeeChat 3.3)
+[07:36:31] *** Joins: supakeen (~user@python/site-packages/supakeen)
+[07:37:48] *** Joins: earnestly (~earnest@user/earnestly)
+[07:39:05] *** Quits: tgschultz (UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[07:39:05] *** Quits: tgschultz_ (AdiIRC@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[07:39:53] *** Joins: tgschultz (UserNick@047-034-058-084.res.spectrum.com)
+[07:39:53] *** Joins: tgschultz_ (AdiIRC@047-034-058-084.res.spectrum.com)
+[07:47:54] *** Quits: beta22 (~beta22@2409:8a5c:4c16:3ab0:ad78:66d1:a456:cff7) (Quit: Client closed)
+[07:59:42] *** Joins: gioyik (~gioyik@gateway/tor-sasl/gioyik)
+[07:59:53] *** Quits: semarie (~semarie@user/semarie) (Ping timeout: 265 seconds)
+[08:00:18] *** Joins: semarie (~semarie@user/semarie)
+[08:06:39] *** Quits: gioyik (~gioyik@gateway/tor-sasl/gioyik) (Ping timeout: 276 seconds)
+[08:11:59] *** Quits: terinjokes (~terinjoke@2604:a880:2:d0::227b:f001) (Quit: ZNC 1.8.2 - https://znc.in)
+[08:12:35] *** Joins: terinjokes (~terinjoke@2604:a880:2:d0::227b:f001)
+[08:17:35] *** Joins: gioyik (~gioyik@gateway/tor-sasl/gioyik)
+[08:22:54] *** Quits: gioyik (~gioyik@gateway/tor-sasl/gioyik) (Ping timeout: 276 seconds)
+[08:23:15] *** Quits: ur5us_ (~ur5us@2406:e002:6c7b:2301:f812:b76c:617f:99d7) (Ping timeout: 264 seconds)
+[08:24:27] *** Quits: nyah (~nyah@94.6.71.219) (Ping timeout: 264 seconds)
+[08:34:37] *** Joins: gioyik (~gioyik@gateway/tor-sasl/gioyik)
+[08:39:49] *** Quits: gioyik (~gioyik@gateway/tor-sasl/gioyik) (Ping timeout: 276 seconds)
+[09:35:00] *** Joins: Tekk_ (~tekk@206.217.205.100)
+[09:37:26] *** Quits: Tekk (~tekk@cpe-76-182-45-53.nc.res.rr.com) (Ping timeout: 245 seconds)
+[09:40:11] *** Joins: gioyik (~gioyik@gateway/tor-sasl/gioyik)
+[09:41:34] *** Quits: tgschultz (UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[09:41:34] *** Quits: tgschultz_ (AdiIRC@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[09:42:07] *** Joins: tgschultz_ (UserNick@047-034-058-084.res.spectrum.com)
+[09:42:07] *** Joins: tgschultz (~UserNick@047-034-058-084.res.spectrum.com)
+[09:58:34] *** Joins: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl)
+[10:02:21] *** Quits: rgrinberg (~textual@201.198.177.243) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[10:12:09] *** Quits: earnestly (~earnest@user/earnestly) (Ping timeout: 256 seconds)
+[10:14:35] *** Joins: Kingsquee (~Kingsquee@node-1w7jr9pliwyywgio3ad1l2mli.ipv6.telus.net)
+[10:15:32] *** Joins: Vexu (~Thunderbi@188.117.20.105)
+[10:18:12] *** Joins: fleg (64bf4386e9@user/fleg)
+[10:42:18] *** Quits: tgschultz (~UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[10:42:18] *** Quits: tgschultz_ (UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[10:42:44] *** Joins: tgschultz (UserNick@047-034-058-084.res.spectrum.com)
+[10:42:44] *** Joins: tgschultz_ (AdiIRC@047-034-058-084.res.spectrum.com)
+[10:43:53] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[10:47:11] *** Quits: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl) (Read error: Connection reset by peer)
+[10:48:51] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Quit: WeeChat 3.3)
+[10:50:31] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[11:20:05] *** Joins: beta22 (~beta22@2409:8a5c:4c1d:4f60:2096:80cd:6a98:9e8e)
+[11:24:42] *** Quits: flokli (~flokli@2a01:4f9:c010:6c2:9479:5dff:fe37:7b16) (Quit: WeeChat 2.2)
+[11:30:48] *** Joins: ur5us_ (~ur5us@2406:e002:6c7b:2301:1b18:b746:eaa9:fad6)
+[11:31:46] *** Quits: Kingsquee (~Kingsquee@node-1w7jr9pliwyywgio3ad1l2mli.ipv6.telus.net) ()
+[11:34:23] *** Joins: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl)
+[11:34:27] *** Joins: _wilsonk (~wilsonk@S0106001b11030a94.cg.shawcable.net)
+[11:34:59] *** Quits: thaumavorio (~thaumavor@thaumavor.io) (Ping timeout: 250 seconds)
+[11:35:51] *** Quits: mountaingoat (~mountaing@user/mountaingoat) (Ping timeout: 250 seconds)
+[11:36:43] *** Quits: wilsonk (~wilsonk@S0106001b11030a94.cg.shawcable.net) (Ping timeout: 250 seconds)
+[11:37:17] *** Joins: thaumavorio (~thaumavor@thaumavor.io)
+[11:37:55] *** Joins: flokli (~flokli@2a01:4f9:c010:6c2:9479:5dff:fe37:7b16)
+[11:42:54] *** Quits: tgschultz (UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[11:42:54] *** Quits: tgschultz_ (AdiIRC@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[11:43:22] *** Joins: tgschultz (UserNick@047-034-058-084.res.spectrum.com)
+[11:43:22] *** Joins: tgschultz_ (AdiIRC@047-034-058-084.res.spectrum.com)
+[11:48:14] *** Joins: bgiannan (giann@2a01:4f8:141:1272::2)
+[11:50:00] *** Joins: mountaingoat (~mountaing@user/mountaingoat)
+[11:51:36] *** Joins: uzer1 (~uzer@dsl-trebng11-54f912-114.dhcp.inet.fi)
+[12:01:34] *** Joins: leon-p (~leon-p@2a02:8108:96c0:1810:24ce:c0ff:fe4b:2852)
+[12:02:28] *** Joins: novakane (~novakane@user/novakane)
+[12:14:22] *** Joins: patrick (~patrick@fsf/member/patrick)
+[12:30:06] *** Quits: M9S[m] (~ninesmatr@2001:470:69fc:105::d9a0) (Quit: You have been kicked for being idle)
+[12:33:46] *** Joins: neurocyte0132889 (~neurocyte@user/neurocyte)
+[12:41:41] *** Joins: ur5us (~ur5us@2406:e002:6c7b:2301:1b18:b746:eaa9:fad6)
+[12:41:57] *** Quits: ur5us_ (~ur5us@2406:e002:6c7b:2301:1b18:b746:eaa9:fad6) (Read error: Connection reset by peer)
+[12:43:38] *** Quits: tgschultz (UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[12:43:38] *** Quits: tgschultz_ (AdiIRC@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[12:44:16] *** Joins: tgschultz (AdiIRC@047-034-058-084.res.spectrum.com)
+[12:44:16] *** Joins: tgschultz_ (UserNick@047-034-058-084.res.spectrum.com)
+[12:54:36] *** Quits: gioyik (~gioyik@gateway/tor-sasl/gioyik) (Ping timeout: 276 seconds)
+[13:00:27] *** Quits: Vexu (~Thunderbi@188.117.20.105) (Ping timeout: 264 seconds)
+[13:02:00] *** Joins: ur5us_ (~ur5us@203.86.198.200)
+[13:05:15] *** Quits: ur5us (~ur5us@2406:e002:6c7b:2301:1b18:b746:eaa9:fad6) (Ping timeout: 264 seconds)
+[13:05:22] *** Joins: Swahili (~Swahili@cpc153693-lewi20-2-0-cust508.2-4.cable.virginm.net)
+[13:10:02] *** Joins: pkap (~pkap@185.209.196.169)
+[13:10:11] *** Quits: _wilsonk (~wilsonk@S0106001b11030a94.cg.shawcable.net) (Ping timeout: 265 seconds)
+[13:11:46] *** Quits: beta22 (~beta22@2409:8a5c:4c1d:4f60:2096:80cd:6a98:9e8e) (Ping timeout: 256 seconds)
+[13:15:46] *** Joins: wilsonk (~wilsonk@S0106001b11030a94.cg.shawcable.net)
+[13:20:12] *** Quits: Swahili (~Swahili@cpc153693-lewi20-2-0-cust508.2-4.cable.virginm.net) (Remote host closed the connection)
+[13:21:47] *** Quits: neurocyte0132889 (~neurocyte@user/neurocyte) (Quit: The Lounge - https://thelounge.chat)
+[13:22:47] *** Joins: neurocyte0132889 (~neurocyte@user/neurocyte)
+[13:24:14] *** Quits: pkap (~pkap@185.209.196.169) (Ping timeout: 256 seconds)
+[13:26:44] *** Joins: gioyik (~gioyik@gateway/tor-sasl/gioyik)
+[13:29:26] *** Quits: ur5us_ (~ur5us@203.86.198.200) (Ping timeout: 268 seconds)
+[13:30:21] *** Joins: Guest46 (~Guest46@62.217.188.36)
+[13:32:18] *** Quits: gioyik (~gioyik@gateway/tor-sasl/gioyik) (Ping timeout: 276 seconds)
+[13:32:20] *** Quits: Guest46 (~Guest46@62.217.188.36) (Client Quit)
+[13:32:26] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 245 seconds)
+[13:40:04] *** Joins: scriptdevil (~scriptdev@202.164.25.5)
+[13:41:46] *** Quits: daurnimator (~daurnimat@vultr.daurnimator.com) (Quit: WeeChat 3.3)
+[13:42:02] *** Joins: daurnimator (~daurnimat@vultr.daurnimator.com)
+[13:42:02] <daurnimator> marler8997: andrewrk: making things *more* troublesome in terms of const-infection is that in zig, function arguments are always constant. so if e.g. you're going to call file.deinit(), then you need to take a `*File` rather than a `File` (or even a `*const File`)
+[13:44:28] *** Quits: tgschultz (AdiIRC@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[13:44:28] *** Quits: tgschultz_ (UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[13:44:58] *** Joins: tgschultz (~UserNick@047-034-058-084.res.spectrum.com)
+[13:44:58] *** Joins: tgschultz_ (~UserNick@047-034-058-084.res.spectrum.com)
+[13:59:13] <Franciman> has anybody tried zig with openmpi?
+[14:05:15] *** Quits: livoreno (~livoreno@user/notzmv) (Ping timeout: 264 seconds)
+[14:24:28] *** Quits: scriptdevil (~scriptdev@202.164.25.5) (Quit: leaving)
+[14:34:40] *** Quits: gxt (~gxt@gateway/tor-sasl/gxt) (Remote host closed the connection)
+[14:35:07] *** Joins: gxt (~gxt@gateway/tor-sasl/gxt)
+[14:39:46] *** Joins: CaNo (cano@dedicated-aim85.rev.nazwa.pl)
+[14:40:15] *** Quits: xd1le (~xd1le@user/xd1le) (Quit: xd1le)
+[14:40:45] *** Joins: scriptdevil (~scriptdev@202.164.25.5)
+[14:40:49] <scriptdevil> [ 99%] Building self-hosted component /home/scriptdevil/zig/zig/build/zig1.o
+[14:41:37] <scriptdevil> Sorry - misclicked. But is that line supposed to take ~8GB of RAM? I am on an older laptop and thought I would spend the weekend hacking on zig
+[14:41:55] <scriptdevil> This is zig0 trying to build zig1.o
+[14:42:05] *** Quits: CaNo (cano@dedicated-aim85.rev.nazwa.pl) (Quit: leaving)
+[14:42:11] <scriptdevil> I even tried using a jemalloc LD_PRELOAD
+[14:47:23] *** Joins: Vexu (~Thunderbi@188.117.20.105)
+[14:57:40] *** Quits: skipwich (~skipwich@user/skipwich) (Read error: Connection reset by peer)
+[15:00:56] <ifreund> scriptdevil: sadly that is expected currently :/
+[15:01:12] <ifreund> https://github.com/ziglang/zig/issues/6485
+[15:01:45] <ifreund> thre are several suggestions in how to work around this in that issue 
+[15:06:11] *** Joins: earnestly (~earnest@user/earnestly)
+[15:13:39] *** Joins: pkap (~pkap@185.209.196.139)
+[15:14:51] *** Quits: scriptdevil (~scriptdev@202.164.25.5) (Ping timeout: 264 seconds)
+[15:25:12] *** Joins: h4ze (~haze@2603-7000-a300-1741-8d5c-c36e-a48f-d005.res6.spectrum.com)
+[15:27:17] *** Joins: skipwich (~skipwich@user/skipwich)
+[15:29:04] *** Quits: haze (~haze@2603-7000-a300-1741-a071-a662-f7a6-2f96.res6.spectrum.com) (Ping timeout: 268 seconds)
+[15:29:04] *** h4ze is now known as haze
+[15:31:05] <bw> Why is zig’s async/await functionality so much simpler than rust’s?
+[15:33:12] <ifreund> it's not just the async/await, the rest of zig is also simpler than the rest of rust :P
+[15:33:56] *** Joins: nyah (~nyah@94.6.71.219)
+[15:35:30] *** Joins: Swahili (~Swahili@cpc153693-lewi20-2-0-cust508.2-4.cable.virginm.net)
+[15:36:01] *** Quits: supakeen (~user@python/site-packages/supakeen) (Quit: WeeChat 3.3)
+[15:36:32] *** Joins: supakeen (~user@python/site-packages/supakeen)
+[15:41:06] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[15:45:29] *** Joins: notzmv (~zmv@user/notzmv)
+[15:46:39] *** Quits: tgschultz (~UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[15:46:39] *** Quits: tgschultz_ (~UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[15:47:02] *** Joins: tgschultz_ (AdiIRC@047-034-058-084.res.spectrum.com)
+[15:47:02] *** Joins: tgschultz (UserNick@047-034-058-084.res.spectrum.com)
+[15:48:42] *** Joins: paulgrmn_ (~paulgrmn@user/paulgrmn)
+[15:49:18] *** Quits: pkap (~pkap@185.209.196.139) (Quit: Client closed)
+[15:50:26] *** Joins: beta22 (~beta22@2409:8a5c:4c1d:4f60:2096:80cd:6a98:9e8e)
+[15:55:19] *** Joins: pkap (~pkap@185.209.196.179)
+[16:18:35] <bw> yes, i agree
+[16:19:23] <bw> i mean... i really like rust, but they move so slowly
+[16:22:18] <ikskuh> zig will move even slower at one point
+[16:24:35] <bw> right, but rust is missing a bunch of stuff
+[16:25:23] <ikskuh> zig does so as well
+[16:25:28] * ikskuh cries in address spaces
+[16:27:52] <Franciman> ahah nooo ikskuh 
+[16:28:00] <ikskuh> hello Franciman 
+[16:28:08] <Franciman> hello! How are you?
+[16:29:08] <ikskuh> pretty fine, just pissed at german covid regulations
+[16:29:16] <Franciman> ehhh
+[16:29:19] <Franciman> sorry
+[16:29:30] <ikskuh> way to work just got 45 minutes longer
+[16:29:44] <ikskuh> apart from that: hacking on zig stuff is pleasing, as usual
+[16:29:50] <ikskuh> whereas hacking on c++ stuff is pain
+[16:29:56] <Franciman> ^^
+[16:30:02] <Franciman> do you work with C++?
+[16:30:15] <ikskuh> yeah, i get paid for doing C++Builder
+[16:30:33] <Franciman> wow
+[16:30:36] <Franciman> very nice
+[16:30:40] <Franciman> you work on compilers!
+[16:30:43] <Franciman> and ide
+[16:30:48] <ikskuh> nah
+[16:30:51] <ikskuh> i just have to use it
+[16:30:53] <ikskuh> and it's horrible
+[16:30:55] <Franciman> oh!
+[16:30:57] <Franciman> sad
+[16:30:58] <ikskuh> like
+[16:31:04] <ikskuh> the best option is to fully disable code completion
+[16:31:09] <ikskuh> best dev ux
+[16:31:14] <Franciman> lol
+[16:31:17] <ikskuh> is having *no* code completion compared to *any*
+[16:33:50] <fleg> isn't C++ Builder, like, 20 years old?
+[16:34:59] <ikskuh> nah
+[16:35:09] <ikskuh> the Borland Version yes, but you can work with that
+[16:35:17] <ikskuh> the Embarcadero version is a Visual Studio clone
+[16:35:22] <ikskuh> that is … horrible
+[16:35:35] <ikskuh> i have about 6 NPPH
+[16:35:39] <ikskuh> (null pointer per hour)
+[16:38:39] *** Quits: chexum (~quassel@gateway/tor-sasl/chexum) (Remote host closed the connection)
+[16:38:51] *** Joins: chexum (~quassel@gateway/tor-sasl/chexum)
+[16:39:55] <fleg> that's a suprise, I thought that C++ Builder was dead and Embarcadero is only milking Delphi
+[16:40:34] <ikskuh> well, they still "work" on the C++Builder
+[16:43:40] *** Joins: frmdstryr (~jrm@172.58.203.71)
+[17:19:56] *** Joins: livoreno (~livoreno@user/notzmv)
+[17:34:58] *** Quits: Vexu (~Thunderbi@188.117.20.105) (Quit: Vexu)
+[17:35:19] *** Joins: gioyik (~gioyik@gateway/tor-sasl/gioyik)
+[17:35:46] <companion_cube> bw: why is it simpler? because there's no borrow checker
+[17:36:05] <bw> is that the only reason?
+[17:36:33] <companion_cube> idk, it's also somewhat different, there's no Future<> type
+[17:44:30] *** Quits: gioyik (~gioyik@gateway/tor-sasl/gioyik) (Ping timeout: 276 seconds)
+[17:55:06] *** Quits: beta22 (~beta22@2409:8a5c:4c1d:4f60:2096:80cd:6a98:9e8e) (Ping timeout: 256 seconds)
+[17:57:55] *** Quits: livoreno (~livoreno@user/notzmv) (Read error: Connection reset by peer)
+[17:58:11] <ikskuh> companion_cube: What is Future<>?
+[17:58:42] <companion_cube> well in rust, async works on functions that return Future<T> (a computation that will eventually yield a T)
+[17:58:46] <ikskuh> because zig frames can be considered futures (which is what is returned by "ascync fun()")
+[17:59:05] <ikskuh> i mean, it's the same in Zig in that regard
+[17:59:12] <ikskuh> var future = async foo();
+[17:59:13] <ikskuh> …
+[17:59:17] <ikskuh> var value = await future;
+[18:00:25] <companion_cube> zig frames are more like coroutines, aren't they?
+[18:00:50] <ikskuh> future and coroutine are orthogonal concepts
+[18:00:51] <companion_cube> like, yeah, they might return a value at some point, but they're allowed not to?
+[18:00:56] <ikskuh> coroutines and threads are on the same axis
+[18:00:57] <companion_cube> I don't think so
+[18:01:01] <ikskuh> while channels and futures are on the same
+[18:01:17] <ikskuh> well
+[18:01:24] <ikskuh> in zig every function returns a value
+[18:01:32] <companion_cube> coroutines can yield multiple values, futures can't
+[18:01:34] <ikskuh> except for noreturn functions
+[18:01:42] <ikskuh> await can only yield a single value
+[18:01:58] <companion_cube> but you can await several time the same frame,can't you?
+[18:02:05] <ikskuh> no
+[18:02:05] <companion_cube> or am I that confused
+[18:02:08] <companion_cube> oh
+[18:02:08] <ikskuh> yes
+[18:02:10] <companion_cube> it's resume taht can?
+[18:02:22] <ikskuh> resume will jump back into a coroutine
+[18:02:26] <ikskuh> but it will never return any value
+[18:02:32] <ikskuh> while await will yield the value or suspend
+[18:02:51] <companion_cube> but then you must make sure that your frame behaves like a future and not a coroutine, right?
+[18:03:22] <ikskuh> futures are the effect of a long taking process
+[18:03:33] <ikskuh> while coroutine is the implementation of a concurrent process
+[18:03:45] <ikskuh> (replace "long taking" with "concurrent" in the previous sentence)
+[18:04:18] <ikskuh> suspend/resume are parts of the scheduler
+[18:04:25] <ikskuh> while async/await are part of the future api
+[18:06:13] <companion_cube> but ultimately they're building on the same notion of frame
+[18:06:25] <ikskuh> no
+[18:06:25] <companion_cube> in rust there's just nothing like that
+[18:06:48] <ikskuh> suspend/resume works with "anyframe" which is a pointer to something that can be resumed
+[18:07:06] <ikskuh> while `async foo()` returns `@Frame(foo)` which is a value that can be awaited
+[18:07:18] <ikskuh> yes, you *could* resume `@Frame(foo)`, but it's most likely a bug
+[18:08:33] <companion_cube> oh I see. cool.
+[18:08:45] <companion_cube> so @Frame(Foo) really is a future
+[18:08:48] <ikskuh> yeah
+[18:08:55] <companion_cube> anyframe->T or sth like that?
+[18:08:57] <ikskuh> anyframe->T is also one
+[18:09:07] <ikskuh> (it's a pointer to @Frame(f)`
+[18:09:36] <companion_cube> and the frame can use other async/await internally
+[18:11:12] <ikskuh> yeah
+[18:12:10] <companion_cube> but that's all predicated on some scheduler being present?
+[18:12:17] <companion_cube> (just like in rust, ofc)
+[18:12:23] <ikskuh> yes
+[18:13:10] <companion_cube> anyway, I stand corrected, there are futures in both cases :)
+[18:13:13] <companion_cube> thanks ikskuh 
+[18:13:38] <ikskuh> sure :)
+[18:13:41] <companion_cube> (a lot of the complexity in rust comes from pinning, because futures are generally self-referencing which does not play well with the borrow checker)
+[18:13:50] <companion_cube> here it's more "don't move a frame" I imagine
+[18:13:53] <ikskuh> we have the same problem with pinning
+[18:21:01] *** Joins: gioyik (~gioyik@gateway/tor-sasl/gioyik)
+[18:24:50] *** Quits: leon-p (~leon-p@2a02:8108:96c0:1810:24ce:c0ff:fe4b:2852) (Ping timeout: 260 seconds)
+[18:33:26] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 268 seconds)
+[18:35:08] *** Joins: rgrinberg (~textual@201.198.177.243)
+[18:53:26] *** Joins: notapenguin (~ryu@2804:14d:5680:8a2c:75cf:7f59:516a:b801)
+[18:54:26] *** Quits: novakane (~novakane@user/novakane) (Quit: WeeChat 3.3)
+[18:55:32] *** Joins: novakane (~novakane@user/novakane)
+[19:00:17] *** Quits: uzer1 (~uzer@dsl-trebng11-54f912-114.dhcp.inet.fi) (Quit: WeeChat 3.3)
+[19:13:28] *** Quits: Nulo (~Nulo@user/nulo) (Quit: ZNC 1.8.2 - https://znc.in)
+[19:16:13] *** Joins: Nulo (~Nulo@user/nulo)
+[19:35:24] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[19:36:38] *** Joins: xackus (~xackus@9-152.w.knc.pl)
+[19:37:48] *** Quits: rgrinberg (~textual@201.198.177.243) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[19:38:49] *** Quits: Nulo (~Nulo@user/nulo) (Quit: ZNC 1.8.2 - https://znc.in)
+[19:40:16] *** Joins: rgrinberg (~textual@201.198.177.243)
+[19:43:14] *** Joins: Nulo (~Nulo@user/nulo)
+[19:50:33] *** Quits: pkap (~pkap@185.209.196.179) (Quit: Client closed)
+[20:05:15] *** Quits: frmdstryr (~jrm@172.58.203.71) (Ping timeout: 264 seconds)
+[20:08:41] *** Quits: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl) (Read error: Connection reset by peer)
+[20:30:05] *** Quits: neurocyte0132889 (~neurocyte@user/neurocyte) (Read error: Connection reset by peer)
+[20:31:58] *** Joins: neurocyte0132889 (~neurocyte@user/neurocyte)
+[20:32:27] *** Joins: dyeplexer (~dyeplexer@user/dyeplexer)
+[20:33:16] *** Quits: ysh (sid6017@ilkley.irccloud.com) (Ping timeout: 245 seconds)
+[20:34:08] *** Joins: ysh (sid6017@id-6017.ilkley.irccloud.com)
+[20:37:47] *** Joins: sm2n_ (~sm2n@user/sm2n)
+[20:38:48] *** Quits: tgschultz (UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[20:38:48] *** Quits: tgschultz_ (AdiIRC@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[20:39:00] *** Joins: euantorano_ (sid180289@id-180289.helmsley.irccloud.com)
+[20:39:37] *** Joins: vent- (~vent@185.62.190.213)
+[20:40:14] *** Joins: lqd_ (uid15826@id-15826.helmsley.irccloud.com)
+[20:41:31] *** Joins: earnest (~earnest@user/earnestly)
+[20:43:35] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 250 seconds)
+[20:46:42] *** Joins: slctvdplcate (~slctvdplc@103.146.3.90)
+[20:46:43] *** Quits: ysh (sid6017@id-6017.ilkley.irccloud.com) (*.net *.split)
+[20:46:43] *** Quits: notapenguin (~ryu@2804:14d:5680:8a2c:75cf:7f59:516a:b801) (*.net *.split)
+[20:46:43] *** Quits: nyah (~nyah@94.6.71.219) (*.net *.split)
+[20:46:43] *** Quits: haze (~haze@2603-7000-a300-1741-8d5c-c36e-a48f-d005.res6.spectrum.com) (*.net *.split)
+[20:46:43] *** Quits: earnestly (~earnest@user/earnestly) (*.net *.split)
+[20:46:43] *** Quits: fleg (64bf4386e9@user/fleg) (*.net *.split)
+[20:46:44] *** Quits: bgs (~bgs@upc.si.94.140.92.241.dc.cable.static.telemach.net) (*.net *.split)
+[20:46:44] *** Quits: saolsen (sid26430@id-26430.lymington.irccloud.com) (*.net *.split)
+[20:46:44] *** Quits: cren (cren@tilde.team) (*.net *.split)
+[20:46:44] *** Quits: vent (~vent@185.62.190.213) (*.net *.split)
+[20:46:44] *** Quits: justicefries (sid26447@id-26447.tinside.irccloud.com) (*.net *.split)
+[20:46:44] *** Quits: sm2n (~sm2n@user/sm2n) (*.net *.split)
+[20:46:44] *** Quits: pusewic|away_ (sid2036@id-2036.lymington.irccloud.com) (*.net *.split)
+[20:46:44] *** Quits: V (~v@anomalous.eu) (*.net *.split)
+[20:46:45] *** Quits: lanodan (~lanodan@2a01:e0a:d6:9930::35) (*.net *.split)
+[20:46:45] *** Quits: lqd (uid15826@helmsley.irccloud.com) (*.net *.split)
+[20:46:45] *** Quits: euantorano (sid180289@helmsley.irccloud.com) (*.net *.split)
+[20:46:45] *** lqd_ is now known as lqd
+[20:46:45] *** euantorano_ is now known as euantorano
+[20:47:05] *** Joins: bgs (~bgs@upc.si.94.140.92.241.dc.cable.static.telemach.net)
+[20:47:42] *** Joins: scriptdevil (~scriptdev@202.164.25.5)
+[20:47:56] *** Quits: xackus (~xackus@9-152.w.knc.pl) (Read error: Connection reset by peer)
+[20:48:41] *** Quits: breavyn (~breavyn@user/breavyn) (Ping timeout: 245 seconds)
+[20:48:58] *** Joins: breavyn (~breavyn@user/breavyn)
+[20:51:20] *** Joins: arkurious (~arkurious@user/arkurious)
+[20:52:04] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[20:52:55] *** Joins: xackus (~xackus@9-152.w.knc.pl)
+[20:52:55] *** Joins: tgschultz___ (AdiIRC@047-034-058-084.res.spectrum.com)
+[20:52:55] *** Joins: tgschultz__ (UserNick@047-034-058-084.res.spectrum.com)
+[20:52:55] *** Joins: ysh (sid6017@id-6017.ilkley.irccloud.com)
+[20:52:55] *** Joins: notapenguin (~ryu@2804:14d:5680:8a2c:75cf:7f59:516a:b801)
+[20:52:55] *** Joins: haze (~haze@2603-7000-a300-1741-8d5c-c36e-a48f-d005.res6.spectrum.com)
+[20:52:55] *** Joins: saolsen (sid26430@id-26430.lymington.irccloud.com)
+[20:52:55] *** Joins: cren (cren@tilde.team)
+[20:52:55] *** Joins: justicefries (sid26447@id-26447.tinside.irccloud.com)
+[20:52:55] *** Joins: pusewic|away_ (sid2036@id-2036.lymington.irccloud.com)
+[20:52:55] *** Joins: V (~v@anomalous.eu)
+[20:52:55] *** Joins: lanodan (~lanodan@2a01:e0a:d6:9930::35)
+[20:53:03] *** Quits: scriptdevil (~scriptdev@202.164.25.5) (Ping timeout: 256 seconds)
+[20:53:25] *** Joins: nyah (~nyah@94.6.71.219)
+[20:53:53] *** Quits: neurocyte0132889 (~neurocyte@user/neurocyte) (Quit: The Lounge - https://thelounge.chat)
+[20:57:59] *** Joins: neurocyte0132889 (~neurocyte@user/neurocyte)
+[21:01:35] <slctvdplcate> Hello. Someone here to answer a question I had? Thanks.
+[21:03:18] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 250 seconds)
+[21:03:18] <viashimo> slctvdplcate: hi, the usual thing in IRC is to ask your question. if somebody knows they may answer. note that a lot of people lurk or are working so it may be some time before getting an answer
+[21:05:15] *** Joins: lumo_e (~enrico@151.29.48.90)
+[21:07:09] <slctvdplcate> viashimo Yeah that's fine.
+[21:07:09] <slctvdplcate> I was watching Andrew's recent talk in HMS on DOD. Had a question about a code snippet. Here's the bin with the specific part: https://zigbin.io/d021ab
+[21:07:10] <slctvdplcate> What kind of data type is this `Color`?
+[21:14:38] *** Joins: damxsa (~damx@2001:16a2:cc46:e600:cd17:6bf3:a5a4:8bdc)
+[21:25:20] *** Quits: rgrinberg (~textual@201.198.177.243) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[21:28:08] <ikskuh> it's a "fit that damn enum on the slide type" ^^
+[21:28:47] <ikskuh> so: not valid syntax, but enum
+[21:31:06] *** Joins: ScriptDevil (~ScriptDev@183.82.29.27)
+[21:43:57] *** Joins: Colt (~Colt@user/colt)
+[21:54:01] <slctvdplcate> Ah got it. I forgot that part of the talk. Thanks ikskuh.
+[21:54:26] *** Parts: slctvdplcate (~slctvdplc@103.146.3.90) ()
+[21:54:46] *** Joins: tane (~tane@dslb-002-201-234-166.002.201.pools.vodafone-ip.de)
+[21:54:46] *** Quits: tane (~tane@dslb-002-201-234-166.002.201.pools.vodafone-ip.de) (Changing host)
+[21:54:46] *** Joins: tane (~tane@user/tane)
+[21:56:02] *** Quits: damxsa (~damx@2001:16a2:cc46:e600:cd17:6bf3:a5a4:8bdc) (Ping timeout: 240 seconds)
+[21:56:24] *** Joins: noeontheend (~noeonthee@207.237.194.194)
+[22:04:26] *** Quits: ScriptDevil (~ScriptDev@183.82.29.27) (Ping timeout: 256 seconds)
+[22:06:36] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[22:07:18] *** Quits: Tekk_ (~tekk@206.217.205.100) (Ping timeout: 256 seconds)
+[22:07:30] *** Quits: dyeplexer (~dyeplexer@user/dyeplexer) (Ping timeout: 260 seconds)
+[22:15:49] *** Joins: frmdstryr (~jrm@172.58.203.71)
+[22:25:58] *** Quits: kron (~weechat@user/qaph) (Quit: kron)
+[22:26:36] *** Quits: Colt (~Colt@user/colt) (Quit: Leaving)
+[22:27:14] *** Joins: Colt (~Colt@user/colt)
+[22:31:40] *** Quits: frmdstryr (~jrm@172.58.203.71) (Ping timeout: 256 seconds)
+[22:31:51] *** Quits: Colt (~Colt@user/colt) (Remote host closed the connection)
+[22:32:20] *** Joins: Colt (~Colt@user/colt)
+[22:33:27] *** Quits: Colt (~Colt@user/colt) (Remote host closed the connection)
+[22:33:29] *** Joins: Colt1 (~Colt@user/colt)
+[22:33:42] *** Quits: Colt1 (~Colt@user/colt) (Remote host closed the connection)
+[22:33:52] <marler8997> daurnimator and andrewrk, here's an example of that: https://github.com/ziglang/zig/blob/57e1f6a89f044e731fe60ce15e98b496dcbaa74f/lib/std/debug.zig#L969
+[22:36:37] *** Joins: Colt (~Colt@user/colt)
+[22:46:26] *** Joins: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl)
+[22:52:34] <companion_cube> I'm only starting it, but lol @ the shirt
+[22:55:59] <marler8997> andrewrk, following the same logic for File, do you also think all slices returned by Allocator should also be mutable?
+[22:56:20] <marler8997> var buf = allocator.alloc(T, 100);  allocator.free(&buf);
+[22:56:27] <marler8997> and allocator.free invalidates buf?
+[22:58:04] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 260 seconds)
+[23:00:00] *** Joins: waleee (~waleee@h-82-196-111-63.NA.cust.bahnhof.se)
+[23:08:37] *** Joins: Arw- (~Arwalk@lfbn-dij-1-163-68.w109-215.abo.wanadoo.fr)
+[23:09:42] *** Quits: Arw (~Arwalk@lfbn-dij-1-163-68.w109-215.abo.wanadoo.fr) (Ping timeout: 268 seconds)
+[23:20:11] *** Joins: ur5us_ (~ur5us@203.86.198.200)
+[23:20:23] *** Joins: wootehfoot (~wootehfoo@user/wootehfoot)
+[23:28:01] *** Quits: Arw- (~Arwalk@lfbn-dij-1-163-68.w109-215.abo.wanadoo.fr) (Ping timeout: 250 seconds)
+[23:29:14] *** Joins: damxsa (~damx@2001:16a2:cc46:e600:cd17:6bf3:a5a4:8bdc)
+[23:30:26] *** Quits: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl) (Read error: Connection reset by peer)
+[23:32:24] *** Joins: Arw (~Arwalk@lfbn-dij-1-1462-22.w109-221.abo.wanadoo.fr)
+[23:34:59] *** Parts: uakci (~uakci@user/uakci) ()
+[23:35:15] *** Joins: rgrinberg (~textual@201.198.177.243)
+[23:48:06] *** Joins: terminalpusher (~terminalp@2a01:586:8c54:1:d213:ff6:6367:dec1)
+[23:57:21] <Franciman> is there any talk about zig std lib?
+[23:57:36] <Franciman> data structures

@@ -1,0 +1,235 @@
+[00:02:37] *** Quits: dangerousdave (~dangerous@host-92-16-216-211.as13285.net) (Ping timeout: 256 seconds)
+[00:02:59] <headius> oh for pete's sake... umask
+[00:03:08] <headius> I guess I should know this stuff
+[00:11:57] <enebo[m]> JavaLangReflect has a method newInstance which has alias annotation "new_instance".  This stumbles over JavaClass having a "new_instance" method
+[00:12:29] <enebo[m]> This will always print out a warning.
+[00:12:46] <enebo[m]>         // NOTE: (legacy) JavaConstructor compat - converting arguments
+[00:12:46] <enebo[m]>         @JRubyMethod(name = "newInstance", alias = "new_instance", rest = true)
+[00:13:23] <enebo[m]> So I am a bit confused on how this works.  The legacy support seems to be making this alias which is overwriting something which is not legacy all the time.
+[00:14:49] <enebo[m]> I guess for anything using j.l.reflect witin JI (which would be people manually using it) would want this alias to occur since you want the reflective version
+[00:16:03] <enebo[m]> It also seems like there is quite a bit of warning potential here since we are putting methods on the same class
+[00:16:16] <enebo[m]> I half wonder if we need an alias_no_warn="new_instance" just so we can skip it for JI
+[00:23:33] <headius> wait what?
+[00:23:44] <headius> JavaLangReflect is a package, it shouldn't get any methods
+[00:24:23] <headius> that should change anyway... the `alias` in JRubyMethod is the wrong way to alias methods on boot... CRuby just defines the methods again with the same name
+[00:24:25] <headius> not with an alias wrapper
+[00:24:45] <headius> there are almost no cases in CRuby where they set another name up for a core (C) method using alias
+[00:25:29] <headius> enebo: this is a kares thing that he moved out of the Ruby code I think
+[00:25:45] <headius> oh no I know what this is
+[00:26:04] <headius> he added this other newInstance to simulate java.lang.Class.newInstance I believe
+[00:26:14] <headius> as part of deprecating and replacing JavaObject, JavaClass, JAvaConstructor
+[00:26:44] <headius> the latter two and similar ones are just using java.lang.Class, java.lang.reflect.Constructor, etc, with these decorations to make them look like the Java* versions
+[00:26:48] <headius> this was in 9.3
+[00:31:58] <headius> hot crackers
+[00:31:59] <headius> [] ~/projects/jruby $ ruby -e "f = File.open('/tmp/test.txt', 'w'); f.puts 'Yeah'; f.close"
+[00:31:59] <headius> [] ~/projects/jruby $ ls -l /tmp/test.txt 
+[00:31:59] <headius> -rw-r--r--  1 headius  wheel  5 Jan  5 15:01 /tmp/test.txt
+[00:32:10] <headius> 0666 with 022 umask... seems to be working now
+[00:34:17] <headius> another one that had to be annotated with a u_int32_t
+[00:34:28] <headius> edging closer... now some ioctl call is segv
+[00:34:46] <headius> aha... more varargs
+[00:35:44] <enebo[m]> headius: so can I remove this?  This is stuff to emulate the old JI in Ruby
+[00:35:58] <headius> remove what
+[00:36:22] <headius> you could make it name = { both } to keep the "alias" and eliminate the warning
+[00:36:37] <enebo[m]> ah yeah
+[00:36:44] <enebo[m]> I will do that and it completely gets around the issue
+[00:36:57] <enebo[m]> I forgot I could do multiple names
+[00:37:18] <headius> we should probably deprecate alias... I'm not sure it is useful
+[00:37:26] <enebo[m]> There is one other issue in ffi/struct.rb I need to fix yet
+[00:37:37] <headius> I added it back when I thought additional names in CRuby were assigned like aliases but they are not
+[00:38:14] <enebo[m]> an "aliagn"  alias in class << self is hitting another one already defined
+[00:38:47] <headius> not sure what that was meant to be
+[00:38:59] <headius> did you check if CRuby still warns for alias overwrite?
+[00:39:43] <enebo[m]> They have a lot of extra logic we don't but I thought it was an alias overwriting an alias but that is not the case
+[00:40:41] <enebo[m]> I have not spent time looking much at that one but I did try a simple repro and it did not work
+[00:42:43] <headius> oh goodie, Ruby FFI logic duplicates a bunch of stuff from jnr-ffi
+[00:45:27] <headius> ok well that's a mess for another day
+[00:45:50] <headius> I think this is crashing because our Ruby FFI impl basically duplicates a bunch of code from jnr-ffi and doesn't have my variadic tweaks
+[00:45:57] <headius> ioctl is variadic
+[00:46:03] <headius> are we having fun yet?
+[00:51:02] <enebo[m]>     @JRubyMethod(name = { "alignment", "align" }, meta = true)
+[00:51:28] <enebo[m]> https://github.com/ffi/ffi/blob/master/lib/ffi/struct.rb#L246
+[00:52:22] <enebo[m]> So we have a Java ext version of Struct but we also have the Ruby version part of the ffi gem
+[00:52:44] <headius> match the C version... if they are assigning this alias in Ruby we don't need the second name
+[00:53:01] <headius> there are a few cases like this that evolved while we were maintaining our own copy of the ruby files
+[00:53:34] <enebo[m]> ok so the goal here is we load native version then the ruby require overlays so we avoid alias errors by not defining this in the native case because the ruby version will alias
+[00:53:43] <headius> right
+[00:54:02] <headius> a number of things like this moved into Ruby from C... I fixed the big ones
+[00:54:32] <enebo[m]> ok looks like alignment is the a valid method here not overridden by ruby version but align actually points to a totally different method
+[00:54:46] <enebo[m]> so I believe this is an outdated name here in the Java annotation
+[00:55:09] <enebo[m]> in any case it is redefined so it is not being used anyways
+[00:59:19] <headius> huh ok
+[00:59:40] <headius> yeaaaah buddy... no more segv
+[01:00:04] <headius> still seeing some weird permission errors on open
+[01:00:28] <headius> these might be M1 or Big Sur behavior differences
+[01:00:57] <headius> ssaschaa: if I were to push a snapshot with these jnr fixes, which version of JRuby would you prefer to try?
+[01:11:30] <headius> ok this is looking pretty decent
+[01:11:58] <headius> spec:ruby:fast timed out on a UDP spec but there were thousands of specs before that and only a couple failures
+[01:12:38] <headius> there will be some platform oddities for sure
+[01:18:20] <headius> hanging in some Process.kill spec
+[01:18:33] <headius> probably need to dig deeper but IO and File and a bunch of other stuff look good
+[01:18:47] <headius> enebo: I think we might be able to spin some releases here
+[01:19:17] <enebo[m]> cool
+[01:20:08] <headius> need to investigate these hangs but IO and File specs are green and that's a lot of native calls including open and fcntl and posix_spawn
+[01:20:18] <headius> we may finally be ready for M1
+[01:29:17] <byteit101[m]> Should alias/alias_method work on extending java interfaces?
+[01:29:58] <headius> Yes
+[01:30:24] <headius> Interface implementation generates a stub method for each that read dispatches to appropriate Ruby names so it should find aliases
+[01:30:33] <headius> Re-dispatches
+[01:31:09] <byteit101[m]> works: module Address; def +(r);add(r);end;end
+[01:31:15] <byteit101[m]> fails: module Address; alias :+ :add;end
+[01:31:48] <byteit101[m]> Caused by: org.jruby.exceptions.NameError: (NameError) undefined method `add' for module
+[01:32:40] <byteit101[m]> 	at org.jruby.RubyModule.alias_method(org/jruby/RubyModule.java:3367)
+[01:32:48] <byteit101[m]> ^ File an issue?
+[01:34:32] <headius> Oh that
+[01:34:59] <headius> We do not actually define the interface methods on the interface modules because they interfere with dispatch when we try to call against Java classes that implement those interfaces
+[01:35:23] <ssaschaa[m]> headius: I don‘t prefer any specific version. I am happy to try anything.
+[01:35:33] <headius> I try a couple times but modules aren't quite the same as interfaces and installing dummy methods screws up the dispatch hierarchy
+[01:36:37] <headius> ssaschaa: I don't think I'll have time to spend any JNR releases until tomorrow, but once that's done we should have snapshots of 9.3 and 9.4 with these fixes in place
+[01:38:03] <byteit101[m]> Should I file an issue about that expectation?
+[02:10:43] <ssaschaa[m]> i have just tried to run the tests on jnr-posix (#174) which included jnr-ffi-2.2.11-SNAPSHOT (#292) which included the jffi-1.3.9-SNAPSHOT (#121) without success.
+[02:11:19] <ssaschaa[m]> java.lang.NullPointerException: Cannot invoke "java.lang.reflect.Field.set(Object, Object)" because the return value of "jnr.posix.JavaLibCHelper$ReflectiveAccess.access$400()" is null
+[02:12:08] <headius> What Java version is this?
+[02:12:37] <ssaschaa[m]> openjdk 17.0.1 2021-10-19
+[02:12:38] <ssaschaa[m]> OpenJDK Runtime Environment Homebrew (build 17.0.1+1)
+[02:13:09] <ssaschaa[m]> Darwin Kernel Version 21.2.0
+[02:13:40] <ssaschaa[m]> macos monterey 12.1
+[02:15:25] <headius> Could be Java modules interfering with the guts of jnr-ffi
+[02:15:48] <headius> I have not run tests on 17 and there's a lot of code generation and reflection in there
+[02:17:46] <headius> Do the jnr-ffi tests pass?
+[02:18:38] <headius> I am on Big Sur and Java 11 and things were passing
+[02:18:51] <ssaschaa[m]> yes, jnr-ffi test are passing
+[02:20:53] <headius> Okay file a bug with jnr posix and I'll have a look tomorrow. It would be nice to have it working on all Java versions before I release
+[02:42:50] <ssaschaa[m]> just tried with java 11 (OpenJDK Runtime Environment Homebrew (build 11.0.12+0)) and tests at jnr-posix are failing as well. but different. i am sorry!
+[02:43:03] <ssaschaa[m]> Running jnr.posix.FileStatTest... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/2d123a531e931a27cda93b8308f5684c21ae208d)
+[02:43:55] <ssaschaa[m]> and:
+[02:43:57] <ssaschaa[m]> openTest(jnr.posix.FileTest)  Time elapsed: 0.002 sec  <<< FAILURE!
+[02:43:57] <ssaschaa[m]> java.lang.AssertionError: expected:<438> but was:<420>
+[03:10:38] <headius> oh rats I commited that test
+[03:10:56] <headius> that test was expected to fail... with umask 022 it turns the requested 666 into 644 so the test is in error
+[03:11:12] <headius> ssaschaa: I have reproduced your failures on 17 and pretty sure it is related to modules and reflection
+[03:11:17] <headius> I will remove or fix that other tests
+[03:16:45] <headius> ssaschaa: fixed
+[03:27:01] <headius> also pushed snapshot builds of jffi, jnr-ffi, and jnr-posix, and started a branch to pull the updates in (from 9.2 on): https://github.com/jruby/jruby/pull/6985
+[03:27:27] <headius> time for my 9-ball league, ttfn
+[19:18:12] <headius> enebo: I am going to push a separate PR for 9.3 since we aren't currently running any tests on 9.2... assuming that looks fine with updated JNR I will spin releases today
+[19:18:43] <enebo[m]> sweet
+[19:24:26] <headius> ssaschaa: thanks for the confirm on that 9.2 PR
+[19:39:17] <headius> looking pretty good on 9.3 PR
+[19:40:02] <headius> enebo: at some point we will want to consider walking away from 9.2 branch and only merging back targeted fixes
+[19:40:17] <headius> 9.3 seems to be going pretty well and the two branches are highly divergent now
+[19:40:32] <enebo[m]> headius: yeah I think we are mostly there now 
+[19:40:44] <headius> any nontrivial change on 9.2 is a pain to merge
+[19:40:45] <enebo[m]> we are only merging back reported issues with low risk
+[19:41:01] <headius> right
+[19:41:50] <enebo[m]> so I think we are fairly restrictive but we do need to make sure anyone on 9.2 has no 9.3 issues.  I feel 2.5.x is so old people really want to at least be on 2.6
+[19:44:34] <headius> yeah there's that too
+[19:45:08] <headius> enebo: no reason I need to keep my kwargs PR open anymore right?
+[19:45:40] <enebo[m]> headius: no. you can close it
+[19:45:59] <enebo[m]> headius: we do still have some to_hash errors with kwargs but that obviously is new work
+[19:46:29] <headius> did you do a PR I can reference?
+[19:47:42] <enebo[m]> I don't think I did nope
+[19:48:27] <headius> JNR updates look good
+[19:48:32] <headius> I'm going to start spinning
+[19:48:42] <headius> 😵‍💫
+[19:49:24] <enebo[m]> I have one exception from pattern match I introduced and it is NPE'ing but I don't see where
+[19:49:24] <enebo[m]> until I type a sentence like this
+[19:49:38] <headius> hah
+[19:49:58] <headius> just do what I do and yell about your bugs while you work
+[19:50:04] <enebo[m]> funny how that works.  We line up pushes exactly and so that cannot be the issue but I realize this is nested and it pops which restores
+[19:50:14] <enebo[m]> I am likely popping a null and not a object back
+[19:50:41] <headius> M1 support will be a big one for 9.3.3 so we should prioritize it
+[19:50:51] <headius> I'm trying to remember if there's anything else needed for 9.2 to support this
+[19:50:55] <enebo[m]> pops are also lined up but they pass the value as temps in the yaccish grammar which makes it all a bit weirder
+[19:51:16] <enebo[m]> yeah M1 is just more and more the thing which people will use
+[19:51:26] <enebo[m]> Ruby is still mac heavy :)
+[19:51:42] <headius> and then I can start using my M1 mini as a desktop for work when I hate my new Linux lappy
+[19:52:13] <headius> THIS ISN'T FOR YOU IT'S FOR ME
+[19:53:13] <enebo[m]> yeah it has already been foretold
+[19:53:21] *** Joins: subbu (~subbu@user/subbu)
+[19:53:27] <enebo[m]> although it may be the year of the linux desktop for you
+[19:53:50] <headius> this MBP has gotten so slow (or feels slow) that anything will be step up
+[19:56:18] <headius> I'm going to release this as minor jnr updates across the board since it doesn't add much other than Variadic annotation and just fixes broken logic on M1
+[20:00:33] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 256 seconds)
+[20:25:36] *** Joins: subbu (~subbu@user/subbu)
+[20:30:13] <headius> enebo: so back to what I said above... should I merge the 9.2 PR and merge 9.2 forward or merge these separately and today is the day we stop merging from 9.2
+[20:31:25] <headius> ssaschaa: I did not fix the 17 issues because they are present on current versions as well... will get back to that soon
+[20:39:48] <headius> JNR releases are out!
+[21:03:00] <headius> ah nevermind about merging.. it was easy anyway
+[21:04:44] <headius> enebo: https://github.com/jruby/jruby/pull/6986
+[21:05:01] <headius> that merges 9.2 including JNR updates and that symbol NPE fix
+[21:05:33] <headius> JNR releases seem to have propagated already, bravo
+[21:29:48] <headius> enebo: https://rubyreferences.github.io/rubychanges/3.1.html
+[21:35:14] <enebo[m]> system ~/work/jruby master * 2359% jruby -ve 'x, y = 100, 200; h = {x:, y:}; p h'
+[21:35:14] <enebo[m]> jruby 9.4.0.0-SNAPSHOT (3.1.0) 2022-01-06 6e32684191 OpenJDK 64-Bit Server VM 25.242-b08 on 1.8.0_242-b08 +jit [linux-x86_64]
+[21:35:14] <enebo[m]> {:x=>100, :y=>200}
+[21:35:36] <headius> woot
+[21:35:38] <enebo[m]> First time I even tried
+[21:35:40] <headius> weird feature but woot
+[21:35:59] <enebo[m]> forwarding is sick but it was before the 3.1 grammar changes
+[21:36:07] <enebo[m]> I hope to have that fixed today
+[21:36:10] <headius> does that work for kwargs?
+[21:36:20] <headius> x, y = 1, 2; foo(x:, y:)
+[21:36:23] <enebo[m]> at least mostly for ordinary
+[21:36:57] <enebo[m]> jruby -ve 'def foo(*a); p a; end; x, y = 1, 2; foo(x:, y:)'
+[21:37:06] <enebo[m]> jruby 9.4.0.0-SNAPSHOT (3.1.0) 2022-01-06 6e32684191 OpenJDK 64-Bit Server VM 25.242-b08 on 1.8.0_242-b08 +jit [linux-x86_64]
+[21:37:06] <enebo[m]> [{:x=>1, :y=>2}]
+[21:37:53] <enebo[m]> lol I need to get 3.1 of MRI yet
+[21:38:21] <enebo[m]> So I want to say this may be wrong
+[21:38:31] <enebo[m]> since I think it will be kwarg and not a hash
+[21:38:31] <headius> heh ok
+[21:39:01] <enebo[m]> If so it is just missing setting !literal to HashNode
+[21:40:42] <headius> yeah no problem
+[21:44:23] <enebo[m]> mri31 -ve 'def foo(*a); p a; end; x, y = 1, 2; foo(x:, y:)'
+[21:44:23] <enebo[m]> ruby 3.1.0p0 (2021-12-25 revision fb4df44d16) [x86_64-linux]
+[21:44:23] <enebo[m]> [{:x=>1, :y=>2}]
+[21:44:35] <headius> that seems wrong
+[21:44:44] <enebo[m]> mri31 -ve 'def foo(*a,**b); p a, b; end; x, y = 1, 2; foo(x:, y:)'
+[21:44:44] <enebo[m]> ruby 3.1.0p0 (2021-12-25 revision fb4df44d16) [x86_64-linux]
+[21:44:44] <enebo[m]> []
+[21:44:44] <enebo[m]> {:x=>1, :y=>2}
+[21:44:58] <headius> oh ok it was just due to no kwargs on receiver
+[21:45:40] <enebo[m]> yeah I keep getting confused because I remember all the variations of this proposal
+[21:46:11] <enebo[m]> I expected it to error or show nothing but this was a change to make older libraries not all require rewriting
+[21:49:43] <enebo[m]> mri31 -e 'C = "constant"; def m()="method"; a = {C:, m:}; p a'
+[21:49:43] <enebo[m]> {:C=>"constant", :m=>"method"}
+[21:49:54] <enebo[m]> ok the constant bit is broken but yikes on this feature
+[21:50:46] <enebo[m]> method does work but this makes sense.  So on compiling this they do a constant check.
+[21:51:18] <headius> wow wat
+[21:51:38] <headius> so it works like defined?
+[21:52:01] <headius> I hope people don't use that
+[21:52:03] <enebo[m]> it is just using what they are defined as
+[21:52:07] <enebo[m]> C = 1 would use 1
+[21:52:20] <headius> does it?
+[21:52:50] <enebo[m]> mri31 -e 'C = 1; def m()="method"; a = {C:, m:}; p a'
+[21:52:50] <enebo[m]> {:C=>1, :m=>"method"}
+[21:52:59] <enebo[m]> The question I have is why?
+[21:53:09] <headius> yeah that is really an odd feature
+[21:53:16] <enebo[m]> Are people having a strong desire to have capitalized keys?
+[21:53:47] <enebo[m]> The insane part of that I just realized
+[21:53:54] <enebo[m]> m: is doing a vcall of m
+[21:53:55] <headius> at least we can still determine statically where the values come from
+[21:54:06] <headius> or how to get them I mean
+[21:54:18] <headius> m: there will always be populated by funcall
+[21:54:44] <enebo[m]> The parser fills these in so it is static in that sense
+[21:54:59] <enebo[m]> if ends up being {C: C, m: m}
+[21:55:11] <enebo[m]> where m is not a valid variable but resolves to a vcall
+[21:55:43] <enebo[m]> C is probably being made into a vcall and failing when it needs a little help in parser support to make it go "oh this is a constant" but I need to see how MRI does this
+[21:55:43] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 256 seconds)
+[21:56:28] <enebo[m]>       HashNode line: 0, literal... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/2304fe1b39a7953cef6c652e06bd8b5561c0bbef)
+[21:56:55] <enebo[m]> called it but yeah it is just syntax sugar
+[21:57:19] <headius> weird
+[21:57:36] <enebo[m]> Feels like a golf feature
+[21:57:49] <headius> yeah it does
+[21:57:58] <headius> maybe for partial forwarding of kwargs?
+[21:58:00] <enebo[m]> Maybe it helps Matz rock paper scissors command-line
+[21:58:08] <headius> def foo(a:, b:); bar(a:); end
+[21:58:25] <headius> it is certainly more compact
+[21:58:46] <enebo[m]> That example makes it look more natural than any I have seen so far
+[22:05:47] *** Joins: dangerousdave (~dangerous@host-92-16-216-211.as13285.net)
+[22:10:22] *** Joins: subbu (~subbu@user/subbu)
+[22:16:59] *** Quits: dangerousdave (~dangerous@host-92-16-216-211.as13285.net) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[22:46:21] <headius> I updated my M1 self-hosted CI PR for latest 9.3: https://github.com/jruby/jruby/pull/6823
+[22:47:23] <headius> just tried spec:ruby:fast and spec:ffi... the former failed because ant isn't installed on the MacStadium instance we have and the latter failed with some problem building the test library
+[22:53:17] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 240 seconds)
+[23:20:03] *** Joins: subbu (~subbu@user/subbu)

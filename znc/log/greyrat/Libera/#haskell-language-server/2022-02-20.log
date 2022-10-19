@@ -1,0 +1,115 @@
+[00:01:38] <fendor[m]> yep, awesome me
+[00:01:56] <fendor[m]> I am on the wrong os right now, so can't check what went wrong
+[01:49:38] <michaelpj> anyone know the history of the `FileStore` abstraction? it seems like the point is to avoid setting up the VFS when running HLS in check mode... but that doesn't seem so onerous. It seems like we could just use the VFS there and ditch the abstraction...
+[01:50:54] <wz1000> michaelpj: first commit in https://github.com/haskell/haskell-language-server/pull/2316 does exactly this
+[01:51:35] <michaelpj> amazing
+[01:52:08] <michaelpj> wz1000: could we land that independently? I'm probably going to touch that a bit and it would be nice if I didn't have to worry about the pointless fake VFS
+[01:53:28] <wz1000> Sure, I can open a new pull request tomorrow, or you could cherry-pick it on your own patch, but note that it depends on https://github.com/haskell/lsp/pull/406
+[01:55:12] <michaelpj> hmmmm
+[01:55:16] <michaelpj> can you inline the function for now?
+[01:55:20] <michaelpj> also that's a scary comment: https://github.com/haskell/haskell-language-server/pull/2316/commits/b611e0090501b060617da6404938f4457ab80b94#diff-1f120c9b06c297d4beda26618a1a1e7cafc7c1faa4c3339897fbfd8e637db5b0R235
+[01:56:10] <wz1000> michaelpj: lsp doesn't expose enough types to let us inline that
+[01:56:16] <michaelpj> gah
+[01:56:32] <wz1000> The scariness already exists, this fixes things
+[01:57:53] <michaelpj> could there be a better underlying fix to the scariness? should the functions exposed by `lsp` for dealing with the VFS be in `STM` instead?
+[01:58:36] <michaelpj> like `getVirtualFile` could be in STM or something
+[01:59:00] <wz1000> This one function is both necessary and sufficient, because you want a consistent snapshot of the entire state of the VFS
+[01:59:10] <wz1000> `snapshotVFS` that is
+[01:59:53] <michaelpj> right, but a way of ensuring that you get consistent access to something is also to access it via an STM transaction
+[02:00:08] <michaelpj> this feels extremely coarse, because we have this shadow copy of the VFS lying around
+[02:00:14] <wz1000> even if `getVirtualFile` is in STM, calling it multiple times in a single shake session could return different results
+[02:02:09] <michaelpj> why do we need a consistent view across a long period of shake rule firings?
+[02:03:16] <wz1000> It's basically double buffering, the copy maintiained by LSP is the working set used to accumulate changes, the copy in the shake store is the frozen state we actually consult
+[02:03:16] <michaelpj> also, does this even update the snapshot?
+[02:03:29] <wz1000> yeah, the snapshot is updated on every restart
+[02:03:54] <wz1000> in `newSession`
+[02:04:38] <wz1000> You need a consistent view in a single shake session or things go horribly wrong
+[02:06:42] <michaelpj> hmmm
+[02:08:06] <wz1000> specially with this patch which relies on file versions being consistent and accurate
+[02:08:46] <michaelpj> thinking out loud: is the issue that Shake doesn't know about the VFS changing, so it doesn't know if things have been updated midway through? (even if we did do this, it might get annoying if stuff got constantly cancelled...)
+[02:09:05] <wz1000> yes, that is the issue
+[02:09:27] <michaelpj> could we teach the VFS to run some callbacks when things change, so we could potentially hook that into Shake?
+[02:09:38] <michaelpj> (I don't really know how shake works, this may be nonsensical)
+[02:09:39] <wz1000> Things are already cancelled on every change which mutates the vfs
+[02:10:31] <michaelpj> wait, if we cancel when the VFS changes how can we see an inconsistent state?
+[02:10:42] <wz1000> but this is asynchronous, rules might continue executing after the VFS is mutated but before the cancellation kicks in
+[02:10:53] <michaelpj> ah right
+[02:11:40] <michaelpj> so we don't have a way of telling the shake thread "hey, one of your leaf nodes has changed, you might want to do something different now"?
+[02:12:10] <wz1000> that is what cancelation does
+[02:12:21] <wz1000> or the restart specifically
+[02:12:29] <wz1000> We tell it exactly which key has changed
+[02:12:35] <michaelpj> I see
+[02:12:59] <wz1000> But `getVirtualFile` still consults the TVar to access the VFS, which is mutated asynchornously, which is precisely the problem
+[02:13:15] <michaelpj> so the issue is stuff like: rule firing starts -> VFS changes, cancellation sent -> rule firing carries on, sees new values, does something bad -> cancellation takes effect too late
+[02:13:23] <wz1000> yeah
+[02:14:04] <michaelpj> okay, so in my STM fantasy world you would run the whole shake rule session in STM so you can roll it back when the VFS TVar gets modified, but that's clearly not going to work
+[02:14:06] <michaelpj> okay, I'm convinced
+[02:14:10] <michaelpj> tricky
+[02:14:38] <wz1000> with this patch we have an independant copy of the VFS (usually mostly shared) which is updated only just before each shake build kicks off and is immutable for the entire duration
+[02:14:47] <michaelpj> yeah, that makes sense
+[02:21:34] <wz1000> ok, thinking about it, this is not enough to satisfy the hls-graph properties - hls-graph needs to know exactly which keys changed on a restart, but the snapshot mechanism does't guarantee this...
+[02:22:04] *** Joins: maerwald[m] (~maerwaldm@2001:470:69fc:105::1ee)
+[02:22:17] <fendor[m]> maerwald, fixed now
+[02:22:44] <wz1000> We might have something like: ChangeEvent A, restart session (A changed), ChangeEvent B, snapshot including changes A and B, rule firing proceeds
+[02:23:38] <wz1000> in particular the snapshot may include arbitrary changes after event that caused us to restart, while hls-graph wants to know exactly what changed (which the set of total changes does tell us)
+[02:23:47] *** Joins: fendor (~fendor@178.165.200.21.wireless.dyn.drei.com)
+[02:24:26] <wz1000> So the solution I see is to pass in the updated VFS snapshot with each change event, instead of relying on hls to call snapshot itself (which might include newer events)
+[02:25:27] <wz1000> probably this means a new type family in LSP and a new argument in the notification handlers to allow passing VFS state along with the contents of certain notifications
+[02:29:13] *** Quits: fendor (~fendor@178.165.200.21.wireless.dyn.drei.com) (Quit: Leaving)
+[03:05:08] <michaelpj> wz1000: what if we had the ability to diff two VFSs to see what had changed between them?
+[03:05:27] <michaelpj> so you restart, take a new snapshot, diff it with your old one to see what changed, go from there
+[03:05:53] <wz1000> michaelpj: the diff is the change event that LSP sends us, so it seems cleaner to me to pass in the new VFS with the change event
+[03:06:16] <wz1000> s/LSP/the client/g
+[03:06:40] <wz1000> rather than trying to recreate the diff after the fact
+[03:07:27] <michaelpj> well, that's because of this double-buffering we're doing; the idea is that the VFS turns those diffs into a queryable state for you, it's just that we don't want that, it seems
+[03:08:13] <michaelpj> diffing would probably be fairly cheap
+[03:09:35] <wz1000> I think it would be nicer if in the lsp API, whenever we update some state due to some message, we pass in the new state along with the message to the handler
+[03:09:43] <michaelpj> and it's much less complicated than threading loads of stuff through notification handlers etc.
+[03:09:49] <wz1000> The message is the diff
+[03:10:10] <michaelpj> I'm not sure I see how that helps us
+[03:11:14] <wz1000> in this case, we get the new VFS along with the DidChangeEvent, we use the DidChangeEvent to invalidate the build graph and we use the new state for queries, and its all in sync
+[03:15:27] <michaelpj> what's the difference between that and grabbing the VFS as the first thing you do in the handler?
+[03:15:45] <michaelpj> we don't process handlers concurrently, do we?
+[03:15:54] <michaelpj> so it's not like another notification can sneak in there and change things
+[03:17:39] <wz1000> I think notification handlers are processed sequentially and request handlers are processed concurrently
+[03:20:51] <wz1000> so ok, I think snapshotting does actually work fine in this case
+[03:21:11] <wz1000> because LSP blocks until we grab a snapshot
+[03:21:31] <wz1000> you are right.
+[03:21:55] <wz1000> (i.e. requests aren't processed until we grab a snapshot)
+[03:23:30] <wz1000> s/requests/new notifications/
+[03:23:37] <wz1000> It still seems quite fragile to me tbh, it works with the way we designed the ghcide core loop, but it really is a landmine in the lsp library API that you have to be aware of.
+[03:26:25] <michaelpj> yeah, the way the lsp stuff is designed seems fairly reasonable for small usecases. the VFS is in a `TVar`, so if you want to use it and be sure you're seeing a consistent snapshot, you just use STM, right? It's because of the scale of what ghcide is doing on top of it that that can't work
+[07:12:50] *** Quits: terrorjack (~terrorjac@2a01:4f8:1c1e:509a::1) (Quit: The Lounge - https://thelounge.chat)
+[07:14:18] *** Joins: terrorjack (~terrorjac@2a01:4f8:1c1e:509a::1)
+[12:02:25] *** Joins: libertyprime (~libertypr@118-92-72-229.dsl.dyn.ihug.co.nz)
+[12:26:01] *** Quits: libertyprime (~libertypr@118-92-72-229.dsl.dyn.ihug.co.nz) (Quit: leaving)
+[13:05:15] *** Gowilla is now known as Heffalump
+[14:00:38] *** Joins: coot (~coot@213.134.190.95)
+[14:22:16] *** Joins: cptwunderlich (~Benjamin@212-186-57-158.cable.dynamic.surfer.at)
+[17:04:51] *** Joins: arrowd (~arr@2.93.163.158)
+[18:13:47] *** Joins: fendor (~fendor@77.119.193.215.wireless.dyn.drei.com)
+[18:21:38] *** Quits: cptwunderlich (~Benjamin@212-186-57-158.cable.dynamic.surfer.at) (Ping timeout: 272 seconds)
+[18:39:01] *** Quits: coot (~coot@213.134.190.95) (Quit: coot)
+[18:59:10] *** Joins: cptwunderlich (~Benjamin@212-186-57-158.cable.dynamic.surfer.at)
+[19:40:36] *** Quits: fendor (~fendor@77.119.193.215.wireless.dyn.drei.com) (Remote host closed the connection)
+[20:28:38] *** Quits: cptwunderlich (~Benjamin@212-186-57-158.cable.dynamic.surfer.at) (Ping timeout: 256 seconds)
+[20:39:35] *** Quits: hololeap (~hololeap@user/hololeap) (Ping timeout: 240 seconds)
+[20:48:34] *** Joins: cptwunderlich (~Benjamin@212-186-57-158.cable.dynamic.surfer.at)
+[20:54:24] *** Joins: hololeap (~hololeap@user/hololeap)
+[20:58:42] *** Quits: arrowd (~arr@2.93.163.158) ()
+[21:53:18] <maerwald> fendor[m]: I think we want a CradleLoadResultT transformer
+[21:53:23] <maerwald> I'm writing a quick patch
+[21:53:27] <maerwald> this bindIO is horrible
+[22:02:02] <maerwald> fendor[m]: https://github.com/hasufell/hie-bios/commit/2a55638e939e4ca5efff22c9585057b07cf9fd57
+[23:03:34] <fendor[m]> maerwald, that's really cool! Is https://github.com/Kleidukos/hie-bios/pull/1 ready to merge?
+[23:03:59] <maerwald> sec
+[23:04:45] <maerwald> I think now
+[23:05:02] <maerwald> I pushed some more changes
+[23:07:18] <fendor[m]> lgtm, I am going to merge at lets see whether CI breaks
+[23:08:12] <fendor[m]> ready now or one moreaddition?
+[23:08:13] <fendor[m]> s/moreaddition/more addition/
+[23:09:06] <maerwald> 78af1e03902771fdeaae5415d83ea73fad2d9970 should be the latest
+[23:09:57] <fendor[m]> awesome thank you!
+[23:10:20] <fendor[m]> merged
+[23:35:08] *** Quits: juhp (~juhp@128.106.188.82) (Ping timeout: 272 seconds)
+[23:37:15] *** Joins: juhp (~juhp@128.106.188.82)

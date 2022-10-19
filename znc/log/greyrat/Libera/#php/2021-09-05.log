@@ -1,0 +1,606 @@
+[00:06:13] *** Joins: semeion (~semeion@user/semeion)
+[00:06:48] *** Quits: memoryleak (~memorylea@77-58-142-250.dclient.hispeed.ch) ()
+[00:17:43] *** Joins: delboy1978uk (~delboy197@202.42-132-109.adsl-dyn.isp.belgacom.be)
+[00:37:54] *** Quits: guidoc (~guido@host-79-27-251-55.retail.telecomitalia.it) (Quit: WeeChat 3.2)
+[00:42:47] *** Quits: magla (~gelignite@55d416bb.access.ecotel.net) (Quit: Stay safe!)
+[00:44:51] *** Joins: genomc (uid245282@id-245282.stonehaven.irccloud.com)
+[01:26:46] *** Quits: delboy1978uk (~delboy197@202.42-132-109.adsl-dyn.isp.belgacom.be) (Quit: delboy1978uk)
+[01:28:15] <Stanley> man
+[01:28:20] <Stanley> docker on OSX is slow slow slow
+[01:28:26] *** Joins: delboy1978uk (~delboy197@202.42-132-109.adsl-dyn.isp.belgacom.be)
+[01:28:52] <Stanley> in production these pages load in like 100ms, using valet locally it's about the same, then docker the page is about 1800ms
+[01:32:26] <Byteflux> Something about that seems off.
+[01:32:55] <Byteflux> Docker on macOS should be using a VM behind the scenes.
+[01:33:09] <Byteflux> But even a VM wouldn't be *that* slow.
+[01:33:17] <Byteflux> Unless your CPU doesn't have hardware virtualization.
+[01:33:26] <Blondie101010> monitor your resource usage
+[01:33:48] <Stanley> It's a 16" 2019 MBP so it's still pretty newish
+[01:34:46] <Byteflux> Probably every Mac released after PowerPC was discontinued should have hardware virtualization in the CPU.
+[01:35:19] <Blondie101010> Stanley:  can you show us the output of `top`?
+[01:35:37] <Blondie101010> while it's being slow
+[01:36:12] <Byteflux> Perhaps the VM being used by Docker Desktop is underallocated
+[01:36:12] <Stanley> https://kopy.io/nRh0B#CR3zAauOxVULkZ
+[01:37:10] <Stanley> it bounces around quite a bit
+[01:37:14] <Stanley> yeah those page loads are like 1500-2500ms
+[01:37:46] <Stanley> Under Resources on Docker Desktop it says 8 cpu's and 2GB ram, 1GB swap and 60GB disk (7.2 used)
+[01:38:18] <Byteflux> Hm, that should be more than sufficient
+[01:38:34] <Stanley> it's more resources than my production servers have
+[01:38:35] <Stanley> lol
+[01:39:09] <Byteflux> Although Docker Desktop does recommend 4GB RAM
+[01:40:04] <Stanley> hm
+[01:40:07] <Stanley> I toggled on an option
+[01:40:07] <Byteflux> But I assume the default installation set you up with 2GB
+[01:40:29] <Stanley> under Experimental Features I toggled on "Use the new Virtualization Framework"
+[01:40:29] <Byteflux> And you don't need that much any way. Something else would be going on.
+[01:40:47] <Stanley> "Enables the new Big Sur virtualization.framework instead of the hypervisor.framework
+[01:40:53] <Stanley> seems to be way faster now, down to around 200ms
+[01:41:44] <Byteflux> Oh I also think I might know...
+[01:41:59] <Byteflux> Are you serving your app from a bind mount?
+[01:42:12] <Stanley> how can i tell
+[01:42:24] <Byteflux> Where do your app files live?
+[01:42:31] <Byteflux> How does your container know to serve them
+[01:42:57] <Stanley> not entirely sure, i'm thinking maybe this line
+[01:42:57] <Stanley>         volumes:
+[01:42:58] <Stanley>             - '.:/var/www/html'
+[01:43:10] <Stanley> so from my local machine? ~/Code/{app_name}
+[01:44:39] <Byteflux> Basically there is going to be a huge difference in filesystem access between the VM accessing files from a virtual disk vs accessing files on your host machine's disk
+[01:45:25] <Byteflux> Well, not too sure about macOS but this is most certainly the case on Docker Desktop for Windows.
+[01:48:44] <Byteflux> Hm, since macOS doesn't have a WSL environment with its own virtual disk, I'm guessing that it tries to make filesystem access more seamless using some kind of network file system or share.
+[01:50:57] <Byteflux> '.:/var/www/html' means "mount the local path `.` to the container path `/var/www/html`" but it has to understand that `.` is referring to ~/Code/{app_name} and not literally `.` in the virtual machine.
+[01:53:43] <Byteflux> In the case of Docker Desktop on Windows, `.` would refer to the actual current directory within the WSL virtual machine and not the Windows host machine. I am betting this is the cause of the abysmal performance.
+[01:53:56] <Byteflux> Easy way to test it, too. Sec.
+[01:55:25] *** Quits: freeworld (~vit@chello085216193138.chello.sk) (Quit: Konversation terminated!)
+[01:55:40] *** Quits: junktext (~junktext@109.201.152.161) (Ping timeout: 240 seconds)
+[02:01:54] <Stanley> Byteflux yeah there's nthing else there that I can see that would link it
+[02:01:55] <Stanley> https://kopy.io/kpwhw#PJyd5qtB4FMZj5
+[02:06:46] *** Quits: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk) (Quit: Leaving)
+[02:06:55] *** Joins: christianPHP (~christian@190.232.168.7)
+[02:08:25] <Byteflux> Stanley: Sorry, was testing some commands. Can you try running this?  docker run -v "$(pwd):/data" -t --rm ubuntu:21.04 dd if=/dev/zero of=/data/testfile iflag=fullblock oflag=dsync bs=64M count=16 status=progress
+[02:08:52] <Byteflux> And then paste the output of the last line indicating rate of transfer.
+[02:11:14] *** Joins: vlm (~vlm@user/vlm)
+[02:14:51] <Byteflux> Stanley: That command will create a new container from the ubuntu:21.04 image, mounts the current directory to /data in the container and generates a 1G file of null bytes. The file should be created very quickly in any case, but native filesystem access will be super fast compared to a network share. You can delete the `testfile` in your current directory afterwards.
+[02:31:35] <Byteflux> This is what I get on Windows in WSL2. The first is writing directly to WSL's filesystem, the second goes through a mount between the VM and the host: https://paste.ubuntu.com/p/qZ2Kw3hsGr/
+[02:33:09] <Cheez> WSL2 filesystem to docker volume should be very fast if you're using docker desktop in WSL2 mode, Windows filesystem to docker volume will be very very slow by comparison (and the first ever time you do it docker desktop will warn you as such)
+[02:33:41] <Byteflux> Right, but just kind of illustrating what I suspect is the cause of the performance issues for Docker in MacOS.
+[02:34:20] <Cheez> docker in macos is a bit simpler, it's a VM with the filesystem mounted straight into it. it's not easy to compare the two.
+[02:35:04] <Byteflux> Right, and that "mount" is probably some kind of network share just like /mnt/c is in Windows/WSL
+[02:36:10] <Cheez> it's not in WSL, it's something... kinda unique. it definitely was in WSL1 though
+[02:36:16] <Cheez> WSL2*
+[02:36:26] <Byteflux> WSL1 was a more native bridge than WSL2
+[02:36:44] <Byteflux> It was an actual Linux kernel shim
+[02:36:55] <Byteflux> Not a virtualized environment like WSL 2
+[02:38:39] <Cheez> Sorry yes, not WSL1, docker desktop pre-wsl integration i meant, in that docker volumes were done through network shares from windows, and that was a whole cluster of fail.
+[02:38:58] <Byteflux> The reason read/writing from/to `//wsl$/` within Windows, or read/writing from/to `/mnt/c/` within WSL2 is slow, is because it's shared over the network.
+[02:39:23] <Byteflux> Albeit, a very lightweight network protocol as far as file sharing goes.
+[02:39:45] <Cheez> i'm fairly sure it doesn't go over the network for /mnt/c, but i lack sufficient resources to verify that atm
+[02:42:16] *** Joins: Rockwood (~Rocky@user/rocky)
+[02:42:24] <Byteflux> Cheez: WSL 2 uses Plan 9 (9P) to mount Windows drives into Linux.
+[02:42:34] <Byteflux> This is most certainly a network protocol.
+[02:42:47] <Cheez> Heh, I only know plan9 as an operating system lol
+[02:42:52] <Cheez> (and a film)
+[02:43:03] <Byteflux> https://en.wikipedia.org/wiki/9P_(protocol)
+[02:43:30] <Cheez> plan9 did everything over the network
+[02:43:37] <Cheez> want cpu? access it over the network
+[02:45:03] <Byteflux> I'm guessing that Docker on MacOS is uses an comparatively inferior protocol for bridging files between VM and host.
+[02:46:29] <__adrian> used to use "overlayfs" not sure if it still does (i don't use my mbp for dev envs anymore)
+[02:46:32] <__adrian> was a pita
+[02:48:48] <Cheez> i really wish phpstorm would add a WSL side component the way vscode does for working within the WSL environment. Currently I mount windows filesystems into docker because using phpstorm over \\wsl$ is even worse.
+[02:49:47] <Cheez> the other option i've seen is running an xserver on windows and running phpstorm inside WSL connecting to that xserver, but that doesn't work when i'm connected to work's VPN because the cisco vpn client breaks pretty much everything
+[02:49:56] <Byteflux> Yeah PHPStorm over \\wsl$ is atrocious. VSCode has nailed this aspect perfectly.
+[02:50:10] <Byteflux> JetBrains says you should use Projector while they develop a competitor :P
+[02:50:22] * Cheez googles jetbrains projector
+[02:50:23] <Byteflux> But at least they're working on something for it.
+[02:51:59] <Cheez> yeah I can imagine they don't want people like me moving my whole flow into vs code (something I'd rather not do, I don't like vscode)
+[02:52:17] *** Joins: DuckThom (~luna@2001:41f0:3fe:3:51d6:db89:2fa:3706)
+[02:54:18] <Byteflux> I still get a lot of value out of IntelliJ, but more and more I'm seeing less value in PHPStorm compared to VSCode when I consider WSL and remote containers.
+[02:54:30] <Cheez> kind of a moot point, when i get a spare 5m between projects i'm going to move my work laptop to arch or ubuntu. I only didn't because it arrived with windows on it during lockdown and I want to do it on works network to get stuff set up with certifcates etc.
+[02:55:02] *** Quits: aloy (~luna@2001:41f0:3fe:3:157:e388:1357:25e0) (Ping timeout: 250 seconds)
+[02:55:03] <Cheez> now i can go into an office if needed to do that
+[02:55:30] <Byteflux> Arch is the kind of thing you throw on your personal machine/laptop. Not ideal for a work laptop
+[02:55:50] <Cheez> it's one of the allowed operating systems for work, centos 7, latest lts ubuntu or arch
+[02:56:11] <Cheez> my current choice is "not centos 7"
+[02:56:17] <Cheez> so either ubuntu or arch :)
+[02:56:24] *** Quits: delboy1978uk (~delboy197@202.42-132-109.adsl-dyn.isp.belgacom.be) (Quit: delboy1978uk)
+[02:56:24] <Byteflux> You want some basic stability guarantee on a work laptop. You don't want every random update to have a 15-30% chance of breaking something that requires 2-5 hours of investigation, as is often the case with Arch.
+[02:56:42] <Cheez> yeah it'll probably be ubuntu
+[02:56:44] <__adrian> i basically stopped using arch when i got an enterprise job
+[02:56:53] <__adrian> everything aims for ubuntu
+[02:57:36] <__adrian> aside: if you have an nvidia gpu, pop_os is largely exactly like ubuntu, but it handles drivers way better.
+[02:58:18] <Byteflux> How does it "handle" drivers better? With NVIDIA, you pretty much *need* the proprietary drives for any decent graphics performance... does it just streamline downloading/compiling it or whatever?
+[02:58:51] <__adrian> yes, it manages installation and updates much more smoothly
+[02:59:21] <__adrian> i don't know all the magic, but i though ubuntu was getting good with nvidia... pop is a night and day difference
+[02:59:26] <__adrian> *thought
+[02:59:44] <Byteflux> Nice
+[03:00:49] <Byteflux> This is one of the reasons I hope AMD catches up to NVIDIA.
+[03:01:58] <Byteflux> The nonsense with the proprietary drivers.
+[03:02:15] <__adrian> i hear it does graphics switching (on laptops) really well too but have never tried it
+[03:06:45] <Byteflux> Not a big deal for me, never really on-the-go with a laptop. Discrete all the way :D
+[03:07:18] <Byteflux> AMD is significantly cheaper at identical performance points, though. That's a big selling point.
+[03:08:29] <__adrian> if ryzen proves anything, it's that they'll raise prices once they're on top  :)
+[03:09:02] <__adrian> but hell, it's a NICE cpu
+[03:09:49] <Byteflux> Yeah and competition is good either way. The CPU and dGPU industries have been one-sided for far too long.
+[03:10:19] <Byteflux> Well, desktop/laptop CPUs, any way.
+[03:10:37] <Cheez> nvidia need to produce mining variants of their GPUs and sell ones that can't be used for mining at sane prices
+[03:10:51] <Cheez> (guess we are getting a little beyond the scope of #php)
+[03:10:54] <__adrian> server cpus have also been one-side far too long
+[03:11:11] <__adrian> yeah, sorry. was there a php question?
+[03:11:31] <Cheez> which gpu should i use for my PHP CRUD app? :D
+[03:11:50] <__adrian> 6900xt
+[03:12:59] <Byteflux> Miners suck and all but the largest toll comes from the pandemic putting an enormous strain on production. Get ready for cheap NVIDIA cards to flood the market when the pandemic shifts more to an endemic and production ramps up again globally.
+[03:13:22] <Byteflux> Though, who's to say when this will happen...
+[03:13:32] <__adrian> now we're just getting into gibberish
+[03:13:35] <__adrian> :p
+[03:13:41] <__adrian> prices aren't coming back down
+[03:13:55] <Byteflux> They will come crashing down. They just don't come down any time soon.
+[03:14:10] <Cheez> They've been saying that about house prices for the last 30 years
+[03:14:29] <__adrian> they'll dip. but they won't crash. this is the new normal.
+[03:14:58] <__adrian> look at what happened when china shut down those mining operations and everyone expected a flood to crash prices
+[03:15:08] <__adrian> nvidia cut production to keep prices high.
+[03:15:11] <Byteflux> The circumstances surrounding GPU demand leads to a reasonable guess that demand is not sustainable and will crash hard.
+[03:15:36] <Byteflux> GPU demand isn't being driven by miners.
+[03:15:45] <Byteflux> Sure they play a role, but they aren't the biggest factor.
+[03:16:09] <__adrian> point is, the suppliers CONTROL the demand.
+[03:17:02] <__adrian> whole "mining gpu" and "LHR" is the same thing - controlling supply. and thereby prices
+[03:17:48] <__adrian> but yeah, sorry, off topic.
+[03:18:05] <__adrian> i'm on #__adrian if you want to hear more ranting
+[03:19:13] <Cheez> miners have caused some interesting things with pricing though, i got my 1070ti for like £200 retail a few years ago, they retail for more than that now
+[03:19:20] <Cheez> well, miners or whatever
+[03:19:24] <Cheez> the market is interesting
+[03:28:40] <Byteflux> Production wasn't really cut, it was shifted to their newer series cards. They'd like to make mid range products because there's a market for that, but they have to balance their limited production capabilities to whatever's most profitable.
+[03:29:02] <__adrian> shill  :p
+[03:29:17] *** Quits: paule32 (~paule32@user/paule32) (Ping timeout: 245 seconds)
+[03:29:50] *** Quits: LucaTM (~LucaTM@user/lucatm) (Quit: Textual IRC Client: www.textualapp.com)
+[03:32:13] *** Quits: Alex8532 (Alex8532@user/alex8532) (Quit: Going offline, see ya! (www.adiirc.com))
+[03:40:25] <Byteflux> Not shilling, just pointing out the reality of what happens when almost every single CPU and GPU made relies on one company in Taiwan to provide their semiconductors :P
+[03:41:09] <BadAdviceCat> #__adrian
+[03:56:28] *** Quits: Warped (~Warped@user/warped) (Ping timeout: 256 seconds)
+[04:50:01] *** Joins: \mSg (~mSg@user/msg/x-0285936)
+[04:54:34] *** Joins: Vision (~Vision@024-178-231-173.res.spectrum.com)
+[05:30:47] *** Joins: ferdna (~ferdna@user/ferdna)
+[05:32:22] *** Joins: jetchisel (jetchisel@user/jetchisel)
+[05:33:29] *** Joins: keypushe- (keypusher@user/keypusher)
+[05:33:52] *** Quits: vlm (~vlm@user/vlm) (Quit: "")
+[05:34:40] *** Quits: keypusher (keypusher@user/keypusher) (Ping timeout: 240 seconds)
+[05:36:44] *** keypushe- is now known as keypusher
+[05:45:53] *** Quits: jetchisel (jetchisel@user/jetchisel) (Quit: Unfortunately time is always against us -- [Morpheus])
+[05:46:55] *** Quits: christianPHP (~christian@190.232.168.7) (Ping timeout: 256 seconds)
+[05:48:02] *** Quits: Rockwood (~Rocky@user/rocky) (Ping timeout: 245 seconds)
+[06:13:17] *** Quits: duidvd (~axe@178.238.173.195) (Remote host closed the connection)
+[06:31:10] *** Quits: Donitz (~Donitz@85-156-203-108.elisa-laajakaista.fi) (Read error: Connection reset by peer)
+[06:36:27] *** Joins: Donitz (~Donitz@85-156-203-108.elisa-laajakaista.fi)
+[06:48:16] *** Quits: sfields (~sfields@2603-8090-1605-d7f3-0ec9-68f3-b8b9-8bd4.res6.spectrum.com) (Quit: Leaving)
+[06:48:48] *** Joins: Rockwood (~Rocky@user/rocky)
+[07:03:05] *** Joins: jetchisel (jetchisel@user/jetchisel)
+[07:49:06] <Rockwood> very silence here
+[07:49:15] <Rockwood> pin drop silence
+[07:53:02] *** Joins: paule32 (~paule32@user/paule32)
+[07:56:55] *** Joins: yuckey2d0 (~yuckey2d@154.3.40.102)
+[08:17:23] <Vision> Rockwood: shhhhhh
+[08:18:09] <Rockwood> Vision, aaaaaaaaaah
+[08:25:40] <BadAdviceCat> Hello.
+[08:34:06] *** Joins: guidoc (~guido@host-79-25-191-5.retail.telecomitalia.it)
+[08:35:07] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[08:37:33] <Rockwood> hi
+[08:52:37] *** Quits: keypusher (keypusher@user/keypusher) (Ping timeout: 245 seconds)
+[09:10:01] *** Quits: dlundgren (~dlundgren@75-9-109-251.lightspeed.milwwi.sbcglobal.net) (Quit: dlundgren)
+[09:20:36] *** Quits: yuckey2d0 (~yuckey2d@154.3.40.102) (Ping timeout: 256 seconds)
+[09:46:53] *** Joins: Pixi (~Pixi@user/pixi)
+[09:55:47] <celphi> should phone numbrs be stored as varchar or numbers in database?
+[09:57:34] <Blondie101010> that depends on what you want to allow
+[09:58:01] <Blondie101010> are special numbers also allowed like the * and #?
+[10:02:15] <Rockwood> celphi, varchar looks better to me
+[10:02:28] <celphi> well i guess that's part 2 of my question- in js i want to make it readable, so do i send to server (php) with those chars stripped then validate on server as 10 digits or do i send as string? or do i not change it at all and store as is to database
+[10:03:02] <Blondie101010> celphi:  you didn't answer my question
+[10:03:28] <Blondie101010> if it's only digits, the answer is simple
+[10:03:44] <Blondie101010> but that is not the case in *every* situation
+[10:03:46] <celphi> the answer is depedent on should i strip characters on client side
+[10:03:55] <Blondie101010> no
+[10:04:08] <Rockwood> she is asking how to use em
+[10:04:08] <Blondie101010> I asked what is valid in the number, disregarding the presentation
+[10:04:20] <Blondie101010> special numbers can include * and #
+[10:04:25] <celphi> oh just numbrs
+[10:05:02] <celphi> if im disregarding presentation it's all numbers
+[10:05:31] <Rockwood> celphi, you want save em and show just that is?
+[10:05:59] <celphi> im assuming it's better to have presentation different than storage
+[10:06:00] <Blondie101010> that could be well represented as a number in the DB, but again depending on the use case, considering it as a string could be useful...  for example if you need to extract the country or area code
+[10:06:07] <Blondie101010> definitely
+[10:06:31] <celphi> i see pros/cons of storing as bigint and varchar
+[10:06:36] <Blondie101010> the safest choice is a string, without formatting
+[10:07:02] <celphi> k
+[10:07:10] <Rockwood> celphi, hi how are you?
+[10:07:13] <Rockwood> lol
+[10:07:19] <Rockwood> sorry late in asking
+[10:07:23] <Blondie101010> #phpc
+[10:08:52] <celphi> im good just tired Rockwood
+[10:08:56] <celphi> what's phpc?
+[10:09:19] <celphi> oh nvm lol
+[10:09:22] <Rockwood> celphi, its php general chat room
+[10:09:30] <celphi> btw what about E.164 formating
+[10:09:45] <Rockwood> why are you confusing
+[10:09:48] <celphi> is it even used?
+[10:10:12] <Rockwood> don't make things harder
+[10:10:30] <Rockwood> just number always looks easy in string
+[10:10:36] <Blondie101010> celphi:  the approach used to solve a problem depends on the use case
+[10:10:56] <Blondie101010> if you're working on phone systems then yes, otherwise you're probably just wasting your time
+[10:11:14] <celphi> ok got it ty
+[10:11:17] <Rockwood> agree
+[10:11:32] <Rockwood> just thing how to use it
+[10:11:55] <Rockwood> formatting is not the real case of change case
+[10:12:07] <Rockwood> formatting is not the real cause of change case
+[10:12:32] <Rockwood> you can do many thing for that
+[10:13:01] <celphi> Aight- ty. Going to go rest.
+[10:13:11] <Rockwood> sure
+[10:13:18] <Rockwood> sleep well
+[10:13:20] <Rockwood> tc
+[10:13:53] <Blondie101010> for phone number fields, I'd allow input of '[0-9() \-]' and I'd remove '[() \-]'
+[10:13:55] <Rockwood> Blondie101010, what do you means by phone system there
+[10:14:12] <Blondie101010> working for a phone company
+[10:14:20] <Blondie101010> or device manufacturer
+[10:14:29] <Rockwood> for get information?
+[10:14:37] <Rockwood> via phone number?
+[10:14:42] <Blondie101010> no the company that handles the phone service
+[10:15:14] <Rockwood> oh okay
+[10:15:29] <celphi> Blondie101010: so you're saying allow the format and not do for them? I was going to add the (...) - as they typed but send just the digits only to server
+[10:15:31] <Rockwood> that is big concept
+[10:16:07] <Blondie101010> celphi:  that sounds like you only know NANP
+[10:16:16] <Rockwood> celphi, just do care at time of save it
+[10:16:20] <Rockwood> NANP?
+[10:16:24] <Blondie101010> Google
+[10:16:32] <Rockwood> sure
+[10:16:38] <celphi> ah true
+[10:16:42] <celphi> i see what you mean
+[10:17:25] <celphi> ill have to find out if we include overseas #s
+[10:17:39] <Rockwood> am correct https://en.wikipedia.org/wiki/North_American_Numbering_Plan?
+[10:17:39] <Blondie101010> not a good idea
+[10:17:55] <celphi> adding is not a good idea?
+[10:17:56] <Blondie101010> I gave you a perfectly suitable solution
+[10:18:34] <Blondie101010> if they like to put '[\- ()]', let them but don't allow anything else and ignore them
+[10:18:54] <celphi> youd remove them after they switched from field?
+[10:19:10] <Blondie101010> before sending to the back-end
+[10:19:17] <celphi> ok got it
+[10:19:19] <Blondie101010> the backend will ensure it's only digits
+[10:19:43] <Rockwood> proper validate just as you require at time sending to DB
+[10:20:04] <Blondie101010> not exactly... validation is done on input
+[10:20:14] <celphi> preg_match i assume bc the filter_var for numbers allow `-`
+[10:20:15] <Blondie101010> when you get to the DB part, you're too late in the process
+[10:20:46] <Rockwood> simple regex is enough
+[10:20:49] <Blondie101010> celphi:  do you absolutely have to ask a question for every line of code you write?
+[10:21:09] <Blondie101010> pick the function that does what you want and test it out properly
+[10:21:24] <celphi> no - i know what i assume to be right answer but im thinking outloud to see if perhaps there's a better solution
+[10:21:55] <Rockwood> be confident first
+[10:22:03] <Blondie101010> good suggestion
+[10:22:05] <Rockwood> by test stuffs
+[10:22:21] <celphi> i dont really lack confidence im looking for better solutions
+[10:22:43] <Rockwood> [11:22:43] <celphi> i dont really lack confidence im looking for better solutions same answer
+[10:23:01] <Blondie101010> celphi:  no, you're wasting your time
+[10:23:28] <Blondie101010> you're probably taking weeks for something that *you* should be able to do in a day
+[10:23:29] <celphi> perfect example- i used to sanitize data ( i was confident about it ) but i later found out it's better to never sanitize data
+[10:23:52] <Blondie101010> not saying you shouldn't try to improve
+[10:24:03] <Blondie101010> but if that's all you do, you won't get much results
+[10:24:06] <Rockwood> you should kick unwanted stuff instead of do corrections
+[10:24:09] <celphi> Blondie101010: prob - it's not really about the timing i finish it- it's me wanting to do it right and learn a pattern of correctness
+[10:24:41] <Blondie101010> celphi:  that pattern comes with good experience, which involves completing projects
+[10:25:08] <Blondie101010> the final part is the hardest
+[10:25:51] <celphi> yup- almost finished- it's why i use my own personal time and not work time to do it the extra stuff
+[10:26:16] <Blondie101010> hmmmmm ok
+[10:38:37] *** Joins: Akimb (~Akimb@86.100.13.100)
+[11:13:46] *** Joins: tccki_ (~tccki@box.webslate.co.nz)
+[11:14:08] *** Quits: tccki (~tccki@2406:e001:2:5a60:250:56ff:fe9e:8795) (Read error: Connection reset by peer)
+[11:15:15] *** tccki_ is now known as tccki
+[11:17:40] *** Quits: mishehu (~mishehu@mira001.eyepeeveesicks.shavedgoats.net) (Ping timeout: 240 seconds)
+[11:29:57] *** Joins: mishehu (~mishehu@mira001.eyepeeveesicks.shavedgoats.net)
+[11:46:19] *** Joins: kerunaru (~Jmcb@64.red-79-146-101.dynamicip.rima-tde.net)
+[11:57:25] *** Quits: semeion (~semeion@user/semeion) (Quit: WeeChat 3.2)
+[12:00:12] *** Joins: Spookbooty (~spookboot@c-71-196-201-34.hsd1.co.comcast.net)
+[12:10:36] *** Quits: mishehu (~mishehu@mira001.eyepeeveesicks.shavedgoats.net) (Ping timeout: 256 seconds)
+[12:12:14] *** Joins: mishehu (~mishehu@mira001.eyepeeveesicks.shavedgoats.net)
+[12:20:32] *** Quits: kerunaru (~Jmcb@64.red-79-146-101.dynamicip.rima-tde.net) (Ping timeout: 245 seconds)
+[12:31:44] *** Joins: kerunaru (~Jmcb@64.red-79-146-101.dynamicip.rima-tde.net)
+[12:34:47] *** Joins: keypusher (keypusher@user/keypusher)
+[12:35:10] *** Quits: konrados (~konrados@user-5-173-179-25.play-internet.pl) (Ping timeout: 240 seconds)
+[12:36:31] *** Quits: kerunaru (~Jmcb@64.red-79-146-101.dynamicip.rima-tde.net) (Ping timeout: 252 seconds)
+[12:38:26] *** Joins: Naktibalda (~Naktibald@88.135.22.17)
+[13:07:04] *** Joins: LucaTM (~LucaTM@user/lucatm)
+[13:09:17] *** Quits: keypusher (keypusher@user/keypusher) (Ping timeout: 245 seconds)
+[13:09:56] *** Joins: keypusher (keypusher@user/keypusher)
+[13:18:05] *** Joins: kerunaru (~Jmcb@64.red-79-146-101.dynamicip.rima-tde.net)
+[13:19:25] *** Quits: Ducki (~ducki@user/ducki) (Ping timeout: 252 seconds)
+[13:23:16] *** Quits: kerunaru (~Jmcb@64.red-79-146-101.dynamicip.rima-tde.net) (Ping timeout: 252 seconds)
+[13:28:07] *** Joins: Ducki (~ducki@user/ducki)
+[13:33:03] *** Joins: kerunaru (~Jmcb@64.red-79-146-101.dynamicip.rima-tde.net)
+[13:39:40] *** Quits: Ducki (~ducki@user/ducki) (Ping timeout: 240 seconds)
+[13:51:52] *** Quits: guidoc (~guido@host-79-25-191-5.retail.telecomitalia.it) (Quit: WeeChat 3.2)
+[13:52:34] *** Joins: guidoc (~guido@host-79-25-191-5.retail.telecomitalia.it)
+[14:03:18] *** Joins: aloy (~luna@2001:41f0:3fe:3:fce0:4f8f:1c16:5e0a)
+[14:05:37] *** Quits: DuckThom (~luna@2001:41f0:3fe:3:51d6:db89:2fa:3706) (Ping timeout: 252 seconds)
+[14:10:13] *** Joins: Rockwood_ (~Rocky@user/rocky)
+[14:11:47] *** Quits: Rockwood (~Rocky@user/rocky) (Ping timeout: 245 seconds)
+[14:12:37] *** Quits: kerunaru (~Jmcb@64.red-79-146-101.dynamicip.rima-tde.net) (Ping timeout: 245 seconds)
+[14:14:43] *** Joins: Mark_Pinecone (~Mark_Pine@gateway/tor-sasl/markpinecone/x-88286818)
+[14:25:06] *** Quits: Mark_Pinecone (~Mark_Pine@gateway/tor-sasl/markpinecone/x-88286818) (Quit: Leaving)
+[14:25:18] *** Joins: Mark_Pinecone (~Mark_Pine@gateway/tor-sasl/markpinecone/x-88286818)
+[14:35:58] *** Joins: kerunaru (~Jmcb@64.red-79-146-101.dynamicip.rima-tde.net)
+[14:41:22] *** Joins: Exagone313 (exa@irc.moe)
+[14:43:24] *** Joins: connrs_ (~connrs@user/connrs)
+[14:43:27] *** Quits: kerunaru (~Jmcb@64.red-79-146-101.dynamicip.rima-tde.net) (Ping timeout: 245 seconds)
+[14:44:03] *** Joins: TinoDid|znc (~TinoDidri@tinodidriksen.com)
+[14:45:25] *** Quits: TinoDidriksen (~TinoDidri@tinodidriksen.com) (Killed (NickServ (GHOST command used by TinoDid|znc)))
+[14:45:25] *** TinoDid|znc is now known as TinoDidriksen
+[14:46:19] *** Quits: Naktibalda (~Naktibald@88.135.22.17) (Ping timeout: 252 seconds)
+[14:48:26] *** Quits: Exa (exa@irc.moe) (Quit: see ya!)
+[14:48:26] *** Quits: connrs (~connrs@user/connrs) (Quit: ZNC 1.8.2 - https://znc.in)
+[14:48:26] *** Exagone313 is now known as Exa
+[14:48:26] *** Quits: Robdgreat (~rob@user/robdgreat) (Remote host closed the connection)
+[14:48:26] *** connrs_ is now known as connrs
+[14:49:40] *** Joins: Ducki (~ducki@user/ducki)
+[14:49:43] *** Joins: Robdgreat (~rob@user/robdgreat)
+[14:59:47] *** Joins: Naktibalda (~Naktibald@88.135.22.17)
+[15:10:35] *** Joins: ___Rockwood__ (~Rocky@user/rocky)
+[15:12:34] *** Quits: Rockwood_ (~Rocky@user/rocky) (Ping timeout: 250 seconds)
+[15:15:58] *** Joins: vlm (~vlm@user/vlm)
+[15:21:01] *** ___Rockwood__ is now known as Rockwood
+[15:23:22] *** Quits: Naktibalda (~Naktibald@88.135.22.17) (Ping timeout: 240 seconds)
+[15:25:35] *** Joins: Warped (~Warped@user/warped)
+[15:38:15] *** Joins: Rockwood_ (~Rocky@user/rocky)
+[15:40:32] *** Quits: Rockwood (~Rocky@user/rocky) (Ping timeout: 245 seconds)
+[15:42:04] *** Quits: jetchisel (jetchisel@user/jetchisel) (Quit: Unfortunately time is always against us -- [Morpheus])
+[16:35:37] *** Joins: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk)
+[16:41:28] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Ping timeout: 256 seconds)
+[16:42:34] *** Joins: sfields (~sfields@2603-8090-1605-d7f3-0ec9-68f3-b8b9-8bd4.res6.spectrum.com)
+[16:47:52] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[16:57:51] *** Joins: kerunaru (~Jmcb@64.red-79-146-101.dynamicip.rima-tde.net)
+[17:02:26] *** Joins: Norkle (~norkle@admin.nasa-g0v.com)
+[17:02:45] *** Joins: freeman_h (~freeman_h@2a02:c7f:fc54:ba00:814d:20ef:b9e9:375)
+[17:14:54] *** Quits: kerunaru (~Jmcb@64.red-79-146-101.dynamicip.rima-tde.net) (Ping timeout: 256 seconds)
+[17:21:03] *** Quits: Rockwood_ (~Rocky@user/rocky) (Read error: Connection reset by peer)
+[17:22:12] *** Joins: Rockwood_ (~Rocky@user/rocky)
+[17:34:34] *** Joins: ___Rockwood__ (~Rocky@user/rocky)
+[17:37:59] *** Quits: Rockwood_ (~Rocky@user/rocky) (Ping timeout: 252 seconds)
+[17:52:54] *** Joins: Rockwood_ (~Rocky@user/rocky)
+[17:54:00] *** Joins: delboy1978uk (~delboy197@202.42-132-109.adsl-dyn.isp.belgacom.be)
+[17:56:37] *** Quits: ___Rockwood__ (~Rocky@user/rocky) (Ping timeout: 252 seconds)
+[17:57:40] *** Quits: Rockwood_ (~Rocky@user/rocky) (Ping timeout: 240 seconds)
+[17:57:52] *** Joins: Rockwood (~Rocky@user/rocky)
+[18:01:57] *** Quits: Furai (~Furai@cookiehoster.furai.pl) (Remote host closed the connection)
+[18:02:45] *** Joins: Furai (~Furai@cookiehoster.furai.pl)
+[18:24:41] *** Joins: Rockwood_ (~Rocky@user/rocky)
+[18:26:22] *** Quits: Rockwood (~Rocky@user/rocky) (Ping timeout: 245 seconds)
+[18:48:48] *** Joins: semeion (~semeion@user/semeion)
+[19:10:38] *** Joins: ___Rockwood__ (~Rocky@user/rocky)
+[19:12:46] *** Quits: Rockwood_ (~Rocky@user/rocky) (Ping timeout: 256 seconds)
+[19:14:59] *** Joins: Cyberg33k (~Cybergeek@80-62-117-22-mobile.dk.customer.tdc.net)
+[19:17:07] *** Quits: WishBoy (~WishBoy@user/wishboy) ()
+[19:20:06] *** ___Rockwood__ is now known as Rockwood
+[19:25:43] *** Quits: freeman_h (~freeman_h@2a02:c7f:fc54:ba00:814d:20ef:b9e9:375) (Ping timeout: 252 seconds)
+[19:34:26] <paule32> hello
+[19:34:37] <paule32> i have a problem with objects
+[19:34:39] <paule32> https://dpaste.com/AGF87NVDN
+[19:34:53] <paule32> in line 20, i get error
+[19:35:58] *** Quits: delboy1978uk (~delboy197@202.42-132-109.adsl-dyn.isp.belgacom.be) (Quit: delboy1978uk)
+[19:41:40] <paule32> ok i get it: https://dpaste.com/AZ68659WT
+[19:41:43] <paule32> solved
+[19:42:59] *** Quits: Mark_Pinecone (~Mark_Pine@gateway/tor-sasl/markpinecone/x-88286818) (Remote host closed the connection)
+[19:44:59] *** Joins: Mark_Pinecone (~Mark_Pine@gateway/tor-sasl/markpinecone/x-88286818)
+[19:49:45] *** Joins: Alex8532 (Alex8532@user/alex8532)
+[19:56:13] *** Quits: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com) (Quit: WeeChat 3.0.1)
+[20:05:52] *** Quits: Cyberg33k (~Cybergeek@80-62-117-22-mobile.dk.customer.tdc.net) (Ping timeout: 252 seconds)
+[20:06:26] *** Quits: jess (~jess@libera/staff/jess) ()
+[20:06:57] *** Quits: molt (~molt@178-222-245-206.static.isp.telekom.rs) (Read error: Connection reset by peer)
+[20:07:21] *** Joins: molt (~molt@178-222-245-206.static.isp.telekom.rs)
+[20:07:35] *** Joins: Xaldafax (~xaldafax@cpe-198-72-160-101.socal.res.rr.com)
+[20:21:04] *** Joins: Cyberg33k (~Cybergeek@80.161.188.186)
+[20:30:09] *** Joins: mIk3_08 (~Thunderbi@user/mik3-08/x-2852566)
+[20:32:27] *** Quits: mIk3_08 (~Thunderbi@user/mik3-08/x-2852566) (Client Quit)
+[20:34:31] *** Quits: Cyberg33k (~Cybergeek@80.161.188.186) (Quit: This computer has gone to sleep)
+[21:05:31] *** Joins: nwzow (~nwzow@188.126.194.123)
+[21:14:05] *** Joins: mastoll (~mastoll@2603-90d8-0200-d385-21d9-78b9-36ad-3b8b.res6.spectrum.com)
+[21:14:13] <mastoll> I have a simple html form input, one text field. Each time the form is submitted, I would like to add/append/push the field contents to an existing array, thus building a list. Can I do this without connecting to a database? So far, I haven't figured out how to get he array to persist through subsequent submits.
+[21:14:55] <Rockwood> paule32, if (isset($item)) { i think you dont need this
+[21:15:47] <mastoll> @paul32, This is a check to see if the form has been submitted, isn't it?
+[21:16:28] <Blondie101010> mastoll:  well you need to keep it somewhere...  if you don't want to save it in a DB, you can keep it in the front-end memory, or in the back-end save it to file, session or any other data repo
+[21:16:35] <paule32> $_GET
+[21:20:31] <Rockwood> paule32, https://3v4l.org/PsC7C just make sure you have an array data type there np if no data
+[21:20:40] <Rockwood> i means blank array
+[21:24:13] *** Joins: Rockwood_ (~Rocky@user/rocky)
+[21:25:15] <da_wunder> so what about just using javascript to add those new inputs instead of submitting that form? and when all inputs are there then just submit it, then you should have an array on your php side that you could use
+[21:25:37] *** Quits: Rockwood (~Rocky@user/rocky) (Ping timeout: 252 seconds)
+[21:36:27] *** Joins: ferdna (~ferdna@user/ferdna)
+[21:37:29] *** Quits: Akimb (~Akimb@86.100.13.100) (Read error: Connection reset by peer)
+[21:43:25] *** Quits: Rockwood_ (~Rocky@user/rocky) (Read error: Connection reset by peer)
+[21:43:30] *** Joins: Rockwood (~Rocky@user/rocky)
+[21:47:28] *** Quits: toretto (~ryan@user/toretto) (Ping timeout: 256 seconds)
+[21:48:14] *** Joins: toretto (~ryan@user/toretto)
+[21:48:32] *** Joins: Robsto (~Rstoll@184-98-39-86.phnx.qwest.net)
+[22:04:11] *** Quits: guidoc (~guido@host-79-25-191-5.retail.telecomitalia.it) (Ping timeout: 252 seconds)
+[22:09:08] <Stanley> Byteflux sorry i stepped away yesterday
+[22:10:39] <Stanley> i wonder if at this point it would be more efficient to run my dev environment on my unraid server and just have my IDE open the project over my network
+[22:10:53] <Stanley> Byteflux so far 603979776 bytes (604 MB, 576 MiB) copied, 117 s, 5.2 MB/s
+[22:11:01] <Stanley> STUPID slow
+[22:11:04] *** Joins: guidoc (~guido@host-95-247-248-249.retail.telecomitalia.it)
+[22:11:56] *** Joins: freeworld (~vit@chello085216193138.chello.sk)
+[22:11:59] <da_wunder> personally I just use virtualbox on my Windows host, and inside that vb linux machine I run my IDE and docker containers - no speed problems at all - used that kind of setup for years
+[22:12:23] <Byteflux> Windows is fine, this is MacOS
+[22:12:26] <Stanley> https://kopy.io/7rpVw#UsO6eMd7xaNAKw
+[22:12:35] <Stanley>  5.1MB/s
+[22:12:36] <Stanley> wot
+[22:12:37] <Byteflux> Stanley: Yeah as you can see on Windows, even going over the local network I still get 227 MB/s
+[22:13:05] *** Quits: Robsto (~Rstoll@184-98-39-86.phnx.qwest.net) (Quit: Client closed)
+[22:13:09] <da_wunder> Stanley: Docker IO speed is just terrible with Windows and Mac
+[22:13:36] <da_wunder> with windows you get some real improvements if you use wsl2 and you mount those files inside that wsl machine
+[22:13:43] <Stanley> Yeah I started using Laravel Sail and the environment is way slower there, enabling that new virtualization mode made it significantly faster but still
+[22:13:52] <da_wunder> for mac there isn't real solution - yet
+[22:14:10] <Blondie101010> Stanley:  a network share would probably be faster
+[22:14:15] <Stanley> lol
+[22:14:16] <Byteflux> Again, this is beyond terrible. On Windows, writing to a bind mount over 9P network share (/mnt/c in Docker) is >220 MB/s. Windows actually is not that bad.
+[22:14:23] <Stanley> sneakernet would be faster at this point
+[22:14:28] <da_wunder> parallels is something that people have used with mac and that should be quite good - but still light years behind of linux
+[22:14:34] <Byteflux> This 5 MB/s you're getting on macOS is a real problem, I don't know why it's so bad in comparison to Windows.
+[22:14:49] <Stanley> i'm disabling that experimental feature and i'll run it again and see what I get
+[22:15:01] <Stanley> when I was googling around some people claimed it had some negative consequences
+[22:15:18] <Stanley> yeah
+[22:15:21] <Stanley> 159MB/s now
+[22:15:33] <da_wunder> "docker for mac edge" did have some speed improvements - but not sure if that is the use case
+[22:15:34] <Byteflux> Yes that is far more reasonable.
+[22:15:51] <Byteflux> That's basically low end SSD speeds.
+[22:15:53] <Stanley> one sec going to benchmark the page access times between the two
+[22:16:28] <da_wunder> another what you could try is docker-sync - http://docker-sync.io/
+[22:16:32] <Byteflux> Now your speeds are closer to mine in the same scenario, but my SSD is probably just better :P
+[22:16:44] <Byteflux> Or 9P is just that much more optimized
+[22:16:59] <Stanley> weird it's running a bit better with that experimental one disabled right now, no clue what was happening before
+[22:17:08] <Stanley> page loads are about 200-350ms which is fine
+[22:17:33] <Byteflux> 200ms still seems really high.
+[22:17:44] <Stanley> they're heavy pages anyways
+[22:18:04] <Stanley> it's still slower than production but I can live with it
+[22:18:22] <Stanley> initially it was around 1500-2500ms, may as well have xdebug on
+[22:19:20] <Stanley> but the whole thing does have my thinking, curious what the experience would be like if I at least installed a VM on my unraid server and ran the environment there
+[22:19:38] <Blondie101010> Stanley:  did you show your top output when it's busy and slow?
+[22:19:44] <Blondie101010> I didn't see it
+[22:19:49] <Stanley> yeah
+[22:20:08] <Blondie101010> can you post it again?
+[22:20:10] <Byteflux> Stanley: The experience shouldn't be any different *unless* you have your application I/O on the VM's disk.
+[22:20:19] <Stanley> Blondie101010 https://kopy.io/nRh0B#CR3zAauOxVULkZ
+[22:20:45] <Stanley> Byteflux I more mean, at least docker wouldn't be running on my mac and cranking the fans up
+[22:20:45] <Stanley> lol
+[22:21:02] <Byteflux> Stanley: The reason for this slowness right now is because Docker on macOS bridges your host filesystem with your Docker VM filesystem over the network.
+[22:21:30] <Byteflux> On Windows you at least have the choice of using the WSL VM's filesystem *or* you can use the Windows host filesystem but that has the same slowness as it happens over the network
+[22:21:43] <Blondie101010> yeah so you're just IO bound
+[22:22:06] <Byteflux> Stanley: And you absolutely could do that (running Linux in a VM and installing Docker on it)
+[22:22:16] <Blondie101010> that is frankly not relevant on this channel...  you should refer to your sysadmin or MacOs or docker support people
+[22:22:20] <Byteflux> You could even expose the Docker engine in your Linux VM over TCP
+[22:22:28] <Byteflux> Allowing you to use the Docker client within your macOS host
+[22:22:47] <Byteflux> You'd just have to be aware that any path names and such would be referring to names within the Linux VM's filesystem
+[22:23:11] <Blondie101010> a simple NFS would probably do
+[22:23:20] <Byteflux> NFS would probably be even slower
+[22:23:41] <Stanley> yeah
+[22:23:46] <Blondie101010> 160MB/s is not bad
+[22:23:58] <Blondie101010> why does that docker container have so much stuff to read?
+[22:24:03] <Byteflux> Most likely Docker is bridging with overlayfs which is specifically designed for this kind of thing
+[22:24:06] <Byteflux> NFS is more general purpose
+[22:24:11] <TernaryOperator> NFS is fine as long as you know the limitations
+[22:24:29] <Stanley> So install a linux VM on my unraid server, install docker there, setup a fileshare to my unraid server, tell my IDE to open the projects from there
+[22:24:41] <TernaryOperator> and how to work around them, good fun when you have tools that watch mtime and such but can't really blame NFS for that directly..
+[22:24:47] <Stanley> I could still have docker on my mac incase I take my laptop out with me
+[22:25:05] <Blondie101010> Stanley:  I'm suggesting you think over why that container needs to do so much external IO
+[22:25:12] <Blondie101010> that seems like the main problem
+[22:25:27] <TernaryOperator> That or you could just run docker on fedora and not have any of those issues -_- and native performance
+[22:25:33] <Stanley> Blondie101010 it seems like it's running acceptably now
+[22:25:39] <Blondie101010> oh well
+[22:25:49] <Stanley> i'm more just optimizing to get this off my laptop
+[22:26:03] <Stanley> when docker runs the fans start going
+[22:26:03] <Stanley> lol
+[22:26:14] <Stanley> TernaryOperator I'm so deep into the Apple ecosystem I can't move off MacOS
+[22:26:23] <Stanley> i mean I could but it would be very inconvenient
+[22:26:31] <TernaryOperator> Fair enough
+[22:27:07] <TernaryOperator> I never use the work issued macbook except to test config changes I've made but I never really bought into the mac ecosystem so for me I just treat it as a slightly brain damaged linux distro
+[22:27:16] <da_wunder> and also remember that docker desktop is not going to be free
+[22:27:32] <TernaryOperator> that's definitely the way they are going
+[22:27:40] <TernaryOperator> had to laugh at the 250 users *or* 10m rev
+[22:27:57] <da_wunder> https://www.theregister.com/2021/08/31/docker_desktop_no_longer_free/
+[22:28:00] <TernaryOperator> I mean what company has 200 staff and 10m rev, that's 50K rev per head, starbucks runs at 100K
+[22:28:38] <TernaryOperator> For me I'll just continue using docker on linux until they pull something really dumb then it's off to podman for work as well
+[22:28:51] <da_wunder> so I'm quite happy just running docker on linux - no speed problems, etc.
+[22:29:01] <TernaryOperator> I also wouldn't be surprised if one of the big cloud players didn't step in and start their own dockerhub at some point
+[22:29:40] <TernaryOperator> ECR isn't terrible at all, I actually don't mind it and it's a breeze to setup if you already have all the aws cli/mfa stuff sorted
+[22:30:03] <da_wunder> my bet is that M$ is going to buy docker
+[22:30:18] <TernaryOperator> which half, it already split a while back
+[22:31:06] <TernaryOperator> I mean technically it's moby I run on fedora anyway and thats OS so I don't really care who (if anyone) buys it in the long run
+[22:31:18] <TernaryOperator> OCI is the core of it and thats all open
+[22:32:05] <Stanley> TernaryOperator man it slowly sucks you in, everything does just work well, not just for me but for my family which is less tech support for me
+[22:32:52] <Stanley> works unless it doesn't*
+[22:32:53] <TernaryOperator> Aye, I've used Linux for 20 odd years and for me it also just works with the added advantage of everyone in my house is running Fedora so things work seamlessly
+[22:33:01] <Stanley> I kind of miss using fedora
+[22:34:06] <Stanley> I ran it as my daily driver for 4-5 years but got frustrated when it started bugging out when I had too many monitors
+[22:34:14] <Stanley> i'm down to just one again though sooo....
+[22:36:26] *** Joins: magla (~gelignite@55d40548.access.ecotel.net)
+[22:40:39] <TernaryOperator> I run dual 4K 27"'s on a 2080 with no issue and nvidia has been notoriously bad on linux for a long time
+[22:40:46] *** Quits: Rockwood (~Rocky@user/rocky) (Quit: The Time is Over)
+[22:41:14] <TernaryOperator> there is an element of luck to it I'm sure but if so I've been lucky with hardware for 20 years since the last time I had a proper fight was back in the Geforce 4 days :)
+[22:43:16] <Stanley> i think it was when i added the fourth monitor
+[22:43:17] <TernaryOperator> In fact I've gotten really lazy when I buy new hardware, I just assume it'll work with Linux out the box, at some point that'll bite me I'm sure >:)
+[22:43:20] <Stanley> i can't remember exactly what was going on
+[22:43:37] <Stanley> but it was happening on fedora and ubuntu, worked on hackintosh
+[22:43:52] <TernaryOperator> most I've run at once was 3 24" but I like 2x27" better at this point
+[22:44:11] <TernaryOperator> though I'm thinking of going to 28"x2 at somepoint soon
+[22:44:45] <Blondie101010> I have 2* 30" and I think I'd prefer 3*27"
+[22:45:18] <da_wunder> personally I have used 3x setup since ~2003 and not going to change that - I just like that setup a lot
+[22:45:30] <TernaryOperator> when I had 3 I never really used the far left one, it just sat there with docs/email/messaging on it, was a waste of space
+[22:45:46] <TernaryOperator> what I really want is 27" 3:2 not 16:9
+[22:45:47] <Blondie101010> it depends what you do
+[22:46:06] <TernaryOperator> or 4:3 but that isn't coming back
+[22:46:12] <Blondie101010> I need to have monitoring tools visible at all times, but those don't require me to read them completely all the time
+[22:46:21] <TernaryOperator> 3840x2880 would be *chefs kiss*
+[22:46:23] <da_wunder> it is sad that 16:10 is not so common
+[22:46:51] <TernaryOperator> 1920x1200 was nice at 24" but I like higher dpi's 3840x2400 would be nice
+[22:47:06] <Blondie101010> I like being able to read the text :)
+[22:47:29] <TernaryOperator> Blondie101010: yeah that's a useful use case but if I want to watch stuff I just shell into my desktop and leave the ipad under the monitor
+[22:47:56] <da_wunder> yep I had those 1920x1200 monitors before - then I upgraded to 2k monitors and now there is just that 16:9
+[22:48:38] <TernaryOperator> I think there was a point in time where everyone I knew had the 1920x1200@24" Dells
+[22:48:49] <TernaryOperator> they where a bargain but I wouldn't buy Dell (or LG) again
+[22:48:50] <da_wunder> tried those ultrawide monitors at work, but those aren't for me
+[22:49:23] <TernaryOperator> the 27" 4k panels in Dells are (mostly) LG panels and the LG panels have crap life times
+[22:49:49] <TernaryOperator> of the 3 I've bought, one had the corners completely blow out (went to the boy for gaming where it's less of an issue) and the 2nd is just starting to go the same way, only the newest one is fine at this point
+[22:50:04] <TernaryOperator> so I might just give him the good one and replace with a couple of 28" Samsungs as they make their own panels
+[22:50:53] <Stanley> I hate having two monitors because either ones to the side and you're always turning to look in one direction, or they're split down the middle which is even worse
+[22:51:01] <TernaryOperator> I game but not anything where >60Hz is something I'd care about so it's not even that bad cost wise, 600 ish for a pair
+[22:51:32] <TernaryOperator> Stanley: buy two 16:9 and rotate them portrait giving you 18:16
+[22:51:44] <Stanley> with a line down the middle
+[22:51:46] <Blondie101010> same problem
+[22:51:47] <TernaryOperator> I ran like for a while but the height becomes an issue after a while unless they are 24"'s
+[22:51:51] <Stanley> **shivers**
+[22:52:08] <Stanley> someone needs to make borderless monitors
+[22:52:09] <TernaryOperator> I'm thinking the UR55's might be a reasonable replacement, they are close to bezel-less
+[22:52:34] <TernaryOperator> Stanley: you can debezel most of them yourself if you are a bit handy or just buy ones that already have a tiny bezel
+[22:52:58] <TernaryOperator> https://www.amazon.co.uk/Samsung-LU28R550UQRXXU-UR55-UHD-Monitor/dp/B08WWH5Z2M/ref=dp_fod_1?pd_rd_i=B08WWH5Z2M&psc=1
+[22:53:10] <TernaryOperator> those are decent for what is a small price (compared to what 4K's used to cost)
+[22:53:32] <Stanley> if i was going to have the joint down the middle it would have to be pretty close to imperceptable
+[22:53:43] <Stanley> imperceptible ?
+[22:53:58] <TernaryOperator> second one ;)
+[22:54:44] *** Joins: glumanda (~manu@194-208-201-025.tele.net)
+[22:55:20] <TernaryOperator> "application.ts:20 Calendar isn't matched in pageMap, did you include it? dingbat"
+[22:55:24] * TernaryOperator knows himself too well
+[23:06:29] *** Quits: Alex8532 (Alex8532@user/alex8532) (Quit: Going offline, see ya! (www.adiirc.com))
+[23:08:01] <paule32> hello
+[23:08:09] <paule32> what is wrong here:
+[23:08:11] <paule32> array_push($this->menuBarTree,[ "name": "File", "id": 1000 ]);
+[23:08:13] <paule32> ?
+[23:09:34] <glumanda> paule32: what is the error you get?
+[23:11:38] <Blondie101010> hmmm not PHP syntax
+[23:11:44] <Byteflux> Your array should be `['name' => 'File', 'id' => 1000]` (notice the `=>`)
+[23:12:03] <glumanda> oh
+[23:12:17] <Blondie101010> note that array_push() is not very useful
+[23:12:20] <Byteflux> Also if only appending a single element to an array, you should opt to use `$this->menuBarTree[] = ['name' => 'File', 'id' => 1000]` instead of array_push()
+[23:12:26] <Blondie101010> exactly
+[23:13:32] *** Joins: freeman_h (~freeman_h@2a02:c7f:fc54:ba00:b92e:3951:b0c7:de35)
+[23:13:50] <glumanda> what's the use case of array_push anyway? it returns a new array?
+[23:14:39] <Byteflux> It can append multiple elements and also returns the new array length.
+[23:15:13] <Blondie101010> frankly not something common either :)
+[23:15:51] <Byteflux> $arr = ['a']; echo 'Size: ', array_push($arr, 'b', 'c', 'd');
+[23:15:59] <Byteflux> But yeah, not a very common use case
+[23:16:18] <Stanley> have you always been able to $array[] = "new element" or is that new and array_push is just a lingering function?
+[23:16:28] <Stanley> well not "new", i can't remember ever not being able to use it
+[23:16:45] <Blondie101010> probably as old as other array_ functions
+[23:17:43] <Blondie101010> defining standard functions from scratch is a challenge as you can't predict all use cases
+[23:18:14] <Blondie101010> so you can take guesses and run with it
+[23:18:36] <Stanley> okay so if my docker is setup to run a project using php7.4 and I upgrade to use PHP8 I would have to what, update my dockerfile to create the new environment and totally rebuild it?
+[23:19:05] <Blondie101010> again a question for docker support
+[23:19:13] <Byteflux> You would need a new container which is running PHP 8, how you go about that is up to you.
+[23:19:18] <Stanley> kk
+[23:19:20] <Blondie101010> and they will tell you that you should DEFINITELY make a new container
+[23:20:47] *** Joins: Mr-Snick__ (mr-snick@gateway/vpn/protonvpn/mr-snick)
+[23:23:10] *** Quits: Mr-Snick_ (mr-snick@gateway/vpn/protonvpn/mr-snick) (Ping timeout: 240 seconds)
+[23:29:00] *** Quits: mastoll (~mastoll@2603-90d8-0200-d385-21d9-78b9-36ad-3b8b.res6.spectrum.com) (Quit: Client closed)
+[23:38:06] *** Quits: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk) (Quit: Leaving)
+[23:50:51] *** Quits: nwzow (~nwzow@188.126.194.123) (Quit: Konversation terminated!)
+[23:51:09] <Albright> It's almost kind of demotivating an error message that shouldn't be happening can be
+[23:51:22] <Albright> *kind of surprising how
+[23:51:33] <Albright> It's like
+[23:51:48] <Albright> "Okay, let's just go home and play Minecraft for the rest of the day"
+[23:53:51] *** Joins: nwzow (~nwzow@188.126.194.123)
+[23:54:23] *** Joins: harpia (~harpia@58.148.205.168.dynamic.vibefibra.com.br)
+[23:54:44] *** Quits: glumanda (~manu@194-208-201-025.tele.net) (Quit: WeeChat 3.2)
+[23:55:30] <Albright> Even though I'm kind of mad at Minecraft for the moment because the Piglins swarmed me for no reason even though I was wearing gold armor and knocked me and my stuff into the lava
+[23:56:30] <Albright> See, even now I'm wasting time on IRC when I should be trying to figure this nonsense out
+[23:56:48] *** Quits: nwzow (~nwzow@188.126.194.123) (Quit: Konversation terminated!)
+[23:57:27] <TernaryOperator> Albright: almost as annoying as it taking 15 minutes to spot that it should be <style type="text/scss" > not <style type="text/css" >
+[23:57:35] * TernaryOperator o0(sodding frontend)
+[23:58:05] <Albright> Does that actually work? What browsers support that?

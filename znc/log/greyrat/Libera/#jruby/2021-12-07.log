@@ -1,0 +1,74 @@
+[00:28:44] *** Quits: sagax (~sagax_nb@user/sagax) (Remote host closed the connection)
+[01:48:26] *** Joins: sagax (~sagax_nb@user/sagax)
+[01:49:06] *** Quits: fidothe (sid1130@uxbridge.irccloud.com) (Ping timeout: 245 seconds)
+[01:52:17] *** Joins: fidothe (sid1130@id-1130.uxbridge.irccloud.com)
+[02:03:54] <headius> Now those do look like m1 issues
+[02:04:03] <headius> You can confirm the JDK is an x86 version?
+[02:04:27] <headius> I know folks have been running JRuby with x86 JDKs without too many issues
+[04:17:42] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Read error: Connection reset by peer)
+[04:36:41] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[05:57:39] <rebelwarrior[m]> How do I check whether a java version is M1 or x86? (I'm pretty sure it's M1 btw).
+[06:49:27] *** Joins: subbu (~subbu@user/subbu)
+[07:53:10] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[07:54:01] <headius> I think there's a flag to the Java command that would work but I can't think of it offhand
+[07:54:02] <headius> You want to try using the x86 version for now. I found at least one fixable problem and I know of another that will take some work for m1
+[12:59:54] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[16:33:23] <rebelwarrior[m]> Hey just FYI I've looked every which way I could think to search and haven't found a flag that will tell me if a java is x86 or arm from the command line. I think there might not be a flag.
+[16:35:01] <headius> Try using `file` to identify the java command
+[16:35:12] <headius> I'll be on the job in a bit
+[17:24:03] <headius> ok good morning!
+[17:24:44] <headius> $ java -Xinternalversion
+[17:24:44] <headius> OpenJDK 64-Bit Server VM (11.0.13+8-LTS) for bsd-aarch64 JRE (Zulu11.52+13-CA) (11.0.13+8-LTS), built on Oct  7 2021 08:52:57 by "zulu_re" with clang Apple LLVM 12.0.0 (clang-1200.0.32.28)
+[17:24:48] <headius> rebelwarrior: ^
+[17:24:53] <headius> try that
+[17:25:19] <headius> like I say, M1 support on JRuby is close but not good enough for most nontrivial Ruby stuff, but x86_64 JDK should work fine
+[17:25:35] <headius> I will make full M1 support my xmas project
+[17:30:23] <headius> I'm looking at the last couple M1 failures in jnr-posix but I believe they are fcntl varargs issues
+[17:42:04] *** Joins: subbu (~subbu@user/subbu)
+[17:54:18] <headius> yeah two tests for fcntl DUPFD and one for GETFD... since fcntl is varargs I'm pretty sure these are issues passing values in correctly
+[18:11:06] <headius> I will spin a release of this jnr-posix so we can start using it
+[19:06:40] <headius> jnr-posix 3.1.14 and jnr-unixsocket 0.38.15 have been released to maven central to pick up the fixed stat struct layout
+[19:29:03] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Ping timeout: 256 seconds)
+[19:42:16] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[19:56:31] <headius> another domino falls... ostruct has been patched for JRuby (avoid aliasing caller-accessing methods like instance_eval): https://github.com/jruby/jruby/pull/6963
+[20:19:42] <puritylake[m]> headius: is there anything pertinent and within my current knowledge range that needs doing?
+[20:24:19] <headius> Perhaps! Maybe we can review failing tests/specs on master and see if there's any Ruby 3.0 features that sound approachable
+[20:26:13] <puritylake[m]> Awesome, I’ll be on my dev machine in about 30 mins or maybe an hour
+[20:41:05] <headius> ok, all the test runs are on GHA so we can poke around there
+[20:41:14] <headius> they're red right now so we can see all the things left to be done
+[21:17:41] <headius> looks like I broke master's build with some keyword arg changes, just pushed an update that should get it compiling again
+[21:23:12] <puritylake[m]> Ok diving in now
+[21:25:06] <puritylake[m]> Never used Github Actions so this is a first for me
+[21:25:46] <headius> yeah we have a couple dozen jobs so the ones you want will be test-mri-core and spec-ruby I think
+[21:25:56] <headius> those would be running CRuby's tests and ruby/spec
+[21:26:21] <puritylake[m]> Ok cool, thanks
+[21:28:41] <headius> lunch and stuff, bbiab
+[21:33:33] <puritylake[m]> No worries, also I'm not seeing either of those jobs tbh
+[21:35:02] <puritylake[m]> Oh is it cause of that error you introduced?
+[21:35:25] <headius> bleh... well the workflow is "JRuby CI" but the jobs are failing to build because Maven hasn't propagated my jnr updates yet
+[21:35:25] <headius> https://github.com/jruby/jruby/actions/runs/1550625563
+[21:35:34] <headius> I would have thought an hour would be plenty of time but sometimes it takes longer
+[21:36:05] <headius> might be easier for you to just pull master and try to build yourself, or this will sort itself out eventually
+[21:36:19] <headius> I'm going to "re-run all jobs" there and hope it does better
+[21:36:50] <headius> the jobs you want are mri-core-* and spec-ruby-*
+[21:37:01] <headius> doesn't really matter which one, they just permute JIT settings and so on
+[21:37:19] <puritylake[m]> Ok thanks
+[21:37:41] <puritylake[m]> Some things have already failed
+[21:37:53] <headius> yeah looks like they're still failing, might have cached the missing maven artifact flag
+[21:38:04] <headius> I'd give it a try locally... let me know if a clean build fails for you
+[21:38:13] <puritylake[m]> Will do
+[21:41:17] <puritylake[m]> Bot my favourite and least favourite thing about programming is compiling, good cause I can do whatever while it runs, bad cause it could fail at any time
+[21:41:44] <headius> yeah we try to make our builds rock solid but when you depend on remote resources anything can happen
+[21:44:48] <puritylake[m]> One of the reasons completely remote work probably won't be permanent
+[21:45:02] <puritylake[m]> For programming anyway
+[21:45:24] <puritylake[m]> Although I do like the idea of working from home
+[21:46:46] <puritylake[m]> Picked a bad time to look for work, getting turned down at every turn or outright ignored. Thought I'd pick up open source to pass the time and pad the resume
+[21:48:50] <puritylake[m]> Trying to help out with MRI too, but I'm rather nervous to pick an issue to fix, it feels more daunting than here
+[22:07:14] <puritylake[m]> Ok forgot to fetch upstream but when I did it mvnw failed on jruby-base 
+[22:07:31] <headius> Failed to find jnr-posix etc?
+[22:08:05] <puritylake[m]> unixsocket and posix
+[22:08:47] <headius> Bleh. Ok maybe look for an older job on master that didn't fail to build. Not sure why those artifacts are taking so long to propagate
+[22:09:51] <puritylake[m]> Ya, it's complaining that an update interval needs to elapse or that the updates are forced
+[22:12:17] <puritylake[m]> Found one from 5 days ago
+[23:47:47] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[23:58:26] *** Joins: subbu (~subbu@user/subbu)

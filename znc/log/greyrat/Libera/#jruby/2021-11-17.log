@@ -1,0 +1,158 @@
+[00:06:10] <mattpatt[m]> headius: first complete run of GHA CI on the 9.3 branch is done. Do you want to pick a file to go over? Not sure what you've already been looking at
+[00:06:38] <headius> nice let's have a look
+[00:08:42] <headius> odd failure on JI specs
+[00:09:08] <headius> this is one of the file I change wrt `touch` and `zip`
+[00:10:03] <headius> mattpatt: I don't have a process in mind... just looking at these failures and trying to suss out why they fail on GHA but not travis
+[00:10:20] <mattpatt[m]> i'm not sure what's what
+[00:10:37] <mattpatt[m]> the last Travis build I can find is from at least a year ago
+[00:10:49] <headius> well your job may be done, but if you look at these and see something obvious we can patch it
+[00:11:02] <headius> most will require a bit of digging to figure out what's different in this environment
+[00:11:45] <headius> e
+[00:12:42] <mattpatt[m]> the JI specs at least all fail on the same spec
+[00:13:32] <headius> ugh yeah it fails locally too... i'll figure out what I didn't fix
+[00:14:26] <headius> -    `zip -d #{jar_path} glob_target/bar.txt`
+[00:14:26] <headius> +    `jar uf #{jar_path} glob_target/bar.txt`
+[00:14:33] <headius> bleh
+[00:14:41] <headius> s/+/-/
+[00:14:54] <headius>  * ```
+[00:14:54] <headius> - `zip -d #{jar_path} glob_target/bar.txt`
+[00:14:54] <headius> + `jar uf #{jar_path} glob_target/bar.txt`
+[00:14:54] <headius> ```
+[00:15:25] <headius> oh duh
+[00:15:26] <headius> -d delete
+[00:15:35] <headius> maybe that's why this used zip
+[00:19:32] <mattpatt[m]> hrm
+[00:20:05] <headius> I would rather not have to install zip to do this but jar doesn't support deleting a file
+[00:20:50] <mattpatt[m]> they claim zip is installed
+[00:21:10] <mattpatt[m]> https://github.com/actions/virtual-environments/blob/ubuntu20/20211108.1/images/linux/Ubuntu2004-README.md#installed-apt-packages
+[00:21:25] <headius> there must be some pathing issue affecting that and `touch`
+[00:21:25] <mattpatt[m]> maybe it's a $PATH thing?
+[00:22:01] <mattpatt[m]> gimme a sec. just finding windows. seems my mechanical keyboard woke the kid
+[00:22:15] <mattpatt[m]> had to relocate further away
+[00:22:54] <headius> hah, mine told me last spring that his fellow remote learners complained about the noise
+[00:23:18] <headius> I do type hard and fast
+[00:23:43] <mattpatt[m]> no obvious path manipulation in the workflow file itself
+[00:24:07] <headius> I don't know that we do anything odd with path in the JI run either
+[00:25:57] <mattpatt[m]> gonna put a test workflow up and see about env info
+[00:26:02] <mattpatt[m]> touch and zip, right>
+[00:26:04] <mattpatt[m]> s/>/?/
+[00:26:14] <headius> yeah that's the two I patched in the JI specs
+[00:26:37] <headius> touch change seems fine because it just uses a Ruby util for it but the zip one is not working
+[00:26:54] <headius> we can just use zip if we can sort out the pathing on GHA
+[00:34:24] <headius> mattpatt: other thing that might be a clue is how ruby/spec runs in GHA itself: https://github.com/ruby/spec/blob/master/.github/workflows/ci.yml
+[00:34:25] <headius> may be something configured differently that allows stuff to work better
+[00:34:47] <headius> I don't see anything obvious though
+[00:40:00] * mattpatt[m] sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/4e4073abb380e3d41f3f45cce93563c1810eeb74
+[00:40:14] <mattpatt[m]> well that was unhelpful
+[00:40:39] <headius> Looks like it should work
+[00:40:46] <mattpatt[m]> https://github.com/fidothe/jruby/blob/gha-env-exploration/Rakefile
+[00:41:04] <mattpatt[m]> did that from inside Rake so it was being invoked with jruby -S
+[00:41:32] <mattpatt[m]> PATH looks sane, which finds zip
+[00:41:38] <mattpatt[m]> so that looks good
+[00:41:48] <mattpatt[m]> so problem must be deeper in
+[00:41:57] <headius> I need a little lie down so handing off to enebo 
+[01:08:39] <mattpatt[m]> headius enebo: if you use `/usr/bin/zip -d` instead of `zip -d` it passes spec:ji
+[01:08:45] <mattpatt[m]> yuck
+[01:08:55] <enebo[m]> hmm
+[01:09:27] <enebo[m]> mattpatt: we could `which zip` and when none is found just hard-code the path with a comment GHA requires it
+[01:09:56] <enebo[m]> This is not really ideal but it would be good to move past this
+[01:11:17] <enebo[m]> if PATH is really the path in your output at that point I think the only issue I can think of is there is a file called zip higher which is not marked with an execute bit
+[01:11:40] <mattpatt[m]> enebo: i'm trying again with only `zip -d`
+[01:12:08] <mattpatt[m]> if that fails i'm going to dump PATH into the output from the spec and see if that's different to the $PATH from the root of the Rakefile
+[01:12:29] <enebo[m]> Your Rakefile experiment looking for a zip in each PATH dir might be worth it too
+[01:12:40] <enebo[m]> although a changed PATH seems likely
+[01:17:33] <mattpatt[m]> Oh wow: Failure/Error: puts `which zip`
+[01:19:21] <mattpatt[m]> okay, i gotta sleep. enebo I'll poke at this again in the morning.
+[01:21:13] <enebo[m]> ok.  Thanks for the efforts!
+[01:33:54] *** Joins: aquijoule_ (~richbridg@089144202142.atnat0011.highway.a1.net)
+[01:36:34] *** Quits: richbridger (~richbridg@089144202142.atnat0011.highway.a1.net) (Ping timeout: 256 seconds)
+[06:58:55] *** Joins: aquijoule__ (~richbridg@213-225-12-152.nat.highway.a1.net)
+[07:01:29] *** Quits: aquijoule_ (~richbridg@089144202142.atnat0011.highway.a1.net) (Ping timeout: 265 seconds)
+[09:32:36] *** Quits: sagax (~sagax_nb@user/sagax) (Read error: Connection reset by peer)
+[10:07:24] *** Joins: sagax (~sagax_nb@user/sagax)
+[12:41:04] <mattpatt[m]> Okay, that's weird - something's popped /usr/bin off the end of $PATH when it gets to the failing spec, which is why the shell can't find `zip` (or `which`)
+[12:41:32] <MateuszFryc[m]> Hmm, I am not sure if my mail reached proper people, I din't get any reply about a failure from smtp server, but didn't get any confirmation that email reached proper people. Is this normal? In archived list of issues https://mail.openjdk.java.net/pipermail/hotspot-compiler-dev/ there is no my issue listed. Additionally I tried to subscribe to the list, but no reply message showed up in my mailbox so far. Issue occurred already 4 times
+[12:41:32] <MateuszFryc[m]> in my production environment on 3 out of 4 servers which crashing software is installed. Only on the weakest machine it hasnt happened yet. I hope my mail reached the group.
+[12:42:30] <MateuszFryc[m]> * headius:  Hmm, I
+[12:47:35] <mattpatt[m]> @enebo I have an idea...
+[13:47:00] *** Quits: siasmj (sid6106@lymington.irccloud.com) (Ping timeout: 256 seconds)
+[13:50:14] *** Joins: siasmj (sid6106@lymington.irccloud.com)
+[14:20:23] <MateuszFryc[m]> headius:  just for your information, I also submitted an issue on oracle bug submission sites, following some information about how to proceed in such a cases if one have no access to JBS. And received following feedback: "We will review your report and have assigned it an internal review ID : 9071983. Depending upon the completeness of the report and our ability to reproduce the problem, either a new bug will be posted, or we will
+[14:20:23] <MateuszFryc[m]> contact you for further information." So when someone assesses it is a bug, it should show up in some publicly accessible database I guess, then one will be able to link it to jruby bug issues tracker if needed.
+[14:36:41] <headius> Yo
+[14:38:50] <headius> Mateusz Fryc: I do not see your email either. May be moderated
+[14:39:04] <headius> Oracle bug submission is good. I will try to post to the compiler list if your email does not show up today
+[14:39:30] <headius> Maybe I should just have filed a JBS bug but I'm skittish
+[14:40:17] <headius> I suppose I  could also raise it directly with the red hat JDK folks since I'm technically on that team
+[16:18:30] *** Parts: mlaug (~mlaug@v220210724969158479.bestsrv.de) (The Lounge - https://thelounge.chat)
+[17:32:43] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Ping timeout: 250 seconds)
+[17:53:14] <mattpatt[m]> headius: Chasing down the failure in `rake spec:ji` - added details at https://github.com/jruby/jruby/issues/6936
+[17:53:53] <mattpatt[m]> seems like there's a helper method that resets `ENV['PATH']` and never sets it back
+[17:54:15] <mattpatt[m]> the spec that calls it is guarded in a way that makes me think that maybe it just never ran on Travis
+[17:55:23] <mattpatt[m]> What's really weird is that I tried altering it so that `ENV['PATH']` gets reset at the end of that spec with an ensure block on the method, but it doesn't seem to get called.
+[18:38:09] <mattpatt[m]> headius: yeah, managed to get it passing, but in a horrendously brittle way
+[18:38:17] <mattpatt[m]> no idea why the ensure didn't work
+[19:05:09] <mattpatt[m]> Okay, got a version that works. Think the previous non-execution of the `ensure` was down to execution context/thread stuff
+[19:05:18] <mattpatt[m]> caused by me being daft
+[19:05:19] <enebo[m]> mattpatt: Perhaps we are throwing an internal error
+[19:06:43] <enebo[m]> We run so many tests too that it becomes easy to miss partial execution of stuff because there are a lot of logs
+[19:07:31] *** Joins: subbu (~subbu@user/subbu)
+[19:07:45] <mattpatt[m]> not here - I have been running just spec:ji on a just JDK 8 in a branch
+[19:08:04] <mattpatt[m]> and grepping the logs for debug `puts`s
+[19:08:09] <enebo[m]> so can you repro that ensure is not running?
+[19:08:43] <mattpatt[m]> I think so - tweaked it several times adding more debug output
+[19:08:44] <mattpatt[m]> and it ran in none of them
+[19:08:48] <mattpatt[m]> here's the version that didn't work: def hide_ant_from_path... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/69096417ee73aca6310a48fa85d463ed3e62eb5c)
+[19:09:05] <mattpatt[m]> ooops
+[19:09:09] <mattpatt[m]> https://github.com/fidothe/jruby/blob/50fbff90b0a2dd4c9c9de72b05a1d5f375e3a8f0/spec/java_integration/ant_spec_helper.rb#L121-L136
+[19:09:27] <enebo[m]> yeah I was looking at your comments on the PR
+[19:09:40] <mattpatt[m]> https://github.com/fidothe/jruby/blob/50fbff90b0a2dd4c9c9de72b05a1d5f375e3a8f0/spec/java_integration/ant/ant_spec.rb#L140-L143
+[19:10:07] <mattpatt[m]> Can you see my builds? Unsure if GHA builds on public repos are totally public
+[19:10:28] <enebo[m]> mattpatt: Run with -d if you get it locally and we may see something raised
+[19:11:10] <mattpatt[m]> https://github.com/fidothe/jruby/actions/runs/1472392273
+[19:11:46] <mattpatt[m]> that's the working version. the `instance_exec` seemed to make the difference
+[19:11:46] <enebo[m]> It looks like I can see all the action runs associated with PRs?
+[19:12:01] <mattpatt[m]> does the link I sent work for you?
+[19:12:36] <enebo[m]> yeah it shows a green run
+[19:13:09] <enebo[m]> although there are errors
+[19:13:19] <mattpatt[m]> yeah, pendings
+[19:14:17] <mattpatt[m]> this is the final form of the ensure-not-running: https://github.com/fidothe/jruby/actions/runs/1471098416
+[19:14:25] <enebo[m]> ah ok I did not think there were that many but it makes sense 
+[19:14:44] <mattpatt[m]> to run with -d I can do `jruby -d -S rake ...`
+[19:14:55] <mattpatt[m]> not an arg passed to rake
+[19:15:26] <enebo[m]> yeah
+[19:15:27] <enebo[m]> undefined local variable or method `original_env_path' for #<RSpec::ExampleGroups::RakeAntAnt:0x752e4223>
+[19:16:31] <mattpatt[m]> great, it's much simpler if i was being an idiot
+[19:16:32] <enebo[m]> Unless you changed from the ensure I find that really weird
+[19:17:21] <mattpatt[m]> `orginal_env_path` and `original_env_path`. 👍️
+[19:17:25] <enebo[m]> mattpatt: can you change that method from doing def; ensure;end to def; end with a begin;ensure;end within it?
+[19:18:05] <mattpatt[m]> sure
+[19:18:38] <enebo[m]> This error if it is from the code linked above implies tyhat original_env_path is not seeing a local variable scope and thinks it is a vcall (e.g. method with no parens or params)
+[19:18:56] <mattpatt[m]> I think the ensure was always running, i just couldn't type
+[19:20:20] <enebo[m]> ok but that specific error in the run shows that it is aborting on original_env_path not being found
+[19:20:41] <enebo[m]> which would be above your puts in that last commit
+[19:21:19] <enebo[m]> I do doubt we broke def a; ensure;end since although uncommon it is not that rare but it looks like it thinks it is a vcall
+[19:25:19] <enebo[m]> https://gist.github.com/enebo/9d4cc40dd0d0856c6a12a568f3c93746
+[19:26:00] <mattpatt[m]> yeah - it was aborting before it to my debug `puts`, and it couldn't reset `ENV['PATH']`, so I was seeing the spec with `zip` still failing
+[19:26:31] <mattpatt[m]> so I think the problem was squarely between brain and keyboard, and not with `ensure`
+[19:27:09] <mattpatt[m]> it's working fine in my latest version of the solution
+[19:30:54] <enebo[m]> yeah and I can confirm ensure is firing too
+[19:55:44] <mattpatt[m]> will tidy up a bit then submit a PR
+[20:01:23] <enebo[m]> mattpatt: great
+[20:55:49] <mattpatt[m]> enebo: is there a rule around trailing whitespace in files? my editor is set to remove it, and it hasn't been a problem with other JRuby source files I've worked with, but `spec/java_integration/utilities/jar_glob_spec.rb` has a load of empty lines with trailing whitespace...
+[20:56:03] <mattpatt[m]> Do I need to revert those?
+[20:56:21] <mattpatt[m]> (https://github.com/jruby/jruby/pull/6944)
+[20:56:26] <enebo[m]> mattpatt: Naw.  Over time we have gotten rid of them so it is fine.
+[20:56:45] <enebo[m]> you can also whitespace ignore even in github to avoid seeing them when looking at a diff
+[20:57:59] <mattpatt[m]> GHA CI is running now, hopefully spec:ji now passes on all tested JDKs
+[20:58:03] <enebo[m]> https://github.com/jruby/jruby/pull/6944/files?diff=split&w=1
+[20:58:23] <enebo[m]> I never remember &w=1 and they keep changing their UI
+[20:59:20] <mattpatt[m]> looking good here
+[21:11:39] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[21:12:58] *** Joins: subbu (~subbu@user/subbu)
+[21:22:45] <headius> Oh looks good so I merged!
+[21:22:53] <headius> What a weird piece of code
+[21:23:28] <headius> mattpatt: nice find!
+[21:25:02] <mattpatt[m]> when I saw that `$PATH` was only missing `/usr/bin` I figured it had to be something else in the test run mutating it
+[21:25:41] <headius> Yeah makes sense
+[21:58:51] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)

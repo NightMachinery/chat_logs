@@ -1,0 +1,726 @@
+[00:06:41] *** Joins: notzmv (~zmv@user/notzmv)
+[00:24:04] *** Joins: X-Scale` (~ARM@219.206.137.78.rev.vodafone.pt)
+[00:25:24] *** Quits: X-Scale (~ARM@219.206.137.78.rev.vodafone.pt) (Ping timeout: 240 seconds)
+[00:25:24] *** X-Scale` is now known as X-Scale
+[01:09:52] *** Joins: vats (~vats@103.216.143.232)
+[01:25:18] *** Quits: mfiano (~mfiano@cpe-67-240-71-179.nycap.res.rr.com) (Quit: WeeChat 3.4.1)
+[01:27:24] *** Joins: qhong (~qhong@rescomp-21-400677.stanford.edu)
+[01:27:47] <qhong> How bad is having two separate class of mutable and immutable CONSes?
+[01:28:35] <qhong> I’m thinking about having a partial evaluator built into core language, but mutable CONS passed to EVAL creates great difficulty for partial eval 
+[01:28:51] <moon-child> haha i bet
+[01:29:05] <moon-child> so you won't allow arbitrary objects to be passed to eval?
+[01:29:22] *** Joins: mfiano (~mfiano@cpe-67-240-71-179.nycap.res.rr.com)
+[01:34:41] *** Joins: X-Scale` (~ARM@92.250.103.201)
+[01:35:03] *** Quits: X-Scale (~ARM@219.206.137.78.rev.vodafone.pt) (Ping timeout: 256 seconds)
+[01:35:14] *** X-Scale` is now known as X-Scale
+[01:38:57] <qhong> moon-child: I'm still thinking about it, haven't decide it, but that is a possibility
+[01:39:04] <qhong> that will make PEVAL much easier
+[01:39:36] <qhong> I think the right thing is to allow arbitrary object, but add an observer/write-hook to mutable objects passed to EVAL, in the style of reactive programming
+[01:39:40] <hayley> IIRC theoretically modifying source code in CL is UB, but in practise implementations basically take a "snapshot".
+[01:39:53] <qhong> hayley: that's UNIX vibe
+[01:40:29] <hayley> I think snapshotting is half reasonable, FWIW
+[01:40:41] <moon-child> I would rather trap on attempts to modify
+[01:40:49] <moon-child> which is effectively also what qhong suggests
+[01:41:48] <qhong> there's still some unfixated design space. Do we have two separate kind of constructors/destructors etc for MCONS and ICONS, or we do MCONS by default and allow freezing them to ICONS
+[01:42:35] <moon-child> in s7 you can (immutable! x) to make x immutable
+[01:42:40] <moon-child> works for any x, not just conses
+[01:43:02] <qhong> moon-child: the right thing I'm thinking of is to not have any immutable CONS, but make COMPILE/PEVAL produce reactive output that gets notified and updated if any dependency is mutated
+[01:43:22] <moon-child> erhmm
+[01:43:28] <qhong> the problem of this "right thing" is probably lots of storage overhead, because I suppose lots of CONSes will end up having hooks attached
+[01:43:56] <moon-child> write barrier overhead ~0.7%?
+[01:44:15] <qhong> moon-child: what implementation technique it uses? having a bit flag in the objects, or use mprotect?
+[01:44:29] <qhong> moon-child: sorry I don't get the write barrier comment
+[01:44:29] <moon-child> I dunno.  Ask steve blackburn
+[01:44:44] <moon-child> oh 0.8%
+[01:44:53] <moon-child> https://twitter.com/stevemblackburn/status/1494240906006110209  steve blackburn's student measures gc write barrier overhead at 0.8%
+[01:45:15] <hayley> "It's an extra, load, mask and conditional on every pointer store."
+[01:46:49] <qhong> I see, so bit flag
+[01:49:02] <kakuhen> good morning
+[02:28:01] <pjb> qhong: depends on how separate your classes are. immutable-cons can be a super-class to mutable-cons. 
+[02:29:09] <pjb> qhong: note that by LSP that implies that all code shall accept mutable-cons, even if they work only with immutable-cons.
+[02:29:45] <pjb> qhong: on the other hand, code that expects mutable-cons will get errors signaled when it tries a mutable operation on an immutable-cons, as it should be.
+[02:30:13] <pjb> qhong: note also, that CL allows implementations to introduce superclasses in the class hierarchy specified for CL.
+[02:30:39] <pjb> qhong: ie. CONS is the mutable-cons class, and you're allowed to add a IMMUTABLE-CONS superclass of CONS!
+[02:31:54] <pjb> qhong: note also, that you can build lists made of both mutable and immutable conses, so even of you type check the first cons cell for mutability or immutability, this doesn't prevent the following cells to have a different class!  Ie. it's rather useless to have such an immutable class in CL.
+[02:32:07] <moon-child> immutable-cons is not a supertype of mutable-cons
+[02:32:28] <moon-child> if I require an immutable cons, and you give me a mutable cons, it will not provide invariants that I expect.  In particular: it has the potential to change under me
+[02:32:29] <pjb> moon-child: yes, it is. Obviously. Just read about the Lyskov Substitution Principle!
+[02:32:41] <pjb> moon-child: and I didn't say supertype, but superclass.
+[02:33:03] <moon-child> well, you brought the LSP into it :P
+[02:33:04] <pjb> The standard doesn't necesarily allow for new (intermediate) types, only for new classes.
+[02:33:27] <pjb> moon-child: what "it"?
+[02:34:13] <pjb> moon-child: YOU ensure the post-conditions assuming the pre-conditions.  If you expect an immutable-cons, then there's no pre-condtion broken if I provide a mutable-cons instead.
+[02:34:23] <pjb> This is the LSP.
+[02:36:10] <pjb> Basically, what expecting a immutable-cons do, is to add to the pre-conditions alpha = (car ic) & delta = (cdr ic)  and add to the post-conditions: alpha = (car ic) & delta = (cdr ic) ; ie. immutabiility of the ic.
+[02:37:20] <pjb> On the other hand, when you substitute a mc to this ic, those pre- and post-conditions take all their meaning, and gives you a guarantee that the mc won't be mutated by the function.
+[02:37:45] <pjb> This is what CLHS writes explicitely for functions such as remove, vs. delete, etc.
+[02:37:53] <SAL9000> I think that only makes sense in a single-threaded context
+[02:38:20] <SAL9000> in the presence of multiple threads, indeed mutable-cons could be modified by someone else while you're running your function which expects an immutable-cons
+[02:38:44] <pjb> SAL9000: well, it's the problem of pre- and post-conditions, which take snapshots on entry and on exit of the function, but sometimes you want to specify what happens dynamically during the execution of the function. I guess that you can add temporal logic invariants.
+[02:39:18] <SAL9000> that or "this function holds the only reference to the cons for the duration of its execution" I guess
+[02:39:27] <pjb> So instead of pre- and post- you'd have require- and provide- invariants.
+[02:39:37] <moon-child> SAL9000: (defmethod f ((x immutable-cons) y) (let ((a (car x))) (funcall y) (assert (eql a (car x))))) (let ((x (list 2 3))) (f x (lambda () (rplaca x 7))))
+[02:39:37] <hayley> <>(same-thread \/ fak-off-m8)
+[02:39:43] <hayley> s/\//\\//
+[02:39:46] <qhong> what about the idea of rather than having any kind of immutable object, replace pure functions with reactive functions?
+[02:40:03] <qhong> I think it makes a much more ergonomic environment
+[02:40:08] <qhong> but implementation cost is unclear
+[02:40:43] <qhong> (whenever I find I cannot change any aspect of my environment, I'm irritated)
+[02:41:08] <SAL9000> moon-child: I guess you could in theory have a type system where passing that immutable-cons to an untyped (thus implicitly mutable-argument) lambda would be verboten
+[02:41:22] <SAL9000> ala C's const pointers
+[02:43:05] <gilberth> That would be static typing. Do you really want that?
+[02:43:23] <hayley> "Java is a great example of a poor type system. Types are erased. Values are boxed unnecessarily. All because they used a LISP-inspired uniform data representation"
+[02:43:31] <hayley> Hm, if they had a Lisp representation, they'd have fixnums.
+[02:43:39] <pjb> remove.condition = for all c cons cell in the list, alpha = (car c) & delta = (cdr c)  ; snapshot
+[02:43:40] <pjb> remove.invariant = for all c cons cell in the list, always alpha = (car c) & always delta = (cdr c) ; temporal logic (assuming always = until exit)
+[02:43:40] <pjb> (remove element list) pre: remove.condition ; require: remove.invariant ; provide: remove.invariant ; post: remove.condition & condition-on-result
+[02:44:46] <pjb> alpha_c delta_c instead of alpha delta, obviously.
+[02:45:24] <hayley> Same guy: "The big lesson here is: with an unboxed data representation you don't need the sophisticated generational GCs of languages like OCaml, Haskell and Java to get decent performance. Basic mark+sweep gets you plenty of performance and it is much easier to support parallelism." lol
+[02:45:43] <pjb> The require condition asks other threads not to mutate the input list. the provide condition ensure the function doesn't mutate (temporarily) the list.
+[02:45:47] <hayley> And here I was, thinking OCaml and C♯ were pretty good with unboxing, yet they still use generational GC.
+[02:49:12] <hayley> Hell, the generational hypothesis even holds for C programs.
+[02:51:25] <hayley> All the other comments are uninteresting like "don't use dynamic types u dummy, you can't write a compiler with dynamic types"
+[02:54:40] <kakuhen> <hayley> ""Java is a great example of a..." <- integer overflows are a fact of life, just don't make mistakes!! fixnums are bloat... that's why LISP died in AI winter !!
+[02:55:22] <hayley> Never mind CL compilers, Deutsch-Schiffman, Smalltalk, V8, LuaJIT...I guess you see what you want to see.
+[02:57:29] <hayley> But "plain mark-sweep is fine with lots of unboxed data" is hilarious. Enjoy having any recursive data structure be spread out across your heap. f
+[03:12:27] <hayley> But IIRC there was a malloc library where you could also specify that an allocation should be near another, so that you miss or page less traversing them.
+[03:18:58] * hayley wonders if separating the dyads from racks is bad for cache utilization. The rack access is basically going to miss always, and one can't really prefetch it.
+[03:20:41] <moon-child> 'miss always' why?
+[03:21:18] <hayley> Rather, you only get temporal locality, not spatial.
+[03:21:33] <moon-child> I mean, the header won't be near the rack, but different racks will be near to each other
+[03:22:15] <hayley> Then you need to keep racks in access order, and not arbitrary order, no? And beach wants a non-moving global heap.
+[03:22:52] <moon-child> right
+[03:23:13] <moon-child> maybe that means the global heap should move...
+[03:23:49] <hayley> But, what I mean is that, to get to a slot, we need two dereferences. You can prefetch the dyad, if you like. But there is no time to prefetch the rack after. So I'd rather try to keep the dyad and rack on the same cache line.
+[03:24:42] <qhong> which one is better: 1. have CDR coding, but no vector 2. have vector, but no CDR coding
+[03:24:53] <hayley> The next question, then, is to pick a good order. But there has been study into depth-first or breadth-first or some hybrid.
+[03:25:13] <hayley> I'd rather the vector, since I don't think CDR coding gives you O(1) access still.
+[03:25:28] <hayley> (inb4 it's O(sqrt heap) actually)
+[03:25:55] <qhong> hayley: NTH can be done in O(1) if the whole list happens to be continuous
+[03:26:18] <hayley> How do you test that in O(1) though?
+[03:26:38] <moon-child> I would rather a vector too.  So if I really need it to be contiguous, I can guarantee it more easily and with less chance of error
+[03:26:53] <moon-child> hayley: presumably a cdr-coded cons cell says how many cdrs it contiguously holds
+[03:27:26] <qhong> In principle that can be done, I'm still thinking about whether there's a good concrete impl strategy
+[03:27:36] <hayley> Right. (So much for the space savings though)
+[03:27:36] <qhong> moon-child: (CONS SE1 SE2 RESERVE-COUNT)
+[03:28:05] <qhong> actually (CONS SE1 SE2 &optional RESERVE-COUNT)
+[03:28:53] <hayley> I seemed to have imagined C++ operator new taking a hint for where to allocate.
+[03:29:06] <hayley> Interlisp was clever about it IIRC.
+[03:29:11] <qhong> hayley: I'm not familiar with C++
+[03:29:20] <moon-child> re c++ new: I think so too, but no idea how that works
+[03:29:59] <qhong> How about this: Each unused cell store its distance to the end of list
+[03:30:15] <qhong> So say you (CONS X Y 4), it will be like [3 2 X Y]
+[03:30:32] <qhong> then you get the length by looking at address CONS-1
+[03:49:10] <drakonis> what kind of bad of clowny post was being discussed here
+[03:53:25] <qhong> hmm, so what do people think now? Can CDR-CODING + O(1) NTH replace vector?
+[03:56:19] <moon-child> no
+[03:56:41] <moon-child> vector has guaranteed O(1) access by construction.  With cdr coding, you have to be careful
+[03:59:38] <qhong> moon-child: With RESERVE-COUNT you can get effectively a fixed size vector. The code will continue to work but slower if you pass in some discontinuous list, but I think that's acceptable, basically all your code are sequence-generic
+[04:13:01] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Quit: ERC (IRC client for Emacs 27.1))
+[04:19:26] <hayley> "That data representation is very common and it makes sense in languages like Lisp and it is definitely faster than boxing (because you're not heap allocating) for values that fit in one word but also slower than C-like representations (because you're still doing runtime type checks around arithmetic)."
+[04:19:39] <hayley> Well, you have to check for fixnum/bignum/rational types. You have to, right? Right?
+[04:20:37] <hayley> (Alternately: You have to check anyway, cause you have a numeric tower. You have a numeric tower, right?
+[04:20:38] <hayley> )
+[04:21:08] <moon-child> lol
+[04:22:28] <hayley> The Interlisp twitter account liked the Bakerposting bot posting just a reference to the Interlisp manual. Makes sense, I guess.
+[04:22:28] <Bakerposting> Each of the list processing primitives is intended to run with interrupts inhibited, so that all interrupt processing can make use of list storage for its buffers and other needs. (List Processing in Real Time on a Serial Computer <https://plover.com/~mjd/misc/hbaker-archive/RealTimeGC.html>)
+[04:22:29] -ixelp- Comm. of the ACM 21, 4 (April 1978), 280-294.
+[04:22:36] <moon-child> actually, I will accept that on one condition: they have static checks that numbers wouldn't have overflowed anyway.  And division is not allowed, of course.  But they don't have that either, do they...
+[04:22:42] <hayley> Dammit, you are still connected to IRC?
+[04:23:02] <hayley> drakonis: https://www.reddit.com/r/ProgrammingLanguages/comments/thouu9/hello_i_created_a_interpreted_dynamic_programming/i1c8t7u/?context=3
+[04:23:04] -ixelp- Hello, I created a interpreted dynamic programming language in C#. I use a bytecode compiler and a vm for interpretation [...]
+[04:23:25] <hayley> Don't tell beach someone made a "programming language in C#" of course.
+[04:23:47] <hayley> https://www.windowscentral.com/british-government-reported-asked-when-microsoft-would-get-rid-algorithms lol
+[04:23:48] -ixelp- The British government reportedly asked when Microsoft would 'get rid' of algorithms | Windows Central
+[04:23:53] <drakonis> profoundly stupid hot takes
+[04:24:05] * gilberth wants a library for C to split and forge pathnames like what the CL pathname data type provides.
+[04:28:09] <drakonis> must be great being so ignorant
+[04:29:09] <hayley> A Prolog account also liked "Lisp is a language-building language par excellence, and it can therefore easily emulate those Prolog capabilities that make parsing simple." Funny.
+[04:29:31] <drakonis> lol
+[04:30:54] <hayley> moon-child: Yeah, no one tell them that you can do type inference on dynamically typed code too.
+[04:31:28] <drakonis> "Simple Runtime Scripting Language" zzzz
+[04:31:31] <drakonis> simple huh
+[04:32:09] <drakonis> CLR is not what i would call simple
+[04:32:23] <random-nick> stupid british government, it's their job to ban algorithms not microsoft's
+[04:32:32] <hayley> SBCL is quite clever around integer bounds. Like, you can have a FIXNUM for array indices, then divide by 16 somewhere (to index into a packed metadata table), and then multiply by 16 to get array indices again. And it'll tell the result is still a FIXNUM.
+[04:32:34] <gilberth> For what it is worth I don't like the Bakerposting spam bot. And I don't like that it doesn't use NOTICE and hence also triggers ixelp. Suppose ixelp would also use PRIVMSG. Could it happen then that both form a loop? Or: What triggers Bakerposting?
+[04:32:34] <Bakerposting> Common Lisp-84 has a reasonably complex type system. (The Nimble Type Inferencer for Common Lisp-84 <https://plover.com/~mjd/misc/hbaker-archive/TInference.html>)
+[04:32:35] -ixelp- The Nimble Type Inferencer for Common Lisp-84
+[04:33:06] <gilberth> Bakerposting: Shut up!
+[04:33:07] <Bakerposting> In addition to the obvious examples from business--e.g., freight loading--there are similarities with real problems in biochemical bonding. (Speeding up the 'Puzzle' Benchmark a 'Bit' <https://plover.com/~mjd/misc/hbaker-archive/PuzzleB.html>)
+[04:33:07] -ixelp- ACM Lisp Pointers V, 3 (Jul/Sep 1992), 18-21.
+[04:33:30] <hayley> gilberth: Mentioning the bot summons it. But I can make it use NOTICE, sure. And I doubt they can make a loop, since none of the articles have the name.
+[04:34:03] <hayley> gilberth: My apologies, nonetheless.
+[04:35:35] <gilberth> http://clim.rocks/gilbert/loop.html
+[04:35:35] -ixelp- Bakerposting Loop?
+[04:35:43] <hayley> Bakerposting: Say something.
+[04:35:43] -Bakerposting- [1] CGC can more easily expand, and more importantly contract, the amount of space under management than can NCGC  [Baker78]. (Cache-Conscious Copying Collectors <https://plover.com/~mjd/misc/hbaker-archive/CacheCGC.html>)
+[04:36:44] <gilberth> hayley: At least you don't respond to NOTICE, good. No need to apologize. It's only me, when I am bothered I could implement /ignore.
+[04:36:54] <hayley> gilberth: The only way it could loop is if ixelp used PRIVMSG, and one of the titles of the Baker articles had "Bakerposting" in it.
+[04:36:55] -Bakerposting- If we have already implemented the other optimizations which make the best use of the cache/main memory, then almost all of the misses/faults will be of the forwarding pointer reference type. (Cache-Conscious Copying Collectors <https://plover.com/~mjd/misc/hbaker-archive/CacheCGC.html>)
+[04:37:28] <gilberth> hayley: See. The only reason that there is no loop is that I obey to the rules.
+[04:37:36] <moon-child> even then, the loop would continue forever with 0 probability
+[04:37:43] <moon-child> unless _all_ the article snippets had 'bakerposting'
+[04:38:15] * hayley thinks to add a (quote Bakerposting) mode.
+[04:38:19] <gilberth> moon-child: Still, there is a reason why it is said that bots should not respond to NOTICE and therefore also use NOTICE.
+[04:38:41] <hayley> I plead ignorance to that.
+[04:39:03] <gilberth> It's written somewhere in the RFC.
+[04:39:28] <moon-child> I have never heard that either
+[04:39:34] <moon-child> nor interacted with another bot that used notices
+[04:39:41] <gilberth> Granted, very few bots do that. And there were some complains about ixelp doing that. Or rather people were surprised.
+[04:40:12] <hayley> (quote Bakerposting) understands reference vs. use now. And this implies that 'Bakerposting is a symbol macro, I guess.
+[04:40:32] <moon-child> what about "bakerposting"?
+[04:40:50] <hayley> It doesn't detect strings, no, and it is also case sensitive.
+[04:41:04] <hayley> It only reacts to being pinged proper on Discord.
+[04:41:14] <moon-child> (QUOTE |Bakerposting|)
+[04:41:15] -Bakerposting- How much memory does the dual system require? (List Processing in Real Time on a Serial Computer <https://plover.com/~mjd/misc/hbaker-archive/RealTimeGC.html>)
+[04:41:22] <hayley> Dammit.
+[04:41:27] <drakonis> how are there so many quotes?
+[04:41:36] <moon-child> `Bakerposting
+[04:41:36] -Bakerposting- We have enjoyed the advantages of cheap copying so long, however, that we have difficulty perceiving its penalties. (NREVERSAL of Fortune[1] -- The Thermodynamics of Garbage Collection <https://plover.com/~mjd/misc/hbaker-archive/ReverseGC.html>)
+[04:41:39] <hayley> I only wrote (quote Bakerposting) and 'Bakerposting. It doesn't really run a CL parser.
+[04:41:50] <moon-child> (quote  Bakerposting)
+[04:41:50] -Bakerposting- Therefore, the non-lazy eviction of a result value to the heap just once can be more efficient than trying too hard to keep the result on the stack. (CONS Should not CONS its Arguments, or, a Lazy Alloc is a Smart Alloc <https://plover.com/~mjd/misc/hbaker-archive/LazyAlloc.html>)
+[04:41:57] <hayley> drakonis: There are a lot of papers, and a lot of quotes in each paper.
+[04:42:01] <hayley> gilberth: Can you tell moon-child to shut up now?
+[04:42:19] <moon-child> gilberth: can you tell hayley to fix her CL parser now?
+[04:42:43] <hayley> I asked the bot on Discord how it felt about being told to shut up, and it said "This practice is too dangerous for applications where an error could cause loss of property or life."
+[04:42:52] <gilberth> hayley, moon-child: Do I look like a relay?
+[04:43:07] * hayley pings gilberth
+[04:43:12] <moon-child> hayley: gilberth asks if he looks like a relay
+[04:43:21] <hayley> moon-child: I think so
+[04:43:27] <moon-child> gilberth: hayley says you do
+[04:43:44] <drakonis> moon-child: whats your take on non lisp langs
+[04:43:57] <drakonis> should one learn them?
+[04:43:59] <gilberth> Perhaps, after all it's Internet Relay Chat, isn't it?
+[04:44:03] <moon-child> drakonis: sure
+[04:44:32] <moon-child> hmm, but 'relay' refers only to the distributed nature of the servers, right?
+[04:44:42] <moon-child> the messages are relayed from one server to another, and thence to the clients
+[04:44:46] <drakonis> i got very curious about raku and i'm attempting to learn it
+[04:44:50] <drakonis> seems v. cool
+[04:45:12] <gilberth> Yes, and both you and hayley asked me to relay messages.
+[04:45:16] * hayley uploaded an image: (36KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/QWOrJAoTFoYKriQrTNsJAdJl/Screenshot_2022-03-20_12-12-16.png >
+[04:45:51] <gilberth> As if you can't talk to each other without a relay. But what do I know?
+[04:46:13] <hayley> Even in person, air molecules would serve as a relay of sorts.
+[04:46:48] <random-nick> the true irc user does relaying manually
+[04:49:04] <gilberth> You don't learn anything by learning Raku. It's just another random language in the procedural language realm. /me shrugs.
+[04:49:57] <hayley> drakonis: I also should mention, that the quotes are scraped (with some pretty poor sentence separation code) and not hand-chosen.
+[04:50:53] <drakonis> lol
+[04:51:08] <drakonis> at least you're scraping them off html
+[04:51:24] <drakonis> i had to scrape text off a pdf once and boy it was awful
+[04:51:35] <drakonis> gilberth: i mean, it strives to be every paradigm at once
+[04:51:48] <drakonis> there has to be something you can learn from it, right?
+[04:53:19] <gilberth> drakonis: Every? What about logic oriented programming like Prolog? Does it implement the Actor model? Or put differently: What is the language feature that Raku has, that Lisp doesn't have? What's new in it?
+[04:53:58] <moon-child> raku has good strings.  And first-class support for grammars, which is nice
+[04:54:01] <drakonis> as far as i'm concerned, it implements erlang's concurrency model
+[04:54:07] <moon-child> that's mostly it
+[04:54:19] <drakonis> moarvm is also quite nice
+[04:54:45] <drakonis> so if you want to implement anything complex, the language does not get in the way of doing so
+[04:55:11] <gilberth> moon-child: Both of which I would consider to be a library things and not a language thing per se. No new paradigms or something.
+[04:55:57] <moon-child> gilberth: well, cl has strings and they are not great...
+[04:56:58] <random-nick> how are raku's strings better?
+[04:57:21] <gilberth> And? Is "a great string data type" a paradigm? Does it really change the language per se? Is it a feature that I cannot have with CL, if I wished?
+[04:57:42] <drakonis> not by default
+[04:58:01] <moon-child> no.  But I don't really buy that argument.  You are falling into the turing tarpit
+[04:58:11] <moon-child> put another way: what _is_ 'really the language'?
+[04:58:15] <drakonis> much like CL, it is malleable, but CL's defaults are bad.
+[04:58:20] <drakonis> by today's standards
+[04:58:24] <random-nick> if you go by what's available by default, then probably python is the best programming language ever
+[04:59:09] <drakonis> ha, no.
+[04:59:21] <gilberth> moon-child: Things like closures for instance. That's a language feature. "Everything is an expression" like in Lisp is a language feature. The way that macros work is a language feature. The whole semantics is a language feature.
+[05:00:46] <moon-child> macros?  But I can easily implement my own code walker which adds them
+[05:01:03] <random-nick> drakonis: so it's the jre and not python?
+[05:01:04] <moon-child> (mdefun 'f '(x y) '(...))
+[05:01:15] <moon-child> and everything in ... will be macroexpanded by mdefun
+[05:02:13] <gilberth> I mean, suppose you know some Java, or perhaps C, or perhaps JavaScript. Learning Raku is then like saying you know American English and now learn another language called "British English". Learning Prolog instead would rather be like learning Chinese.
+[05:02:23] <qhong> What would be an analog of MOP for a prototype-based object system?
+[05:02:43] <drakonis> i mean
+[05:03:22] <qhong> In a class based system object has to have class, and then metaclass. In a prototype based system object don't need to have any prototype at all... then I can't see where to put some "MOP"
+[05:03:38] *** Joins: razetime (~quassel@117.254.35.224)
+[05:03:44] <gilberth> Oh! You have meta classes. How exciting. Doesn't really change the way I explain problems to the machine.
+[05:04:10] <moon-child> you must explain your problems to the machine?  How unfortunate
+[05:04:17] <hayley> A class is an instance of a meta-class. An object in prototype OO may have parent objects.
+[05:04:19] <moon-child> I have a compiler to do that for me
+[05:04:31] <hayley> I could imagine a meta-parent.
+[05:04:34] <drakonis> also, raku has MOP
+[05:04:37] <drakonis> which is v. cool
+[05:04:39] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4.1)
+[05:04:55] <gilberth> moon-child: And the compiler knows by itself what program you want to have?
+[05:05:00] <qhong> hayley: but parent of parent is just like transitive super class
+[05:05:06] <qhong> not really anything meta
+[05:05:28] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[05:05:48] <gilberth> Yes, and there is no multiple inheritance. An object has at most one prototype.
+[05:05:50] <hayley> "Student competition by Amazon Web Services" Very funny. Now can I have some interesting emails?
+[05:06:09] <hayley> That's not true, Self has multiple parent slots.
+[05:06:35] <hayley> qhong: The meta-parent(s) would be another sort of slot, like how a parent slot is different to a normal slot.
+[05:06:56] <random-nick> moon-child: your mdefun wouldn't be processed by the file compiler as a defun so its use makes the file compiler less useful
+[05:07:00] <gilberth> hayley: How are they ordered?
+[05:07:05] <qhong> hayley: what will meta-parent do then?
+[05:07:06] <random-nick> which means macros have to be in the lanugage
+[05:07:40] <hayley> gilberth: They are not, if two parents have a slot then you get a "ambiguous message send" error when trying to send the message.
+[05:07:46] <hayley> qhong: The stuff a meta-class does, I guess.
+[05:08:23] <qhong> hayley: that doesn't sound right, meta-class is a natural result of class-of^2, not something separated
+[05:08:25] <gilberth> hayley: So a breadth-first search takes place?
+[05:08:36] <qhong> in class based system there can also be meta-meta-class
+[05:08:45] <qhong> will you have also meta-meta-parent slot?
+[05:10:07] <gilberth> Meta classes are classes that implement classes. Like what SLOT-VALUE does given a triple of the object's class, the instance and the slot name. That's ll. Another implicit parameter, if you like.
+[05:10:15] <hayley> gilberth: Not quite, I think. Having multiple candidates is ambiguous, but if I had e.g. (| a* = (| X = 2 |). b* = (| X = 3 |). X = 4 |) then the X in the object takes precedence over the Xs in parent slots.
+[05:10:30] <hayley> (Self syntax, so a* denotes a parent slot named "a".)
+[05:10:48] <qhong> I think it's reasonable to have an ordered list of parents, just like direct-superclass
+[05:11:05] <gilberth> hayley: I see. So only two X's meeting at the same level clash?
+[05:11:19] <hayley> qhong: class-of is separated by itself, though. Class OO has instance-of and subclass-of relations, whereas prototype OO has parent-of only.
+[05:11:23] <hayley> gilberth: Right.
+[05:11:46] <gilberth> Makes perfect sense.
+[05:12:06] <qhong> hayley: that's the problem. Now there's only one relation I can't find a place for something "meta"
+[05:12:36] <hayley> Sure, we have to invent another relation. But it's not worse than class OO (even without a meta-object protocol) in that regard.
+[05:12:44] <qhong> hayley: What do you think: instead of class, keep an ordered list like direct-superclass?
+[05:12:52] <qhong> *clash
+[05:13:32] <hayley> I'm not sure. I started to feel like depending on the order of mixins was a smell in my compiler.
+[05:13:44] <random-nick> there's also the issue of representing methods as metaobjects
+[05:13:57] <random-nick> instead of some opaque object you can't customise
+[05:14:08] <gilberth> Again. The meta part come in when you think of (SLOT-VALUE instance slot-name) being a short hand to SLOT-VALUE-USING-CLASS. Which it is. Once you see that there is nothing magic to meta classes.
+[05:15:21] <qhong> gilberth: then it seems that in a prototype based system, we can have that power without lots of magic. How about we hard code the parent slots so dispatch can happen, then retrieve usual slot value by an ordinary message/method call?
+[05:15:47] <hayley> That's tricky with "uniform access" OO where slots just look like methods that load and store from somewhere magical. You can't really reference a slot, so you need a new meta-level (mirrors).
+[05:15:49] <qhong> Then usual objects can simply delegate to <object> or some other <custom-object>, which implements slot-value
+[05:15:53] <gilberth> So amoung other things it allows you to have your own SLOT-VALUE. Something that most OO systems don't provide.
+[05:16:07] <hayley> And "uniform access" is orthogonal to class/prototypes. Newspeak is uniform and class-based. Self is uniform and prototype-based.
+[05:17:33] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4.1)
+[05:17:56] <qhong> basically, does the following give you the same power as MOP: 1. implement SLOT-VALUE as an ordinary method 2. let objects delegate to <custom-object> rather than <object>
+[05:18:17] <gilberth> qhong: What you need is to say that the sugar syntax foo.bar is expanded into some method call dispatching on the class, the instance and the slot. Hard to do without generic functions, though.
+[05:18:49] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[05:19:27] <gilberth> The trick is the ternary SLOT-VALUE-USING-CLASS, you want the class in the equation. That is dispatching on the class of the class.
+[05:20:37] <gilberth> So in message passing, you would send a message to the class of the class asking for a slot value of a given instance.
+[05:21:15] <qhong> gilberth: but in prototype-based system, there is no class, so we just send a message in something in the delegation chain that knows SLOT-VALUE?
+[05:21:17] *** Quits: random-nick (~random-ni@87.116.167.125) (Ping timeout: 240 seconds)
+[05:21:25] <qhong> and now SLOT-VALUE is just binary
+[05:21:26] <qhong>  
+[05:22:44] <gilberth> qhong: There could still be a SLOT-VALUE method. So "x.y" becomes "x.slotvalue('y')" and that slotvalue method could be found in some prototype.
+[05:23:16] <qhong> gilberth: yes that's what I'm thinking about. or (slot-value x 'y) in multimethod fashion
+[05:23:20] <gilberth> And you also want a method to find a prototype of a given object. E.g.
+[05:23:34] <qhong> gilberth: Yes. And I think we have to keep that hard coded
+[05:23:45] <qhong> otherwise the delegate dispatch can't happen
+[05:24:03] <gilberth> If that's hardcoded it's no a meta object protocol anymore.
+[05:25:00] <qhong> gilberth: I can't think of any need that require customizing that. Basically we hardcode only the PARENT slot, and then you're free to change layout for all "normal" slots.
+[05:25:36] <gilberth> Well, then it's less powerful as the MOP. I guess.
+[05:25:55] <qhong> If we have to make PARENT-OF customizable... I can't think of a way, because to do anything useful on an object you have to know its parent, or you know it's a built-in object
+[05:26:22] <qhong> gilberth: Well, does CLOS MOP let you customize CLASS-OF?
+[05:27:37] <gilberth> Ask hayley. But I don't believe so. But the class precedence list is under MOP control.
+[05:28:34] <hayley> qhong: Nope.
+[05:29:15] <gilberth> Anyhow, you could view the prototype object model as saying that every object is its own class.
+[05:30:38] <gilberth> Saying that, I wonder how hard it would be to implement a prototype object model with the MOP.
+[05:31:21] <drakonis> https://twitter.com/buttplugio/status/1505308596849950720
+[05:31:45] <hayley> I think it's been done before.
+[05:31:48] <qhong> gilberth: Looks like from our discussion, modulo the unsolved part, what you need is simply make SLOT-VALUE a dispatched method rather than built-in procedure
+[05:32:01] <drakonis> https://docs.raku.org/language/experimental#macros hhhmmm
+[05:32:02] -ixelp- Experimental features
+[05:35:29] <qhong> gilberth: Maybe keep the representation of PARENTS hardcoded at runtime, but customizable at object creation time
+[05:35:53] <qhong> I think this give you the same power as CLOS MOP, but also much less vicious circularity problems
+[05:36:39] <drakonis> qhong: are you making a new language?
+[05:37:04] <qhong> drakonis: I've been thinking for a long time and will probably keep thinking...
+[05:37:40] <drakonis> oh
+[05:37:50] <drakonis> what are you aiming to build here?
+[05:41:00] <qhong> Some primary goals: 1. somewhat efficient F-expr based language (in the style of Kernel), by introducing staging/partial evaluation 2. flexible runtime, all functions can be made generic, and type/delegation hierarchy is fully extensible. Also should have BECOME: 3. do all those with a minimal core language
+[05:46:02] *** Quits: razetime (~quassel@117.254.35.224) (Ping timeout: 240 seconds)
+[05:46:55] <moon-child> you want become: but also immutability?
+[05:47:13] <qhong> moon-child: I don't want immutability, I want to find a way around it
+[05:47:46] <qhong> my current idea is to use reactive function that produce reactive value that changes when dependency changes, rather than pure functions on immutable dependency
+[05:48:07] <qhong> but, not sure about whether it can be practically implemented
+[05:49:12] <qhong> also using indirection object and become, you can actually make an immutable object
+[05:49:23] <qhong> (I think so)
+[05:50:07] <qhong> copy a mutable object, let the original object BECOME an indirection object to the copied object, but then intercept the mutation methods on the indirection object
+[05:52:19] <hayley> "Definitely no numeric tower and no bignums. :)" Your loss, not mine.
+[05:52:24] *** Quits: mfiano (~mfiano@cpe-67-240-71-179.nycap.res.rr.com) (Quit: WeeChat 3.4.1)
+[05:55:54] *** Joins: razetime (~quassel@117.254.35.224)
+[05:55:55] <moon-child> lol
+[05:56:20] <moon-child> enjoy overflow, I guess
+[05:56:52] <hayley> BIGNUM Strikes Again
+[05:56:57] <hayley> https://www.youtube.com/watch?v=u-JDl5IeDIY
+[05:56:57] -ixelp- Bigmouth Strikes Again (2017 Master) - YouTube
+[06:01:42] <drakonis> oh that's nice.
+[06:06:56] *** Joins: Inline__ (~Inline@p200300cd473cb900eebf25766a02ea81.dip0.t-ipconnect.de)
+[06:07:23] <sm2n> who doesn't want a numeric tower
+[06:08:39] <semz> 64 bits of integers ought to be enough for anybody
+[06:09:02] *** Quits: Inline (~Inline@p200300cd472d40002c1b8381bd5618c5.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[06:10:04] <sm2n> thought I exorcised you already bill
+[06:10:04] <qhong> I don't get it -- why not just use binary representation '(t t nil nil t)?
+[06:10:34] * semz once saw somebody seriously argue that languages should do this
+[06:11:00] <semz> iirc the argument went along the lines of "if the language decides on a numerical tower, it might get it wrong, better define all numbers from scratch with ADTs instead"
+[06:12:17] <semz> How pleasant are CL-style numeric towers in statically typed languages anyway? I only know Haskell's and found all the fromIntegrals pretty cumbersome.
+[06:16:29] <hayley> Haskell has bignums and fixnums in one type, which is a start.
+[06:31:45] <qhong> srsly, I think '(t t nil nil t) could work with some form of CDR coding
+[06:32:03] <hayley> gilberth: Well, Interlisp on maiko is slower than that other VM I tested, but the former a. also handles bignums and b. is way cooler.
+[06:32:49] <hayley> qhong: Heard of https://github.com/Kindelia/HVM? I heard it does tricks on representation to make ADTs pretty compact.
+[06:32:50] -ixelp- GitHub - Kindelia/HVM: A massively parallel, optimal functional runtime in Rust
+[06:37:46] *** Quits: razetime (~quassel@117.254.35.224) (Ping timeout: 250 seconds)
+[06:56:40] <moon-child> qhong: not churchy enough.  How about ((((())))) for 4?
+[06:57:20] <moon-child> or, for that matter, (() (()) (() (())) (() (()) (() (()))))
+[06:57:23] <qhong> moon-child: unary is complexity oof oof
+[06:57:44] <moon-child> I'm pretty sure I got the latter wrong.  Was supposed to be the standard zfc peano coding
+[06:58:04] <qhong> hayley: haven't looked at low level representation. I've heard it does some funky stuff on church encoding
+[06:58:20] <qhong> moon-child: unary is complexity oof oof
+[06:58:22] <qhong> need binary
+[06:58:43] <moon-child> why stop at 2?
+[06:59:21] <moon-child> oh i got the 4 coding right
+[06:59:23] <moon-child> cool
+[06:59:30] <qhong> moon-child: why CONS not TRONS?
+[07:01:01] <moon-child> (defclass coons () ((%car :accessor car :initarg :car) (%cdr :accessor cdr :initarg :cdr) (%cgr :accessor cgr :initarg :cgr)))
+[07:04:09] *** Joins: razetime (~quassel@117.254.35.224)
+[07:15:02] *** Quits: vats (~vats@103.216.143.232) (Ping timeout: 240 seconds)
+[07:21:20] <moon-child> https://gankra.github.io/blah/fix-rust-pointers/   rust continues to try to be the best of c and ml, fails at both
+[07:21:20] -ixelp- Rust's Unsafe Pointer Types Need An Overhaul - Faultlore
+[07:23:00] *** Quits: mzan (~quassel@mail.asterisell.com) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[07:27:40] <drakonis> womp womp
+[07:28:25] <drakonis> qhong: are you committed enough to make a kernel inspired lang to build on kernel in a meaningful way?
+[07:28:45] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-08-70-29-36-27.dsl.bell.ca) (Remote host closed the connection)
+[07:30:33] *** Joins: derelict_ (~derelict@user/derelict)
+[07:30:57] *** Quits: derelict (derelict@user/derelict) (Ping timeout: 240 seconds)
+[07:34:02] *** derelict_ is now known as derelict
+[07:35:39] *** Joins: semz_ (~semz@user/semz)
+[07:37:41] <hayley> moon-child: CONS Should Not CONS Its Arguments part 3: Good Lord What the Fuck
+[07:38:26] *** Quits: semz (~semz@user/semz) (Ping timeout: 250 seconds)
+[07:44:07] *** semz_ is now known as semz
+[07:44:22] <gilberth> moon-child: More exclamation marks. Rust should be renamed to "Bang" or "Let's!" judging from the articles I read about it.
+[07:47:07] <hayley> The language encourages it, since every macro ends in !
+[07:47:37] <hayley> That said, pointer^Wcell dereference in Standard ML uses prefix !
+[07:49:14] <waleee> a missed opportunity for haskell to have named the BangPatterns-extension BangHaskell
+[07:53:49] <gilberth> Well, I also consider starting every paragraph with "Let's" bad style. And I see that a lot with Rust articles and in that poor book. So what is it with Rusticans, that they cannot write? Begins with that you should avoid using contractions with apostrophes in proper writing. /me shrugs.
+[07:56:33] <hayley> idk, I consider writing about Rust bad style. To each their own.
+[07:57:21] <moon-child> hayley: you hypocrite!
+[07:57:30] <gilberth> I mean, that is a filler really. Instead of "Let's define a foo function!" you could as well write "We define a foo function.", calmer, more to the point. When I wished to split hairs, I could say, that only because you suggest to me that we do something, does not mean that we really do.
+[07:57:40] <waleee> damn, of course it should have been s/BangPatterns/LetsBangHaskell
+[07:57:50] <hayley> moon-child: Fine, "writing nice things about Rust"
+[07:58:08] <hayley> But the article is not writing nice things still. Oh well.
+[07:58:47] <hayley> gilberth: I guess the former sounds more welcoming. My favourite coauthor said my writing style sounds like "Murray Bookchin forgot to take his medication" once.
+[07:59:45] * hayley uploaded an image: (28KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/zZhOMpybfeUREKwXNpoQKVTx/Screenshot_2022-03-20_15-29-36.png >
+[08:00:49] <hayley> Speaking of, I should write a part 2 of the one-more-re-nightmare compiler article. Since the one weakness in my results was rectified long ago.
+[08:01:06] <gilberth> hayley: You mean the "let's"? It is not welcoming at all. You say "Let us do blah". Why do I need to participate? Why do you suggest that this is my idea, too? Why do you insult me by therefore suggesting that the silly thing you write would also be my doing and would have my approval?
+[08:01:13] <qhong> drakonis: What do you mean by "build on" kernel? On some (mostly non existent) standard Kernel implementation, or you mean on its idea?
+[08:01:16] <hayley> lol
+[08:01:35] <drakonis> the idea really
+[08:01:35] <moon-child> gilberth: but 'we' does exactly the same thing
+[08:01:47] <drakonis> because the kernel standard never really manifested
+[08:02:00] <hayley> gilberth: idk, I've heard it before, and that was my guess. Like how one project advertises by saying "Let's do blablabla on my platform." I agree that it's insulting to suggest that I would go do that.
+[08:02:22] <qhong> drakonis: of course. I will decompose lambda into vau+wrap, and I will build most thing around first-class environment
+[08:02:48] <hayley> I've made fun of that project since before it existed (it's younger than Netfarm by some time). But I haven't really accomplished anything other than a paper, and looking like an angry woman on the Internet.
+[08:02:51] <qhong> drakonis: In fact I plan to unify object and environment. SLOT-VALUE = ENVREF, DELEGATE = ENV-PARENT
+[08:02:55] <drakonis> hm
+[08:03:11] <gilberth> moon-child: Not quite. It's in use so often that its real meaning is "we [the authors]". And it is custom to use the plural even if there is only one author. There are two we: "Another person and I" and "You and I". When I read "We define a foo function" I read the former meaning.
+[08:03:39] <hayley> qhong: Beware, because you might want lexical closure and parents. Then you need multiple inheritance of sorts.
+[08:04:09] <qhong> hayley: I plan to have multi-parent environment, which is sort of what "module" already needs
+[08:04:09] <moon-child> 'it is custom to use the plural even if there is only one author'  a truly terrible custom that leads to obfuscated and unclear writing
+[08:04:20] <qhong> so object = environment = module
+[08:04:40] <moon-child> A friend of a friend once wrote 'the reader finds that [...]'.  What on earth did he mean?  He meant: '_I_ find that'.  But he had learned that you do not say 'I' in academic writing
+[08:04:41] <hayley> Also c.f. http://bracha.org/dyla.pdf which argues that you better look up the lexical parents first, before looking up normal parents (or superclasses, since this is Newspeak)
+[08:05:35] <gilberth> moon-child: Doesn't change that it is custom. Might be different for you, but I actually was advised in education to prefer using "we" over "I" in articles.
+[08:05:56] <qhong> hayley: Interesting. But in my imagined system there will just be a PARENTS list, so you can have whatever precedence order you want
+[08:06:42] <hayley> I was once accused of having multiple personality disorder when I read some of a paper I wrote to my father.
+[08:06:50] <gilberth> The inclusive "we" rather is used in speeches or the like as in "We must act!" Here the "we" is addressing the listener or reader.
+[08:07:20] <hayley> I know some people with MPD and I (we?) would rather have that than be him.
+[08:09:11] <gilberth> When I say "We performed benchmarks." it is clear that the reader is not a member of the set of person meant by "we".
+[08:09:50] <moon-child> gilberth: I would not write 'we performed benchmarks' if I were the only one performing them.  But I might write 'by looking at graph 1.3, we can see that'
+[08:11:26] <gilberth> moon-child: I would. And I was taught to do that. Have you ever read a paper in which they use first person singular?
+[08:12:14] <moon-child> most papers have more than one author
+[08:14:44] <gilberth> Very funny.
+[08:15:53] <moon-child> point is, no examples immediately come to mind.  I don't keep careful track of such things
+[08:18:12] <gilberth> Well, my point is: I was taught to use "we" no matter if I am the only author or not. But you're right that often this is shifted to anonymous third person in passive voice.
+[08:18:15] <hayley> Hm, now I wonder if COMPILE does anything in Interlisp.
+[08:21:02] <hayley> It does!
+[08:22:20] <hayley> gilberth: Correction then, (FIB 32) on Interlisp takes 280ms or so.
+[08:23:29] <hayley> And kewl, the pause key is used to interrupt Lisp evaluation.
+[08:25:17] <moon-child> cute
+[08:26:56] <hayley> COMPILE sure makes it faster, but I don't know why. DISASSEMBLE output is basically the same.
+[08:41:49] *** Quits: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340) (Ping timeout: 240 seconds)
+[08:45:32] <hayley> So, 2x as fast as that other VM, and at least #.most-positive-fixnum times cooler.
+[08:47:40] *** Joins: dave0 (~dave0@069.d.003.ncl.iprimus.net.au)
+[09:41:26] *** Joins: rotateq (~user@p200300e787143500a6f16de1b1c2e823.dip0.t-ipconnect.de)
+[09:43:57] * hayley wonders what other fun things to profile for in a JIT. Common types are one, prefetching possiblities another, what about the base size of adjustable arrays?
+[09:45:32] <qhong> hayley: is there a somewhat unified way? e.g. do value of a variable remain mostly constant?
+[09:45:50] <qhong> then if you implement type check and bound check in Lisp, the optimizations will happen automatically
+[09:46:38] <hayley> Yes, you can propagate types to eliminate bounds checks, would you know that the index is always in bounds.
+[09:47:14] <hayley> Though most hard ones basically get into dependent types, and the compiler avoids those by representing "is-definitely-index-in" relations some other way.
+[09:48:17] <qhong> Is there any Lisp do dynamic dependent type? CL type is so ugly
+[09:48:30] <moon-child> hayley: branch probabilities
+[09:48:40] <hayley> Yeah, branch probabilities are another.
+[09:48:42] <moon-child> tracing jit for the extreme version, buut
+[09:48:53] <hayley> "fun" as in stupid things no one else would do.
+[09:49:09] <moon-child> loop counts to decide when to unroll.  Could be a really hot loop but only runs through once or twice so not worth it
+[09:49:40] <moon-child> hayley: 'stupid things no one else would do'  fun fact: on x86 you can usefully PGO assembly code
+[09:49:51] <moon-child> probably on arm too, actually
+[09:49:58] <moon-child> 'usefully'
+[09:50:17] <moon-child> by which I mean, I can construct a microbenchmark with a carefully aligned loop and CLFLUSH where it matters
+[09:51:03] <hayley> I know beach also wants prefetching (to avoid arguments about locality and non-moving GC) but I don't know if the information exists statically for dynamically-typed languages.
+[09:52:01] <qhong> Is cache locality universal, or just a mistake of our current stock hardware?
+[09:52:08] <moon-child> fragmentation tho
+[09:52:22] <qhong> Can there be an architecture specially optimized for Lisp such that cache locality is a non-issue?
+[09:52:35] <moon-child> qhong: universal.  Consider the speed of light as a limitation on the amount of fast memory you can have
+[09:52:53] <hayley> Paul Wilson apparently destroyed fragmentation (not holding my breath on it still), but locality is still alive and well.
+[09:53:05] <qhong> moon-child: what about the "get stuff into cache with nearby memory address" part?
+[09:53:38] <moon-child> qhong: if you can come up with a better metric to decide what stuff to get into cache, I would love to hear it
+[09:53:50] <qhong> What if memory understand CONSes and fetch CAR and CDR?
+[09:54:08] <moon-child> what if I don't need the car and cdr, and you threw out something else I needed?
+[09:54:26] <qhong> moon-child: there will always be misses, just how much
+[09:54:54] <moon-child> then I don't understand your question.  Is it 'can we get better?'?  Then: of course
+[09:54:55] <qhong> or in general, let memory understand reference, and fetch neighbors in the reference graph
+[09:55:31] <qhong> moon-child: that is my question. my proposal may look like an improvement, but I don't know if it really is
+[09:57:11] <moon-child> I think you can make something of it.  I think you definitely don't want to blindly prefetch everything.  But e.g. have a flag when you load an object that tells the cpu to prefetch all the objects that object points to
+[09:57:44] <moon-child> I don't know how much of an improvement that is.  But if co-designing hardware and software, go for it
+[09:57:51] * moon-child wonders why there's no avx 'gather' prefetch
+[09:58:22] <qhong> moon-child: why flag is more essential here than the "nearby memory address" strategy? I think current architecture just prefetch blindly whenever some address is touched
+[09:58:48] <moon-child> it doesn't
+[09:58:56] <moon-child> much more sophisticated
+[09:59:19] <qhong> doesn't it always load a whole cache line when a single bit is requested?
+[09:59:53] <moon-child> cache line is 64 bytes, so if your object is smaller than that you'll get some extra for free.  Not much to be done about that.  Aside from that, it'll detect serial iteration, strided iteration, backwards iteration, and won't prefetch more than a cache line if you're just looking at one object
+[10:00:12] <qhong> hmm, I see
+[10:00:19] <moon-child> qhong: yes, the minimum order is a single cache line, because doing bookkeeping at the level of individual bytes is hard; you probably want to do that anyway
+[10:01:11] <qhong> I'm trying to understand why people says having lots of jumping pointers (e.g. lisp list) has cache locality issue compared to packed representation
+[10:01:56] <qhong> it seems that they in general have the same amount of cache miss (but maybe if you visit a array in order, the iteration detection you mention helps)
+[10:02:10] <moon-child> fwiw ocaml people got rather fast list traversal with 2 nodes' prefetch
+[10:03:36] <qhong> there's another source of overhead for lists -- one need to load a cell to know where is the next cell
+[10:03:54] <qhong> maybe this is the main problem rather than cache issue?
+[10:04:22] <qhong> so there's a serial memory access dependency
+[10:04:43] <moon-child> there is a serial dependency, but given appropriate prefetching, it doesn't matter as long as you're doing enough with each list element
+[10:05:29] <qhong> yes I can see that. And I think we can expect a small horizon of "ref graph neighborhood prefetch" can eliminate that overhead
+[10:05:46] <qhong> this probably need to have support at the memory side though
+[10:09:45] <hayley> I have to wonder how to generate code for a two-node prefetch. You'd have to type test, load the CDR, then test again, and prefetch the CDR of that. Maybe there's some test elimination trick, but I can't work it out in my head.
+[10:11:01] <hayley> Well, I guess we know that the first list is a cons cell. We could have another loop variable "frontrunning" the actual iteration variable, too. idk
+[10:11:38] <moon-child> load cdr, type test, if it fails, go to sadpath.  In the sad path: run the final loop iteration, and then throw
+[10:15:51] <hayley> https://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.113.5802&rep=rep1&type=pdf claims that (on p.3) deeper prefetching won't be better than 1-node prefetch. Hm.
+[10:18:08] <hayley> But p.9 figure 8 of https://www.cl.cam.ac.uk/~tmj32/papers/docs/ainsworth20-ismm.pdf claims that the best for a fold-left on a list is 8 nodes ahead, though 2 is also pretty good.
+[10:20:44] <hayley> Thus I still wonder how well 1-node prefetching fares, cause it would be the easiest to integrate.
+[10:20:54] *** Quits: lagash (lagash@lagash.shelltalk.net) (Ping timeout: 252 seconds)
+[10:23:43] <hayley> But SBCL already has a mechanism for lists - trans_list in the GC tries its hardest to keep a list in order in memory.
+[10:24:21] <Alfr> hayley, assuming your lists are not dotted and nil is encoded so that you can just treat it like a cons (for the purpose of cdr) you can get away with simply following the reference.
+[10:24:41] <hayley> I think NIL does actually do that on SBCL.
+[10:24:55] <moon-child> yeah
+[10:25:37] <hayley> (disassemble (lambda (x) (declare (list x) (optimize speed (safety 0))) (cdr x))) ⇒ MOV RDX, [RDX+1] ; calling convention noise
+[10:26:05] <Alfr> hayley, note that the paper is from '96, and iirc cache misses have become more expensive in the mean time.
+[10:26:11] <hayley> Also try (sb-vm:hexdump nil)
+[10:26:47] <moon-child> (also: if you do align checks, align miss will crash and you can recover easily.  Just sayin...)
+[10:29:04] <hayley> I want my analysis to be more generic w.r.t the actual type of the recursive data structure, still; I fear that the SBCL GC does a good job at linearisation (for once) already.
+[10:30:15] <moon-child> hmm.  Then just grab the first few slots, no matter what they are :)
+[10:31:31] <hayley> The issue is that we can cheat on NIL having CAR and CDR in the right places, so I can unconditionally load the CDR from NIL still, but not for user-defined data structures.
+[10:32:43] <hayley> Prefetching an invalid pointer won't do you any harm on x86-64 (other than wasting real time), but the effects of loading an invalid pointer should not be new.
+[10:32:52] <moon-child> well, user-defined data structures will be a header followed by a rack, no?  The first n slots of each rack will always be in the same place
+[10:33:02] <moon-child> 'loading an invalid pointer' well, you can recover from that
+[10:33:05] <moon-child> hotspot does it
+[10:33:26] <hayley> Is this SICL or SBCL now?
+[10:33:40] <moon-child> ¯\_(ツ)_/¯
+[10:34:39] *** Quits: aeth (~aeth@user/aeth) (Ping timeout: 252 seconds)
+[10:36:31] <hayley> Also, the list example is broken if someone passes in an improper list. I'll just go with a 1-deep prefetch, so that I don't have to do new tests.
+[10:36:40] *** Joins: aeth (~aeth@user/aeth)
+[10:37:00] <hayley> Granted, though, I can't move a prefetch of a slot value to before dominating type tests, unless I replicate the type test earlier.
+[10:38:21] <moon-child> you can just check that it's a standard object, which will be cheaper
+[10:40:09] *** Quits: razetime (~quassel@117.254.35.224) (Ping timeout: 252 seconds)
+[10:41:16] <moon-child> (well, issues if you go over a page boundary, could #GP, but keep a page of padding or so and probably fine)
+[10:45:35] <hayley> https://www.youtube.com/watch?v=6Rpmg52MK2w
+[10:45:36] -ixelp- Ask Toby Jones - Tax Questions - Jones Big Ass Truck Rental - YouTube
+[10:50:38] *** Joins: razetime (~quassel@117.254.35.109)
+[11:00:10] <kakuhen> is there a nice way to write to a stream in big-endian 
+[11:00:15] <kakuhen> without using my own bit stream thingy
+[11:00:38] <kakuhen> if not, then  it's fine, i'll just remember to make a library out of my bit reader/writer and use that whenever i deal with codecs
+[11:00:56] <kakuhen> my mu-law decoder gives identical output to ffmpeg except that the byte-ordering is reversed lol
+[11:01:35] <kakuhen> i.e. `ab cd` is written as `cd ab` in the stream
+[11:07:39] *** Joins: lagash (lagash@lagash.shelltalk.net)
+[11:20:50] <kakuhen> ok looks like i'll be more successful writing my own bit reader, then moving my bit-level i/o stuff into its own library
+[11:21:00] <kakuhen> err bit writer*
+[11:24:03] <dave0> i only know c sorry
+[11:25:35] * hayley uploaded an image: (260KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/lnRsujvwCVoGHChxvJDpifwW/Screenshot_2022-03-20_18-52-58.png >
+[11:29:50] <semz> what was he actually saying?
+[11:30:07] <hayley> "A full heap trace"
+[11:30:19] * hayley uploaded an image: (190KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/BJKUPhnEzacJpJMqBSyBhDKr/Screenshot_2022-03-20_18-53-51.png >
+[11:30:42] <moon-child> wtf based sicl
+[11:30:47] <moon-child> hammer and sicl
+[11:31:07] <hayley> moon-child is the fourth person to make the joke, methinks.
+[11:31:20] <moon-child> :<
+[11:31:33] <hayley> First me (in private), then someone joined #sicl just to say "hammer and SICL", and then a friend said it in private, and then moon-child said it in #sicl and here.
+[11:32:15] <hayley> "why garbage collection i dont want my ram going into landfill" "recycle"
+[11:33:45] <hayley> The animations in https://www.youtube.com/watch?v=MAk6RdApGLs (the first video) are quite pretty though.
+[11:33:46] -ixelp- Deconstructing the Garbage-First Collector - YouTube
+[11:43:56] <hayley> Lang-Du🅱️ont
+[11:54:57] <hayley> Now I have to wonder how a hybrid GC would fare for SWCL. Try to use mark-sweep (which has the benefit that it's easier to make concurrent and/or parallel, too) and then fall back to copying if we're too fragmented.
+[11:55:42] <hayley> But SBCL pages might be too coarse to find any free pages from mark-sweep. Lang-Dupont always compacts *something* and Immix uses tiny "lines" for reclamation.
+[12:03:48] *** Quits: Brucio-61 (~Brucio-21@ip-094-114-248-079.um31.pools.vodafone-ip.de) (Ping timeout: 240 seconds)
+[12:04:02] *** Quits: scymtym (~user@ip-094-114-248-079.um31.pools.vodafone-ip.de) (Ping timeout: 240 seconds)
+[12:13:02] <hayley> Speaking of, but not really, I mentioned to someone that I think organisation is largely not necessary, but something has to happen for the uncommon case. Thus, in line with "lazy allocation", I now call it "lazy organisation". You only start your damn bureau when a write barrier is tripped.
+[13:04:14] <hayley> gilberth: New idea: I make the SBCL GC hybrid, only compacting when fragmentation gets bad, and thus I could make non-compacting GCs parallel (and even concurrent, later on).
+[13:07:16] *** Joins: scymtym (~user@ip-094-114-248-079.um31.pools.vodafone-ip.de)
+[13:09:29] *** Joins: Brucio-61 (~Brucio-21@ip-094-114-248-079.um31.pools.vodafone-ip.de)
+[13:25:36] <kakuhen> ok i just realized my bit-level writer is a stupid idea
+[13:25:50] <kakuhen> when i am filling out data and making a file in some format, i should be preparing everything to fit nicely into 8 bits anyway
+[13:26:12] <kakuhen> or rather, if i want to write out something, first make sure I align to an exponent of 2
+[13:29:34] <dave0> i only have c code to read/write bits
+[13:32:19] <hayley> https://pvk.ca/Blog/2014/09/13/doodle-hybridising-sbcls-gencgc-with-mark-and-sweep/ makes it sound like it's not a new idea to hybridize GENCGC. But I might have a new trick. Like Lang-Dupont or smth, I might be able to see about only copying the most fragmented pages at a time, and then I can do pointer fixups out of every other page in parallel.
+[13:32:20] -ixelp- Doodle: hybridising SBCL's GENCGC with mark and sweep - Paul Khuong: some Lisp
+[13:38:42] <hayley> So, the game plan is: 1. Parallel mark/sweep 2. If there are many mostly empty pages, copy them (and the mark bitmap will tell you what's live), then parallel fix up on other pages
+[13:56:30] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 252 seconds)
+[14:09:16] <hayley> .oO( Now, the funny thing is that I was going to use MMTk to borrow someone else's parallel Immix part. But the non-moving and parallel part is harder to fuck up, by some orders of magnitude. )
+[14:12:29] <dave0> hayley: do you know radiohead? this is a good cover: https://youtu.be/E_dCRnF-lvs
+[14:12:30] -ixelp- Gin Blossoms - Fake Plastic Trees - 2/12/2019 - Paste Studios - New York, NY - YouTube
+[14:15:41] *** Joins: cosimone (~user@93-44-187-176.ip98.fastwebnet.it)
+[14:22:37] *** Quits: razetime (~quassel@117.254.35.109) (Ping timeout: 240 seconds)
+[14:25:05] <hayley> dave0: the song by Talking Heads?
+[14:26:23] <dave0> ah i'm not aware of that .. i will google
+[14:27:49] *** Quits: Oddity (~Oddity@user/oddity) (Ping timeout: 240 seconds)
+[14:28:15] <dave0> oohhh you mean the name "radiohead" ??
+[14:28:23] <hayley> Yes.
+[14:28:46] <hayley> Radio Head is a song by Talking Heads off the 1986 album True Stories. True story.
+[14:28:51] <dave0> oh wow that's an interesting fact!
+[14:29:18] <dave0> yep it seems the band radiohead took it's name from the talking heads song!
+[14:29:39] <dave0> but no, i meant the band :-)
+[14:29:44] <dave0> it's still a good cover
+[14:31:05] <dave0> heh this is interesting
+[14:31:14] <dave0> talking heads is weird!
+[14:32:05] *** Joins: razetime (~quassel@117.254.35.224)
+[14:34:15] <dave0> hayley: (the band) radiohead's best known song is probably "creep"
+[14:34:27] <dave0> i can't remember if i had the album in the 90's
+[14:34:45] <dave0> but they were a critical success
+[14:52:27] *** Joins: mfiano (~mfiano@cpe-67-240-71-179.nycap.res.rr.com)
+[14:56:47] *** Joins: random-nick (~random-ni@87.116.176.196)
+[15:06:41] *** Joins: Lycurgus (~juan@98.4.112.204)
+[15:15:24] <kakuhen> wait turns out writing bits is useful in some scenarios, but im not in those scenarios yet
+[15:15:36] <kakuhen> for now i just made my own little loop that is able to do things like write 2^n bits in big endian order
+[15:15:43] <kakuhen> now i can produce au files that do not hurt my ears
+[15:16:52] *** Joins: notzmv (~zmv@user/notzmv)
+[15:21:37] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-08-70-29-36-27.dsl.bell.ca)
+[15:39:17] <hayley> I heard that Cheney is getting axed from SBCL, so it sounds like relatively fair play to start breaking gencgc pretty soon.
+[15:41:27] <Lycurgus> axed? it always was non standard, maybe requiring a special build
+[15:42:11] <Lycurgus> so they could at most support it less
+[15:42:22] <Lycurgus> *even less
+[15:42:33] <hayley> It's standard on some ISAs. But they'll just delete src/runtime/cheneygc.c at some point.
+[15:42:48] <Lycurgus> ISA?
+[15:43:51] <hayley> Instruction set architecture.
+[15:44:00] <Lycurgus> i c
+[15:44:11] <hayley> e.g. Cheney was standard for MIPS some time ago, now gencgc works (better than Cheney did).
+[15:44:13] <Lycurgus> ida said just arch
+[15:44:39] <Lycurgus> sbcl is about 4th in my list of implementations
+[15:44:56] <hayley> So my plan is, from then, to evolve gencgc into genrcgc (generational regional conservative garbage collector).
+[15:45:34] <Lycurgus> only in the list because of how widespread its adoption is and because I switched from cmucl with it got going
+[15:45:40] *** Inline__ is now known as Inline
+[15:46:02] <Lycurgus> great and you'll have a standard in what ACL does
+[15:46:11] <kakuhen> if i ever try to do my stupid idea of running lisp on ps vita
+[15:46:15] <kakuhen> i plan to use ecl to bootstrap sbcl lole
+[15:46:15] <hayley> And I still think that the new soft write barriers could really help for implementing concurrent marking, but I haven't thought about it much.
+[15:46:32] <hayley> SBCL is also $599 (or more) cheaper than ACL.
+[15:46:39] <Lycurgus> more
+[15:47:04] <hayley> And I don't recall how ACL handles compaction. The Immix is clever about avoiding compaction in a way.
+[15:47:04] <kakuhen> allegro cl, right? does it actually have a tree shaker and produce smol executables or is that a myth
+[15:47:07] <Lycurgus> but it and lw are the best implementations
+[15:47:20] <kakuhen> i see mentions of that in comp.lang.lisp but i cant test it for myself.
+[15:47:55] <kakuhen> there's also this https://gist.github.com/burtonsamograd/f08f561264ff94391300 which i find very amusing
+[15:47:55] -ixelp- A quick and dirty tree shaker for SBCL, giving about a 40% reduction in dump size. · GitHub
+[15:48:00] <kakuhen> hayley: what are your thoughts on this 
+[15:48:18] <Lycurgus> acl 10 personal edition is less restricted than lw personal edition (both free)
+[15:48:23] <kakuhen> just destroy the entire cl package and run gc hahaha
+[15:49:08] <hayley> stylewarning once sent me something more evil (and broken on newer SBCL).
+[15:50:19] <pl> kakuhen: LW is the one with tree shaker and it works
+[15:51:21] <hayley> But either I get a new fancy CPU or ACL, not both with my budget.
+[15:52:31] <Lycurgus> *when it got going
+[15:54:34] <kakuhen> i was considering LW for its fancy GUI library for a while
+[15:54:41] <kakuhen> but it's very expensive
+[15:55:56] <kakuhen> in any case, sbcl  is a nice implementation; at least for what i do, it's speedy and pretty portable, and it's not a nightmare to bootstrap unlike ccl
+[15:56:40] <kakuhen> i only really stay on ccl because it has a speedier compiler and slightly more responsive REPL from within SLY, but that's basically it
+[15:57:00] <kakuhen> but if i want performance (again, for the things I do), the most obvious step is to ditch ccl 
+[15:57:06] <kakuhen> THEN optimize my code
+[15:58:46] <hayley> Come to my never ending SWCL bucket list, we have - parallel cache conscious GC - prefetch inserting compiler - zstd support (not funny, I actually programmed that in)
+[16:03:30] *** Quits: Lycurgus (~juan@98.4.112.204) (Quit: Exeunt)
+[16:08:27] <hayley> Better hurry before I add vectorisation to the list, and that never gets implemented too!!!
+[16:35:32] *** Quits: aeth (~aeth@user/aeth) (Ping timeout: 240 seconds)
+[16:37:43] *** Joins: aeth (~aeth@user/aeth)
+[16:38:39] *** Quits: mfiano (~mfiano@cpe-67-240-71-179.nycap.res.rr.com) (Quit: WeeChat 3.4.1)
+[17:16:42] *** Quits: euandreh (~euandreh@2804:14c:33:9fe5:e51b:ac6b:af96:5d6c) (Ping timeout: 252 seconds)
+[17:29:03] *** Joins: euandreh (~euandreh@2804:14c:33:9fe5:156d:4cd3:81cf:f50c)
+[18:02:12] *** Quits: Aurora_v_kosmose (~LispyLigh@user/lispylights) (Remote host closed the connection)
+[18:02:36] *** Joins: Aurora_v_kosmose (~LispyLigh@user/lispylights)
+[18:09:36] *** Joins: mfiano (~mfiano@cpe-67-240-71-179.nycap.res.rr.com)
+[18:10:02] *** Quits: mfiano (~mfiano@cpe-67-240-71-179.nycap.res.rr.com) (Client Quit)
+[18:35:11] *** Quits: minion (~minion@common-lisp.net) (Remote host closed the connection)
+[18:35:19] *** Joins: mzan (~quassel@mail.asterisell.com)
+[18:35:24] *** Joins: Inline__ (~Inline@p200300cd473cb900eebf25766a02ea81.dip0.t-ipconnect.de)
+[18:35:29] *** Quits: Inline (~Inline@p200300cd473cb900eebf25766a02ea81.dip0.t-ipconnect.de) (Killed (zirconium.libera.chat (Nickname regained by services)))
+[18:35:29] *** Inline__ is now known as Inline
+[18:35:57] *** Joins: minion (~minion@common-lisp.net)
+[18:42:05] *** Quits: sirufer (68f46fc7c3@user/sirufer) (Ping timeout: 240 seconds)
+[18:42:08] *** Quits: dave0 (~dave0@069.d.003.ncl.iprimus.net.au) (Quit: dave's not here)
+[18:42:17] *** Joins: sirufer (68f46fc7c3@user/sirufer)
+[18:46:32] *** Quits: sirufer (68f46fc7c3@user/sirufer) (Ping timeout: 240 seconds)
+[18:46:43] *** Joins: sirufer (68f46fc7c3@user/sirufer)
+[18:54:05] *** Joins: semz_ (~semz@user/semz)
+[18:54:16] *** Joins: robin__ (~robin@user/terpri)
+[18:57:37] *** Quits: semz (~semz@user/semz) (Ping timeout: 250 seconds)
+[18:57:37] *** Quits: robin (~robin@user/terpri) (Ping timeout: 250 seconds)
+[18:57:37] *** Quits: pjb (~pjb@user/pjb) (Ping timeout: 250 seconds)
+[18:57:38] *** Quits: mala (~mala@user/malaclyps) (Ping timeout: 250 seconds)
+[18:58:32] *** Joins: mala (~mala@user/malaclyps)
+[18:58:58] *** Joins: rogersm_ (~rogersm@90.166.180.250)
+[19:00:00] *** Joins: White__Flame (~quassel@user/white-flame/x-6930243)
+[19:00:12] *** Joins: notzmv- (~zmv@user/notzmv)
+[19:00:19] *** Quits: rogersm (~rogersm@90.166.180.250) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: rotateq (~user@p200300e787143500a6f16de1b1c2e823.dip0.t-ipconnect.de) (Remote host closed the connection)
+[19:00:19] *** Quits: cosimone (~user@93-44-187-176.ip98.fastwebnet.it) (Remote host closed the connection)
+[19:00:19] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: White_Flame (~quassel@user/white-flame/x-6930243) (Ping timeout: 250 seconds)
+[19:18:14] *** Joins: mfiano (~mfiano@cpe-67-240-71-179.nycap.res.rr.com)
+[19:38:31] *** Quits: razetime (~quassel@117.254.35.224) (Ping timeout: 256 seconds)
+[19:39:04] *** Joins: shka (~herr@109.231.3.55)
+[19:42:28] *** Joins: rotateq (~user@p200300e787143500a6f16de1b1c2e823.dip0.t-ipconnect.de)
+[19:56:07] <gilberth> Good morning #lispcafe!
+[20:01:22] *** Joins: Lycurgus (~juan@98.4.112.204)
+[20:02:59] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-08-70-29-36-27.dsl.bell.ca) (Remote host closed the connection)
+[20:03:19] *** Quits: Lycurgus (~juan@98.4.112.204) (Client Quit)
+[20:27:55] *** robin__ is now known as robin
+[20:53:08] *** Joins: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340)
+[20:53:24] *** Joins: pjb (~pjb@user/pjb)
+[20:53:44] *** Joins: Lycurgus (~juan@98.4.112.204)
+[20:55:52] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[20:59:35] *** Quits: Lycurgus (~juan@98.4.112.204) (Quit: Exeunt)
+[21:06:28] *** Joins: Lycurgus (~juan@98.4.112.204)
+[21:14:18] *** Quits: Lycurgus (~juan@98.4.112.204) (Quit: Exeunt)
+[21:15:47] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-16-50-101-90-18.dsl.bell.ca)
+[21:28:10] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-16-50-101-90-18.dsl.bell.ca) (Ping timeout: 268 seconds)
+[21:30:20] *** Quits: mfiano (~mfiano@cpe-67-240-71-179.nycap.res.rr.com) (Quit: WeeChat 3.4.1)
+[21:33:53] *** Joins: mfiano (~mfiano@cpe-67-240-71-179.nycap.res.rr.com)
+[21:35:06] <gilberth> Quiet here. Is everyone on their way to ELS?
+[21:35:22] <shka> sunday evening 
+[21:35:33] <shka> not expecting high activity 
+[21:35:59] <gilberth> Which means what? Social life? Family? Friends?
+[21:36:07] <shka> perhaps
+[21:36:41] *** Quits: mfiano (~mfiano@cpe-67-240-71-179.nycap.res.rr.com) (Client Quit)
+[21:37:31] <gilberth> Hmm.
+[21:39:11] <rotateq> Hey gilberth, you might like to hear that I achieved understanding a few more parts how to do things with McCLIM across the last two weeks. :)
+[21:43:58] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-16-50-101-90-18.dsl.bell.ca)
+[21:44:45] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[21:47:20] *** Joins: mfiano (~mfiano@cpe-67-240-71-179.nycap.res.rr.com)
+[21:52:15] *** Quits: mfiano (~mfiano@cpe-67-240-71-179.nycap.res.rr.com) (Ping timeout: 252 seconds)
+[21:52:38] <clothespin> hello
+[21:53:33] <clothespin> when's els?
+[21:54:06] *** Joins: mfiano (~mfiano@cpe-67-240-71-179.nycap.res.rr.com)
+[21:54:19] <gilberth> https://www.european-lisp-symposium.org/2022/index.html
+[21:54:19] -ixelp- ELS 2022, Porto - European Lisp Symposium
+[21:55:50] <clothespin> maybe someday I'll get a passport
+[21:56:35] <gilberth> I wouldn't need a passport to go there. But I would need some health.
+[21:56:36] *** Quits: notzmv- (~zmv@user/notzmv) (Ping timeout: 245 seconds)
+[21:59:09] <rotateq> And I would need some more money. ^^ But in 2 years or so.
+[22:00:13] <edgar-rft> gilberth: have you already asked at the public health department if they have some?
+[22:01:14] <gilberth> edgar-rft: Not yet. I suppose nobody works there at the moment, but I will phone them tomorrow. Perhaps I could get some?
+[22:09:28] <clothespin> nurbs are harder than they seem
+[22:12:56] <clothespin> do you think emacs keys prevent older programmers from switching to lisp?
+[22:14:23] <drakonis> oh?
+[22:14:32] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-16-50-101-90-18.dsl.bell.ca) (Remote host closed the connection)
+[22:16:57] <gilberth> I believe Emacs keys prevent younger programmers from using it.
+[22:17:32] <drakonis> you forgot about folks without custom keyboards
+[22:18:20] <gilberth> Custom? I don't need a custom keyboard for Emacs.
+[22:18:58] <drakonis> ah yes, key remapping
+[22:21:37] <gilberth> Key remapping? What key remapping? I don't need that either.
+[22:26:50] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-16-50-101-90-18.dsl.bell.ca)
+[22:33:15] *** Quits: Aurora_v_kosmose (~LispyLigh@user/lispylights) (Ping timeout: 240 seconds)
+[22:42:13] *** Joins: Aurora_v_kosmose (~LispyLigh@user/lispylights)
+[22:45:46] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-16-50-101-90-18.dsl.bell.ca) (Remote host closed the connection)
+[23:12:33] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 252 seconds)
+[23:14:31] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[23:26:14] *** Joins: Lycurgus (~juan@98.4.112.204)
+[23:27:46] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Remote host closed the connection)
+[23:32:36] *** Quits: Lycurgus (~juan@98.4.112.204) (Quit: Exeunt)
+[23:35:06] <shka> https://www.youtube.com/watch?v=o32yd_20WmM
+[23:35:06] -ixelp- Opeth. Time for porn music - YouTube
+[23:35:13] <shka> Frank Zappa mode engaged 
+[23:53:46] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-08-70-29-36-27.dsl.bell.ca)

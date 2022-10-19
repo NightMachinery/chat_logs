@@ -1,0 +1,597 @@
+[00:17:13] *** Quits: rogersm (~rogersm@90.166.180.250) (Quit: Leaving...)
+[00:46:24] <shka> https://www.youtube.com/watch?v=KTu5ZhAPcgQ
+[00:46:25] -ixelp- Sprayer - "Crazy Black Magic" - YouTube
+[01:37:49] *** Quits: shka (~herr@109.231.0.226) (Ping timeout: 240 seconds)
+[01:50:18] *** Joins: dec0d3r (~dec0d3r@2001:8003:480a:e00:e07:e7c3:7efc:ed0f)
+[01:53:53] <hayley> gilberth: https://twitter.com/burntsushi5/status/1480576123864064015
+[02:16:45] <hayley> This guy always bails out to a NFA when Unicode appears, so I am not too convinced it is more of a problem than bounded repeats are themselves.
+[02:22:37] *** Joins: dra (~dra@2a04:4540:640f:9400:e533:1ee:7186:242a)
+[02:22:39] <dra> Hello!
+[02:23:11] <hayley> Hello dra!
+[02:24:52] *** Quits: makomo (~makomo@user/makomo) (Quit: WeeChat 3.3)
+[02:29:46] *** Quits: kevingal (~quassel@2a02:8084:4140:f300:4856:a4ca:ca7b:cdae) (Remote host closed the connection)
+[02:31:51] *** Joins: phantomics (~phantomic@97-118-136-125.hlrn.qwest.net)
+[02:37:32] *** Quits: random-nick (~random-ni@87.116.181.150) (Ping timeout: 256 seconds)
+[02:39:01] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 240 seconds)
+[02:55:18] <hayley> https://www.youtube.com/watch?v=cLoQADJnGr4
+[02:55:19] -ixelp- King Crimson - One More Red Nightmare - YouTube
+[03:06:55] *** Quits: dra (~dra@2a04:4540:640f:9400:e533:1ee:7186:242a) (Remote host closed the connection)
+[03:39:24] <clothespin> is ensure-class supposed to let you make duplicate direct slot definitions?
+[03:40:13] *** Quits: euandreh (~euandreh@2804:14c:33:9fe5:cb46:c04b:665a:c687) (Ping timeout: 240 seconds)
+[04:05:53] *** Joins: notzmv (~zmv@user/notzmv)
+[04:33:59] <gilberth> hayley: What a surprise! I said it all the time: People may use character classes, but don't actually have Unicode data. Perhaps they don't even realize that [[:digit:]] is more than just [0-9]. (And locale dependent).
+[04:37:26] <gilberth> BTW the same thing as with CL implementations which make DIGIT-CHAR-P also be non-NIL for a whole lot more characters than [0-9], which is sth I often don't want. Hence I carry ASCII-DIGIT-CHAR-P with me.
+[04:40:49] <hayley> I still want to handle Unicode though, and ideally with negligible performance difference.
+[04:41:38] *** Joins: euandreh (~euandreh@2804:14c:33:9fe5:87d8:fa0a:4d3d:df57)
+[04:41:48] <hayley> Doing ASCII tests inline and falling back to a bitmap might work, I guess. Not that I like it that much.
+[04:42:12] <gilberth> The trouble is not so much with matching, we saw that my idea to have the DFA be in terms of an UTF-8 octet stream is not feasible. A DFA on terms of Unicode code-points is ok; we could need a smaller ISUM representation. One approach would be to operate on equivalent classes. I do this while construction anyway, but don't don't have that in my tables (unlike lex(1)).
+[04:43:19] <gilberth> hayley: That's cheap in terms of code size. You have a DIGIT-CHAR-P lurking somewhere anyway. It might even be sth better than a bitmap.
+[04:43:57] <hayley> I know SBCL has a code point -> Unicode class table.
+[04:44:29] <hayley> But I could have [[:digit:]]|A and thus not have exactly DIGIT-CHAR-P.
+[04:44:53] <gilberth> Again, this is things I am not concerned about. As in: Are they programming languages or other syntaxes allowing for all the say digits that there are in Unicode, when parsing an integer?
+[04:45:20] * hayley still annoyed that burntsushi tried to convince her to use a byte DFA, when he still uses a codepoint NFA.
+[04:45:27] <gilberth> You misspelled [[:digit:]A] :-)
+[04:46:21] <gilberth> Well, when you are concerned, come up with a more clever ISUM datatype, which can represent that. Good luck.
+[04:48:13] <hayley> hayley, famous for knowing POSIX syntax.
+[04:49:14] <gilberth> hayley: Well, I also always thought an octet DFA would be fine until you started really doing that. I think an inline decoding could be fine. We do a dispatch anyway, a dispatch for >= #x80 is cheap and then we could decode UTF-8 and do again. Also sth I am not too concerned with as API-wise I want to interact with CL's characters. What I am concerned with though is that our UTF-8 decoders could be faster.
+[04:49:32] <hayley> But the problem still is that I need to represent operations on "symbolic" sets like [:digit:] as well as actual sets, or I have to make an efficient test for hairy sets.
+[04:50:41] <hayley> Currently I like the idea of using a codepoint DFA, and having our "AREF" do the decoding. You could also optimise or defer decoding in a few cases, but I don't know them all.
+[04:51:23] <hayley> e.g. .b shouldn't decode while matching the .
+[04:51:38] <hayley> e.g. .*b shouldn't decode while matching the .*
+[04:52:02] <gilberth> Yep.
+[04:52:18] <hayley> With a or even α we should guess that we match, and try a bytewise comparison, before decoding and handling the loss.
+[04:56:49] <gilberth> For repetition counts. Again, I am not concerned. When you see that in some formal grammar as like say [a-z][a-z0-9]{0,15} the author wanted to emphasize that e.g. identifiers are limited to 16 chars. You often find that with grammars. In practice you match [a-z][a-z0-9]* and check for the length afterwards. This is like a grammar having say <typename> ::= <ident> and <varname> ::= <ident> and <fooname> ::= <ident>.
+[04:57:34] <gilberth> While the latter yields a grammar which is not practical, as it becomes case-sensitive. Often it isn't really. (C being the exception here).
+[04:58:28] <hayley> I can't imagine repetition being commonly used. And it's no better if you lazily generate a DFA, as you need a big cache, or a NFA even.
+[04:59:25] <gilberth> Otherwise, You could try to have {n,m} work by having a counter and transitions, which are guarded by some condition like [n < 100]. I was not successful in getting DFAs here. I believe it won't be possible either, but have no proof.
+[05:02:20] <gilberth> This becomes obvious with (a|aa}{n,m}, as at each char read you wind up with many counter values being possible. Kind of like a wave function waiting for collapse.
+[05:03:26] <hayley> IIRC one of the authors of Hyperscan declared that lookahead/behind were very painful with any finite automaton. I don't see how you avoid bounded repetition pains either.
+[05:04:36] <gilberth> Nah, lookbehind and lookahead isn't that bad. It's not as bad as repetition counts.
+[05:05:58] <hayley> ^ and $ are easy to me, you use derivative classes to determine if you need to check, and then take derivatives for each case.
+[05:06:08] <gilberth> However certain RE with repetition counts just explode, no matter if you build a DFA or an NFA. You could pass the burden to runtime, but it won't disappear.
+[05:06:53] <hayley> Still not finding myself liking that guy, honestly.
+[05:08:40] <hayley> Though, lazy DFA generation is a bit like having a tracing JIT. You can have counters for the states and transitions you actually tend to use, compile them, and interpret the rest.
+[05:08:44] <gilberth> I can't see a way around (a|aa}{n,m} keeping all possible counts in general.
+[05:10:02] <gilberth> It's however different for special cases like a{n,m}, as what is iterated upon has a fixed length.
+[05:10:37] <gilberth> However, many RE engines choke on large repetition counts.
+[05:11:14] <hayley> So I could make an interpreter of some sort, stick counters everywhere, and replace interpreted states with compiled code.
+[05:15:25] <hayley> That would have the effect that we are not subjecting the Lisp compiler to O(2^n) states at least.
+[05:17:22] <gilberth> glibc on (a|aa){1,100} on 100 "a"s is at 193kB/s, while a{1,100} is 197MB/s. re2 is only abount twice as fast.
+[05:17:47] <gilberth> That is no change in complexity.
+[05:19:38] <gilberth> libtre about the same.
+[05:21:20] <gilberth> My kinda reference implementation, which keeps all solutions and sorts them by the very definition is ok with a{1,100}, but completely folds with (a|aa){1,100}
+[05:22:24] <hayley> But it might complicate the compiler as we have to de-optimise and enter interpreted code again.
+[05:23:17] <gilberth> Anyhow, as glibc and the FreeBSD libc love to destroy themselfs, I now want to modify the AT&T textregex to fork(2) for each test.
+[05:25:13] <gilberth> Then the MMU saves me from being destroyed too. This will be fun: fork(3) for each regcomp(3) and regexec(3) :-)
+[05:41:36] <gilberth> Can I have an Emacs macro, which inserts the needed #include's, whenever I use a libc function? I would need to have a list of which include officially defines which identifier.
+[05:48:28] *** Quits: euandreh (~euandreh@2804:14c:33:9fe5:87d8:fa0a:4d3d:df57) (Ping timeout: 268 seconds)
+[06:01:32] <hayley> https://www.youtube.com/watch?v=3YBmS5oaNwU
+[06:01:32] -ixelp- Amateur Hour - YouTube
+[06:03:10] <gilberth> hayley: Well, you could build the DFA on-demand compiling each state to a dispatch function. After all you are only after SIMD hay-wading to get high GB/s figures. I don't have that luxury as I have no hay.
+[06:03:45] <hayley> Hmm. I still have big speedups from compiling, rather than running a stupid interpreter.
+[06:03:59] <hayley> So I don't buy that it's just using SIMD to skip obvious misses.
+[06:04:59] <gilberth> hayley: Sure, but the pissing contests are to be won on the SIMD part. I saw >10GB/s figures with re2, while it otherwise isn't too fast.
+[06:05:14] <hayley> ...though, you should theoretically be able to generate SIMD code for tight loops. I just haven't found any benefit from it, as I don't have long enough loops.
+[06:05:23] <hayley> Sure.
+[06:05:39] <gilberth> What I am interested in though is experimental results on how SIMD could speed up say string literal scanning.
+[06:05:54] <hayley> But e.g. when I go ask for submatches, Rust regex gives up and drops throughput substantially.
+[06:05:55] <gilberth> Or white space skipping or comment skipping.
+[06:05:58] <hayley> Yes, that's what the SIMD tight-loop optimisation is supposed to do.
+[06:06:38] <hayley> But when it comes to e.g. recognising a screen resolution, you only have four digits at best. Doesn't work there.
+[06:07:06] <hayley> So either I want static hints (yeah, nah) or dynamic feedback on how long a loop is.
+[06:07:26] <gilberth> Yep, that's my question: Where in char count is the break-even point?
+[06:08:05] <gilberth> Or: Is it worth bothering with SIMD in a scanner? Must be, as there are JSON parsing pissing contests, which invoke SIMD.
+[06:08:06] <hayley> But, of course, my CPU is shit for 256-bit vector instructions, and runs 128-bit halves through twice. Hence why I call it a Z80.
+[06:08:36] <hayley> (...as I suppose you are aware the Z80 had a 4-bit ALU, and ran 8-bit stuff through it twice.)
+[06:08:43] <gilberth> hayley: Can I use SIMD for computing a hash too?
+[06:09:01] <hayley> xxhash is pretty simple to make SIMDable.
+[06:09:19] <gilberth> hayley: Well, how many people have a full 256-bit ALU?
+[06:09:33] <hayley> e.g. https://moinakg.wordpress.com/2013/01/19/vectorizing-xxhash-for-fun-and-profit/ - look ma, 4 independent lanes.
+[06:09:34] -ixelp- Vectorizing xxHash for Fun and Profit | The Pseudo Random Bit Bucket
+[06:09:53] <hayley> gilberth: How many people _making pissing contests_ have a full 256-bit ALU?
+[06:10:14] <hayley> Best I can tell, it is a Zen 1 oddity. So, assuming your computer is less than 7 years old, a fair few?
+[06:11:28] <gilberth> Ok. My machines are olde. Can I figure out, if I have a full 256-bit ALU?
+[06:11:33] <hayley> Here's xxhash with Java's vectors: https://richardstartin.github.io/posts/xxhash
+[06:11:34] -ixelp- XXHash | Richard Startin’s Blog
+[06:11:50] <gilberth> hayley: Thanks for the pointers, I'll stash them.
+[06:12:10] <hayley> Hm. On Linux you look through /proc/cpuinfo and look for "avx2". Dunno about macOS, since they really don't like you knowing about the CPU.
+[06:12:28] <hayley> Rather saying "early 2015 Intel i5 CPU" or something. Wow, thanks.
+[06:12:36] <gilberth> As I am far from attacking SIMD.
+[06:13:20] <GreaseMonkey> it's like saying you have "Intel HD Graphics"
+[06:13:35] <gilberth> hayley: Ok. my /proc/cpuinfo mentions avx2.
+[06:14:04] <hayley> Congrats then. But that's to check your machine doesn't crash running the instructions, idk how you check the actual ALU width.
+[06:14:29] <gilberth> Why would it crash?
+[06:14:44] <hayley> SIGILL or something.
+[06:15:29] <gilberth> Oh, good! I feared overheating. My cooling is insufficient for some reason, anyway.
+[06:15:52] <GreaseMonkey> i also recall a rant about why AVX isn't supported in a particular game physics engine, and it boiled down to notable delays when turning the 256-bit ALU on and off for the purposes of saving power
+[06:15:58] <hayley> Well, AVX-512 and AVX2 tend to throttle your CPU to avoid overheating or drawing too much power.
+[06:16:11] <GreaseMonkey> except there was at least one console which could do AVX w/ a 128-bit ALU and the op density proved beneficial and it didn't have the windup period that desktop CPUs tend to need, so the engine *did* use AVX for that particular CPU
+[06:16:17] <gilberth> But I ought to ask my wife to buy a new machine anyway. I only have to figure out, what I want.
+[06:17:46] * gilberth can't spend money on things for himself for some psychological blockade.
+[06:18:18] <hayley> Just go window shopping in https://de.pcpartpicker.com/
+[06:18:23] <GreaseMonkey> for longish batch tasks though, where SSE is fine, AVX is also usually fine... it definitely helped perfwise when grinding a 2^29 space to try to work out what all the possible puzzle solutions were for Silent Hill 2 given some known solutions
+[06:18:43] <GreaseMonkey> with 4 cores firing and enough already-known combinations it gets all the answers in under a second IIRC
+[06:18:59] <moon-child> can just use cpuid.  It's unprivileged
+[06:19:20] <hayley> Well, doing SIMD for things that aren't vector sums already scares me, as instruction selection is a bitch. Even worse if I have to switch between SIMD and a DFA scanner.
+[06:19:38] <hayley> "SIMD is easy." "Yeah, cause you only do easy things with it. No fair."
+[06:19:52] <gilberth> hayley: I have no clue what CPU to get. All the brand names and model numbers are complete gibberish to me. As well as socket types.
+[06:20:13] <moon-child> gilberth: ryzen is good
+[06:20:17] <gilberth> hayley: Well, thinking about doing UTF-8 with SIMD makes my head hurt.
+[06:20:28] <GreaseMonkey> socket type determines what you can choose from for a motherboard
+[06:20:36] <hayley> idk, Intel apparently caught up now. So I have no idea what's good.
+[06:20:49] <moon-child> if you would like avx512, you must get an intel cpu, though
+[06:20:54] <moon-child> _not_ the most recent revision
+[06:21:00] <gilberth> moon-child: Sure. Must be as I own $AMD but not $INTC. :-)
+[06:21:02] <hayley> All the benchmarks are for video games and rendering, which I don't do too much of. (I say as I am about to start gmod again for the 12th time this week.)
+[06:21:38] <hayley> But gmod consistently performs like shit.
+[06:21:52] <gilberth> Well, begins with that I don't want to attach a display, nor a keyboard, nor a mouse.
+[06:22:08] <moon-child> I thought you pride yourself on your remote rendering?
+[06:22:16] <gilberth> Just power and a network cable.
+[06:22:20] <GreaseMonkey> oh yeah do they still require a round trip for all assets not loaded via fastload?
+[06:22:23] * hayley reads "It needs to be just like math. Assignment through the = sign" on the topic of variable binding and has a chuckle.
+[06:22:44] <hayley> idk. But there is a noticeable stutter when someone loads in a new player model.
+[06:23:13] <gilberth> moon-child: Exactly. And I don't like fans and like RAID spinning disk arrays. Therefore the machine should live in the basement.
+[06:23:37] <gilberth> That is the noise of fans. Fans are ok, as long as I don't hear them.
+[06:23:38] <moon-child> hayley: :/ my game engine was shitty, shoddy, and barely did anything, but it did handle that properly
+[06:23:44] <hayley> Apparently I only use the workspaces which have square numbers, i.e. 1, 4 and 9. Noticed that for a few days.
+[06:24:14] <hayley> moon-child: https://www.youtube.com/watch?v=YbMSVGZSkBw
+[06:24:15] -ixelp- Achieved with Sorse - YouTube
+[06:24:56] <gilberth> And for gaming I would just get some random gaming Windows PC off the shelf and be set. KVMs exist.
+[06:25:00] *** Quits: Alfr (~Alfr@user/alfr) (Remote host closed the connection)
+[06:25:05] <moon-child> hahaha
+[06:25:31] <moon-child> I did have the advantage of aiming for concurrency from the get-go.  Still
+[06:26:05] * gilberth is puzzled that ixelp is back. split aftermath?
+[06:26:19] <hayley> I finally half a half okay rocket design, and a half okay targeting system. So I might combine the two and really piss some people off.
+[06:26:37] *** Joins: Alfr (~Alfr@user/alfr)
+[06:27:15] *** Quits: Alfr (~Alfr@user/alfr) (Remote host closed the connection)
+[06:27:40] <gilberth> Anyhow, for my computing needs. My cousin agreed that I may run a network cable from the basement to my room, which is great.
+[06:28:55] *** Joins: Alfr (~Alfr@user/alfr)
+[06:30:19] <gilberth> I only have to convince him now to wire the DSL modem/router too. WiFi kind of sucks. I don't like WiFi. I would need to find where the landline hides in the basement. It must be there somewhere. Or that house is so olde, that it enters somewhere else. I doubt that.
+[06:33:33] <hayley> Can still simplify the control circuitry a fair bit. IIRC I basically implemented it all with a few chips rather than a processor (in-game, of course). Just need to take (- here there) to get the direction vector, and (< height target) suffices to control the vertical thruster.
+[06:34:24] <moon-child> if you have many computers, hooking them up to each other (rather than to a switch) gets cumbersome
+[06:35:59] <gilberth> ?
+[06:41:04] <moon-child> well, suppose you have XYZ.  You may run two cables, one X<->Y, Y<->Z, but then if you want X to talk to Z it must go by way of Y.  Or you may run three, adding one X<->Z
+[06:41:19] <moon-child> if you instead hook up all three to a centralised switch, there is no problem
+[06:41:44] <gilberth> I would never build a LAN without some central switch.
+[06:42:20] <gilberth> Then go point-to-point to that switch. Or if you have many devices in one room, put another switch there to save cables.
+[06:43:43] <gilberth> My evil house has at least two ethernet cables running to each room, but the bath rooms. I fully cabled it, when moving in.
+[06:44:11] <moon-child> evil house?
+[06:44:22] <gilberth> All run to the basement, where a patch field and a nice switch sits.
+[06:44:49] <gilberth> moon-child: The house in the rural part of northern Germany, which almost killed me.
+[06:45:30] <gilberth> Solitude can kill. This is why I hide here at my cousin's place. I don't intent to leave and I could stay as long as I wish.
+[06:46:05] * moon-child nods
+[06:48:31] <gilberth> Anyhow, I am unsure what the easiest and quickest way is to have regcomp(3) and regexec(3) run in its own process. Doesn't need to be fast.
+[06:49:17] <moon-child> LD_PRELOAD hax?
+[06:49:33] <gilberth> #define will do for me.
+[06:50:42] <gilberth> I already do that to expose a POSIX API for re2 and libpcre. This testregex tool is awful and I don't want to touch it.
+[06:51:48] <moon-child> why do you use it?  Can you just scrape their testcases?
+[06:53:31] <gilberth> moon-child: Those tests come with a dozen flags that can be set or not on each test. Conditionals are also implemented, like: If this test passes, we assume that and that feature, let us run more tests. And since others also the very same tool and test case format, I want to stay compatible.
+[06:54:05] <moon-child> I see
+[06:58:13] * hayley wants to point out she only wrote a RE engine to practise for university.
+[06:58:36] <hayley> Okay, clowning on the Rust regex guy was also a goal, but mostly just that the lectures were moving too slowly.
+[06:58:40] <gilberth> And the end of day I want to be able to talk to some kind of sub-process passing requests over a pipe to be able to easily test implementations which can't be linked that easily to C.
+[06:59:02] <moon-child> didn't you also want to use ecl so you _could_ link your lisp to c?
+[06:59:32] <gilberth> That was an idea. idk if that is a good idea.
+[07:05:09] <ck_> morning
+[07:12:43] * hayley managed to blow a rocket up, using the same bombs it dropped.
+[07:21:04] *** Quits: elflng (~elflng@5.28.137.182) (Remote host closed the connection)
+[07:36:23] *** Quits: semz (~none@user/semz) (Ping timeout: 268 seconds)
+[07:47:02] <hayley> Well, making a self-targeting flying thing is harder than expected. As well as trying to get the error from the actual target (call it E) close to zero, I need to get dE/dt close to zero too.
+[07:49:01] *** Joins: dave0 (~davezero@069.d.003.ncl.iprimus.net.au)
+[07:49:08] *** Joins: semz (~none@user/semz)
+[07:49:21] <dave0> maw
+[07:49:41] <moon-child> sup dave0
+[07:50:56] <dave0> maw moon-child 
+[07:51:12] <dave0> nuffing just having a coffee.. how are you?
+[07:52:29] <gilberth>  What I ever "nuffing" is. I could need a coffee. I am in C land.
+[07:53:15] <dave0> your native land is common lisp :-)
+[07:53:17] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Ping timeout: 240 seconds)
+[07:53:26] <gilberth> See. I lost a space and an "I". ECAFFEINE
+[07:54:18] <gilberth> dave0: Yes, I am for vacation there.
+[07:56:20] <gilberth> I know a frightening lot of C and the UNIX API. *sigh*
+[08:13:59] * hayley watches the rocket very slowly approach her target.
+[08:14:48] <hayley> I think I want sign(dE/dt) = -sign(E), and dE/dt ~ log(E) or something like that.
+[08:15:19] *** Joins: elflng (~elflng@5.28.137.182)
+[08:15:27] <hayley> i.e. we try to reduce error, and reduce velocity so that we don't overshoot so much.
+[08:18:02] <dave0> gilberth: i know fork bomb  for(;;) fork()
+[08:18:03] <hayley> But as I control thrusters, I only have a say over d^2E/dt^2.
+[08:27:06] <hayley> Better, dE/dT ~ -sign(E) * log(abs(E))
+[08:30:36] <Alfr> hayley, do you have something like constant gravity?
+[08:31:01] <hayley> I use another control for gravity.
+[08:33:44] *** Quits: semz (~none@user/semz) (Ping timeout: 268 seconds)
+[08:37:21] <Alfr> You could constantly output something to stay stationary. Keeping that you can then treat moving around as you would for a free particle.
+[08:40:38] <hayley> IIRC I had worked it out (by brute-ish force) once. But I'm trying to work out the other two dimensions now.
+[08:41:37] <dave0> far out hayley are you doing rocket science?
+[08:41:46] <dave0> (it's not quite brain surgery, is it)
+[08:41:54] <hayley> Yes.
+[08:42:02] <hayley> idk, never done brain surgery.
+[08:42:14] <dave0> :-p
+[08:42:28] <dave0> it's a mitchell and webb joke :-)
+[08:44:36] <Alfr> hayley, you're actually losing mass when you use thrusters?
+[08:44:53] <hayley> No, these thrusters run on magic and not fuel.
+[08:46:36] *** Joins: semz (~none@user/semz)
+[08:48:03] *** Quits: elflng (~elflng@5.28.137.182) (Quit: leaving)
+[08:48:29] *** Joins: elflng (~elflng@5.28.137.182)
+[08:48:52] <dave0> hayley: https://youtu.be/THNPmhBl-8I
+[08:48:53] -ixelp- Brain Surgeon - That Mitchell & Webb Look , Series 3 - BBC Two - YouTube
+[08:49:40] <Alfr> hayley, then if you want to move from A to B you could accelerate the first half of the path in B-A direction and the second half in the A-B direction, add to that the don't let me fall constant output. (Assuming you're not going to collide with anything on that path.)
+[08:50:23] <Alfr> hayley, if you were stationary to begin with, you should reach B and be stationary. 
+[08:58:29] <hayley> Ah yeah.
+[08:58:50] <hayley> I seem to hit a maximum velocity though.
+[09:01:32] <Alfr> Do you at the same time also increase in mass?
+[09:01:45] <Alfr> Just wondering.
+[09:01:46] <gilberth> No FTL travel?
+[09:02:21] <hayley> No and no.
+[09:11:05] <gilberth> Ok. FreeBSD libc: 3 hangs, 201 errors. glibc 24 hangs, 149 errors. No clear winner. Macos libc: 0 hangs, 15 errors. tre: 96 errors. Me: No hangs, no errors. About 2,500 total tests.
+[09:13:10] <gilberth> Worst are FreeBSD libc and glibc as they could destroy themself. And if they destroy themself, who knows what they destroy too.
+[09:14:20] <hayley> How do they destroy themselves?
+[09:15:04] <gilberth> Idk. They first hang and then any subsequent regcomp(3) fails, hangs or seg faults.
+[09:15:35] <hayley> Wow.
+[09:15:48] <gilberth> My reason for fork()ing off.
+[09:17:36] * hayley starts to wonder if it's really possible to stabilise without changing mass.
+[09:18:33] <hayley> Probably just need a PID controller. Again.
+[09:19:38] <hayley> https://liberdon.com/@orthzar/107602023410883966 lol
+[09:19:39] -ixelp- Orthzar McGee: "Ordinary programmers: Dependency hell is rough C…" - Liberdon
+[09:22:49] <hayley> But I have some momentum m, and I need to come up with some acceleration a(t) s.t. -m = \int_t a(t), and in the end have E = 0.
+[09:23:35] <hayley> Or, I have some initial velocity, but that's basically the same thing.
+[09:26:11] <hayley> So I need to approximate -v_0 = \int a(t) dt and -E = \int [v(t) + \int^t a(u) du] dt. Fun.
+[09:32:42] <hayley> I still have the total flight time and acceleration function as free variables.
+[09:50:14] * gilberth is shopping for more RE implementations claiming to implement POSIX semantics and found cregex, which uses the same test suite as I do, but tweaking the test cases, so that it passes. Terrific!
+[09:51:58] <gilberth> And it too comes with its own API. Why not offer sth POSIX compatible?
+[09:57:48] <moon-child> did you try libfsm yet?
+[09:58:18] <gilberth> Nope. I would need to grok its API, too.
+[10:05:18] <gilberth> I don't find any pointers how to use it for matching. Hmm, it somehow generates C code. Does it even do submatch addressing?
+[10:05:46] <moon-child> no idea.  And: I think it has both an interpreter and a compiler
+[10:08:37] <moon-child> I do spot a 'capture.h'
+[10:09:10] *** Quits: clothespin (~awolven@c-73-209-95-92.hsd1.il.comcast.net) (Ping timeout: 256 seconds)
+[10:10:45] <gilberth> Yep. I find uses that decorate some FSM with some magic offsets passed in or so. What I miss is an example "run a regular expression re on input s".
+[10:11:27] <moon-child> re.h has a thing to compile an re to an fsm
+[10:11:53] <gilberth> Yep, and how to run that fsm and extract submatches?
+[10:12:15] <gilberth> This is too much poking around the sources for me atm.
+[10:15:16] *** Quits: dec0d3r (~dec0d3r@2001:8003:480a:e00:e07:e7c3:7efc:ed0f) (Quit: Leaving)
+[10:15:32] <gilberth> The main README says that the re command would allow me to execute REs, but all I see is creating .dot files and C code.
+[10:26:03] <gilberth> Ok. When I generate C code, "(foo)" and "foo" yield the same code.
+[10:29:39] <hayley> gilberth: With my engine, generating code for (a|aa){,N} is O(2^n) in time, but the DFA has O(n) size. Nothing new to you, but /me wonders what goes wrong for that to happen.
+[10:31:20] <hayley> Ah, the intermediate REs just get hairier and hairier.
+[10:35:05] *** Quits: Inline (~Inline@aftr-37-201-240-204.unity-media.net) (Ping timeout: 256 seconds)
+[10:35:35] <gilberth> hayley: I am O(n) in DFA size and perhaps O(n^2) in construction time.
+[10:36:11] <gilberth> It suprises me a bit that the DFA is only O(n). Where is my error in reasoning?
+[10:36:29] <hayley> Well, I was just guessing the time complexity, not even using TIME. Kinda stupid.
+[10:38:31] <hayley> It makes sense to me that the DFA is O(n) if derivatives are shared between e.g. δ_a a(a|aa){,N-1} [we chose aa] and δ_aa (a|aa){,N-1} [we chose a]
+[10:40:09] <gilberth> Hmm. What about (a|aa){,N}b ?
+[10:40:48] <hayley> The sequence of DFA states is drunk here, but still O(n).
+[10:41:08] <gilberth> Anyhow, you miss sth CLEX2 is doing here.
+[10:41:39] <hayley> I write "(«a|aa»|){N}b", and get the sequence 6, 9, 10, 13, 14, 17, 18, 21, 22, 25...
+[10:42:04] <hayley> FWIW I don't think my compile time is O(2^n), but it's somehow not strictly increasing.
+[10:42:23] <hayley> Maybe running the GC every so often?
+[10:42:40] <gilberth> Nah, you should be able to tell NP from P.
+[10:42:56] <moon-child> O(2^np)
+[10:42:56] <gilberth> GC? What has the GC to do with that?
+[10:43:13] <hayley> Just guessing, as I run something twice and get either 800ms and 300ms.
+[10:43:35] * hayley uses THE-COST-OF-NOTHING to beat some sense into the numbers.
+[10:43:56] <gilberth> Run something longer than.
+[10:45:05] * hayley should probably reset hash consing tables too. Oops.
+[10:45:21] *** Joins: shka (~herr@109.231.0.226)
+[10:45:29] <gilberth> How does that help with complexity?
+[10:45:51] <hayley> Also, I wonder if the parser is having some problems, because («a|aa»|){1}b takes 22.2ms from text to DFA, but («a|aa»|)b takes 230 microseconds.
+[10:46:29] <hayley> Hash tables would get gunked up with old results.
+[10:46:47] <hayley> ...indeed that seems to change things. Why? idk
+[10:46:47] <gilberth> Red herring.
+[10:47:48] <hayley> Nope, it does make things faster.
+[10:50:02] * hayley uploaded an image: (13KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/WKXkErYFREAeVMjEskqIpcvP/microseconds.png >
+[10:50:10] <hayley> Some more of my famous LibreOffice graphing.
+[10:51:17] <gilberth> You can build (a|aa){,200} now?
+[10:55:10] <gilberth> Which I can do in about 300ms.
+[10:56:43] <gilberth> while (a|aa){0,20} is about 2.6ms.
+[11:01:09] <gilberth> For (?:a|aa){0,20} I get like .7ms and ~60ms for (?:a|aa){0,200}
+[11:03:04] <hayley> Not a chance.
+[11:03:33] <hayley> But, at that point, the Lisp compiler would also be unbearably slow.
+[11:04:11] <hayley> Probably helps that I am still doing (?:(a|aa)?){,N} as I don't have a {M,N}.
+[11:06:16] <gilberth> Not my compiler. :-p
+[11:06:47] <gilberth> hayley: An RE parser, when?
+[11:07:00] <hayley> Some time this year.
+[11:07:32] <hayley> And I should generalise (kleene R) to (repeat R minimum maximum) too.
+[11:08:12] <gilberth> Brilliant idea. *sigh*
+[11:08:53] <hayley> Sorry, I wrote everything by the book^Wpaper...because, again, I wasn't intending to make a production-ready RE engine.
+[11:08:57] <gilberth> It's all im my draft.
+[11:08:57] <hayley> That just happened.
+[11:09:44] <gilberth> Well, my aim is to have sth for production. Actually I use it myself a lot, I just have to overcome releasephobia.
+[11:10:18] <hayley> So I should just keep working on one-more-re-nightmare to increase the pressure?
+[11:10:58] <gilberth> I am not as competitive as you may believe.
+[11:12:08] <hayley> By my reading of page 3, you have \delta_a (\hat{x}^{m, n}) = \delta_a (\hat{x}^{m, n}), m \neq 0. Shouldn't that be the inductive step, something like \delta_a (x) \hat{x}^{m-1, n-1}?
+[11:12:21] <hayley> All well and good to say that the derivative is equal to itself.
+[11:14:08] <gilberth> That's handling of the empty-match POSIX rule. when m /= 0 it makes no difference, it only kicks in for m=0.
+[11:14:37] <gilberth> But there is an extra hat. Indeed.
+[11:14:42] <hayley> Right, but you have \hat{x} on the LHS and RHS.
+[11:15:12] <hayley> And the derivative rule for m=0 indicates no difference, though nullable is different.
+[11:15:18] <gilberth> Yep, and that's a mistake.
+[11:15:23] * moon-child kinda wants to read this mystic paper
+[11:15:36] <gilberth> hayley: The interesting thing happens on \nu.
+[11:16:32] <gilberth> moon-child: Would you promise to not share it?
+[11:16:47] <moon-child> yes
+[11:29:21] <hayley> moon-child: Have you shared it yet?
+[11:29:53] <gilberth> hayley: Have you?
+[11:30:04] <moon-child> hayley: no, but my willpower is waning
+[11:30:39] <hayley> Does Gnuxie count?
+[11:31:00] <gilberth> hayley: Yes.
+[11:31:11] <hayley> Best not say then.
+[11:31:34] <gilberth> hayley: I am not amused.
+[11:31:58] <hayley> ):
+[11:32:51] <hayley> She is co-maintainer and she knows it's secret, still.
+[11:34:32] <gilberth> How secret is it, when it is passed all around? You may now quote as "It is well known that ..."
+[11:35:02] <hayley> Yes, passed to the one person that helps me with this library. So well known.
+[11:35:07] <hayley> Not.
+[11:35:13] <moon-child> 'two can keep a secret, if one of them is dead'
+[11:35:24] <gilberth> "Well known" is a synonym for "me and a friend talked about it".
+[11:36:19] <hayley> Still, a friend partly responsible for keeping the library in shape.
+[11:36:31] <hayley> And you talked with me about it already.
+[11:36:52] <gilberth> And?
+[11:36:59] * hayley tries to play community maps on Portal 2 and it crashes. Can't have shit in Unix
+[11:37:20] <hayley> I could have already said it was "well known", if that's all you care for.
+[11:38:12] <gilberth> hayley: Anyhow, you could have asked. Asking is free.
+[11:38:17] <hayley> With all due respect, I know my favourite co-conspirator isn't going to screw you or I over with that information.
+[11:38:25] <hayley> Sure. My apologies.
+[11:38:41] <gilberth> Ok. Accepted.
+[11:39:05] <hayley> But, that, or she would continue to be clueless while I ramble to her when you're away.
+[11:39:51] <gilberth> I don't need to repeat myself. Next time, just ask, ok?
+[11:39:57] <hayley> Right.
+[11:46:45] * hayley manages to crash Portal 2 again.
+[11:47:19] <moon-child> 'What is the fucking deﬁnition of an DFA by the book?'  lol
+[11:47:38] <hayley> https://www.urbandictionary.com/define.php?term=DFA
+[11:47:38] -ixelp- Urban Dictionary: DFA
+[11:50:09] * hayley has also made a majority of r/10xermemes posts now, after posting the "RISC architecture is going to change everything" meme.
+[11:50:15] <hayley> https://www.reddit.com/r/10xermemes/comments/s182f3/risc_architecture_is_gonna_change_nothing/
+[11:50:16] -ixelp- RISC architecture is gonna change nothing : 10xermemes
+[11:51:09] <gilberth> Some definitions of DFA are a subset of another definition.
+[11:52:21] <hayley> I learnt at university that you have a set of tuples (this state, next state, symbol), an initial state, and a set of accepting states.
+[11:53:09] <gilberth> Yep, that's by the book.
+[11:53:44] <hayley> Do I look like I ever read any of the books at university? The course material was mostly shit, so the books the material came from would be worse.
+[11:54:15] <gilberth> But that could also be an NFA, you need to have an injective mapping here for an DFA.
+[11:54:24] <hayley> Right.
+[11:55:51] <gilberth> hayley: You didn't read your Hopcroft? Be sure to get the old 1979 edition.
+[11:56:00] <hayley> Nope.
+[11:56:31] <gilberth> You don't like homework?
+[11:57:00] <hayley> Not a fan of it, but I might change tune if I got anything less menial than usual.
+[12:00:00] <epony> s/is/was/g
+[12:01:05] <semz> gilberth: Is there something wrong with the newer editions?
+[12:02:05] <gilberth> semz: The newer edition is fine, but misses a few of the more theoretical stuff. I own both.
+[12:02:37] <semz> huh, unusual for material to get removed in newer editions
+[12:03:20] <gilberth> semz: It was perhaps too theoretical, although the whole book is like that.
+[12:05:27] <gilberth> I don't remember what exactly is missing, but it was sth I could need with my RE nightmare.
+[12:09:15] <gilberth> hayley: As I have my copy at hand because I needed to look at the date: Both Moore and Mealy machines have output. The difference is that Moore machines have output depending on the state, while Mealy have output depending on the transition. So we build Mealy automata, as I always said.
+[12:09:54] <hayley> Right.
+[13:19:01] *** Quits: Posterdati (~posterdat@host-87-19-166-231.retail.telecomitalia.it) (Ping timeout: 240 seconds)
+[13:55:23] *** Joins: euandreh (~euandreh@2804:14c:33:9fe5:4f29:e68c:50c9:fe2)
+[13:55:39] *** Joins: kevingal (~quassel@2a02:8084:4140:f300:dc6a:cea3:1af:140f)
+[14:12:56] <hayley> gilberth: Making a DFA for (a|ab){400} takes 3.2 seconds here FWIW, and IIRC I do the stupid thing and expand {N} eagerly.
+[14:13:48] <hayley> Making a grep machine is less kind though - {80} takes 4 seconds and makes 242 states.
+[14:18:09] <hayley> So, not quite dead, but not very alive either.
+[14:38:27] <hayley> https://www.multicians.org/thvv/vvimg/comix-7.gif
+[14:40:20] <moon-child> 'But the plans were on display!'
+[14:44:54] <gilberth> 403
+[14:45:35] <gilberth> hayley: RE_DUP_MAX may be as low as 255. :)
+[14:46:47] * hayley uploaded an image: (14KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/tbsYtXYtwiTFAagtdCGbjFeI/comix-7.gif >
+[14:47:00] <hayley> gilberth: Then I'm nearly safe.
+[14:47:42] <hayley> Reminds me of how SBCL has been shrinking array-rank-limit a lot these days.
+[14:48:19] <hayley> Not that you can feasibly use arrays with high rank (sparse arrays, anyone?) but that's a thing that is happening.
+[14:49:38] <gilberth> hayley: (((a|aa){0,255}){0,255}){0,255} ?
+[14:49:58] <hayley> Now that's just rude.
+[14:50:30] <gilberth> Nah, I was polite, (a|aa){0,255}{0,255}{0,255} would be UB.
+[14:50:56] <hayley> .oO(Todo: make compiler complain when you exceed 100 states. "You really think SBCL will compile this today?" "What the hell are you doing with this regular expression?" "Do I look like a NFA to you?")
+[14:51:25] <gilberth> 100 states is not much for a scanner.
+[14:51:59] <moon-child> I think c has ~200 production rules, just for the parser
+[14:52:13] <hayley> It's weird for a grepper though. I'd also bet, with your separate rules, that there are enough cliques in states that you don't care too much.
+[14:52:44] <hayley> Not really just the number of states, but how strongly connected they are.
+[14:54:53] <hayley> idk, I was trying to make a joke. But it'd be better feedback than waiting for SBCL to work.
+[14:55:11] <moon-child> like sudo 'insults'?
+[14:55:44] <hayley> Something like it.
+[14:56:20] <hayley> Guess I should put it behind a #+insults then.
+[14:57:08] <hayley> (when *warn-large-dfas* (warn (random-elt *insults*)))
+[15:10:42] <gilberth> Memory has LEDs too?
+[15:11:19] <moon-child> indeed
+[15:11:54] <gilberth> Why? Does it run faster that way?
+[15:13:04] <hayley> Only if you set them red.
+[15:13:27] <hayley> Green means it uses less power, blue means it runs cooler. Trust me, I did intro to electrical engineering
+[15:13:33] <gilberth> Ok. What doesn't have LED these days. I feel like was asleep for 10 years. (Which is about true).
+[15:14:03] <moon-child> lol
+[15:14:32] * moon-child has no leds of the obnoxious variety.  Except for a few on his mouse which doesn't count as it was free
+[15:14:56] <moon-child> I expect ecc ram will be less likely to have leds, and ecc > non-ecc anyway
+[15:14:57] <Duuqnd> I've been calling RGB LEDs "gamer bulbs" recently
+[15:15:08] <gilberth> hayley: Good to know. I pick red then. I do as the Green party and don't care about the climate. Let's turn natural gas into cycles. Burn, baby, burn!
+[15:15:14] <hayley> It doesn't even work like the connection machine 0/10
+[15:16:12] <gilberth> moon-child: Good. I would pick ECC ram only, anyway.
+[15:16:37] <gilberth> hayley: Now, that would have been at least kewl.
+[15:17:44] * moon-child hooks up an led to each individual bit of ram
+[15:20:57] <gilberth> Ah, those Ryens don't have integrated graphics, do they? And picked a Threadripper with the system builder with my preferred dealer and my choice for motherboard now is empty. Terrific. /me is idle.
+[15:21:06] <ck_> maybe stars are the RGB of the Hitchhiker's supercomputer
+[15:22:19] <moon-child> some ryzens have integrated graphics
+[15:22:25] <moon-child> but, I thought you do not want to hook up a monitor?
+[15:22:36] <hayley> They have G on the end of the model name iirc.
+[15:22:55] <moon-child> (I don't think there are any threadrippers with graphics, though)
+[15:23:32] <hayley> Yeah, not likely. More or less like asking for a Xeon with graphics.
+[15:23:36] <gilberth> moon-child: It's good when I can, for trouble-shooting or installing the OS. Otherwise I would need a board supporting a remote console.
+[15:24:00] <moon-child> you could also get a graphics card
+[15:24:02] <moon-child> lol
+[15:25:17] <gilberth> Well I would need is a VGA text screen only. I still have a few HGC ISA 8-bit boards which also would do, I doubt I find a motherboard for them. Hmm.
+[15:25:58] <hayley> Not likely, no.
+[15:26:12] <hayley> What's the shittest PCIe card you can get?
+[15:26:41] <moon-child> I would worry about driver compatibility
+[15:26:55] <gilberth> moon-child: For a text screen?
+[15:27:14] <hayley> Yeah, for *nix and a simple console, it's not so important.
+[15:27:24] <hayley> As long as it has VESA...
+[15:28:03] <gilberth> I mean, they are VGA compatible, aren't they? Framebuffer at 0xA0000 with 80x25 chars, all set. Mode 3.
+[15:28:37] <gilberth> Mode 1 or 2 are 40x25, would also do :-)
+[15:28:38] <hayley> Right.
+[15:28:50] <moon-child> I assume there is bios-level and hardware-level magic that has to happen for that though
+[15:29:01] <moon-child> and I do not know if they are fully backwards-compatible
+[15:29:12] <gilberth> moon-child: Those boxes still boot DOS fine.
+[15:29:13] <hayley> Apparently the cheapest AMD card at the usual computer store is AU$749. Terrible start.
+[15:29:35] <pl> Find older nVidia quadro nvs used 
+[15:29:45] <moon-child> gilberth: well, sure, they are software-compatible
+[15:29:50] <moon-child> I don't know whether they are hardware-compatible
+[15:30:09] <pl> Easy to find PCIE versions, worst possible issue is that you might go too old and have incompatible firmware 
+[15:30:11] <hayley> The cheapest one is still like AU$100!?
+[15:30:24] <hayley> Well shit.
+[15:30:32] <pl> hayley: very low end got nuked by integrated graphics 
+[15:30:39] * hayley continues to be #lispcafe's top swearer.
+[15:32:26] <pl> My recommendation is to find oldest UEFI-compatible quadro nvs and search for used cards from there to newer 
+[15:32:47] <pl> They should be cheap due to being, we'll, not very useful outside of being cheap but solid 
+[15:33:03] <hayley> Just as FUBAR at another store. But I guess for a $n,nnn CPU a $100 GPU isn't so insulting.
+[15:33:18] <pl> hayley: look for used 
+[15:33:38] * moon-child wants an nvidia gpu so he can play with NV_path_tracing
+[15:33:39] <pl> NVS series also don't care about GPU shortage 
+[15:33:59] <pl> Because gamers nor miners would buy them 
+[15:34:00] <moon-child> probably doesn't need to be recent, but I think needs to be <5 years or so old
+[15:34:14] <gilberth> moon-child: They are set up in a compatible way. Trust me, the framebuffer at 0xA0000 is there. Nah, for text mode it's B8000 I forgot. A0000 is graphics.
+[15:35:41] <hayley> Which Threadripper model btw?
+[15:35:56] <hayley> (Can it run 42nd at Threadmill?)
+[15:36:04] <moon-child> gilberth: yes, that is a software compatibility.  But that is memory mapped i/o, it must communicate with the gpu somehow.  That said, wiki indicates pcie is broadly backwards compatible
+[15:37:46] <gilberth> moon-child: I yet have to find a board, that doesn't act like a VGA board, when the boot loader is run.
+[15:38:11] <hayley> (More important, can it run rustc?)
+[15:38:44] <gilberth> hayley: The only available, 3960X. 24 cores should be suffice.
+[15:39:37] <moon-child> that's the one I have.  It has not disappointed so far :P
+[15:39:46] <moon-child> (well, it has no avx512.  That's my one complaint)
+[15:39:51] <gilberth> moon-child: And when Linux boots it doesn't need to fiddle with any I/O registers but the cursor position. Linux could even use a serial console. GRUB can too.
+[15:39:53] * hayley still on a 160
+[15:39:57] <hayley> *1600
+[15:40:17] <hayley> beach had a 1600x but it crashed too much. Could have been the same hardware bug that I got too.
+[15:40:21] <moon-child> gilberth: if you can use a serial console, then why do you need graphics output?  Just make sure you have a serial port
+[15:41:00] <hayley> Now, how's one sink 280W exactly?
+[15:41:46] <moon-child> very carefully
+[15:41:50] <gilberth> moon-child: Because, unless I have a server board which supports a console and maps an emulated VGA board to it, it is good to have a save fallback. Also for configuring the BIOS.
+[15:41:57] <hayley> Called it.
+[15:42:42] <pl> No sensible threadripper setup runs VGA without emulator 
+[15:42:57] <pl> But they do support serial console 
+[15:44:06] <gilberth> Once the machine is up, I don't need any console. Unless I move the machine. And that could be years, before I do.
+[15:45:24] <gilberth> moon-child: I could do without avx512.
+[15:45:46] <hayley> Still, I am approaching my CPU getting 5yo and thinking of a replacement. Seems about time that I would find something substantially faster.
+[15:46:01] <moon-child> gilberth: it's sexy though
+[15:46:04] <moon-child> it has scatter
+[15:46:06] <moon-child> and masks
+[15:46:38] <moon-child> hayley: bad timing.  Am5 just came out (or, is about to have)
+[15:47:21] <moon-child> (but the launch am5 cpus don't look too sexy)
+[15:48:38] <hayley> Looks like the 5600x is close to twice the performance of a 1600. Though, if I'm nearly employed to hack, I might spend some more.
+[15:49:03] <moon-child> twice the performance?  I don't believe it.  What is this, the 90s?
+[15:49:19] <hayley> Over 5 years?
+[15:50:08] <moon-child> moore says 2.3x transistors over 5 years.  And I expect performance to be outpaced by transistor count
+[15:50:13] * hayley reads specs. Only 3? Sheesh.
+[15:50:28] <moon-child> 3?
+[15:51:19] <hayley> 5600x was mid 2020, 1600 was mid 2017. Could have been a funny benchmark though.
+[15:52:23] <moon-child> looks like double the l3.  That could be it
+[15:52:36] <hayley> Sure. And also I like to pick on the ALU size.
+[15:53:46] <gilberth> All sold out. Not available. No idea when stocked again. Shopping is no fun.
+[15:53:52] <hayley> A 5600G is remarkably only $50 more expensive than what I got a 1600 for when it came out (pretty much $300).
+[15:54:44] <hayley> For only double the price, I can have double the cores. Hm.
+[15:56:29] <hayley> Pity only the mid end and top end actually look decent. The 5700G and 5700X seem pretty mediocre for the price increase.
+[15:58:53] <hayley> Intel also seems meh in that range. /me waits for AM5 then
+[16:00:25] * gilberth can get CPUs but no boards.
+[16:00:31] <moon-child> ooh, sopine clusterboard is back in stock
+[16:00:45] * moon-child considers getting a bunch of cheap arm boards for running chrome
+[16:01:01] <ck_> one board per tab?
+[16:01:16] <moon-child> oh no it was the computer modules that were out of stock :/
+[16:01:17] <moon-child> ck_: exactly
+[16:01:31] <hayley> Still no idea of what we'll get on AM5?
+[16:01:35] <moon-child> software separation has failed
+[16:01:47] <gilberth> moon-child: With blinkenlights?
+[16:01:58] <moon-child> wazzat?
+[16:02:27] <gilberth> Like the Connection Machine? Blinkenlight. Lot's of them.
+[16:03:10] <gilberth> Blinking whenever the CPU thinks.
+[16:03:38] <moon-child> oh cute
+[16:03:44] <moon-child> I mean, obnoxious in practice, but cute
+[16:05:34] <hayley> Repeat after me:... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/9a0521455f5ffbcca0357701f3cb60adec4b8d5f)
+[16:05:49] <hayley> Also https://www.plover.com/~mjd/misc/hbaker-archive/ReverseGC.html when
+[16:05:50] -ixelp- NREVERSAL of Fortune
+[16:07:17] <gilberth> moon-child: I once had an analogue load average indicator. I turned the printer port into a dirt cheap DAC and patched the kernel to output the load average to it.
+[16:08:03] <hayley> "The processes used to copy DNA and transcribe RNA are mostly conservative, or else the heat dissipated during cell mitosis in an embryonic chicken would produce a hard-boiled egg!"
+[16:14:30] <hayley> Didn't even bake the egg. Fuckin Baker and he boiled the egg. Can't believe it
+[16:17:52] *** Joins: random-nick (~random-ni@87.116.167.125)
+[16:22:44] * hayley wonders if having internal reversibility, like microcode makes an internal ISA, would help. I think Baker mentioned it as "hardware maintaining illusions" or such.
+[16:23:17] *** Quits: kevingal (~quassel@2a02:8084:4140:f300:dc6a:cea3:1af:140f) (Ping timeout: 240 seconds)
+[16:23:27] <hayley> "We would then not need to change the abstraction seen by the programmer or compiler; after all, computer engineers have been hiding the physical truth from programmers for over 50 years."
+[17:13:01] *** Joins: clothespin_ (~awolven@c-73-209-95-92.hsd1.il.comcast.net)
+[17:22:12] *** Joins: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4)
+[17:22:56] * gilberth finds some more test cases that all fail.
+[17:28:17] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Ping timeout: 240 seconds)
+[17:31:00] *** Joins: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4)
+[17:39:51] *** Joins: domovod (~domovod@ec2-35-165-86-158.us-west-2.compute.amazonaws.com)
+[17:55:41] <dave0> nite all
+[17:59:52] *** Quits: dave0 (~davezero@069.d.003.ncl.iprimus.net.au) (Quit: dave's not here)
+[18:24:57] *** Joins: Inline (~Inline@aftr-37-201-240-204.unity-media.net)
+[18:26:13] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Ping timeout: 240 seconds)
+[18:28:22] *** Quits: Inline (~Inline@aftr-37-201-240-204.unity-media.net) (Client Quit)
+[18:30:00] *** Joins: Inline (~Inline@aftr-37-201-240-204.unity-media.net)
+[18:50:13] *** Joins: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4)
+[18:55:24] *** Joins: kevingal (~quassel@2a02:8084:4140:f300:18e:85f:67dd:e924)
+[19:13:27] *** Joins: treflip (~user@user/treflip)
+[19:14:35] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Ping timeout: 252 seconds)
+[19:27:57] *** Quits: kevingal (~quassel@2a02:8084:4140:f300:18e:85f:67dd:e924) (Ping timeout: 240 seconds)
+[19:33:29] <shka> http://spacing.ca/toronto/2012/10/02/the-toronto-circus-riot-of-1855-the-day-the-clowns-picked-the-wrong-toronto-brothel/
+[19:33:29] -ixelp- The Toronto Circus Riot of 1855 — the day the clowns picked the wrong Toronto brothel - Spacing Toronto
+[19:41:03] *** Quits: domovod (~domovod@ec2-35-165-86-158.us-west-2.compute.amazonaws.com) (Quit: WeeChat 3.4)
+[19:41:20] *** Joins: domovod (~domovod@ec2-35-165-86-158.us-west-2.compute.amazonaws.com)
+[20:01:44] *** Joins: Posterdati (~posterdat@host-87-19-166-231.retail.telecomitalia.it)
+[20:07:48] *** Quits: Aurora_v_kosmose (~LispyLigh@user/lispylights) (Remote host closed the connection)
+[20:08:20] *** Joins: Aurora_v_kosmose (~LispyLigh@user/lispylights)
+[20:10:25] <phoe> Online Lisp Meeting #13 starting in 20 minutes: https://www.twitch.tv/TwitchPlaysCommonLisp
+[20:10:25] -ixelp- Twitch
+[20:17:46] <shka> phoe: cool!
+[20:19:41] <selwyn> phoe: is there irc chat
+[20:20:23] <phoe> selwyn: no IRC bridge, just Twitch
+[20:20:28] <shka> #lispcafe is not enough? :P
+[20:20:30] <phoe> I don't have the resources to set one up
+[20:21:21] <shka> phoe: yes
+[20:21:25] <shka> microphone works
+[20:21:27] <phoe> thanks!
+[20:27:01] *** Quits: domovod (~domovod@ec2-35-165-86-158.us-west-2.compute.amazonaws.com) (Ping timeout: 240 seconds)
+[20:28:18] *** Joins: domovod (~domovod@176.196.122.197)
+[20:30:02] <selwyn> kefir tastes almost alcoholic today
+[20:30:16] <selwyn> probably is alcohol
+[20:31:56] <shka> now that is the proper powerful beard
+[20:32:01] *** Joins: kevingal (~quassel@2a02:8084:4140:f300:18e:85f:67dd:e924)
+[20:38:15] <shka> clog sounds like something i can make use of 
+[20:38:37] <ck_> I'm interested as well
+[20:45:05] <shka> ... ok
+[20:45:12] <ck_> he's going ahead a lot
+[20:45:57] <shka> i hope that there is way to send all of those updates in a batch 
+[20:49:53] <shka> i wonder how portable this is 
+[20:50:01] <phoe> portable across what?
+[20:50:08] <phoe> browsers? implementations? OSes?
+[20:50:28] <shka> implementations
+[20:50:43] <shka> it seems to count on things being thread safe 
+[20:53:23] <shka> the true words has been spoken tough 
+[20:55:44] <ck_> "Visual Basic and Delphi"?
+[20:58:17] <shka> yes
+[20:58:23] <shka> why things got so complicated?
+[21:00:26] <shka> can you resize the windows?
+[21:00:32] <shka> ok, you can
+[21:08:43] <shka> oooh
+[21:12:17] <shka> phoe: really nice presentation, send my kudos 
+[21:12:31] <shka> shkas stamp of approval 
+[21:12:43] <phoe> sent
+[21:13:12] <shka> noticed the chat
+[21:13:39] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[21:13:50] <shka> i wonder how it would play if one would marry clog to nyxt browser :-)
+[21:13:58] <shka> which can host the clog server
+[21:15:59] <shka> you could quickly hack applications that would talk to the browser env itself
+[21:16:01] *** Quits: domovod (~domovod@176.196.122.197) (Quit: WeeChat 3.4)
+[21:16:18] <shka> so it could for instance display browser history in a cool way
+[21:17:28] <shka> that was cool presentation
+[21:33:49] *** Quits: pjb (~pjb@user/pjb) (Ping timeout: 268 seconds)
+[21:48:33] *** Quits: kevingal (~quassel@2a02:8084:4140:f300:18e:85f:67dd:e924) (Remote host closed the connection)
+[21:56:43] <epony> Turbo Pascal.
+[21:57:16] <epony> (turbo lisp is still in the to be discussed list)
+[21:58:00] <epony> https://en.wikipedia.org/wiki/Turbo_pascal
+[21:59:45] *** Quits: lisp123 (~lisp123@5.30.23.247) (Remote host closed the connection)
+[22:16:57] *** Joins: pjb (~pjb@user/pjb)
+[22:34:15] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 268 seconds)
+[22:34:46] *** Quits: treflip (~user@user/treflip) (Quit: ERC (IRC client for Emacs 27.2))
+[22:43:05] *** Joins: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4)
+[22:53:38] *** Quits: Inline (~Inline@aftr-37-201-240-204.unity-media.net) (Quit: Leaving)
+[23:01:55] * edgar-rft screws a handle on it to make it portable
+[23:08:49] * Alfr replaces edgar-rft's screws with nails and steals all his hammers.
+[23:11:09] *** Joins: Inline (~Inline@aftr-37-201-240-204.unity-media.net)
+[23:12:25] *** Quits: Inline (~Inline@aftr-37-201-240-204.unity-media.net) (Remote host closed the connection)
+[23:41:18] <hayley> https://www.youtube.com/watch?v=IJr61z44m6c
+[23:41:19] -ixelp- Beat the Clock [Extended Version] - YouTube
+[23:52:18] *** Joins: Catie (~user@user/catie)
+[23:52:39] *** Quits: zacts (~zacts@user/zacts) (Ping timeout: 250 seconds)

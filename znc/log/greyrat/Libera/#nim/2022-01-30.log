@@ -1,0 +1,800 @@
+[00:00:24] <FromDiscord> <vindaar> after all, it should really only be code that must be removed for the user.↵You might as well add dummy `delete` procedures for ARC, that simply don't do anything, but write a deprecation message.That is of course, unless the `delete` has a purpose beyond being a finalizer
+[00:02:19] <arkanoid> long story short: I am not the author of the lib, but an user that is trying to fix a memory leak problem when using ARC/ORC (finalizer not called, issue already posted). Everything started be removing the root of the problem, that is remove all forward declarations of the finalizers, that triggered chain reaction: had to move all constructor in same module as type declaration, had to replace include
+[00:02:21] <arkanoid> with import to decouple, had to move imports to late imports (thanks beef!) and merge some modules to avoid recursive dependency issue, but now I'm facing this show stopper:  https://play.nim-lang.org/#ix=3NUW
+[00:04:15] <arkanoid> this is the library I'm trying to improve, but the "code smell" (just include and no imports) is actually not so wrong considering all the workarounds that I'm facing to improve it
+[00:04:17] <arkanoid> https://github.com/filcuc/nimqml
+[00:05:18] <FromDiscord> <krisppurg> sent a code paste, see https://play.nim-lang.org/#ix=3NVH
+[00:06:57] *** Joins: elves-upstate (~elves-ups@129-2-180-39.wireless.umd.edu)
+[00:08:10] <FromDiscord> <demotomohiro> Adding --passC:-Ic:\path\to\your\include\dir?
+[00:08:21] <arkanoid> this is the root cause that makes refc code silently leaking when using arc/orc https://github.com/nim-lang/Nim/issues/19402
+[00:10:28] <emery> is there a way to trace which modules import which? I find myself importing unusable modules
+[00:13:49] <arkanoid> emery, good question, I've been facing kinda same issue when trying to deal with multiple recursive dependency issues. At least when that kind of issue is found the compiler gives you the import chain root cause. I had to write a graphviz diagram by hand
+[00:15:52] <FromDiscord> <vindaar> from skimming this\:↵the `var T` issue isn't an issue in practice. Just define a regular base `object` that the thing that has the current name is a `ref object` of. Then you can just define the `=destroy` for the object (which then takes `var T`). But as one never calls `=destroy` manually (well, sometimes from a different destructor), you don't really have to change anything in the code (aside from the removal of `delete`)↵(<@709044
+[00:17:09] <emery> i'm trying to import asyncdispatch for a platform without sockets or file descriptors, i think thats my problem
+[00:19:04] <arkanoid> vindaar: the library currently asks the user to extend base class, setup new finalizer, and use it to call parent finalizer: https://github.com/filcuc/nimqml/blob/04888273ce01038334e7c89b379432180acefedb/examples/abstractitemmodel/mylistmodel.nim#L20
+[00:19:21] <arkanoid> emery, which platform?
+[00:19:28] <emery> its a suprise
+[00:21:35] <arkanoid> :O
+[00:22:48] <emery> I think I should remove genode before I add another esoteric platform
+[00:23:05] *** Quits: elves-upstate (~elves-ups@129-2-180-39.wireless.umd.edu) (Remote host closed the connection)
+[00:23:22] *** Joins: elves-upstate (~elves-ups@129-2-180-39.wireless.umd.edu)
+[00:23:35] <arkanoid> btw a think a simple program that walks the project folder and greps "import" and prints "srcmodule -> dstmodule" can be turned into a graphviz digraph easily
+[00:24:08] <arkanoid> question is that this could be done also with a project level macro, or module level macro, but not sure about their existence
+[00:24:19] *** Quits: elves-upstate (~elves-ups@129-2-180-39.wireless.umd.edu) (Remote host closed the connection)
+[00:26:29] <arkanoid> detomotohiro: thanks for the MyType()[].typeof, works nicely! and also makes a lot of sense
+[00:29:43] <FromDiscord> <krisppurg> In reply to @demotomohiro "Adding --passC:-Ic:\path\to\your\include\dir?": no?
+[00:33:13] *** Quits: noeontheend (~noeonthee@207.237.194.194) (Ping timeout: 250 seconds)
+[00:34:57] *** Quits: lumo_e (~enrico@131.114.212.19) (Ping timeout: 240 seconds)
+[00:37:50] *** Joins: lumo_e (~enrico@131.114.212.19)
+[00:41:31] <FromDiscord> <demotomohiro> @krisppurg Do you have the header file that gcc says no such file? If so, you need to pass the directory to gcc with -I option.
+[00:46:20] *** Quits: jmdaemon (~jmdaemon@user/jmdaemon) (Ping timeout: 256 seconds)
+[00:55:17] <FromDiscord> <noow> can I disable the "install" and "build" commands for a nimble package
+[00:55:24] <FromDiscord> <noow> I only want custom tasks
+[00:56:36] <FromDiscord> <tandy> anyone here know stuff / maintain karax? i wonder if its possible to add better async support
+[00:56:40] <FromDiscord> <noow> or alternatively, how do I add custom flags to the custom build
+[00:56:52] <FromDiscord> <noow> (edit) "custom" => "nimble" | "nimblebuild ... " 03added "command"
+[00:58:26] <FromDiscord> <Elegantbeef> you can make a `config.nims` inside your project with the flags you want
+[01:01:00] <FromDiscord> <noow> but then i'll have to --skipProjCfg and --skipParentCfg everywhere
+[01:01:32] <arkanoid> can you tell me why I'm not getting destructors being called here with --gc:arc? https://play.nim-lang.org/#ix=3NWd
+[01:02:03] <FromDiscord> <krisppurg> In reply to @demotomohiro "<@222794789567987712> Do you have": no
+[01:02:12] <FromDiscord> <krisppurg> (edit) "In reply to @demotomohiro "<@222794789567987712> Do you have": no ... " 03added "i dont have the header file"
+[01:07:39] <FromDiscord> <Elegantbeef> Expanding arc shows that it calls destroy for the a, but i dont get why it doesnt destroy the inner object
+[01:08:57] <arkanoid> hi beef!
+[01:09:07] <FromDiscord> <Elegantbeef> Hello
+[01:09:07] <Amun-Ra> hmm, same with orc
+[01:09:23] <FromDiscord> <Elegantbeef> Even minimized it doesnt work
+[01:09:44] <arkanoid> oh no :(
+[01:10:39] <FromDiscord> <oldteen> Hello, noob question, what do you use as language server with visual studio code ?
+[01:10:53] <FromDiscord> <Elegantbeef> I use saem's extension
+[01:11:00] <FromDiscord> <Elegantbeef> https://play.nim-lang.org/#ix=3NWh this works arknoid
+[01:11:07] <arkanoid> I also use saem's extension
+[01:11:16] <FromDiscord> <Elegantbeef> I think the issue is that ref's dont have destructors so it doesnt attempt to call it?
+[01:11:43] <FromDiscord> <Elegantbeef> Well it attempts to call it but `=destroy(aRefObject)` is just "no call so we dont destruct"
+[01:12:02] <FromDiscord> <Elegantbeef> I dont recall why ref's dont have destructors
+[01:13:32] *** Quits: lumo_e (~enrico@131.114.212.19) (Ping timeout: 256 seconds)
+[01:14:31] <arkanoid> {.borro: `.`.} ... efficient, expressive, elegant 
+[01:15:01] *** Joins: lumo_e (~enrico@131.114.212.19)
+[01:15:11] <FromDiscord> <Elegantbeef> Lol It's the least toxic borrow method
+[01:15:17] <FromDiscord> <Elegantbeef> Borrowing anything else is hell on earth
+[01:16:35] <arkanoid> so this means destructors + arc + ref objects are a no?
+[01:16:39] <FromDiscord> <vindaar> https://play.nim-lang.org/#ix=3NWj
+[01:16:53] <FromDiscord> <vindaar> same as on non arc you still have to do something to turn that ref into a non nil
+[01:17:12] <FromDiscord> <Elegantbeef> Oh i didnt even notice that
+[01:17:17] <FromDiscord> <Elegantbeef> Nice vindaar 😀
+[01:21:26] <arkanoid> oh! right, but is it aways necessary? I don't recall calling `new` in my constructors returning ref type all the times
+[01:21:53] <FromDiscord> <Elegantbeef> Well `Type()` also `new`s internally
+[01:22:19] <FromDiscord> <Elegantbeef> So you can either `new result` or do `MyType(field: someVal, ... )`
+[01:22:51] <arkanoid> mmm ok
+[01:24:10] <FromDiscord> <Elegantbeef> But yes you need to allocate that memory somehow 😛
+[01:24:27] <FromDiscord> <Elegantbeef> Is life making anymore sense in regard to the delayed imports
+[01:25:18] <arkanoid> sure, but calling proc that returns a result of ref type should alloc it automatically, just like result for non ref returning procs
+[01:26:21] <FromDiscord> <Elegantbeef> It 0's memory
+[01:26:23] <FromDiscord> <Elegantbeef> Nim just 0's memory
+[01:26:28] <FromDiscord> <Elegantbeef> And for a reference `0` is nil
+[01:26:35] <FromDiscord> <Elegantbeef> Otherwise you have unintended allocations
+[01:26:42] <arkanoid> Elegantbeef, this question of mine is still about that very same project. I've been applying delayed + merging when necessary and it seems going, problem is that I'm now facing another show stopper: https://play.nim-lang.org/#ix=3NUW
+[01:27:07] <FromDiscord> <Elegantbeef> Say you're searching a list for a specific value and you return nil if you dont find it, it's bad if the result is intialized
+[01:27:45] <arkanoid> Elegantbeef, there's Option[type] for that
+[01:28:06] *** Quits: vicfred (~vicfred@user/vicfred) (Quit: Leaving)
+[01:28:44] <FromDiscord> <Elegantbeef> I mean sure, but that doesnt change the point
+[01:28:55] <FromDiscord> <Elegantbeef> Intializing the result of something that returns ref is an allocation you cannot stop
+[01:29:10] <arkanoid> true
+[01:30:06] <FromDiscord> <Elegantbeef> I assume in your world `var a: MyRef` should also allocate 😛
+[01:30:31] <arkanoid> mmm no :D
+[01:36:01] <arkanoid> Elegantbeef, with that project I have to deal with existing code that's calling `child.Parent.delete()' in their finalizers, this makes useless all my efforts to move constructions and finalizers on top of modules just after type declaration, as ARC will try to declare a =delete before the finalizer itself
+[01:36:26] <arkanoid> just like in https://play.nim-lang.org/#ix=3NWt
+[01:37:50] <FromDiscord> <demotomohiro> In reply to @krisppurg "no i dont have": Then, you need to get the header file. Read readme of module that cause the error or google library name.
+[01:56:38] *** Joins: carce (~carce@109-93-222-211.dynamic.isp.telekom.rs)
+[01:56:42] <carce> Hello]
+[01:56:46] <carce> :D 
+[01:56:56] <FromDiscord> <Elegantbeef> Hello
+[01:57:21] <arkanoid> hi!
+[01:59:27] <arkanoid> so there's no way to call parent finalizer/destructor with ARC without using gcDestructors definition or triggering "Error: cannot bind another '=destroy' to: Child:ObjectType;"?
+[02:00:44] <FromDiscord> <Elegantbeef> Do not know
+[02:02:34] <arkanoid> thanks for the feedback. Well. I hope the original author will accept to introduce breaking changes, or at least raise compile error with ARC, otherwise code will leak memory
+[02:03:56] <FromDiscord> <TurtleP> hey, I remember someone telling me I don't need to `staticRead(path/to/nimble).fromNimble(field)` to get the data I want from that, but I was never told how to do it, anyone know?
+[02:04:16] <FromDiscord> <TurtleP> I tried to import `system/nimscript` but `echo(nimscript.author)` is empty
+[02:04:25] <FromDiscord> <TurtleP> (edit) "I tried to import `system/nimscript` but `echo(nimscript.author)` is ... emptystring" 03added "printing an" | "printing anempty ... " 03added "string"
+[02:04:51] <FromDiscord> <Elegantbeef> that stuff is only set inside the nimble VM not the compiler VM
+[02:05:24] <FromDiscord> <TurtleP> right, but is there a way to do the thing I'm trying to do?
+[02:05:48] <FromDiscord> <Elegantbeef> use strdefines, or parse the nimscript file
+[02:06:08] <FromDiscord> <TurtleP> you mean the nimble file?
+[02:06:19] <FromDiscord> <Elegantbeef> Same difference
+[02:08:51] <FromDiscord> <TurtleP> though I'm confused--since I was told a while back I could just not need to read the nimble file
+[02:10:03] <FromDiscord> <Elegantbeef> I mean it's interpreted so you can just read it, but  in very small chances it'll not work
+[02:10:25] <FromDiscord> <Elegantbeef> I dont get why you need to know the author but you do you 😀
+[02:10:36] <FromDiscord> <TurtleP> I mean it's an example
+[02:10:50] <FromDiscord> <TurtleP> and it's better than having to redefine something already defined
+[02:11:00] <FromDiscord> <TurtleP> e.g. outputting program version in `help`
+[02:13:25] <FromDiscord> <gcao> In reply to @haxscramper "well, *right now* the": Thanks for your reply. I sent that message and went for shoveling so couldn't engage with the discussion. Are you the core contributor to Nimskull? What are the features planned for Nimskull but not in Nim? I tried to search that but couldn't find it.
+[02:15:55] <FromDiscord> <haxscramper> In reply to @gcao "Thanks for your reply.": There are no planned new features for now aside from the improvements listed on the roadmap, and associated requirements for fixing different parts of the compiler/tooling
+[02:17:01] <FromDiscord> <gcao> sorry for being blatant. that doesn't sound intriguing for developers to give it a try though.
+[02:17:51] <FromDiscord> <Elegantbeef> Well it's the first step of features
+[02:17:57] <FromDiscord> <Elegantbeef> Making a solid foundation that can be expanded
+[02:22:00] *** Quits: lumo_e (~enrico@131.114.212.19) (Ping timeout: 250 seconds)
+[02:24:00] <FromDiscord> <gcao> A big refactoring or rewrite usually does not end well. Unless you have very good reason it won't fall to that trap.
+[02:24:01] *** Joins: elves-upstate (~elves-ups@129-2-180-39.wireless.umd.edu)
+[02:24:33] <FromDiscord> <haxscramper> Well, believe me, we do have a reason, that one I can say with absolute certainty
+[02:24:44] <FromDiscord> <Elegantbeef> Well the good reason is tech debt that needs addressing
+[02:25:16] <FromDiscord> <gcao> I guess Araq doesn't feel that way or it's not his priority. so the fork is born?
+[02:25:17] <FromDiscord> <haxscramper> After spending last two months digging through the current compiler and testament, I would say ton of the code has never seen anyone who thought about long-term sustainability
+[02:25:44] <FromDiscord> <haxscramper> For example error messages that I talked about for couple months prior
+[02:25:53] <FromDiscord> <Elegantbeef> To the contrary he actually has commented multiple times about the current state of code and that things could be done better↵(@gcao)
+[02:25:55] <FromDiscord> <haxscramper> RFCs #323, #324 and #325
+[02:26:19] <FromDiscord> <haxscramper> I claim that with current architecture the compiler is unable to produce good error messages
+[02:26:42] <FromDiscord> <haxscramper> This is fundamentally impossible, this thing needs to be refactored with a scorched earth approach
+[02:27:05] <FromDiscord> <haxscramper> One example of a refactor that I can talk in details about
+[02:27:29] <FromDiscord> <haxscramper> IT has already been done by me, so far there are no major abnormalities
+[02:27:52] <FromDiscord> <haxscramper> (edit) "IT" => "It"
+[02:28:19] <FromDiscord> <gcao> I don't mean to question your decision, just out of pure curiosity from technical perspective.↵If the fork didn't get blessing from Araq, where will the project land? A language work like Nim but is not called Nim ?
+[02:28:34] <FromDiscord> <Elegantbeef> Yes
+[02:28:57] <FromDiscord> <huantian> Nimish
+[02:29:13] <FromDiscord> <Elegantbeef> A language with many similarities to Nim but cares more about a technically correct compiler, and working features
+[02:29:36] <FromDiscord> <Elegantbeef> For instance look at how many generic bugs exist
+[02:29:37] <FromDiscord> <gcao> And it's not planned to be compatible with Nim in the long run
+[02:29:59] <FromDiscord> <Elegantbeef> Well it's not Nim 😀
+[02:31:53] <FromDiscord> <gcao> If it doesn't get adoption, technically correct compiler won't matter. Do you foresee it gets same adoption as Nim which is only a niche language right now?
+[02:32:08] <FromDiscord> <gcao> And it'll probably only get adoption from current Nim developers
+[02:32:32] <FromDiscord> <Elegantbeef> I dont think that's presently a concern
+[02:32:41] *** Joins: jmdaemon (~jmdaemon@user/jmdaemon)
+[02:32:56] <FromDiscord> <Elegantbeef> The people that contribute to Nimskull want a Nim that works, cause the love the language, but hate it's short comings
+[02:33:24] <FromDiscord> <Elegantbeef> You dont dedicate time making a fork a compiler for a language you find abhorrent 😀
+[02:34:06] <FromDiscord> <haxscramper> Right now main concern is to have the working implementation that is understandable to the contributors, there are so many small bits of shifting sand in this right now, that talking about grand future vision is next to useless
+[02:35:10] <FromDiscord> <gcao> Agree. I just hope the people who work on the fork and who work on current compiler can join force, or the fork gets blessing from Araq. But it's just a hope.
+[02:35:12] <FromDiscord> <Elegantbeef> Should clarify this is atleast my reason for backporting my fixes to Nimskull
+[02:37:02] <FromDiscord> <haxscramper> In reply to @gcao "Agree. I just hope": I have my doubts
+[02:38:40] <FromDiscord> <gcao> When Nim is big enough, with enough resources and backing from big companies, forks will come inevitably. But if at the early stage, lots of core contributors left to work on a fork. that doesn't help Nim to grow
+[02:39:21] <FromDiscord> <haxscramper> But unmaintainable codebase with ossified garbage all over the place certainly helps nim to grow, right
+[02:39:24] <FromDiscord> <gcao> Didn't mean to stop you guys doing what you think is right 🙂
+[02:40:31] <FromDiscord> <gcao> I'll end my comments here. Now I think I got the big picture
+[02:40:49] <FromDiscord> <haxscramper> Not like we haven't worked on nim before, krux, xybber were core devs, saem made a vscode extension, leorize did vim one, I worked on pattern matching
+[02:41:26] <FromDiscord> <haxscramper> Nimble RFCs, error message RFCs, there is also a cps that was a joint effort by several people at nimskull
+[02:41:27] <FromDiscord> <Elegantbeef> How hax i very well feel included!
+[02:41:28] <FromDiscord> <haxscramper> And so on
+[02:43:20] <FromDiscord> <tandy> nim is in no position to receive more sponsors really↵(@gcao)
+[02:43:24] <FromDiscord> <tandy> and thats why it hasnt
+[02:44:07] <FromDiscord> <tandy> biggest proof that nim has failed in marketing and growth is rust
+[02:44:27] <FromDiscord> <haxscramper> No, let's be honest here, rust is a bad comparison
+[02:44:33] <FromDiscord> <ynfle> In reply to @tandy "biggest proof that nim": Lol. That's backed my mozzilla
+[02:44:33] <FromDiscord> <haxscramper> And go as well
+[02:44:34] <FromDiscord> <Elegantbeef> Eh there is a minor difference with Rust and Nim that Rust had it's origin mozilla
+[02:44:40] <FromDiscord> <Elegantbeef> Nim vs Zig is more equivlent
+[02:44:43] <FromDiscord> <Elegantbeef> Or Nim vs Odin
+[02:44:54] <FromDiscord> <tandy> eh, zig is way lower level
+[02:45:00] <FromDiscord> <haxscramper> You just can't compete with 100kk USD per month poured into the language
+[02:45:12] <FromDiscord> <Elegantbeef> They're both system languages
+[02:45:15] <FromDiscord> <Elegantbeef> Nim can be used everywhere Zig can be
+[02:45:27] <FromDiscord> <haxscramper> In reply to @tandy "eh, zig is way": We are talking marketing here mostly
+[02:45:37] <FromDiscord> <haxscramper> Well, the default rant about
+[02:45:42] <FromDiscord> <haxscramper> What was it
+[02:45:46] <FromDiscord> <Elegantbeef> Zig is a system language with origins aside from a large corporation
+[02:45:46] <FromDiscord> <gcao> Agree. Nim didn't get Rust's adoption mainly because there is no company like Mozilla behind it.
+[02:45:51] <FromDiscord> <tandy> rust wasnt backed by mozilla from the start↵(@ynfle)
+[02:45:54] *** Joins: pro (~pro@user/pro)
+[02:45:56] <FromDiscord> <Elegantbeef> Nim is a system language with origins aside from large corportation
+[02:46:04] <FromDiscord> <Elegantbeef> > The language grew out of a personal project begun in 2006 by Mozilla employee Graydon Hoare
+[02:46:12] <FromDiscord> <Elegantbeef> I mean it's closely related to mozilla
+[02:46:25] <FromDiscord> <Elegantbeef> > Mozilla began sponsoring the project in 2009
+[02:47:30] <FromDiscord> <gcao> Let's not attribute the low adoption to Nim's marketing because it's not the language developer's job to push it to Rust's popularity
+[02:48:04] <FromDiscord> <Elegantbeef> It's an interesting look to see how many developers of Nim have left vs. Zig or Odin
+[02:48:14] <FromDiscord> <Elegantbeef> Zig has picked up an ex Nim compiler developer
+[02:48:17] <FromDiscord> <haxscramper> Anyway, it is the "same shit different day" scenario, so to save the time, tldr for my rant is:↵- document things↵- enabling people to do the work is always more productive than BDFLing your opinion in↵- be more open with your plans, talk to people, show your roadmap
+[02:48:51] <FromDiscord> <gcao> those I do agree
+[02:48:53] <FromDiscord> <haxscramper> Put UX high on the list, irritated people don't do anything good
+[02:48:57] <FromDiscord> <Elegantbeef> My view is simpler and why i still often make PRs to Nim, a more competent compiler is a better compiler
+[02:49:16] *** Joins: lumo_e (~enrico@151.29.57.144)
+[02:49:22] <FromDiscord> <Elegantbeef> I dont care which compiler works more, i just want fewer "X should work but doesnt"
+[02:49:28] <FromDiscord> <haxscramper> Basically that's what I stand for in nimskull and that's what I completely failed to find in mainline
+[02:49:55] <FromDiscord> <Elegantbeef> I'm too easily amused 😀
+[02:50:00] <FromDiscord> <haxscramper> Repeatedly, on multiple topics
+[02:50:13] <FromDiscord> <gcao> is Nimskull compatible with Nim 1.6 or 1.4 or some lower version?
+[02:50:20] *** Quits: pro (~pro@user/pro) (Client Quit)
+[02:50:38] <FromDiscord> <Elegantbeef> Nimskull is mostly compatible with 1.6 as that's the forking point, though async is removed and some other behaviours have changed
+[02:50:57] <FromDiscord> <haxscramper> I might not be the best manager in the world, to be honest I wouldn't trust myself to run a web scraper peoject, but I at least try to follow these principles on nimskull
+[02:51:12] <FromDiscord> <haxscramper> When I get the real feedback we can iterate from there
+[02:51:34] <FromDiscord> <haxscramper> In reply to @gcao "is Nimskull compatible with": We still have the full test suite, largely intact in place
+[02:51:48] <FromDiscord> <haxscramper> And added some 4.5k sloc of spec on top of that
+[02:52:06] <FromDiscord> <haxscramper> But considering nims stability is a duct tape solution, we can't guarantee anything
+[02:52:21] <FromDiscord> <haxscramper> Despite trying not to cause pointless regressions
+[02:53:11] <FromDiscord> <ynfle> In reply to @Elegantbeef "Zig has picked up": Who?
+[02:53:14] <FromDiscord> <Elegantbeef> There will be eventually an overhaul of the types which will cause regressions almost certainly
+[02:53:19] <FromDiscord> <Elegantbeef> Lemonboy
+[02:53:40] <FromDiscord> <Elegantbeef> But the regression will be due to things that arent supposed to work working
+[02:54:04] <FromDiscord> <haxscramper> In reply to @Elegantbeef "There will be eventually": Yes, but for now the general plan is to stay stable for as long as possible, other we get another layer of sand under our feet
+[02:54:30] <FromDiscord> <gcao> Thank you @haxscramper @ElegantBeef for taking the time to reply and explain things. I wish both Nim and Nimskull best of luck
+[02:54:44] <FromDiscord> <Elegantbeef> To be fair though every time i fix a generic issue i wonder if i should attempt to improve Nim's types myself
+[02:55:17] <FromDiscord> <Elegantbeef> Would take so much longer and probably wouldnt be accepted, but man so many issues with generics
+[02:55:46] <FromDiscord> <auxym> huh, first I hear of nimskull. You guys plan on keeping C as a compiler target?
+[02:56:03] <FromDiscord> <haxscramper> Yes, of course
+[02:56:07] <FromDiscord> <Elegantbeef> Think Saem floated the idea of using Zig possibly, but C is it for now
+[02:56:09] <FromDiscord> <haxscramper> C, C++, js
+[02:56:31] <FromDiscord> <Elegantbeef> Think Saem was more interested in the Zig compiler as a portable GCC alternative
+[02:56:54] <FromDiscord> <haxscramper> I mean, I want to reiterate on that again - we are not going to take a hammer and smash everything we see because idk, someone though it is a good idea
+[02:57:11] <FromDiscord> <tandy> when backends are more pluggable im interested in setting up a typescript backend \:)↵(@auxym)
+[02:57:22] <FromDiscord> <auxym> I just really like the whole "targets any platform gcc does" thing
+[02:57:25] <FromDiscord> <Elegantbeef> I mean arent backends pretty pluggable?
+[02:57:45] <FromDiscord> <haxscramper> There might be some back and forth discussions about different things, but in general things put on the readme roadmap are what we are going to do
+[02:57:59] <FromDiscord> <haxscramper> In reply to @Elegantbeef "I mean arent backends": No
+[02:58:43] <FromDiscord> <haxscramper> For example sem analyzes code little differently for expression, depending on whether we compile to c or cpp
+[02:59:13] <FromDiscord> <haxscramper> Backends can do the error reports that should've been in the sem layer
+[02:59:15] <FromDiscord> <Elegantbeef> Ah apparently i've never seen that before
+[02:59:56] *** Parts: elves-upstate (~elves-ups@129-2-180-39.wireless.umd.edu) ()
+[03:00:03] <FromDiscord> <haxscramper> Also there is a a `backend: RootRef # minor hack` in the module graph that is used by all backends to store their global data
+[03:00:16] <FromDiscord> <haxscramper> Although that one can be called pluggable probably
+[03:00:34] <FromDiscord> <tandy> `# minor hack` makes me laff
+[03:00:54] <FromDiscord> <Elegantbeef> It's a bit better than `pointer`
+[03:00:59] <FromDiscord> <haxscramper> A bit
+[03:01:59] <FromDiscord> <haxscramper> Anyway, it's 02:30 here, so I'm going to sleep now
+[03:02:08] <FromDiscord> <tandy> gnight hax
+[03:02:14] <FromDiscord> <Elegantbeef> Buh bye
+[03:02:15] <FromDiscord> <haxscramper> Hope inwont come back to 1.2k messages of the following nimskull discussion
+[03:02:35] <FromDiscord> <haxscramper> (edit) "inwont" => "I won't"
+[03:02:40] <FromDiscord> <haxscramper> That I missed
+[03:02:55] <FromDiscord> <Elegantbeef> Read the roadmap 😀
+[03:09:08] *** Quits: carce (~carce@109-93-222-211.dynamic.isp.telekom.rs) (Remote host closed the connection)
+[03:28:18] *** Quits: jmdaemon (~jmdaemon@user/jmdaemon) (Ping timeout: 250 seconds)
+[03:30:48] <FromDiscord> <evoalg> Beefy when will I be able to compile in nimskull?
+[03:31:06] <FromDiscord> <Elegantbeef> You can now
+[03:31:38] <FromDiscord> <evoalg> with libs like strutils and slicerator?
+[03:33:14] <FromDiscord> <tandy> `Error: expression 'await validateToken(lb, token)' has no type (or is ambiguous)`
+[03:33:14] <FromDiscord> <tandy> oh im a dumb dumb
+[03:33:17] <FromDiscord> <tandy> redefined the proc didnt i
+[03:33:17] <FromDiscord> <tandy> sent a code paste, see https://play.nim-lang.org/#ix=3NX3
+[03:33:33] <FromDiscord> <Elegantbeef> Yes Nimskull is mostly compatible with Nim since it's a fork
+[03:33:47] <FromDiscord> <evoalg> is there a nimskull channel?
+[03:34:16] <FromDiscord> <tandy> https://matrix.to/#/!alsWvZtOfWkQlHwcHC:envs.net?via=libera.chat&via=matrix.org&via=envs.net
+[03:44:41] *** Joins: jmdaemon (~jmdaemon@user/jmdaemon)
+[03:46:47] *** Quits: l1x (uid1954@id-1954.tinside.irccloud.com) (Quit: Connection closed for inactivity)
+[03:50:01] *** Quits: lumo_e (~enrico@151.29.57.144) (Quit: Quit)
+[04:41:28] <FromDiscord> <ynfle> How can I get where paramTypesMatch is trying to match in the source file? I don't mind random `warning` hacks or whatever
+[05:11:01] <FromDiscord> <ynfle> In reply to @ynfle "How can I get": `echo $lineInfoToStr(config(m.c), arg.info)` kinda works
+[05:11:08] <FromDiscord> <ynfle> (edit) "$lineInfoToStr(config(m.c)," => "lineInfoToStr(config(m.c),"
+[05:19:32] <termer_> Is there a way to create a Table that can contain any key type?
+[05:19:37] <FromDiscord> <ynfle> In reply to @ynfle "`echo lineInfoToStr(config(m.c), arg.info)` kinda": Doesn't get the first frame in the stack.
+[05:19:49] <termer_> I need some way to store mixed data in a table, and not JSON
+[05:19:54] <termer_> or something similar to a table
+[05:20:02] <FromDiscord> <Elegantbeef> Make a `Table[Hash, T]`↵(<@709044657232936960_termer_=5b=49=52=43=5d>)
+[05:20:11] <FromDiscord> <ynfle> In reply to @termer_ "Is there a way": Not one table instance. Unless you use variant object
+[05:20:12] <termer_> That would be a single type though
+[05:20:28] <FromDiscord> <Elegantbeef> No it'd work with any key type
+[05:20:34] <FromDiscord> <ynfle> In reply to @termer_ "I need some way": Why would JSON not work?
+[05:20:52] <termer_> JSON can hold types that my design is not supposed to
+[05:21:03] <termer_> specifically, it can hold nested arrays which would be a problem
+[05:21:15] <FromDiscord> <ynfle> In reply to @termer_ "JSON can hold types": So build on the design
+[05:21:58] <termer_> Maybe I should look how the JSON implementation holds it
+[05:22:40] <termer_> JsonNode is just an object that holds every possible type for a node, right?
+[05:22:49] <FromDiscord> <ynfle> In reply to @termer_ "JsonNode is just an": Yup
+[05:22:59] <termer_> well that's pretty inefficient
+[05:23:22] <FromDiscord> <Elegantbeef> https://play.nim-lang.org/#ix=3NXo
+[05:23:29] <FromDiscord> <Elegantbeef> Can use multiple Key types  fine
+[05:23:55] <termer_> @Elegantbeef I'm not looking to hold multiple key types
+[05:24:01] <termer_> I'm looking to hold multiple value types
+[05:24:09] <FromDiscord> <Elegantbeef> Well you should've said that
+[05:24:16] <termer_> I thought I did, my bad
+[05:24:21] <termer_> Interesting, JsonNode has a switch-case in the object definition
+[05:24:23] <termer_> didn't know you could do that
+[05:24:30] <FromDiscord> <Elegantbeef> Object variants are the best way
+[05:25:06] <FromDiscord> <Elegantbeef> Yes that's an object variant it's the most memory efficient method of doing this as the type size is the largest branch
+[05:25:06] <termer_> All right, thanks
+[05:25:25] <FromDiscord> <Elegantbeef> You can also look at https://github.com/alaviss/union
+[05:25:40] <FromDiscord> <Elegantbeef> Manual for object variants https://nim-lang.org/docs/manual.html#types-object-variants
+[05:43:03] <FromDiscord> <kevin> Anyone know how callback functions work for async code?
+[05:44:12] <FromDiscord> <kevin> sent a code paste, see https://play.nim-lang.org/#ix=3NXs
+[05:47:33] *** Quits: rienske (~rie@185.254.75.31) (Quit: WeeChat 3.4)
+[05:47:52] *** Joins: rienske (~rie@185.254.75.31)
+[05:47:54] <FromDiscord> <Elegantbeef> https://nim-lang.org/docs/asyncdispatch.html#Callback
+[05:50:48] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3NXu
+[05:51:01] <FromDiscord> <Elegantbeef> One could make a template to convert `proc()` into a closure
+[05:53:39] <FromDiscord> <Elegantbeef> for instance
+[05:53:41] <FromDiscord> <Elegantbeef> sent a code paste, see https://paste.rs/M2U
+[06:26:27] *** Quits: rienske (~rie@185.254.75.31) (Quit: WeeChat 3.4)
+[06:26:48] *** Joins: rienske (~rie@185.254.75.31)
+[06:27:37] *** Quits: rienske (~rie@185.254.75.31) (Client Quit)
+[06:27:56] *** Joins: rienske (~rie@185.254.75.31)
+[06:33:19] <FromDiscord> <Bung> @ElegantBeef hey , get news to me ?
+[06:35:02] <FromDiscord> <Elegantbeef> I cannot fix the packages
+[06:35:24] <FromDiscord> <Elegantbeef> if you want to use a package make an issue on the package's repo about not being usable in VM
+[06:35:59] <FromDiscord> <Elegantbeef> If you cannot import it using `nim e ./my.nims` i cannot do anything
+[06:36:40] <FromDiscord> <Bung> how to do that , it seems it's a error during parsing
+[06:36:53] <FromDiscord> <Elegantbeef> What do you mean
+[06:37:01] <FromDiscord> <Elegantbeef> The issue was with stacktrace
+[06:37:05] <FromDiscord> <Bung> I tried use when nimvm but it will throw before that
+[06:37:06] <FromDiscord> <Elegantbeef> nimscript doesnt have stacktrace
+[06:38:49] <FromDiscord> <Elegantbeef> I'd like a solution but Nimscripter isnt the problem afaik
+[06:42:18] <FromDiscord> <Bung> I tried `when not defined(release) and not nimvm:`  not work.
+[06:42:37] <FromDiscord> <Elegantbeef> nimvm is special
+[06:42:45] <FromDiscord> <Elegantbeef> do `and not defined(nimscript)`
+[06:46:10] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:3db3:b1d2:4da9:9983) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[06:46:53] *** Joins: noeontheend (~noeonthee@207.237.194.194)
+[06:47:14] <FromDiscord> <Bung> oh, that's work
+[06:50:35] <FromDiscord> <Bung> `Script Error: /users/bung/.choosenim/toolchains/nim-1.6.2/lib/system/sets.nim:21:19 undeclared identifier: 'countBits64'` finally I get this
+[06:52:10] <FromDiscord> <Elegantbeef> I assume same thing is the issue
+[06:52:26] <FromDiscord> <Elegantbeef> They use `countBits64` which is a exported procedure only in Nim
+[06:54:07] <FromDiscord> <Elegantbeef> Nimscript is a subset of Nim so not everything will work
+[06:59:46] *** Quits: arkurious (~arkurious@user/arkurious) (Quit: Leaving)
+[07:03:27] <FromDiscord> <Bung> what I can do for support it
+[07:03:58] <FromDiscord> <Elegantbeef> Use libraries that support compile time code is generally it really
+[07:04:08] <FromDiscord> <Elegantbeef> I imagine a lot of treeform's libraries will work
+[07:05:14] <FromDiscord> <Elegantbeef> Anything that relies on lower level logic that doesnt handle nimscript will require changes
+[07:09:24] <FromDiscord> <Rika> treeform makes networking and other libraries too, i imagine its not "a lot"
+[07:09:57] <FromDiscord> <Elegantbeef> I suppose
+[07:10:32] <FromDiscord> <Bung> found it occurs in set in operator
+[07:17:42] <FromDiscord> <BhamidipatiNikhil> I have no idea Why is this error occuring? https://media.discordapp.net/attachments/371759389889003532/937192323404681216/unknown.png
+[07:18:24] <FromDiscord> <Rika> stdin is a File
+[07:18:24] <FromDiscord> <Elegantbeef> `readLine`  also has a file impl
+[07:18:26] <FromDiscord> <Rika> not a Stream
+[07:19:02] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3NXG
+[07:19:58] <FromDiscord> <Elegantbeef> https://nim-lang.org/docs/io.html#readLine%2CFile is what you were calling prior
+[07:21:49] <FromDiscord> <Elegantbeef> Overloads are magic
+[07:26:24] *** Quits: Onionhammer (~onionhamm@23-88-146-29.fttp.usinternet.com) (Quit: The Lounge - https://thelounge.chat)
+[07:27:19] <FromDiscord> <BhamidipatiNikhil> sent a code paste, see https://play.nim-lang.org/#ix=3NXI
+[07:27:36] <FromDiscord> <Elegantbeef> Id did indeed!
+[07:27:38] <FromDiscord> <Elegantbeef> it\
+[07:27:53] <FromDiscord> <Elegantbeef> `readUint8` reads the next character as a byte
+[07:28:25] <FromDiscord> <Elegantbeef> You want to read until you hit a space then parse that as an int
+[07:28:40] <FromDiscord> <BhamidipatiNikhil> In reply to @Elegantbeef "You want to read": Yes, exactly!
+[07:28:57] <FromDiscord> <Elegantbeef> So then do that 😀
+[07:30:36] <FromDiscord> <BhamidipatiNikhil> In reply to @Rika "stdin is a File": readLine(stdin) is valid, while readUint8(stdin) is invalid although in the manual both take (s: stream) as input in their definitions and i was thinking that stdin is a stream so it should work for both
+[07:30:54] *** Joins: Onionhammer (~onionhamm@23-88-146-29.fttp.usinternet.com)
+[07:31:40] *** Quits: cheer[m] (~cheertchn@2001:470:69fc:105::39de) (K-Lined)
+[07:31:42] *** Quits: happycorsair[m] (~happycors@2001:470:69fc:105::205) (K-Lined)
+[07:31:42] *** Quits: xiamx (~xiamx@2001:470:69fc:105::1:5692) (K-Lined)
+[07:31:43] *** Quits: zgasma[m]1 (~mckaymatr@2001:470:69fc:105::1:627c) (K-Lined)
+[07:31:43] *** Quits: nixfreaknim[m] (~reversem3@2001:470:69fc:105::33d1) (K-Lined)
+[07:32:53] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3NXL
+[07:33:59] <FromDiscord> <Elegantbeef> That'll allow inputing values on new lines, altogether, character seperated, whatever
+[07:38:41] <FromDiscord> <Rika> In reply to @BhamidipatiNikhil "readLine(stdin) is valid, while": again, as beef said, there is also a readLine(f: File) proc
+[07:38:46] <FromDiscord> <Rika> nim has overloading
+[07:38:56] <FromDiscord> <Elegantbeef> I am bot what i say is wrong!
+[07:44:07] <termer_> How can I store a type in an object property?
+[07:44:09] <termer_> is it possible?
+[07:44:21] <FromDiscord> <Elegantbeef> You cannot types are compile time only
+[07:44:29] <termer_> All right, that's what I figured
+[07:44:54] <FromDiscord> <BhamidipatiNikhil> In reply to @Rika "again, as beef said,": Oh yeah! you are right!!
+[07:44:57] *** Quits: noeontheend (~noeonthee@207.237.194.194) (Ping timeout: 240 seconds)
+[07:53:07] <FromDiscord> <evoalg> I'm trying to figure out this code ... it seems to run without end?
+[07:53:27] <FromDiscord> <Elegantbeef> `mySeq.add` adds a value
+[07:53:43] <FromDiscord> <Rika> ? yes it does, what does that have to do with
+[07:53:57] <FromDiscord> <Elegantbeef> `while mySeq.len < N:` is the condition
+[07:54:02] <FromDiscord> <Rika> yes indeed
+[07:54:09] <FromDiscord> <Rika> add value, wait for len to exceed N, end
+[07:54:19] <FromDiscord> <Rika> so now why does it run forever?
+[07:54:26] <FromDiscord> <evoalg> sent a code paste, see https://play.nim-lang.org/#ix=3NXS
+[07:54:50] <FromDiscord> <Rika> do you hit the invalid input?
+[07:54:51] <FromDiscord> <Rika> or what
+[07:55:32] <FromDiscord> <evoalg> I'm just so confused
+[07:55:38] *** Joins: cheer[m] (~cheertchn@2001:470:69fc:105::39de)
+[07:56:11] <FromDiscord> <Elegantbeef> I have seemed to mess something up
+[07:56:11] *** Joins: happycorsair[m] (~happycors@2001:470:69fc:105::205)
+[07:56:23] *** Joins: zgasma[m] (~mckaymatr@2001:470:69fc:105::1:627c)
+[07:56:35] *** Joins: xiamx (~xiamx@2001:470:69fc:105::1:5692)
+[07:56:35] *** Joins: nixfreaknim[m] (~reversem3@2001:470:69fc:105::33d1)
+[07:56:51] <FromDiscord> <Elegantbeef> `buff.add stdin.readChar` is the issue
+[07:57:21] <FromDiscord> <Elegantbeef> that should be `ch` but I was being silly and missed it
+[07:57:44] <FromDiscord> <Rika> oh yeah true it does a double-ask
+[07:57:58] <FromDiscord> <Elegantbeef> image.png https://media.discordapp.net/attachments/371759389889003532/937202454351712317/image.png
+[07:58:00] <FromDiscord> <Elegantbeef> Works properly with that
+[07:58:19] <FromDiscord> <Rika> nvim test.nim
+[07:58:34] <FromDiscord> <Elegantbeef> Yea was in my history hit up too many times 😛
+[08:00:11] <FromDiscord> <Elegantbeef> Anyway it was just an example it's not production code!
+[08:00:23] *** Joins: fowl (~fowlmouth@user/fowl)
+[08:01:11] <FromDiscord> <evoalg> works ... I was just trying to understand it ... I don't even know why they wanted a seq of uint8's?
+[08:01:11] <FromDiscord> <Elegantbeef> There should be a check on the result of `parseInt` to ensure it's in 0..255
+[08:01:30] <FromDiscord> <Elegantbeef> I'm not a guessologist i dont know
+[08:03:59] <FromDiscord> <Elegantbeef> Also evo did you ever go to the dev docs to stare at your added docs 😛
+[08:04:36] <FromDiscord> <evoalg> my added docs?
+[08:04:40] *** Quits: fowl (~fowlmouth@user/fowl) (Quit: cya pals)
+[08:04:49] <FromDiscord> <Elegantbeef> The example to the ctrl C hook 😀
+[08:05:04] <FromDiscord> <evoalg> oooo let me look
+[08:06:51] *** Joins: fowl (~fowlmouth@user/fowl)
+[08:06:59] <FromDiscord> <evoalg> it has the example, nice!
+[08:17:30] *** Quits: nixfreaknim[m] (~reversem3@2001:470:69fc:105::33d1) (Quit: Client limit exceeded: 20000)
+[08:17:38] <FromDiscord> <BhamidipatiNikhil> IT worked like magic... Thanks a ton @ElegantBeef .... You are a genius!! https://media.discordapp.net/attachments/371759389889003532/937207405522083860/unknown.png
+[08:17:53] *** Joins: nixfreaknim[m] (~reversem3@2001:470:69fc:105::33d1)
+[08:18:43] *** Quits: cheer[m] (~cheertchn@2001:470:69fc:105::39de) (Quit: Client limit exceeded: 20000)
+[08:18:49] *** Quits: happycorsair[m] (~happycors@2001:470:69fc:105::205) (Quit: Client limit exceeded: 20000)
+[08:19:51] *** Quits: zgasma[m] (~mckaymatr@2001:470:69fc:105::1:627c) (Quit: Client limit exceeded: 20000)
+[08:20:32] *** Quits: xiamx (~xiamx@2001:470:69fc:105::1:5692) (Quit: Client limit exceeded: 20000)
+[08:22:02] *** Quits: dtomato (~dtomato@82-64-189-70.subs.proxad.net) (Ping timeout: 252 seconds)
+[08:22:29] <FromDiscord> <evoalg> why does BhamidipatiNikhil's message appear on discord but not matrix?
+[08:22:42] <FromDiscord> <evoalg> (their latest msg)
+[08:22:50] *** Joins: cheer[m] (~cheertchn@2001:470:69fc:105::39de)
+[08:23:04] *** Joins: happycorsair[m] (~happycors@2001:470:69fc:105::205)
+[08:23:18] *** Joins: zgasma[m] (~mckaymatr@2001:470:69fc:105::1:627c)
+[08:23:30] *** Joins: xiamx (~xiamx@2001:470:69fc:105::1:5692)
+[08:25:03] <FromDiscord> <Elegantbeef> Bridge issue perhaps
+[08:27:11] <FromDiscord> <evoalg> It may filter out compliments to you beefy, as you've been getting so many of them that they're now flagged as spam
+[08:27:32] <FromDiscord> <Elegantbeef> Probably
+[08:27:35] *** Quits: fowl (~fowlmouth@user/fowl) (Quit: cya pals)
+[08:27:50] <FromDiscord> <Elegantbeef> Most sensible solutiion
+[08:28:10] *** Joins: fowl (~fowlmouth@user/fowl)
+[08:35:44] <FromDiscord> <evoalg> In reply to @BhamidipatiNikhil "IT worked like magic...": beefy said "There should be a check on the result of parseInt to ensure it's in 0..255" ... if it's above that I think it will wrap, and you might not want that?
+[08:37:42] <FromDiscord> <BhamidipatiNikhil> In reply to @evoalg "beefy said "There should": Yes sure!
+[09:02:27] <termer_> How would I go about converting a uint64 containing its max value to an int64?
+[09:02:47] <termer_> or vise-versa
+[09:02:59] <FromDiscord> <Elegantbeef> You want the bit signature?
+[09:02:59] <FromDiscord> <evoalg> How would one go about reading input from the keyboard without it being entered with the return key?
+[09:03:04] <FromDiscord> <Elegantbeef> `cast[int](yourUint)`
+[09:03:24] <FromDiscord> <Elegantbeef> `getCh` or using a library that automates it
+[09:03:35] <FromDiscord> <Elegantbeef> `getCh` is blocking
+[09:04:04] <termer_> Thanks
+[09:04:26] <termer_> cast does it properly
+[09:04:42] <termer_> I forgot about that, I was just doing a literal cast with (uint64)
+[09:04:46] <FromDiscord> <evoalg> gotcha ok thx I can work with that I think ... if I want to create a game then I'll think about a using a lib
+[09:05:02] <FromDiscord> <evoalg> would it be some sort of async lib?
+[09:05:15] <FromDiscord> <Elegantbeef> cast is a bit siganture cast, the other is a type conversion
+[09:05:42] <FromDiscord> <Elegantbeef> Depends on the library and what you're doing
+[09:07:24] <FromDiscord> <Elegantbeef> illwill/ncurses for instance let your read keys like a game engine
+[09:07:28] <FromDiscord> <evoalg> I guess I was pretending that I was able to create a space invaders game where left & right & fire would be acted upon, but in the mean time I still want the baddies to march down
+[09:07:40] <FromDiscord> <evoalg> nice thx
+[09:07:58] <FromDiscord> <Elegantbeef> You could use Nico for space incaders
+[09:08:16] <FromDiscord> <Elegantbeef> It's easy to work with and allows you to draw proper graphics
+[09:08:21] <FromDiscord> <Elegantbeef> Plus you can annoy impbox
+[09:08:57] <FromDiscord> <evoalg> I was just curious but I'll store this in my notes - thanks!
+[09:09:26] <FromDiscord> <Elegantbeef> Ncurses is how you'd probably want to do it otherwise
+[09:09:36] <FromDiscord> <Elegantbeef> or illwill(pure Nim so clearly better)
+[09:09:49] <FromDiscord> <evoalg> ahh nice
+[09:14:05] <FromDiscord> <Rika> i would not say that
+[09:14:31] <FromDiscord> <Rika> it is less robust and less battle tested. if a wrapper is made well it would be better than a pure nim solution
+[09:14:40] <FromDiscord> <Elegantbeef> Not say what?
+[09:14:48] <FromDiscord> <Elegantbeef> I was joking
+[09:15:00] <FromDiscord> <Rika> evo may not have understood that
+[09:15:28] <FromDiscord> <evoalg> ahhh I didn't understand - thanks Rika!
+[09:17:49] <FromDiscord> <evoalg> I think beefy has faith that I'm smarter than I am sometimes
+[09:19:28] <FromDiscord> <Elegantbeef> There is a benefit of pure nim though in that it doesnt require an other dependencies, minor benefit but alas
+[09:19:55] <FromDiscord> <evoalg> and it might be easier for the community to maintain
+[09:20:07] <FromDiscord> <evoalg> or adjust
+[09:20:21] <FromDiscord> <Elegantbeef> With external libraries you either use dynamic libraries(shipped aside the binary or on the system) or static linked (compiled into the binary)
+[09:20:33] <FromDiscord> <Elegantbeef> Yea it's nicer to have pure libraries due to being written in the language you're using but the question was of quality
+[09:21:35] <FromDiscord> <evoalg> dynamic libs, eg written in c, and nim can import those fine (I think I read that on here)
+[09:21:49] <FromDiscord> <Bung> anyone could give me some idea to improve my parser https://github.com/bung87/scorper/blob/8e22995ac2bb9a6f489bbc742a5b03d22631a0a2/src/scorper/http/multipartparser.nim#L266
+[09:21:52] <FromDiscord> <Elegantbeef> Nim can use both dynamic and static
+[09:22:08] <FromDiscord> <evoalg> nice!
+[09:22:16] <FromDiscord> <Bung> I do some search on Boyer–Moore but am using buffered string
+[09:27:24] <FromDiscord> <Elegantbeef> I'd give advice but i dont know the domain 😀
+[09:40:43] <FromDiscord> <Bung> it's about find http multipart form boundary , you see now I search boundary by loop every char
+[09:47:00] <FromDiscord> <Bung> when found boundary the content part is finished so I can save it to disk , the hard part is I use buffered string so I may read part of boundary, current implementation works but code looks very dumb
+[10:07:36] *** Quits: jmdaemon (~jmdaemon@user/jmdaemon) (Quit: ZNC 1.8.2 - https://znc.in)
+[10:07:54] *** Joins: jmdaemon (~jmdaemon@user/jmdaemon)
+[10:14:23] *** Quits: jmdaemon (~jmdaemon@user/jmdaemon) (Read error: Connection reset by peer)
+[10:18:30] *** Joins: jmdaemon (~jmdaemon@user/jmdaemon)
+[10:25:13] *** Joins: kobi7 (~kobi@82.166.168.241.fix.netvision.net.il)
+[10:26:07] <kobi7> hi
+[10:26:20] <FromDiscord> <Rika> hello
+[10:31:10] <kobi7> Has anyone tried the classes package? 
+[10:32:11] <FromDiscord> <Elegantbeef> I know impbox has used https://github.com/Glasses-Neo/OOlib
+[10:33:43] <FromDiscord> <Rika> thats a dope graphic wow
+[10:33:58] <FromDiscord> <Elegantbeef> lol
+[10:45:53] *** Joins: Gustavo6046 (~Gustavo60@user/gustavo6046)
+[11:11:49] <kobi7> I am trying to use translate_v2 of the gcplat package. It is a generated openapi, but it has compile errors.
+[11:14:44] <kobi7> do I have to use disruptek's openapi generator? I assumed the generated part is self contained
+[11:21:27] <kobi7> I think I see now..
+[12:15:21] <FromDiscord> <Tetralux> In reply to @Elegantbeef "Nim can use both": That also true with libc?
+[12:16:04] <FromDiscord> <Elegantbeef> Shit venturing into territory I'm 99.9% ignorant in
+[12:16:15] <FromDiscord> <Elegantbeef> I mean i imagine so given musl stuff
+[12:20:31] <FromDiscord> <Rika> Pretty much
+[12:20:41] <FromDiscord> <Rika> You need to configure Nim to use musl
+[12:27:42] *** Joins: pro (~pro@user/pro)
+[12:30:21] <FromDiscord> <Tetralux> In reply to @Rika "You need to configure": How does one do that though?
+[12:30:46] <FromDiscord> <Rika> https://github.com/kaushalmodi/hello_musl https://scripter.co/nim-deploying-static-binaries/
+[12:33:15] <kobi7> btw, if you use musl for static libs, well, some things like regular expressions based on PCRE, won't work. other dlopen libs that are dynamically linked won't work as well, as far as i understand
+[12:35:25] <madprops> seems there's no python's mutagen nim alternative
+[12:35:33] <madprops> for read/writing audio file tags
+[12:35:55] <FromDiscord> <Tetralux> Hmm. I think that using Zig as the C compiler would actually be all that's needed - at least in a basic sense.↵Unfortunately, I cannot ask Nim to do that, seemingly.
+[12:36:12] <FromDiscord> <Tetralux> In reply to @Tetralux "How does one do": Hmm. I think that using Zig as the C compiler would actually be all that's needed - at least in a basic sense.↵Unfortunately, I cannot ask Nim to do that, seemingly.
+[12:37:07] <FromDiscord> <Elegantbeef> To use Zig you'd need to use a shell file due to `zig cc` being how you call it
+[12:37:13] <FromDiscord> <Elegantbeef> It's documented in places
+[12:39:15] <FromDiscord> <Tetralux> Yeah - I saw that, but I couldn't figure out what command I needed to make it use it. `--cc` wasn't it.
+[12:39:28] <FromDiscord> <Tetralux> (edit) "wasn't" => "didn't want to accept"
+[12:39:32] *** Joins: MrSyabro (~MrSyabro@91.226.191.247)
+[12:40:07] <FromDiscord> <Tetralux> It seems like I can trick it with `--gcc.exe:zigcc.bat --gcc.linkerexe:zigcc.bat`. 🤔
+[12:40:15] <FromDiscord> <Rika> Make a shell file “zcc” and put “zig cc $1” in it
+[12:40:18] <FromDiscord> <Rika> Yes
+[12:40:21] <FromDiscord> <Rika> Pretty much that
+[12:40:40] <FromDiscord> <Tetralux> In reply to @Tetralux "It seems like I": Mentioning `gcc` in this seems... backwards, to say the least. 😄
+[12:40:48] <FromDiscord> <Tetralux> Nothing I want involves GCC. 🤔
+[12:40:58] <FromDiscord> <Tetralux> But it seems to work, at least.
+[12:43:14] <kobi7> here's a new nim file i just finished, sort of finished u know: suncalc
+[12:43:27] <kobi7> https://github.com/kobi2187/suncalc-nim
+[12:44:23] <kobi7> by the way I want to recommend the commandant package. it's an argument parser for command line usage. It works really great. supports subcommands as well
+[12:44:40] <FromDiscord> <Elegantbeef> Should `DEFAULT_TIMES` be a `const`?
+[12:44:59] <kobi7> yeah, this is just a remnant of the python codee
+[12:45:14] <FromDiscord> <Elegantbeef> Ah
+[12:45:16] <kobi7> they are sun angles and their description
+[12:45:25] <FromDiscord> <Elegantbeef> Didnt know if `DateTIme` could be a `const`
+[12:45:39] <kobi7> i want to separate it better, build from below instead of above
+[12:45:53] <FromDiscord> <Elegantbeef> To reeeee at you like rika used to you dont do `a: type` consistently
+[12:46:03] <FromDiscord> <Elegantbeef> used to me, you\
+[12:46:11] <kobi7> i mean, handle one, than do many, instead of how it's written in python, but for now it works and i am already time limited anyway
+[12:46:19] <FromDiscord> <Elegantbeef> Also put your example inside a `when isMainModule:` 😀
+[12:46:28] <kobi7> thanks
+[12:46:40] <FromDiscord> <Elegantbeef> No problem
+[12:48:14] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:3db3:b1d2:4da9:9983)
+[12:49:12] <kobi7> porting from python is almost straight forward. I am an advocator for transpilers and automated porting. I think pylib is really cool and should be contributed to.
+[12:49:31] *** Quits: jmdaemon (~jmdaemon@user/jmdaemon) (Ping timeout: 245 seconds)
+[12:50:05] <kobi7> since devs are invested in their languages, the best way is to have a porting effort. since projects change and improve so fast these days, it's better to have automated tools for porting.
+[12:50:52] <kobi7> for example, see nuget.org (dot net's package manager)
+[12:51:00] <kobi7> it has 292,169 unique packages...
+[12:51:20] <FromDiscord> <Elegantbeef> Yea automated porting is harder from languages without similar conventions though
+[12:51:56] <FromDiscord> <Elegantbeef> C to Nim could be done for the most part automatically but it's not a fun thing
+[12:52:20] <kobi7> python has a lot, and other trending languages as well. I am currently interested in dart, and there are other clean languages, rust etc. to port a high level language is safer, and with nim its performance will be better.
+[12:53:46] <kobi7> I wrote a tool to do cs to nim, but even there, the languages are different. The proper way is to have an intermediate language, that has all the constructs imaginable, and knows how to translate them to a "lesser" language (lesser meaning a simpler one)
+[12:54:08] <kobi7> but it's a lot of effort. much more complicated than it seems at first
+[12:55:03] <kobi7> even with the tool i wrote, i do not handle c# annotations, reflection, and any other code generation or macro-like 
+[12:55:38] <kobi7> if porting from python, you cannot use any runtime eval etc. unless you use python in runtime like nimpy.
+[12:55:45] <FromDiscord> <Elegantbeef> Yea languages with vastly different conventions is just going to be hell to machine transpile
+[12:56:05] <kobi7> and there is the problem of Dynamic type, and Array of Object - stuff like that, which Nim doesn't directly support
+[12:56:40] <FromDiscord> <Elegantbeef> I mean it kinda does but yea
+[12:57:36] <kobi7> Nim can be regarded a superset sometimes, so it's possible. and with macros, we have things like the classes package and other things that can enable the use case.
+[12:57:54] <kobi7> Right, nim does have variant kinds, which can mimic Object
+[12:58:03] <FromDiscord> <Elegantbeef> I mean without any magic
+[12:58:04] <FromDiscord> <Elegantbeef> https://play.nim-lang.org/#ix=3NYC
+[12:58:19] <kobi7> https://github.com/Carpall/nobject
+[12:58:52] <kobi7> yes, but add an int, or string to that list...
+[12:58:57] <FromDiscord> <Elegantbeef> It doesnt work on all types only `ref RootObj` but it's atleast there
+[12:59:07] <FromDiscord> <Elegantbeef> That was the "kinda"
+[12:59:18] <kobi7> :) actually i almost forgot that it can.
+[13:14:08] <FromDiscord> <Evrensel Kişilik> i hate all of damn things
+[13:14:12] <FromDiscord> <Evrensel Kişilik> damn framework hells
+[13:23:53] *** Quits: pro (~pro@user/pro) (Quit: pro)
+[13:24:22] *** Quits: kobi7 (~kobi@82.166.168.241.fix.netvision.net.il) (Ping timeout: 260 seconds)
+[13:25:44] *** Joins: pro (~pro@user/pro)
+[13:37:20] *** Quits: MrSyabro (~MrSyabro@91.226.191.247) (Quit: Quit)
+[13:38:15] *** Quits: Gustavo6046 (~Gustavo60@user/gustavo6046) (Quit: Leaving)
+[13:40:06] *** Quits: vicecea (~vicecea@gateway/vpn/pia/vicecea) (Remote host closed the connection)
+[13:40:36] *** Joins: vicecea (~vicecea@gateway/vpn/pia/vicecea)
+[13:45:40] <FromDiscord> <Goel> I'm looking at the System module, but i can't find the proc to get the max value that can be stored by an int (corrisponding by its Type, in my case int32)
+[13:47:48] <FromDiscord> <BhamidipatiNikhil> In reply to @Goel "I'm looking at the":  https://media.discordapp.net/attachments/371759389889003532/937290490708127774/unknown.png
+[13:48:15] <FromDiscord> <Elegantbeef> `high(int)`↵(@Goel)
+[13:48:27] <FromDiscord> <Elegantbeef> `high(int32)`
+[14:03:04] *** Quits: pro (~pro@user/pro) (Ping timeout: 256 seconds)
+[14:06:39] <FromDiscord> <BhamidipatiNikhil> @ElegantBeef I applied similar strategy to what you suggested to input an integer too... I am struggling to understand why it failed? https://media.discordapp.net/attachments/371759389889003532/937295234415607838/unknown.png
+[14:07:35] <FromDiscord> <Elegantbeef> If you're reading a single int why not just `parseInt(stdin.readLine)`?
+[14:10:48] <FromDiscord> <Elegantbeef> It looks like you're on windows so change `ch != '\n'` to `ch notin Whitespace`
+[14:11:02] <FromDiscord> <Elegantbeef> iirc Windows uses two characters for a newline
+[14:13:21] <FromDiscord> <BhamidipatiNikhil> In reply to @Elegantbeef "It looks like you're": Genius!! I forgot, i read about this in the official tutorials... Thx @ElegantBeef !
+[14:27:21] <FromDiscord> <Rika> Beware windows uses \r\n lol
+[14:27:56] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:3db3:b1d2:4da9:9983) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[14:56:09] <FromDiscord> <xx_ns> aye, window uses CRLF and most other systems just LF if you want to google it\
+[14:56:11] <FromDiscord> <xx_ns> (edit) "it\" => "it"
+[15:02:24] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:3db3:b1d2:4da9:9983)
+[15:13:54] <FromDiscord> <tandy> how do i make my computer use my nim fork?
+[15:14:16] <FromDiscord> <tandy> i made a pr but i dont want to wait till its merged and released to use it
+[15:19:44] <FromDiscord> <xx_ns> what OS?
+[15:20:54] <FromDiscord> <tandy> linux
+[15:21:38] <FromDiscord> <tandy> oh i just did choosenim .
+[15:21:45] <FromDiscord> <tandy> nice
+[15:25:52] <FromDiscord> <BhamidipatiNikhil> How do i create a matrix of sequence? I tried to do it through arrays as shown in official tutorial 1, but the problem is that the size of the matrix is not known at compile time.... https://media.discordapp.net/attachments/371759389889003532/937315174040358952/unknown.png
+[15:28:13] <FromDiscord> <BhamidipatiNikhil> How to create a matrix whose size is not known at compile time??
+[15:28:54] <FromDiscord> <tandy> nvm, lots of broken shit here..
+[15:29:31] <FromDiscord> <Bung> seq[seq[int]]
+[15:30:17] <FromDiscord> <Bung> newSeq is constructor
+[15:33:27] <FromDiscord> <Waldecir Santos> In reply to @BhamidipatiNikhil "<@!145405730571288577> I applied similar": May I ask what the theme do you use ?
+[15:34:25] <FromDiscord> <BhamidipatiNikhil> In reply to @Bung "seq[seq[int]]": Yes, but wouldn't it allocate too much space to it.... I wanted to conserve space.... https://media.discordapp.net/attachments/371759389889003532/937317321083584512/unknown.png
+[15:35:24] <FromDiscord> <BhamidipatiNikhil> In reply to @Waldecir Santos "May I ask what": This Theme is called CyberPunk... I am using it in VSCode editor https://media.discordapp.net/attachments/371759389889003532/937317571382882304/unknown.png
+[15:37:38] <FromDiscord> <BhamidipatiNikhil> In reply to @Waldecir Santos "May I ask what": https://marketplace.visualstudio.com/items?itemName=max-SS.cyberpunk
+[15:38:52] <FromDiscord> <Waldecir Santos> In reply to @BhamidipatiNikhil "https://marketplace.visualstudio.com/items?itemName": Perfect, thank you/
+[15:39:18] <FromDiscord> <Waldecir Santos> Does nim have any vscode extension that integrates with the testing features ? like Testing Explorer ?
+[15:48:31] <FromDiscord> <Rika> In reply to @BhamidipatiNikhil "Yes, but wouldn't it": seq can be allocated w/ specific space with `newSeqOfCap` but you do not put that in the type definition
+[15:52:19] <FromDiscord> <demotomohiro> @BhamidipatiNikhil Define matrix type `type Matrix[T] = object x: seq[T]` and define proc `[]`[T](m: Matrix[T]; row, column: int): T =
+[16:33:26] *** Joins: PMunch (~PMunch@user/pmunch)
+[16:41:02] <FromDiscord> <coldfussion> sent a code paste, see https://paste.rs/oah
+[17:05:22] <PMunch> Hmm, I'm guessing Nim doesn't involve the shell with `gorge`
+[17:05:28] <PMunch> So it tries to run that as a single command
+[17:05:53] <PMunch> Try to replace it with `nimble dump --json ..`
+[17:07:45] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:3db3:b1d2:4da9:9983) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[17:32:11] <PMunch> @coldfussion ^
+[17:32:32] <FromDiscord> <pmunch> [coldfussion](https://matrix.to/#/@coldfussion:ru-matrix.org)\: ^
+[17:32:52] <PMunch> Huh, I thought tagging people worked..
+[17:33:02] <PMunch> Oh wait, do I not add the @?
+[17:33:05] <PMunch> coldfusion ^
+[17:33:09] <PMunch> Hmm, nope
+[17:41:38] <FromDiscord> <Rika> they are a matrix user
+[17:42:53] <PMunch> Aha, and tagging only works for Discord?
+[17:43:16] <FromDiscord> <Rika> not sure
+[17:43:18] <FromDiscord> <Rika> prolly
+[17:43:23] <PMunch> @Rika
+[17:43:38] <FromDiscord> <Rika> or the matrix bridge doesnt work when the irc bridge posts a ping
+[17:43:39] <PMunch> Seems like it
+[17:43:55] <PMunch> It even added a @ to the nick even though I didn't put it there
+[17:46:38] <FromDiscord> <ynfle> Is this a bug, or "just add it to the pile of generics bugs"?
+[17:46:54] <FromDiscord> <ynfle> https://play.nim-lang.org/#ix=3O0U
+[17:47:26] <FromDiscord> <coldfussion> Oh, this worked! Thank you. Though it's strange ; worked on Linux...↵(<@709044657232936960_=50=4dunch=5b=49=52=43=5d>)
+[17:52:39] <FromDiscord> <ynfle> In reply to @ynfle "https://play.nim-lang.org/#ix=3O0U": Never mind. Don't think it's a bug
+[17:56:44] <FromDiscord> <BhamidipatiNikhil> In reply to @demotomohiro "<@764483963422375946> Define matrix type": What should i do next? https://media.discordapp.net/attachments/371759389889003532/937353140334899200/unknown.png
+[18:00:04] <FromDiscord> <BhamidipatiNikhil> I am facing a lot of problems creating a matrix of sequence... https://media.discordapp.net/attachments/371759389889003532/937353980902801468/unknown.png
+[18:01:21] <FromDiscord> <Rika> you cannot index an empty seq, instead you use `add`
+[18:10:40] <PMunch> @coldfussion, probably just a difference in how `staticExec`/`gorge` is implemented between the two platforms
+[18:11:31] *** Joins: carce (~carce@109-93-222-211.dynamic.isp.telekom.rs)
+[18:11:34] <PMunch> Or you can do `var am = newSeq[seq[int]](3)` to create a sequence of length three, and then you can assign the three entries like you do in your code
+[18:26:28] *** Joins: arkurious (~arkurious@user/arkurious)
+[18:32:44] <FromDiscord> <auxym> Is there a way to declare a `const` array that uses an enum index?
+[18:33:48] <FromDiscord> <auxym> nvm I just rtfm'd
+[18:34:41] <FromDiscord> <Rika> lol
+[18:35:32] *** Joins: pro (~pro@user/pro)
+[18:35:48] <FromDiscord> <auxym> just had to use the correct enum order in the literal with colon syntax
+[18:36:52] <FromDiscord> <Rika> yeah would be weird to be able to define index 1 before index 0
+[18:42:11] *** Quits: pro (~pro@user/pro) (Quit: pro)
+[18:42:30] *** Joins: pro (~pro@user/pro)
+[18:58:45] <PMunch> Colon syntax?
+[19:01:10] *** Quits: NimEventer (~NimBot@78.47.140.224) (Ping timeout: 268 seconds)
+[19:08:43] *** Quits: carce (~carce@109-93-222-211.dynamic.isp.telekom.rs) (Remote host closed the connection)
+[19:11:37] <FromDiscord> <Rika> [0: val, 1: val2 ...]
+[19:14:10] <PMunch> Wait what?
+[19:19:04] *** Joins: NimEventer (~NimBot@78.47.140.224)
+[19:22:28] *** Quits: dv^_^ (~dv@eclipse.oxfordfun.com) (Read error: Connection reset by peer)
+[19:24:21] *** Joins: dv^_^ (~dv@eclipse.oxfordfun.com)
+[19:28:10] <FromDiscord> <BhamidipatiNikhil> In reply to @PMunch "Or you can do": Yes, this worked... Thx @pmun
+[19:28:20] <FromDiscord> <BhamidipatiNikhil> (edit) "@pmun" => "@PMunch"
+[19:29:08] <FromDiscord> <BhamidipatiNikhil>  https://media.discordapp.net/attachments/371759389889003532/937376390376992818/unknown.png
+[19:30:19] <FromDiscord> <Szahid> Fastests grx car in GT Sport?
+[19:30:29] <FromDiscord> <Szahid> Not here
+[19:30:30] <FromDiscord> <Szahid> Sorry
+[19:39:11] <FromDiscord> <auxym> sent a code paste, see https://play.nim-lang.org/#ix=3O1L
+[19:39:13] <FromDiscord> <auxym> https://nim-lang.org/docs/manual.html#types-array-and-sequence-types
+[19:39:42] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:3db3:b1d2:4da9:9983)
+[19:49:18] <PMunch> Huh, I didn't know that was a thing
+[19:53:01] <PMunch> Hmm, that appears to create a weird type out of it
+[19:53:46] <PMunch> https://play.nim-lang.org/#ix=3O1T
+[19:54:32] <PMunch> There is another way of doing it, which means that it is an error to not declare all the types, and that you can only use a `Values` enum value to get data from the array
+[19:54:40] <PMunch> But that kinda seems to be the case for you as well
+[19:55:51] <PMunch> It says that it is `array[0..1, string]`, but I believe it is actually `array[valA..valC, string]` or put a different way `array[Values(0..1), string]`
+[19:56:14] <PMunch> But the error message you get when you do `lookupTable[0]` is super confusing
+[20:06:17] <anddam> PMunch: hi there
+[20:06:51] <anddam> I watched the presentation about the keyboard firmware in nim, pretty cool
+[20:07:57] <PMunch> Hi anddam, glad you liked it
+[20:08:30] <PMunch> I'm actually holding a presentation during FOSDEM which is about making a framework out of the stuff I wrote for that
+[20:11:11] <pro> whenn is fosdem ?
+[20:16:44] *** Joins: carce (~carce@109-93-222-211.dynamic.isp.telekom.rs)
+[20:17:03] <anddam> PMunch: will look forward to it
+[20:17:42] <anddam> btw is FOSDEM still held in physical presence?
+[20:18:03] <anddam> (not that I am going to attend, but still)
+[20:20:03] <PMunch> pro, FOSDEM is the 5th and 6th of February
+[20:20:32] <anddam> PMunch: IIRC when Yardanico helped me out with nimgl/imgui you also suggested a C library "autowrapper" that you wrote 
+[20:20:33] <PMunch> anddam, FOSDEM last year and this year where both virtual conferences. Hopefully we'll be back to physical ones next year (but who knows, we said that last year as well)
+[20:20:43] <PMunch> anddam, ah yes, Futhark
+[20:20:57] <anddam> PMunch: yep, COVID was kinda the black swan event of gatherings
+[20:29:42] <anddam> I'll reask my question: why do examples at https://github.com/marcomq/nimview/tree/main/examples import ../src/webgui rather than just webgui?
+[20:30:02] <anddam> I mean once the package is installed with nimble the latter should be an available package, shouldn't it?
+[20:34:58] *** Joins: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com)
+[20:37:17] <PMunch> It's common practice, that way you can clone the repository and run the examples without installing it
+[20:37:43] <PMunch> And if you have installed an older version and clone the repository the examples are guaranteed to run with the version they actually belong to
+[20:46:37] *** Quits: rp1 (~rp@cpc77289-basf12-2-0-cust607.12-3.cable.virginm.net) (Ping timeout: 240 seconds)
+[20:48:41] *** Joins: rp1 (~rp@cpc77289-basf12-2-0-cust607.12-3.cable.virginm.net)
+[21:00:08] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:3db3:b1d2:4da9:9983) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[21:11:31] *** Joins: noeontheend (~noeonthee@207.237.194.194)
+[21:37:08] *** Quits: PMunch (~PMunch@user/pmunch) (Quit: leaving)
+[21:37:33] <FromDiscord> <yumi> hello, can i ask for some help?
+[21:39:40] <FromDiscord> <yumi> im a nim beginner (wrote two utilities at https://github.com/egor4ka), and im trying to rewrite my mpv server folder utility that parses an html to get the file paths and tries to play all the files with mpv, but i cant figure out how to parse html (i've tried parsexml and parsehtml but i couldnt figure out how to do it)
+[21:42:35] <FromDiscord> <PMunch> This example from the html parser module should be quite easy to adapt to what you want to do: https://nim-lang.org/docs/htmlparser.html#examplecolon-transforming-hyperlinks
+[21:43:13] <FromDiscord> <yumi> it started spitting errors about findAll for some reason
+[21:43:15] <FromDiscord> <yumi> tried that
+[21:43:56] <FromDiscord> <yumi> let me try to do it real quick...
+[21:44:05] <FromDiscord> <yumi> and show you the code
+[21:44:48] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:3db3:b1d2:4da9:9983)
+[21:45:04] *** Joins: jmdaemon (~jmdaemon@user/jmdaemon)
+[21:49:42] <FromDiscord> <yumi>  https://media.discordapp.net/attachments/371759389889003532/937411770476273674/mpv-url-folder.nim
+[21:49:44] <FromDiscord> <yumi> here
+[21:50:02] <FromDiscord> <yumi> yeah ik about the no hyphens stuff
+[21:50:35] <FromDiscord> <yumi> i usually change the name when i copy it over
+[21:51:41] <FromDiscord> <yumi> wait i forgot a discard
+[21:51:45] <FromDiscord> <yumi> brb
+[21:52:26] <FromDiscord> <huantian> what I immediately see is that you're trying to `add` to an immutable variable `files` too
+[21:52:36] <FromDiscord> <yumi> oh wait yeah
+[21:52:40] <FromDiscord> <yumi> forgot bout that
+[21:53:17] *** Quits: noeontheend (~noeonthee@207.237.194.194) (Ping timeout: 240 seconds)
+[21:53:59] <FromDiscord> <yumi> here https://media.discordapp.net/attachments/371759389889003532/937412845447028746/mpvurlfolder.nim
+[21:54:43] <FromDiscord> <yumi> i get a bunch of errors about undeclared stuff
+[21:55:48] <FromDiscord> <TurtleP> sent a code paste, see https://play.nim-lang.org/#ix=3O2x
+[21:57:02] *** termer_ is now known as termer
+[22:02:43] *** Joins: jmd_ (~jmdaemon@user/jmdaemon)
+[22:03:27] *** Quits: jmdaemon (~jmdaemon@user/jmdaemon) (Ping timeout: 250 seconds)
+[22:04:00] <FromDiscord> <yumi> In reply to @yumi "i get a bunch": i seriously have no idea what the fuck does it mean
+[22:06:03] <FromDiscord> <dom96> In reply to @TurtleP "Hey, I keep getting": how did lovebrew-0.5.4 get installed?
+[22:06:19] <FromDiscord> <TurtleP> locally
+[22:06:20] <FromDiscord> <dom96> if nimblemeta.json doesn't exist in it then it sounds like some other tool put it there improperly
+[22:06:44] <FromDiscord> <TurtleP> I ran `nimble install` on my project
+[22:06:52] <FromDiscord> <TurtleP> which is lovebrew
+[22:07:19] *** Quits: carce (~carce@109-93-222-211.dynamic.isp.telekom.rs) (Remote host closed the connection)
+[22:07:30] <FromDiscord> <dom96> is there a nimblemeta.json file in `C:\Users\jpost\.nimble\pkgs\lovebrew-0.5.4\` if you `nimble install` it?
+[22:08:00] <FromDiscord> <TurtleP> yes
+[22:08:54] *** Quits: jmd_ (~jmdaemon@user/jmdaemon) (Ping timeout: 250 seconds)
+[22:08:55] <FromDiscord> <dom96> hm, then that's odd. I guess it's complaining about \dist\lovebrew.exe being missing
+[22:09:08] <FromDiscord> <dom96> maybe the error is poor and it expects that file to have been installed, but it wasn't
+[22:09:56] <NimEventer> New thread by Cybersecdo: Cryptography , see https://forum.nim-lang.org/t/8854
+[22:10:44] <FromDiscord> <TurtleP> which it does exist
+[22:10:49] <FromDiscord> <TurtleP> but that's in the project directory
+[22:13:09] <FromDiscord> <yumi> hmm
+[22:15:12] *** Joins: jmdaemon (~jmdaemon@user/jmdaemon)
+[22:16:44] <FromDiscord> <TurtleP> and if I got to the filesystem directory and delete the folder it complains about, the error goes away
+[22:16:48] <FromDiscord> <TurtleP> @dom96
+[22:17:55] <FromDiscord> <dom96> hard to say what the problem is, could be a Nimble bug
+[22:18:01] <FromDiscord> <dom96> depends what this `dist` directory is
+[22:18:11] *** Quits: nixfreaknim[m] (~reversem3@2001:470:69fc:105::33d1) (Quit: Bridge terminating on SIGTERM)
+[22:18:11] *** Quits: cheer[m] (~cheertchn@2001:470:69fc:105::39de) (Quit: Bridge terminating on SIGTERM)
+[22:18:11] *** Quits: happycorsair[m] (~happycors@2001:470:69fc:105::205) (Quit: Bridge terminating on SIGTERM)
+[22:18:12] *** Quits: zgasma[m] (~mckaymatr@2001:470:69fc:105::1:627c) (Quit: Bridge terminating on SIGTERM)
+[22:18:12] *** Quits: xiamx (~xiamx@2001:470:69fc:105::1:5692) (Quit: Bridge terminating on SIGTERM)
+[22:18:17] <FromDiscord> <dom96> and whether you do some fancy stuff with it during Nimble install 🙂
+[22:18:43] <FromDiscord> <TurtleP> it's just a directory where the resulting binary goes
+[22:19:04] <FromDiscord> <TurtleP> sent a code paste, see https://play.nim-lang.org/#ix=3O3V
+[22:21:15] <FromDiscord> <yumi> trying to nim check the mpvurlfolder.nim file, i get the output in the nimcheckoutput.txt file https://media.discordapp.net/attachments/371759389889003532/937419705113788496/mpvurlfolder.nim https://media.discordapp.net/attachments/371759389889003532/937419705310912532/nimcheckoutput.txt
+[22:21:25] <FromDiscord> <yumi> any ideas?
+[22:22:33] *** Joins: cheer[m] (~cheertchn@2001:470:69fc:105::39de)
+[22:29:09] <FromDiscord> <yumi> okay nvm i screwed something up in my fs
+[22:29:10] *** Joins: happycorsair[m] (~happycors@2001:470:69fc:105::205)
+[22:29:10] <FromDiscord> <yumi> brb
+[22:29:22] *** Joins: zgasma[m] (~mckaymatr@2001:470:69fc:105::1:627c)
+[22:29:37] *** Joins: xiamx (~xiamx@2001:470:69fc:105::1:5692)
+[22:29:37] *** Joins: nixfreaknim[m] (~reversem3@2001:470:69fc:105::33d1)
+[22:29:43] <FromDiscord> <yumi> hmm
+[22:29:45] <FromDiscord> <auxym> `import xmltree` maybe? findAll on XmlNode is defined in xmltree
+[22:29:50] <FromDiscord> <yumi> oh
+[22:29:51] <FromDiscord> <yumi> okay
+[22:29:57] <FromDiscord> <yumi> ill try that
+[22:30:03] <FromDiscord> <yumi> but termux is kinda screwed
+[22:30:04] <FromDiscord> <yumi> brb
+[22:30:22] <FromDiscord> <yumi> (yeah im coding on a phone)
+[22:30:36] <FromDiscord> <rishavs (Rishav Sharan)> Need some advice. I am trying to create a parser combinator in nim, and will need to mutate a source string "in-situ" a lot for this. Would something like strutils/ continuesWith or delete procs be good for this. I really don't want to create a new string everytime but just truncate a few characters from the start of the string.
+[22:34:53] <FromDiscord> <yumi> sent a code paste, see https://play.nim-lang.org/#ix=3O42
+[22:35:53] <FromDiscord> <huantian> `files.add(splitFile(a.attrs["href"]))`, `splitFile(a.attrs["href"])` returns a `tuple[dir: string, name: string, ext: string]`, nto a string
+[22:35:59] <FromDiscord> <huantian> (edit) "`files.add(splitFile(a.attrs["href"]))`, `splitFile(a.attrs["href"])`" => "`files.add(splitFile(a.attrs["href"]))`↵`splitFile(a.attrs["href"])`"
+[22:36:06] <FromDiscord> <huantian> (edit) "`files.add(splitFile(a.attrs["href"]))`↵`splitFile(a.attrs["href"])`" => "`files.add(splitFile(a.attrs["href"]))`↵`splitFile()`"
+[22:36:09] <FromDiscord> <huantian> (edit) "nto" => "not"
+[22:43:19] <FromDiscord> <yumi> uh
+[22:43:25] <FromDiscord> <yumi> so what do i change it to?
+[22:44:35] <FromDiscord> <huantian> if you only want the filename use `extractFilename()`
+[22:44:42] <FromDiscord> <huantian> not sure why you're splitFile-ing
+[22:44:54] <FromDiscord> <yumi> uh
+[22:44:55] <FromDiscord> <yumi> what
+[22:45:02] <FromDiscord> <yumi> i just want to get the value of the href
+[22:45:13] <FromDiscord> <huantian> then I don't think you  need splitFile at all
+[22:45:21] <FromDiscord> <yumi> what do i use then?
+[22:45:36] <FromDiscord> <huantian> `files.add((a.attrs["href"])`
+[22:45:39] <FromDiscord> <huantian> (edit) "`files.add((a.attrs["href"])`" => "`files.add(a.attrs["href"])`"
+[22:45:44] <FromDiscord> <yumi> oh okay thanks
+[22:46:31] *** Quits: cyraxjoe (~joe@2806:109f:13:81b1:201:2eff:fe80:7df4) (Quit: I'm out!)
+[22:46:32] <FromDiscord> <yumi> wooo it works
+[22:46:33] <FromDiscord> <yumi> thanks
+[22:46:53] <FromDiscord> <Rika> Where did the split file thing come from? Why did you use it I mean
+[22:48:19] *** Joins: cyraxjoe (~joe@2806:109f:13:81b1:201:2eff:fe80:7df4)
+[22:49:33] <FromDiscord> <yumi> i copied it from the docs
+[22:49:56] *** Quits: nixfreaknim[m] (~reversem3@2001:470:69fc:105::33d1) (Quit: Client limit exceeded: 20000)
+[22:53:20] *** Quits: cheer[m] (~cheertchn@2001:470:69fc:105::39de) (Quit: Client limit exceeded: 20000)
+[22:53:35] *** Quits: happycorsair[m] (~happycors@2001:470:69fc:105::205) (Quit: Client limit exceeded: 20000)
+[22:55:01] <FromDiscord> <yumi> hmmm
+[22:55:02] *** Joins: cheer[m] (~cheertchn@2001:470:69fc:105::39de)
+[22:55:09] <FromDiscord> <yumi> now getting runtime errors
+[22:55:17] *** Joins: happycorsair[m] (~happycors@2001:470:69fc:105::205)
+[22:55:30] *** Joins: nixfreaknim[m] (~reversem3@2001:470:69fc:105::33d1)
+[22:56:49] <FromDiscord> <yumi> ./mpvurlfolder https://duckykutya.cf/kat/↵/data/data/com.termux/files/home/mpvurlfolder.nim(3) mpvurlfolder↵/data/data/com.termux/files/usr/lib/nim/lib/system/fatal.nim(53) sysFatal↵Error: unhandled exception: index 1 not in 0 .. 0 [IndexDefect] https://media.discordapp.net/attachments/371759389889003532/937428659667611668/mpvurlfolder.nim
+[22:57:04] <FromDiscord> <yumi> uh
+[22:57:05] <FromDiscord> <yumi> wait
+[22:57:47] <FromDiscord> <yumi> (edit) "./mpvurlfolder https://duckykutya.cf/kat/↵/data/data/com.termux/files/home/mpvurlfolder.nim(3) mpvurlfolder↵/data/data/com.termux/files/usr/lib/nim/lib/system/fatal.nim(53) sysFatal↵Error: unhandled exception: index 1 not in 0 .. 0 [IndexDefect] https://media.discordapp.net/attachments/371759389889003532/937428659667611668/mpvurlfolder.nim" => "sent a long message, see http://ix.io/3O47"
+[22:57:54] <FromDiscord> <yumi> i dont understand
+[22:58:25] <FromDiscord> <dom96> sent a code paste, see https://paste.rs/SND
+[23:01:19] <FromDiscord> <yumi> In reply to @yumi "~ $ ./mpvurlfolder https://duckykutya.cf/kat/": i run curl from the script but nothing
+[23:02:45] <FromDiscord> <yumi> hmm
+[23:04:58] <FromDiscord> <yumi> fixed the issue L
+[23:05:02] <FromDiscord> <yumi> (edit) "L" => "LOL"
+[23:05:17] <FromDiscord> <yumi> i shouldve declared the html variable AFTER the curl
+[23:05:21] <FromDiscord> <yumi> i am an idiot
+[23:09:40] <FromDiscord> <yumi> thanks for the help guys!
+[23:23:09] <FromDiscord> <yumi> by the way, how can i silence the output of a proc in nim?
+[23:23:30] <FromDiscord> <yumi> sent a code paste, see https://paste.rs/Mqk
+[23:27:44] <FromDiscord> <ajusa> In reply to @yumi "i need to silence": what's the full command? did you try `curl -s`?
+[23:28:06] <FromDiscord> <yumi> i tried curl -LO {file} {url}
+[23:28:12] <FromDiscord> <yumi> there is an -s param?
+[23:29:18] <FromDiscord> <ajusa> I see the code you posted earlier, if you are on a UNIXy system `curl -LO {file} {url} > /dev/null` should work.
+[23:30:00] <FromDiscord> <ajusa> alternatively you could do `curl -L {url} > {file}`, that might work as well.
+[23:30:26] <FromDiscord> <yumi> but > doesnt work with execShellCmd
+[23:30:32] <FromDiscord> <yumi> lemme try -s
+[23:30:39] *** Parts: zgasma[m] (~mckaymatr@2001:470:69fc:105::1:627c) ()
+[23:31:01] <FromDiscord> <ajusa> In reply to @yumi "but > doesnt work": oh really? my bad, thought it just used the normal system shell
+[23:31:09] <FromDiscord> <yumi> i dont think so
+[23:31:41] <FromDiscord> <yumi> https://github.com/egor4ka/mpvurlfolder here is the repo btw
+[23:45:25] *** Quits: jmdaemon (~jmdaemon@user/jmdaemon) (Read error: Connection reset by peer)
+[23:45:48] *** Joins: jmdaemon (~jmdaemon@user/jmdaemon)
+[23:55:39] <FromDiscord> <hethir> how can I deep copy a `ref object`?
+[23:57:28] <FromDiscord> <konsumlamm> using `deepCopy`
+[23:58:59] <FromDiscord> <rishavs (Rishav Sharan)> sent a code paste, see https://play.nim-lang.org/#ix=3O4n

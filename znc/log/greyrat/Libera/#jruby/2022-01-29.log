@@ -1,0 +1,103 @@
+[00:43:46] <kovyrin[m]> Following up on the report above: while building our base CI image after install jruby 9.3.3.0 via RVM I am getting the following trying to run `/usr/share/rvm/rubies/jruby-$JRUBY_VERSION/bin/gem update --system $RUBYGEMS_VERSION --no-document`:... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/abfefee31beb3908fb32b6c520d27fbafbd193cc)
+[00:44:19] <kovyrin[m]> s/up on//, s///
+[00:48:54] <kovyrin[m]> Just confirmed - it blows up like that on any gem install O_o
+[00:49:59] <kovyrin[m]> Feels like something is very broken somewhere, but I can't imagine openssl is broken for everybody, so probably my environment or maybe rvm is doing something bad to jruby during installation.
+[00:50:36] <kroth_lookout[m]> one of my coworkers reports you can do `gem install --local` if you download the gem separately
+[00:51:09] <kroth_lookout[m]> https://github.com/jruby/jruby-openssl/runs/4981415605?check_suite_focus=true did pass, idk what that means
+[00:52:01] <kroth_lookout[m]> `jruby -S gem install ...` does not work for me though
+[00:52:23] <kroth_lookout[m]> * gem separately (which makes some sense since it wouldn't need to do https/ssl things if it's not doing a dl)
+[00:53:01] <kroth_lookout[m]> * me though (same failure as above)
+[01:26:49] <kroth_lookout[m]>  * one of my coworkers reports you can do `gem install --local` if you download the gem separately (which makes some sense since it wouldn't need to do https/ssl things if it's not doing a dl) e.g.... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/2872debfc35f66d85f5f244ddfad232d894c41fa)
+[01:27:09] <kroth_lookout[m]>  * one of my coworkers reports you can do `gem install --local` if you download the gem separately (which makes some sense since it wouldn't need to do https/ssl things if it's not doing a dl) e.g.... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/5e27a61c334772d87cf05572a5a6cadca670f116)
+[01:50:43] <headius> Hey there
+[01:52:33] <headius> kroth_lookout: hmm that would mean a version mismatch and it can't find a method it is looking for. Possibly we changed something in JRuby that jruby-openssl is using
+[01:53:19] <headius> But clearly 9.3.3 works with the certain of jruby-openssl we shipped
+[01:53:42] <headius> You might try downloading latest version gem and installing locally, that may fix it for you
+[01:53:58] <headius> File a bug if it does not and let me know
+[02:00:06] *** Joins: jtarvydas[m] (~jtarvydas@2001:470:69fc:105::1:8387)
+[02:03:45] <jtarvydas[m]> Hi there - this jetty bug looks similar: https://github.com/eclipse/jetty.project/issues/3244 - The issue there was that compiling with JDK 9+ produced bytecode incompatible with JDK 8, even when source/target were set to 1.8. I suspect that's the case here (ByteBuffer.limit is definitely in java 8's API). The fix here might be to add `release => 8` to the compiler options in jruby-openssl's Mavenfile (although I haven't had time to
+[02:03:45] <jtarvydas[m]> validate any of this locally yet)
+[02:11:04] <headius> jtarvydas: You are correct about that first error, that looks like jruby-openssl was build with Java 9 or higher without -release 8 so it used those newer method signatures
+[02:11:17] <kroth_lookout[m]> fwiw: i'm trying 9.3.3 but installing it via rvm is taking an awfully long time to complete `jruby-9.3.3.0 - #importing gemset /Users/kroth/.rvm/gemsets/jruby/global.gems`
+[02:11:47] <headius> the other error about is on our own RubyArray class and we must have changed it some time after the jruby-openssl version that kroth_lookout has installed (in a global gemset maybe?)
+[02:12:08] <headius> that first error should be reported on jruby-openssl and we just need to rebuild an x.x.x.1 release with Java 8 to fix it
+[02:12:12] <kroth_lookout[m]> oh finished, slightly different error on 9.3.3:... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/2cd518c302c62c763b3c1e85e9e728d6c7e48a8c)
+[02:12:29] <headius> the second error should be fixed by a newer jruby-openssl but that may be the one that's built with Java 9 😀
+[02:13:17] <kroth_lookout[m]> s/https://artifactory.prod.lkt.is/artifactory/api/gems/lookout-gems//etc/
+[02:13:31] <headius> not sure when this RubyArray.collect method would have changed 🤔
+[02:14:11] <kroth_lookout[m]>  * oh finished, slightly different error on 9.3.3:... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/3665090acee452dff51f77f242bf5469c8d61ac3)
+[02:14:50] <headius> aha
+[02:15:06] <headius> kroth_lookout: so the first error with the buffer thing was jruby 9.2.19.0
+[02:15:35] <kroth_lookout[m]> that's right. we still have a number of projects on 9.2.x
+[02:15:35] <headius> whatever version of jruby-openssl is installed in that one is probably compiled against Java 9+
+[02:15:41] <headius> so a newer jruby-openssl on that one might help
+[02:16:03] <headius> for the 9.3.3.0 error there's a different issue, it is using a jruby-openssl that compiled against a different version of that method
+[02:16:16] <headius> need to figure out what version of jruby-openssl is being used in each case
+[02:17:10] <kroth_lookout[m]> we only started getting the 9.2 error with jruby-openssl 0.12 afaict... let me see if I can confirm that's what comes in from rvm install
+[02:17:25] <kroth_lookout[m]> * 0.12 afaict (based on timing)... let
+[02:17:29] <kroth_lookout[m]> * 0.12 afaict (based on timing, this wasn't a problem yesterday)... let
+[02:19:25] <headius> aha
+[02:19:42] <headius> so that is a bug then, 0.12 was built with Java 9 and uses methods that don't exist in 8
+[02:19:50] <headius> jruby-openssl bug, easy to remedy
+[02:19:57] <headius> kares: ^
+[02:20:44] <headius> the other one is more peculiar... RubyArray.collect does not appear to have changed substantially since 2020, so you would have to be using a jruby-openssl older than that probably
+[02:22:18] <headius> https://github.com/jruby/jruby/commit/e849caf1e7329ed1fe196287882866a624812def
+[02:22:23] <kroth_lookout[m]> i just did rvm install jruby-9.3.3.0, so whatever comes with that :) 
+[02:22:50] <headius> that is likely the offending commit... return value changed from RubyArray to IRubyObject
+[02:23:46] <headius> that was merged in Apr 2020 for Ruby 2.6 features of JRuby 9.3
+[02:24:17] <headius> kroth_lookout: is this you? https://github.com/jruby/jruby/issues/7048
+[02:24:35] <kroth_lookout[m]> fwiw... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/dc184fbf2c5ee588e9bca8e2738ee2daeb1f4ce9)
+[02:24:59] <kroth_lookout[m]> headius: nope
+[02:25:17] <headius> oh I see
+[02:25:19] <kroth_lookout[m]> but close enough i think
+[02:25:20] <headius> this version was just released
+[02:25:24] <headius> today!
+[02:25:27] <kroth_lookout[m]> yeah
+[02:25:31] <headius> and now we are getting the bugzies
+[02:25:56] <headius> ok we will get a rerelease of this.. until then you should just roll back
+[02:27:04] <kroth_lookout[m]> uh the rolling back is a little difficult as it gets packaged with rvm install
+[02:27:17] <headius> and rvm is installing whatever is the latest
+[02:27:20] <headius> you know what, I think I can yank it
+[02:27:24] <kroth_lookout[m]> one of my coworkers reports you can do `gem install --local` if you download the gem separately (which makes some sense since it wouldn't need to do https/ssl things if it's not doing a dl) e.g.... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/621da4029681c535999782b39a946518e73a4891)
+[02:27:39] <headius> the jossl releases are pushed by kares but I should have rights to yank
+[02:30:56] <headius> I'm going to do it!
+[02:31:04] <headius> 💪
+[02:34:08] <headius> ok the deed is done
+[02:34:24] <headius> kroth_lookout: if you dump and reinstall it should pull the older gem now and work ok
+[02:34:34] <headius> I will file an issue with jruby-openssl to get a newly built release of 0.12.0
+[02:35:03] <headius> and also address that binary incompatibility with 9.2
+[02:35:14] <kroth_lookout[m]> 👍️
+[02:39:11] <headius> transfered this one from jruby bugs: https://github.com/jruby/jruby-openssl/issues/244
+[02:39:16] <headius> I'll file the RubyArray issue separately
+[02:42:24] <headius> le sigh
+[02:42:48] <headius> sad thing is if we fix it back to the old signature it will still be broken on 9.3.0/1/2/3 so we need to patch jruby-openssl to work around it
+[02:52:46] <kroth_lookout[m]> just confirming the yank has put things back to normal for me, thanks very much headius 
+[02:53:37] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 240 seconds)
+[02:58:18] <ahorek[m]1> headius:  any thoughts about https://maven.apache.org/plugins/maven-compiler-plugin/examples/set-compiler-release.html flag? it should prevent binary incompatible releases like https://github.com/jruby/jruby-openssl/issues/244
+[03:01:33] <ahorek[m]1> recently we had a very similar problem that lead to https://github.com/rake-compiler/rake-compiler/pull/201
+[03:03:36] <ahorek[m]1> I've tried it on the main repository, but it complains about using unsafe ```/jruby/core/src/main/java/org/jruby/util/StringSupport.java:[56,15] error: package sun.misc does not exist``` https://bugs.openjdk.java.net/browse/JDK-8214165
+[03:07:30] <headius> ahorek: ah very nice, so we don't have to have special config for 8 vs 9
+[03:07:33] <headius> yes good idea
+[03:08:06] <headius> I will probably use this in jnr-* too because they have to be built for release with 9 but still support 8 (I have just conditionally added -release for now)
+[03:10:32] <ahorek[m]1> it turns out to be a cleaner solution then https://github.com/headius/backport9/blob/master/src/main/java/com/headius/backport9/buffer/Buffers.java#L35 maybe it could work simply just by adding the flag on smaller repositories like jopenssl
+[03:14:17] <ahorek[m]1> s/then/than/
+[03:20:13] <headius> I think we could add it to any of our repositories without any risk
+[03:20:21] <headius> I would like to get rid of that backport logic anyway
+[07:35:42] *** Joins: subbu (~subbu@user/subbu)
+[09:06:20] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 250 seconds)
+[09:07:27] <kares[m]> headius: thanks for yanking jossl
+[09:07:27] <kares[m]> did not put enough time to manual testing nor to get more CI testing fixed, but I will try to on Monday.
+[09:10:18] <kares[m]> spent my time getting TLS 1.3 support ready and most of it trying to port the C OpenSSL bits but decided to cut my loses after several days and release it partially working but not complete (would need to port the whole ssl_ciph.c logic and a few others but it's just more and more work) ...
+[09:28:26] <headius> Yeah no problem, it was a mistake that was bound to happen eventually with no release control in the build, and the 9.3 API thing should have been caught a long time ago
+[09:28:44] <headius> I'll try to come up with a patch for that if you don't get around to it before morning
+[10:07:36] <byteit101[m]> hmm
+[10:07:57] <byteit101[m]> how do I adapt a setter using binder/methodHandle?
+[10:08:14] <byteit101[m]> the getter has no args so I can simply chain
+[10:08:38] <byteit101[m]> but I need to pre-process the target for the setter
+[10:15:14] <byteit101[m]> I think foldArguments may work
+[10:16:02] <kares[m]> wouldn't have happened if CI was in place, going to do that on Monday we're already half way there.
+[18:35:20] *** Joins: subbu (~subbu@user/subbu)
+[19:45:16] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[22:08:04] <headius> byteit101: yes fold should be what you want
+[23:51:08] <byteit101[m]> headius: yup, I used that successfully and updated the pr. Now awaits  review
+[23:53:51] <headius> Great!

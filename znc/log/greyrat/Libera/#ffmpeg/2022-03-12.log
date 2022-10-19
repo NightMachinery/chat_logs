@@ -1,0 +1,486 @@
+[00:00:03] <znf> if I don't -async/vsync, does it break the a+v sync?
+[00:00:10] <hyperfekt> ah, so it won't work for all decoders? that explains why i am still seeing corruption despite that flag
+[00:00:18] <JEEB> it's on the demux level, not decode
+[00:00:30] <JEEB> as in, if the reader (like the MPEG-TS one) can notice that something's off
+[00:00:40] <JEEB> the libavformat library will just not output that AVPacket
+[00:01:23] <hyperfekt> ah, got it. so i guess if i haven't already been seeing corrupt packet warnings it's not going to help me
+[00:01:42] <JEEB> znf: the (badly named) vsync option in ffmpeg.c should be completely irrelevant, since the timestamps of the packets are what matters
+[00:02:06] <znf> hm, ok
+[00:02:15] <JEEB> your filter chain and other stuff decides what happens if you f.ex. miss a video frame
+[00:02:38] <znf> so what's the advantage of using +discardcorrupt if I'd be transcoding?
+[00:02:38] <JEEB> and well, vsync can attempt to do frame duplication by itself, but it is not "vsync"
+[00:02:49] <JEEB> less chances of throwing garbage at a decoder
+[00:02:55] <JEEB> I'm using +discardcorrupt myself
+[00:03:07] <JEEB> because it's much more likely that a completely broken packet will cause damage in a decoder
+[00:03:15] <znf> yeah, I've seen that often
+[00:03:49] <JEEB> I quickly checked what MPEG-TS reader utilizes to figure out if a packet is corrupt and it's pretty understandable stuff
+[00:03:53] *** Joins: lavaball (felix@31.204.155.215)
+[00:04:02] <JEEB> you can grep the libavformat mpegts file for AV_PKT_FLAG_CORRUPT
+[00:04:03] *** Quits: keypusher (keypusher@user/keypusher) (Ping timeout: 252 seconds)
+[00:04:16] <JEEB> I think it was a PES packet mismatch and the counter not being continuous?
+[00:04:34] <JEEB> in either case shit's happened and maybe it's a good idea to drop the packet on the floor :)
+[00:04:47] <znf> but if I'm just -c copy from mpegts to mpegts, with +discardcorrupt, what happens to the missing frames? :P
+[00:05:00] <znf> and will they not eventually skew the audio/video?
+[00:05:07] <JEEB> mpeg-ts has thankfully timestamps
+[00:05:11] <znf> I'm not entirely sure how DTS/PTS works in regards o audio/video sync
+[00:05:18] *** Joins: keypusher (keypusher@user/keypusher)
+[00:05:57] <JEEB> PTS is what is always utilized for sync
+[00:06:31] <JEEB> DTS is something utilized as another timestamp on the container level
+[00:07:30] <znf> hm, you made me curious now
+[00:07:40] <znf> I have a channel that always goes out of sync on my TV
+[00:07:55] <JEEB> for analysis of MPEG-TS I recommend DVB Inspector
+[00:07:58] <JEEB> has graphing etc
+[00:08:01] <znf> (and it's traight copy from DVB-C)
+[00:08:06] <JEEB> https://kuroko.fushizen.eu/screenshots/apple_mpegts/nice_timestamps_there.png
+[00:08:15] <znf> And stop/starting it will resume correctly
+[00:08:50] <znf> actually -- it's even weirder, because I don't even have to stop/start the ffmpeg instance that I fetch data from, only the player
+[00:13:47] *** Joins: fman3 (~fman3@2a0d:4500::a01d)
+[00:15:06] <fman3> Can I force the first frame of every input to be encoded as a keyframe?
+[00:18:32] *** Quits: Stalker (~Stalker@89.201.5.246) (Ping timeout: 240 seconds)
+[00:18:37] <znf> pretty sure the first frame is a keyframe, not sure how else would video work
+[00:19:08] <fman3> Yes but not when encoding multiple inputs
+[00:19:12] <fman3> ffmpeg -ss 10.0 -to 15.0 -i video.mp4 -ss 40.0 -to 45.0 -i video.mp4 -ss 110.0 -to 115.0 -i video.mp4 -filter_complex "concat=n=3,scale=1280:720" out.mp4
+[00:19:56] *** Joins: Stalker (~Stalker@89.201.5.246)
+[00:19:58] <fman3> I want the first frame of every input to be encoded as a keyframe
+[00:20:09] <furq> -force_key_frames
+[00:20:18] <fman3> let me try
+[00:21:34] <furq> i guess -force_key_frames 5,10
+[00:22:08] <furq> -force_key_frames source would work if you weren't seeking in the input
+[00:22:30] *** Quits: thebombzen (~thebombze@c-68-41-54-207.hsd1.mi.comcast.net) (Quit: Quit)
+[00:31:37] *** Quits: Blacker47 (~Blacker47@user/blacker47) (Quit: Life is short. Get a V.90 modem fast!)
+[00:38:12] *** Quits: DarkG (~DarkG@user/darkg) (Excess Flood)
+[00:38:26] *** Joins: DarkG (~DarkG@user/darkg)
+[00:50:12] <fman3> Why does "-force_key_frames source" not work when seeking?
+[00:50:52] <furq> that just writes a keyframe whenever there's one in the source
+[00:51:09] <furq> you don't know if there's a keyframe at exactly 40 seconds
+[00:51:17] <furq> if there happens to be one there then it'll work
+[00:51:30] <fman3> Doesn't the seeking for the inputs happens at keyframes anyways?
+[00:51:35] <furq> no
+[00:51:42] <fman3> Can I force it?
+[00:52:05] <furq> you can enable -noaccurate_seek but then the seeks might be more than five seconds out
+[00:52:45] <fman3> Hmmm, yes that might be an issue
+[00:54:51] *** Quits: luni-4 (uid453292@id-453292.ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[00:55:03] *** Quits: mthall (~quassel@mail.thalliman.com) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[00:56:00] *** Joins: AbleBacon (~AbleBacon@user/AbleBacon)
+[00:57:52] <fman3> yep that's not working
+[00:58:56] <fman3> I guess there's also no simple way to add a chapter marker for every input?
+[01:01:57] *** Joins: xkuru (~xkuru@user/xkuru)
+[01:02:36] *** Joins: mthall (~quassel@mail.thalliman.com)
+[01:07:11] <fman3> Shouldn't the output of this be exactly 15 seconds?
+[01:07:11] <fman3> ffmpeg -ss 10.0 -to 15.0 -i video.mp4 -ss 40.0 -to 45.0 -i video.mp4 -ss 110.0 -to 115.0 -i video.mp4 -filter_complex "concat=n=3,scale=1280:720" out.mp4
+[01:16:43] *** Joins: darkapex_ (~darkapex@user/darkapex)
+[01:16:56] *** Quits: darkapex (~darkapex@user/darkapex) (Ping timeout: 250 seconds)
+[01:19:49] *** Joins: yhnujmikV (~yhnujmikV@185.65.135.253)
+[01:25:12] *** Joins: iive (~iive@87.119.101.204.client.entry.bg)
+[01:25:39] *** Quits: samhza (~sam@samhza.com) (Ping timeout: 256 seconds)
+[01:26:17] *** Joins: samhza (sam@2600:3c03::f03c:92ff:fe40:814c)
+[01:27:22] <fman3> Is "force_key_frames" dependent on the encoder? It doesn't seem to have any effect with libsvtav1
+[01:27:42] <JEEB> depends whether the encoder follows the fed AVFrames' flags I guess
+[01:27:53] <JEEB> which is what I expect force_key_frames to set
+[01:31:20] *** Quits: lavaball (felix@31.204.155.215) (Remote host closed the connection)
+[01:34:21] <fman3> Then I guess libsvtav1 doesn't do that. Same command with libx264 worked.
+[01:35:12] *** Joins: JGod-P666-45 (~JGod-P666@213.237.85.167)
+[01:35:42] *** Quits: JGod-P666-45 (~JGod-P666@213.237.85.167) (Client Quit)
+[01:35:48] *** Quits: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340) (Ping timeout: 240 seconds)
+[01:36:18] *** Quits: pong (~beaver@user/pong) ()
+[01:38:01] *** Joins: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se)
+[01:41:37] *** Quits: dreamon (~dreamon@p57a4c768.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[01:47:55] *** Quits: orthoplex64 (~crm@70.120.0.94) (Quit: Leaving)
+[01:53:40] *** Quits: babyface (~babyface@user/babyface) (Quit:  )
+[01:53:53] *** Joins: babyface (~babyface@user/babyface)
+[01:54:46] *** Quits: crashrep (~crashrep@user/crashrep) (Quit: WeeChat 3.4)
+[01:58:00] <furq> fman3: if all your input videos are the same length then you can maybe set the keyint interval in the encoder
+[01:58:05] <furq> idk if svt-av1 lets you set that
+[02:00:06] *** Quits: cosimone (~user@93-44-187-176.ip98.fastwebnet.it) (Quit: ERC (IRC client for Emacs 27.1))
+[02:00:19] *** Joins: scoobydoob (~scooby@user/scoobydoo)
+[02:01:41] *** Joins: realies3 (~realies@user/realies)
+[02:02:32] *** Joins: Nex8192_ (~Nex8192@user/nex8192)
+[02:02:33] *** Joins: sr55 (~s55@cpc115138-livi7-2-0-cust15.18-2.cable.virginm.net)
+[02:03:00] *** Joins: CyberReloaded (vladimir@89.28.117.31)
+[02:03:04] *** Joins: deetwelv- (~deetwelve@user/deetwelve)
+[02:03:19] *** Joins: qwedfg_ (~qwedfg@user/qwedfg)
+[02:04:05] *** Joins: novaphoenix_ (~quassel@163-172-98-86.rev.poneytelecom.eu)
+[02:04:32] *** sr55 is now known as s5
+[02:04:42] *** Joins: bencoh_ (~bencoh@nautica.notk.org)
+[02:04:43] *** Joins: Mapianka (mapman@rick.hlds.pl)
+[02:04:47] *** Joins: Dariusz (~d.frankie@62.115.176.133)
+[02:04:54] *** Joins: isamiamsam (~d@zukertort.childrenofmay.org)
+[02:05:04] *** Quits: s5 (~s55@cpc115138-livi7-2-0-cust15.18-2.cable.virginm.net) (Changing host)
+[02:05:04] *** Joins: s5 (~s55@user/s55)
+[02:05:07] *** Joins: rdrg109_ (~rdrg109@user/rdrg109)
+[02:05:12] *** Joins: gartt_ (~gartt@ip68-0-205-52.ri.ri.cox.net)
+[02:05:17] *** Joins: yaymukund (~yaymukund@185.21.216.136)
+[02:05:19] *** Joins: garfvl (~root@ns530260.ip-149-56-24.net)
+[02:05:31] *** Joins: someperson (someperson@23-118-229-174.lightspeed.hstntx.sbcglobal.net)
+[02:05:31] *** Joins: hendry1 (~hendry@210.23.22.2)
+[02:05:40] <fman3> Yes it's all the same length. Thanks, I think this should work well enough.
+[02:06:20] <fman3> It's supported and seems to work fine
+[02:08:09] *** Joins: marcj (~marc@205.175.215.11)
+[02:08:39] *** Quits: s5 (~s55@user/s55) (Remote host closed the connection)
+[02:09:44] *** Quits: mthall (~quassel@mail.thalliman.com) (*.net *.split)
+[02:09:44] *** Quits: xkuru (~xkuru@user/xkuru) (*.net *.split)
+[02:09:44] *** Quits: qwedfg (~qwedfg@user/qwedfg) (*.net *.split)
+[02:09:44] *** Quits: Icedream (~icedream@hzn-b.serverkomplex.de) (*.net *.split)
+[02:09:44] *** Quits: haasn (~nand@haasn.dev) (*.net *.split)
+[02:09:44] *** Quits: s55 (~s55@user/s55) (*.net *.split)
+[02:09:44] *** Quits: Jerrk (~Jerrk@185.195.233.167) (*.net *.split)
+[02:09:45] *** Quits: paddymahoney (~paddymaho@cpe9050ca207f83-cm9050ca207f80.cpe.net.cable.rogers.com) (*.net *.split)
+[02:09:45] *** Quits: realies (~realies@user/realies) (*.net *.split)
+[02:09:45] *** Quits: foul_owl (~kerry@23.82.193.89) (*.net *.split)
+[02:09:45] *** Quits: wyatt8740 (~wyatt8740@23.226.141.204) (*.net *.split)
+[02:09:45] *** Quits: blinky42 (~quassel@user/blinky42) (*.net *.split)
+[02:09:45] *** Quits: hendry (~hendry@210.23.22.2) (*.net *.split)
+[02:09:45] *** Quits: CyberShadow (vladimir@89.28.117.31) (*.net *.split)
+[02:09:45] *** Quits: Nex8192 (~Nex8192@user/nex8192) (*.net *.split)
+[02:09:45] *** Quits: Some_Person (~someperso@23-118-229-174.lightspeed.hstntx.sbcglobal.net) (*.net *.split)
+[02:09:45] *** Quits: jwash (~jwash@c-73-254-46-148.hsd1.wa.comcast.net) (*.net *.split)
+[02:09:45] *** Quits: koolazer (~koo@user/koolazer) (*.net *.split)
+[02:09:45] *** Quits: marcj- (~marc@205.175.215.11) (*.net *.split)
+[02:09:45] *** Quits: garfvl_ (~root@ns530260.ip-149-56-24.net) (*.net *.split)
+[02:09:45] *** Quits: rdrg109 (~rdrg109@user/rdrg109) (*.net *.split)
+[02:09:45] *** Quits: bencoh (~bencoh@user/bencoh) (*.net *.split)
+[02:09:45] *** Quits: Dariusz_ (~d.frankie@62.115.176.133) (*.net *.split)
+[02:09:45] *** Quits: yaymukun1 (~yaymukund@185.21.216.136) (*.net *.split)
+[02:09:45] *** Quits: Bombo (atom@user/bombo) (*.net *.split)
+[02:09:45] *** Quits: kuba-orlik (~kuba-orli@nyuno.kuba-orlik.name) (*.net *.split)
+[02:09:45] *** Quits: pgloor (~petergloo@bit.cubus.space) (*.net *.split)
+[02:09:45] *** Quits: scoobydoo (~scooby@user/scoobydoo) (*.net *.split)
+[02:09:45] *** Quits: tinystoat (~squeek@user/tinystoat) (*.net *.split)
+[02:09:45] *** Quits: MapMan (~mapman@rick.hlds.pl) (*.net *.split)
+[02:09:45] *** Quits: samiamsam (~d@zukertort.childrenofmay.org) (*.net *.split)
+[02:09:45] *** Quits: deetwelve (~deetwelve@user/deetwelve) (*.net *.split)
+[02:09:45] *** Quits: gartt (~gartt@ip68-0-205-52.ri.ri.cox.net) (*.net *.split)
+[02:09:45] *** Quits: novaphoenix (~quassel@163.172.98.86) (*.net *.split)
+[02:09:45] *** someperson is now known as Some_Person
+[02:09:46] *** realies3 is now known as realies
+[02:09:46] *** CyberReloaded is now known as CyberShadow
+[02:09:49] *** deetwelv- is now known as deetwelve
+[02:09:50] *** scoobydoob is now known as scoobydoo
+[02:12:07] *** Joins: s55 (~s55@user/s55)
+[02:15:26] *** Joins: mthall (~quassel@mail.thalliman.com)
+[02:15:26] *** Joins: xkuru (~xkuru@user/xkuru)
+[02:15:26] *** Joins: Icedream (~icedream@hzn-b.serverkomplex.de)
+[02:15:26] *** Joins: haasn (~nand@haasn.dev)
+[02:15:26] *** Joins: foul_owl (~kerry@23.82.193.89)
+[02:15:26] *** Joins: wyatt8740 (~wyatt8740@23.226.141.204)
+[02:15:26] *** Joins: blinky42 (~quassel@user/blinky42)
+[02:15:26] *** Joins: kuba-orlik (~kuba-orli@nyuno.kuba-orlik.name)
+[02:15:26] *** Joins: jwash (~jwash@c-73-254-46-148.hsd1.wa.comcast.net)
+[02:15:26] *** Joins: Bombo (atom@user/bombo)
+[02:15:26] *** Joins: pgloor (~petergloo@bit.cubus.space)
+[02:15:26] *** Joins: tinystoat (~squeek@user/tinystoat)
+[02:16:07] *** Quits: foul_owl (~kerry@23.82.193.89) (Max SendQ exceeded)
+[02:16:49] *** Joins: foul_owl (~kerry@23.82.193.89)
+[02:17:01] *** Joins: koolazer (~koo@user/koolazer)
+[02:18:12] *** Joins: paddymahoney (~paddymaho@cpe9050ca207f83-cm9050ca207f80.cpe.net.cable.rogers.com)
+[02:18:36] *** Quits: MrZeus_ (~MrZeus@89.238.143.231) (Ping timeout: 240 seconds)
+[02:35:47] *** Parts: fman3 (~fman3@2a0d:4500::a01d) ()
+[02:35:55] *** Quits: patricia (~patricia@82-64-100-19.subs.proxad.net) (Quit: patricia)
+[02:37:11] *** Joins: patricia (~patricia@82-64-100-19.subs.proxad.net)
+[03:03:58] *** Quits: nemesit (~nemesit@myriadvisuals.com) (Ping timeout: 250 seconds)
+[03:16:18] *** Quits: clock__ (~clock@167.179.38.75) (Quit: Leaving)
+[03:25:10] *** Quits: palasso (~palasso@user/palasso) (Read error: Connection reset by peer)
+[03:26:56] <znf> how come -c copy doesn't copy subtitles, too? (which are copied by -copy_unknown)
+[03:59:53] *** Joins: Jerrk (~Jerrk@185.195.233.167)
+[04:02:57] *** Quits: iive (~iive@87.119.101.204.client.entry.bg) (Quit: They came for me...)
+[04:19:48] *** Quits: Buster_ (~Buster@buster-net.ru) (Ping timeout: 252 seconds)
+[04:23:31] *** Joins: Buster_ (~Buster@buster-net.ru)
+[04:23:56] *** Quits: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se) (Ping timeout: 272 seconds)
+[04:25:57] *** Joins: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340)
+[04:26:28] *** Joins: MrZeus_ (~MrZeus@194.37.96.151)
+[04:27:37] *** Quits: LuKaRo (~LuKaRo@p57b157e5.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[04:32:05] *** Quits: yhnujmikV (~yhnujmikV@185.65.135.253) (Ping timeout: 256 seconds)
+[04:33:24] *** Quits: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340) (Ping timeout: 240 seconds)
+[04:33:58] *** Joins: yhnujmikV (~yhnujmikV@141.98.255.152)
+[04:38:08] *** Joins: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340)
+[04:38:39] *** Quits: ketas (~ketas@0011-0000-0000-0000-d7dc-830e-07d0-2001.dyn.estpak.ee) (Ping timeout: 256 seconds)
+[04:43:10] *** Joins: LuKaRo (~LuKaRo@p200300dfa712f1141fa1e0576466c280.dip0.t-ipconnect.de)
+[04:44:22] *** Quits: Buster_ (~Buster@buster-net.ru) (Ping timeout: 260 seconds)
+[04:45:31] *** Quits: kurosu (uid342582@id-342582.hampstead.irccloud.com) (Quit: Connection closed for inactivity)
+[04:51:32] *** Quits: Seirdy (~Seirdy@sourcehut/user/seirdy) (Quit: exiting 3.4)
+[04:52:50] *** Joins: ketas (~ketas@0011-0000-0000-0000-d7dc-830e-07d0-2001.dyn.estpak.ee)
+[05:00:16] *** Quits: rv1sr (~rv1sr@user/rv1sr) ()
+[05:10:58] *** Quits: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340) (Ping timeout: 260 seconds)
+[05:21:46] *** Quits: fkaa (~fkaa@user/fkaa) (Remote host closed the connection)
+[05:23:47] *** Joins: crashrep (~crashrep@user/crashrep)
+[05:31:41] *** Quits: emagex (~user@user/emagex) (Quit: ERC (IRC client for Emacs 27.1))
+[05:33:37] *** Joins: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340)
+[05:34:12] *** Quits: GenTooMan (~cyberman@2601:547:437f:e5c6:21f:5bff:fefe:a883) (Ping timeout: 240 seconds)
+[05:36:14] *** Joins: GenTooMan (~cyberman@2601:547:437f:e5c6:21f:5bff:fefe:a883)
+[05:37:17] *** Quits: minimal (~minimal@user/minimal) (Quit: Leaving)
+[05:38:42] *** Quits: Bombo (atom@user/bombo) (Ping timeout: 256 seconds)
+[05:39:34] *** Quits: bpmedley_ (~bpmedley@2600:1700:e2c:8410:74fe:e115:6802:6be0) (Read error: Connection reset by peer)
+[05:40:35] *** Joins: Bombo (atom@p2e58e9f1.dip0.t-ipconnect.de)
+[05:40:35] *** Quits: Bombo (atom@p2e58e9f1.dip0.t-ipconnect.de) (Changing host)
+[05:40:35] *** Joins: Bombo (atom@user/bombo)
+[05:40:45] *** Joins: bpmedley (~bpmedley@2600:1700:e2c:8410:d87d:26ad:c49:c70f)
+[05:41:49] *** Quits: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340) (Ping timeout: 240 seconds)
+[05:49:00] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Ping timeout: 240 seconds)
+[05:54:21] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[05:56:46] *** Quits: crashrep (~crashrep@user/crashrep) (Quit: WeeChat 3.4)
+[06:04:30] *** Joins: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se)
+[06:09:02] *** Quits: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se) (Ping timeout: 240 seconds)
+[06:15:21] *** Joins: led_belly (~led_belly@159.48.53.215)
+[06:18:41] *** Quits: MrZeus_ (~MrZeus@194.37.96.151) (Ping timeout: 245 seconds)
+[06:42:34] *** Joins: durandal11707 (~computer@95.168.121.48)
+[06:45:10] *** Quits: durandal_1707 (~computer@212.15.177.21) (Ping timeout: 272 seconds)
+[06:48:07] *** Joins: euphoricallysane (~quatro@user/euphoricallysane)
+[07:19:22] *** Quits: jos1 (~jos3@dyndsl-178-142-070-065.ewe-ip-backbone.de) (Ping timeout: 272 seconds)
+[07:21:09] *** Joins: Seirdy (~Seirdy@sourcehut/user/seirdy)
+[07:32:09] *** Joins: jos1 (~jos3@dyndsl-091-096-040-201.ewe-ip-backbone.de)
+[07:58:19] *** Quits: Jerrk (~Jerrk@185.195.233.167) (Remote host closed the connection)
+[08:12:36] *** Joins: crashrep (~crashrep@user/crashrep)
+[08:24:36] *** Quits: rando25892 (~homefame@user/rando25892) (Ping timeout: 272 seconds)
+[08:27:57] <babyface> which audio codec would you say produces the best audioquality at 192 kbps stereo AAC or AC3 ?
+[08:29:22] <furq> aac
+[08:41:06] *** Quits: euphoricallysane (~quatro@user/euphoricallysane) (Ping timeout: 250 seconds)
+[08:41:43] *** Quits: rvalue (~rvalue@user/rvalue) (Remote host closed the connection)
+[08:43:09] *** Joins: rvalue (~rvalue@user/rvalue)
+[08:43:09] *** Joins: YuGiOhJCJ (~YuGiOhJCJ@gateway/tor-sasl/yugiohjcj)
+[08:44:06] *** Quits: Hobbyboy (Hobbyboy@hobbyboy.co.uk) (Quit: The BNC has broken!)
+[08:45:43] *** Quits: jafa (~jafa@ip70-162-39-218.ph.ph.cox.net) (Remote host closed the connection)
+[08:45:56] *** Joins: jafa (~jafa@ip70-162-39-218.ph.ph.cox.net)
+[08:48:40] *** Quits: tm512 (~tm512@user/tm512) (Read error: Connection reset by peer)
+[08:48:54] *** Joins: tm512 (~tm512@50.53.132.213)
+[08:49:01] *** Quits: tm512 (~tm512@50.53.132.213) (Changing host)
+[08:49:01] *** Joins: tm512 (~tm512@user/tm512)
+[08:49:46] *** Quits: termos (sid18647@id-18647.helmsley.irccloud.com) (Ping timeout: 250 seconds)
+[08:49:46] *** Quits: CoreX (~CeX@2001:41d0:8:d55f::1) (Ping timeout: 250 seconds)
+[08:49:46] *** Quits: raytiley (sid13397@id-13397.hampstead.irccloud.com) (Ping timeout: 250 seconds)
+[08:50:04] *** Quits: ravioli (sid83460@donger/pasta) (Read error: Connection reset by peer)
+[08:50:05] *** Quits: NaviTheFairy (~Squirrel@user/navithefairy) (Quit: Oh no. A thing broke.)
+[08:50:06] *** Quits: meinside (uid24933@id-24933.helmsley.irccloud.com) (Read error: Connection reset by peer)
+[08:50:08] *** Quits: buhman (sid411355@user/buhman) (Read error: Connection reset by peer)
+[08:50:10] *** Joins: raytiley (sid13397@id-13397.hampstead.irccloud.com)
+[08:50:12] *** Joins: ravioli (sid83460@donger/pasta)
+[08:50:22] *** Joins: meinside (uid24933@id-24933.helmsley.irccloud.com)
+[08:50:24] *** Joins: termos (sid18647@id-18647.helmsley.irccloud.com)
+[08:50:27] *** Joins: buhman (sid411355@user/buhman)
+[08:50:31] *** Joins: NaviTheFairy (~Squirrel@user/navithefairy)
+[08:50:39] *** Joins: CoreX (~CeX@2001:41d0:8:d55f::1)
+[08:51:30] *** Quits: ```md (~md@chat.estaog.info) (Ping timeout: 250 seconds)
+[08:52:33] *** Joins: ```md (~md@chat.estaog.info)
+[09:09:39] *** Joins: thebombzen (~thebombze@c-68-41-54-207.hsd1.mi.comcast.net)
+[09:17:04] *** Quits: durandal11707 (~computer@95.168.121.48) (Ping timeout: 250 seconds)
+[09:18:31] *** Joins: Hobbyboy (Hobbyboy@hobbyboy.co.uk)
+[09:18:46] *** Joins: durandal_1707 (~computer@212.15.177.23)
+[09:24:28] *** Quits: crashrep (~crashrep@user/crashrep) (Quit: WeeChat 3.4)
+[09:51:19] *** Joins: labrador (~labrador@user/labrador)
+[10:02:04] *** Quits: zmt00 (~zmt00@user/zmt00) (Read error: Connection reset by peer)
+[10:06:56] *** Joins: zmt00 (~zmt00@user/zmt00)
+[10:33:34] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[10:46:11] *** Quits: labrador (~labrador@user/labrador) (Remote host closed the connection)
+[10:46:24] *** Joins: labrador (~labrador@user/labrador)
+[10:47:24] *** Quits: milkt (~debian@gateway/tor-sasl/milkt) (Remote host closed the connection)
+[10:47:34] *** Joins: milkt_ (~debian@gateway/tor-sasl/milkt)
+[11:18:54] *** Joins: dreamon (~dreamon@ppp-88-217-83-128.dynamic.mnet-online.de)
+[11:22:40] *** Quits: mven (~mven@ip68-104-39-54.lv.lv.cox.net) (Quit: Goodbye.)
+[11:24:25] *** Joins: mven (~mven@ip68-104-39-54.lv.lv.cox.net)
+[11:29:59] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[11:43:08] *** Joins: lavaball (felix@31.204.155.215)
+[12:04:40] *** Joins: bencc1 (~bencc1@2a00:a040:197:3af:5031:112b:5ab:fc5c)
+[12:07:19] *** Joins: kurosu (uid342582@id-342582.hampstead.irccloud.com)
+[12:07:57] *** Joins: palasso (~palasso@user/palasso)
+[12:19:36] *** Joins: emagex (~user@user/emagex)
+[12:58:23] *** Joins: guest (~guest@161.117.202.209)
+[12:59:13] *** Quits: zumba_addict (~zumba_add@c-71-194-58-34.hsd1.il.comcast.net) (Quit: Client closed)
+[12:59:55] *** Quits: guest (~guest@161.117.202.209) (Client Quit)
+[13:00:58] *** Quits: OsteHovel (~OsteHovel@ti0056a400-0096.bb.online.no) (Read error: Connection reset by peer)
+[13:11:07] *** Joins: clock (~clock@167.179.38.75)
+[13:11:54] *** Quits: clock (~clock@167.179.38.75) (Remote host closed the connection)
+[13:12:19] *** Joins: clock (~clock@167.179.38.75)
+[13:21:50] *** Joins: pong (~beaver@user/pong)
+[13:26:21] *** Quits: clock (~clock@167.179.38.75) (Remote host closed the connection)
+[13:28:23] *** Quits: labrador (~labrador@user/labrador) (Quit: Leaving)
+[13:32:57] *** Quits: Fohsap (~Muimi@2001:19f0:6001:e4d:5400:3ff:fe41:8d5b) (Ping timeout: 240 seconds)
+[13:36:06] *** Joins: labrador (~labrador@user/labrador)
+[13:41:50] *** Joins: Blacker47 (~Blacker47@user/blacker47)
+[13:45:08] *** Quits: Some_Person (someperson@23-118-229-174.lightspeed.hstntx.sbcglobal.net) (Quit: ZNC 1.8.2 - https://znc.in)
+[13:46:39] *** Joins: Some_Person (someperson@2600:1700:d02:1c50:ce81:24dc:3854:f698)
+[13:53:45] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[14:13:43] *** Joins: __Myst__ (~Myst@37.183.121.203)
+[14:15:37] *** Quits: ___Myst___ (~Myst@37.183.121.203) (Ping timeout: 240 seconds)
+[14:18:13] *** Quits: Kadigan (~Kadigan@user/kadigan) (Ping timeout: 240 seconds)
+[14:21:57] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[14:25:48] *** Quits: yhnujmikV (~yhnujmikV@141.98.255.152) (Ping timeout: 240 seconds)
+[14:27:54] *** Joins: yhnujmikV (~yhnujmikV@185.65.135.252)
+[14:32:04] *** Quits: yhnujmikV (~yhnujmikV@185.65.135.252) (Client Quit)
+[14:33:22] *** Joins: Kadigan (~Kadigan@user/kadigan)
+[14:36:39] *** Joins: Buster_ (~Buster@buster-net.ru)
+[14:57:55] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 272 seconds)
+[15:00:51] *** Joins: rv1sr (~rv1sr@user/rv1sr)
+[15:15:06] *** Joins: clock (~clock@167.179.38.75)
+[15:15:53] *** Quits: clock (~clock@167.179.38.75) (Remote host closed the connection)
+[15:16:16] *** Joins: clock (~clock@167.179.38.75)
+[15:24:30] *** Quits: Buster_ (~Buster@buster-net.ru) (Ping timeout: 272 seconds)
+[15:30:22] *** Joins: MrZeus_ (~MrZeus@86.106.136.215)
+[15:30:33] *** Quits: durandal_1707 (~computer@212.15.177.23) (Ping timeout: 256 seconds)
+[15:33:08] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[15:39:01] *** Joins: durandal_1707 (~computer@95.168.121.48)
+[15:40:09] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 252 seconds)
+[15:49:44] *** Quits: CruxOfTheB (~CruxOfThe@192.222.196.53) (Read error: No route to host)
+[15:51:06] *** Joins: CruxOfTheB (~CruxOfThe@192.222.196.53)
+[15:56:21] *** Quits: Mavrik- (~Mavrik@virag.si) (Quit: G'bye)
+[15:57:58] *** Joins: Mavrik (~Mavrik@virag.si)
+[15:58:40] *** Quits: af (~af@awalgarg.me) (Quit: WeeChat 3.4)
+[16:00:28] *** Joins: patricia_ (~patricia@8.21.238.31)
+[16:00:56] *** Quits: patricia (~patricia@82-64-100-19.subs.proxad.net) (Ping timeout: 250 seconds)
+[16:00:56] *** patricia_ is now known as patricia
+[16:01:19] *** Quits: chowbok (~quassel@207.181.241.169) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[16:01:54] *** Joins: chowbok (~quassel@207.181.241.169)
+[16:05:16] *** Quits: patricia (~patricia@8.21.238.31) (Ping timeout: 250 seconds)
+[16:14:14] *** Joins: patricia (~patricia@82-64-100-19.subs.proxad.net)
+[16:20:09] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[16:20:18] *** Quits: clock (~clock@167.179.38.75) (Ping timeout: 252 seconds)
+[16:35:46] *** Quits: HumanG33k (~HumanG33k@dau94-2-82-66-65-160.fbx.proxad.net) (Quit: WeeChat 3.0)
+[16:37:27] *** Joins: HumanG33k (~HumanG33k@2a01:e0a:95:5d90:215:c5ff:fe68:fb04)
+[16:43:18] *** Quits: patricia (~patricia@82-64-100-19.subs.proxad.net) (Quit: patricia)
+[16:44:31] *** Joins: patricia (~patricia@82-64-100-19.subs.proxad.net)
+[16:49:02] *** Quits: patricia (~patricia@82-64-100-19.subs.proxad.net) (Ping timeout: 250 seconds)
+[16:50:50] *** Joins: patricia (~patricia@82-64-100-19.subs.proxad.net)
+[16:53:33] *** Joins: af (~af@awalgarg.me)
+[16:56:35] *** Quits: rv1sr (~rv1sr@user/rv1sr) ()
+[16:56:45] <patricia> : i brodcast my webcam  with ffmpeg and srs on macos i’m happy
+[17:07:14] *** Joins: clock (~clock@202.53.146.188)
+[17:57:06] *** Quits: nillyhan (~1b93e2d2@user/nillyhan) (Quit: Leaving)
+[18:15:39] *** Joins: bosonbear (~user@2a05:f480:1800:663:5400:3ff:fee5:48ad)
+[18:17:19] <bosonbear> Hi folks. I'm converting a mkv file to a gif but after the conversion I see a blinking/flickering effect in the gif. To describe it: the resolution becomes every other second, then image gets blurred, so on and so forth. Any idea what issue is this related to?
+[18:18:10] <BtbN> A gif only has 256 colors to work with, so it's bound to look like crap
+[18:19:29] <bosonbear> It's okay to look like crap, as long as the image is "stable". My problem is that sometimes it looks like crap, and the next second it's amazing, then crap again
+[18:19:35] <bosonbear>  This flickering effect makes it even crappier than necessary
+[18:20:08] <BtbN> it'll all depend on how well the colors in that frame can be represented with the pallet chosen
+[18:20:23] <BtbN> You can try doing a two pass encode using palettegen/use
+[18:21:54] <bosonbear> I see thanks BtbN
+[18:22:30] *** pong is now known as beaver
+[18:28:49] *** Quits: toulene (~toulene@user/toulene) (Ping timeout: 272 seconds)
+[18:30:44] *** Joins: toulene (~toulene@user/toulene)
+[18:31:09] *** Quits: labrador (~labrador@user/labrador) (Quit: Leaving)
+[18:38:57] *** Quits: zmt00 (~zmt00@user/zmt00) (Ping timeout: 240 seconds)
+[18:48:12] *** Quits: YuGiOhJCJ (~YuGiOhJCJ@gateway/tor-sasl/yugiohjcj) (Quit: YuGiOhJCJ)
+[18:50:40] *** gartt_ is now known as gartt
+[18:59:12] *** Quits: dreamon (~dreamon@ppp-88-217-83-128.dynamic.mnet-online.de) (Ping timeout: 272 seconds)
+[19:00:52] <yuri6037> Hi, I have a big problem I can no longer get rid of tmcd sections with ffmpeg: this command "ffmpeg -i a.mov -c:v copy -c:a copy -write_tmcd 0 b.mov" no longer works it appears write_tmcd was removed or is now broken because it has absolutely no effect! Is there any other hack I can try to remove this annoying tmcd section?
+[19:03:15] <durandal_1707> yuri6037: write_tmcd is still available
+[19:03:39] <yuri6037> yeah but the fact is it does no longer have any effect
+[19:04:57] <yuri6037> ok so now it's back rebooted mac terminal and it worked now ffmpeg is so unsatble and broken
+[19:05:16] <durandal_1707> yuri6037: no, its is stable
+[19:05:28] <durandal_1707> make sure you use correct version
+[19:05:39] <yuri6037> well maybe for you it's unstable on my mac
+[19:05:46] <durandal_1707> pebkac
+[19:06:00] <yuri6037> thing is I always have problems with ffmpeg no matter if it's linux or mac
+[19:06:49] <yuri6037> on linux it's just better because distributions of it with nvenc/dec has potential system crash
+[19:06:59] <durandal_1707> yuri6037: you have issues with something else instead
+[19:10:56] *** Joins: MrZeus__ (~MrZeus@194.37.96.135)
+[19:11:48] *** Joins: zmt00 (~zmt00@user/zmt00)
+[19:12:52] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[19:13:55] *** Joins: zmt01 (~zmt00@user/zmt00)
+[19:15:04] *** Quits: MrZeus_ (~MrZeus@86.106.136.215) (Ping timeout: 250 seconds)
+[19:16:17] *** Quits: zmt00 (~zmt00@user/zmt00) (Ping timeout: 240 seconds)
+[19:26:38] *** Joins: dreamon (~dreamon@p57a4c768.dip0.t-ipconnect.de)
+[19:27:12] *** Quits: pa (~pah@user/pah) (Ping timeout: 250 seconds)
+[19:28:44] *** Joins: orthoplex64 (~crm@70.120.0.94)
+[19:28:51] *** Joins: pah (~pah@user/pah)
+[19:34:49] *** Joins: tben (~tben@cpc89006-gill18-2-0-cust2324.20-1.cable.virginm.net)
+[19:36:21] <tben> hi, wondering if anyone can help me.  I've got the demuxing example from the src and adjusted it to capture audio from microphone and dump it into a pcm file.  Its going well but it seems to be capturing every other frame - I'm wondering if this is because the example code is expecting video and audio frames but I can't see in the code where to adjust it accordingly. Any ideas?
+[19:44:10] *** Joins: rsx (~dummy@ppp-188-174-156-38.dynamic.mnet-online.de)
+[19:44:59] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[19:46:40] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[19:46:58] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Client Quit)
+[19:48:40] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[19:52:48] *** Joins: minimal (~minimal@user/minimal)
+[19:53:14] *** Joins: ___Myst___ (~Myst@net-93-151-172-38.cust.dsl.teletu.it)
+[19:55:00] *** Quits: __Myst__ (~Myst@37.183.121.203) (Ping timeout: 240 seconds)
+[19:56:44] *** Joins: blaze (~blaze@user/blaze)
+[20:07:04] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 250 seconds)
+[20:08:28] *** Quits: tben (~tben@cpc89006-gill18-2-0-cust2324.20-1.cable.virginm.net) (Remote host closed the connection)
+[20:16:18] *** Joins: tlacatlc6 (~tlacatlc6@097-101-132-062.res.spectrum.com)
+[20:28:48] *** Joins: Buster_ (~Buster@46.160.36.66)
+[20:33:01] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[20:33:02] *** Quits: TheSash__ (~TheSashmo@174.119.184.190) (Quit: Leaving...)
+[20:49:01] *** Quits: DrJ (~asdf@user/drj) (Ping timeout: 256 seconds)
+[20:49:13] *** Joins: xkuru (~xkuru@user/xkuru)
+[20:58:58] *** Quits: clock (~clock@202.53.146.188) (Read error: Connection reset by peer)
+[21:07:28] *** Quits: mthall (~quassel@mail.thalliman.com) (*.net *.split)
+[21:07:28] *** Quits: Icedream (~icedream@hzn-b.serverkomplex.de) (*.net *.split)
+[21:07:28] *** Quits: haasn (~nand@haasn.dev) (*.net *.split)
+[21:07:28] *** Quits: wyatt8740 (~wyatt8740@23.226.141.204) (*.net *.split)
+[21:07:28] *** Quits: blinky42 (~quassel@user/blinky42) (*.net *.split)
+[21:07:28] *** Quits: jwash (~jwash@c-73-254-46-148.hsd1.wa.comcast.net) (*.net *.split)
+[21:07:28] *** Quits: kuba-orlik (~kuba-orli@nyuno.kuba-orlik.name) (*.net *.split)
+[21:07:28] *** Quits: pgloor (~petergloo@bit.cubus.space) (*.net *.split)
+[21:07:28] *** Quits: tinystoat (~squeek@user/tinystoat) (*.net *.split)
+[21:09:02] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 272 seconds)
+[21:12:55] *** Joins: mthall (~quassel@mail.thalliman.com)
+[21:12:55] *** Joins: Icedream (~icedream@hzn-b.serverkomplex.de)
+[21:12:55] *** Joins: haasn (~nand@haasn.dev)
+[21:12:55] *** Joins: wyatt8740 (~wyatt8740@23.226.141.204)
+[21:12:55] *** Joins: blinky42 (~quassel@user/blinky42)
+[21:12:55] *** Joins: kuba-orlik (~kuba-orli@nyuno.kuba-orlik.name)
+[21:12:55] *** Joins: jwash (~jwash@c-73-254-46-148.hsd1.wa.comcast.net)
+[21:12:55] *** Joins: pgloor (~petergloo@bit.cubus.space)
+[21:12:55] *** Joins: tinystoat (~squeek@user/tinystoat)
+[21:13:29] *** Quits: mthall (~quassel@mail.thalliman.com) (Max SendQ exceeded)
+[21:13:43] *** Joins: mthall (~quassel@mail.thalliman.com)
+[21:18:40] *** pah is now known as pa
+[21:31:03] *** Joins: Guest8352 (~Guest83@2001:1970:5340:4700:1828:d060:134b:f8bc)
+[21:34:24] *** Joins: clock (~clock@167.179.38.75)
+[21:46:10] *** Joins: zmt00 (~zmt00@user/zmt00)
+[21:46:27] *** Quits: zmt01 (~zmt00@user/zmt00) (Ping timeout: 252 seconds)
+[21:58:54] *** Joins: hans (uid529825@id-529825.helmsley.irccloud.com)
+[22:00:08] *** Quits: patricia (~patricia@82-64-100-19.subs.proxad.net) (Quit: patricia)
+[22:01:26] *** Joins: patricia (~patricia@82-64-100-19.subs.proxad.net)
+[22:03:58] *** Joins: crashrep (~crashrep@user/crashrep)
+[22:06:07] *** Quits: lexano (~lexano@174.119.69.134) (Remote host closed the connection)
+[22:08:06] *** Joins: rv1sr (~rv1sr@user/rv1sr)
+[22:27:54] *** Parts: NyB (~archon@2a02:169:1d9::1:0:0) (WeeChat 3.0)
+[22:34:23] *** Joins: lexano (~lexano@174.119.69.134)
+[22:37:38] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[22:41:06] *** Joins: fkaa (~fkaa@user/fkaa)
+[22:43:19] *** Joins: zmt01 (~zmt00@user/zmt00)
+[22:43:57] *** Quits: zmt00 (~zmt00@user/zmt00) (Ping timeout: 240 seconds)
+[22:47:10] *** Joins: zmt00 (~zmt00@user/zmt00)
+[22:47:36] *** Joins: Giovanni (~Giovanni@176.55.170.26)
+[22:47:57] *** Quits: zmt01 (~zmt00@user/zmt00) (Ping timeout: 240 seconds)
+[22:51:58] *** Quits: beaver (~beaver@user/pong) ()
+[22:53:34] *** Joins: zmt01 (~zmt00@user/zmt00)
+[22:53:57] *** Quits: zmt00 (~zmt00@user/zmt00) (Ping timeout: 240 seconds)
+[22:55:22] *** Joins: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340)
+[22:58:37] *** Quits: hendry1 (~hendry@210.23.22.2) (Ping timeout: 240 seconds)
+[22:59:54] *** Joins: hendry1 (~hendry@210.23.22.2)
+[23:06:09] *** Quits: Hackerpcs (~user@user/hackerpcs) (Quit: Hackerpcs)
+[23:08:22] *** Joins: Hackerpcs (~user@user/hackerpcs)
+[23:08:38] *** Quits: Hackerpcs (~user@user/hackerpcs) (Max SendQ exceeded)
+[23:09:42] *** Joins: Hackerpcs (~user@user/hackerpcs)
+[23:12:30] *** Joins: irc_user (uid423822@id-423822.lymington.irccloud.com)
+[23:22:08] *** Joins: shibboleth (~shibbolet@user/shibboleth)
+[23:22:09] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 252 seconds)
+[23:29:00] *** Joins: Jerrk (~Jerrk@185.213.154.230)
+[23:29:04] <babyface> -vn -acodec only copies the audio but why do I type if I only want to copy the video?
+[23:29:47] <JEEB> -map 0:v maps all video streams from the 0th input, and then just say -c copy (copy for all mapped streams)
+[23:30:05] <JEEB> by explicitly mapping things you disable auto-selection
+[23:30:44] <babyface> is there a simpler method?
+[23:30:58] <znf> -vcodec copy -an
+[23:31:17] <JEEB> why is manual mapping more complex?
+[23:31:31] <JEEB> if you want just audio, just say you want just audio. if you want just video you tell it that
+[23:31:41] <JEEB> like, I would like to understand that attitude, where it comes from?
+[23:31:59] <babyface> I never understood the map command I find it to be very confusing
+[23:32:01] <JEEB> because -vn -acodec copy definitely does not ignore stuff like subtitles
+[23:32:08] <JEEB> it will just disable video
+[23:32:17] <JEEB> just like -an only disables audio
+[23:32:29] <JEEB> (the codec types are: video, audio, subtitle, data)
+[23:32:37] <babyface> I'm sorry but the map command doesn't make sense to me
+[23:33:21] *** Quits: rsx (~dummy@ppp-188-174-156-38.dynamic.mnet-online.de) (Quit: rsx)
+[23:34:15] <JEEB> I actually wonder if you don't even need to specify the input file index with map, I just have gotten used to do it since I often have more than one input file
+[23:34:26] <JEEB> for example, -map v just mapping all inputs' all video streams
+[23:34:31] <JEEB> or -map v:0 just the first one of those
+[23:34:51] <JEEB> I just do way too much of -map 0:v -map 0:a for example
+[23:34:54] <JEEB> *-map 1:a
+[23:35:04] <JEEB> where I take video from first input, and audio from second
+[23:36:04] <JEEB> but yea you can do `-c:v copy -an -sn -dn`
+[23:36:08] <JEEB> that disables audio, subtitles and data
+[23:36:13] <JEEB> and sets video to copy
+[23:36:24] <JEEB> although at that point you might as well just utilize -c copy since you've only left one media type
+[23:36:53] <JEEB> basically -vn -c copy only copies audio only if you have no subtitles or data streams in the input :P
+[23:38:17] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[23:38:20] <JEEB> and that's why doing "I only want X" ends up being simpler with map than the "disable everything else" alternative. since you need to remember to disable all of the 3 you don't want out of 4. but eh, to each their own
+[23:43:17] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 240 seconds)

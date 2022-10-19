@@ -1,0 +1,126 @@
+[00:35:40] <headius> enebo: it might be good to throw out a 9.2.20 as well
+[00:35:46] <headius> and maybe that will be the last one
+[02:54:59] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 264 seconds)
+[03:23:49] *** Joins: subbu (~subbu@user/subbu)
+[03:52:11] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 260 seconds)
+[06:50:18] *** Joins: subbu (~subbu@user/subbu)
+[07:47:47] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[09:41:19] *** Joins: sagax (~sagax_nb@user/sagax)
+[15:33:41] <edipofederle[m]> Morning guys, 
+[17:05:44] <headius> Morning!
+[18:27:28] <edipofederle[m]> headius: I'm checking some old issues, and I looking at this one now: https://github.com/jruby/jruby/issues/2167 it works with current version, But I didnt try with v1.7.x (issues to compile it right now). So this is relevant yet? (I also propbhaly comment and ping you in another issues, so sorry for 'spam' you). 
+[18:43:11] <enebo[m]> edipo.federle: no this appears to be fixed for 9.2 and 9.3 and we don't support anything earlier.  So I will close this one.
+[18:43:33] <enebo[m]> It is nice to find old fixed issues and get them off the logs!
+[18:44:08] <edipofederle[m]> yep, makes sense
+[19:30:06] *** Quits: Bi[m] (~bimatrixo@2001:470:69fc:105::109a) (Quit: You have been kicked for being idle)
+[19:45:55] <headius> "SortedSet has been removed for dependency and performance reasons."
+[19:46:05] <headius> ok...
+[19:54:28] <edipofederle[m]> is about it: https://github.com/ruby/set/pull/2 ?
+[19:54:59] <headius> yup, there's a pure-Ruby gem that replaces it now
+[19:55:07] <headius> 🤷‍♂️
+[19:55:27] <headius> fine with me I guess, it will probably die in the wild now
+[19:56:29] <headius> ah I see
+[19:56:41] <headius> they replaced the implementation with RBTree and did not want to add that dependency into core
+[19:58:26] <headius> we're going to need to get our java Set into the `set` gem and get a JRuby impl of the RBTree gem
+[20:02:26] <headius> wow
+[20:02:31] <headius> double wow
+[20:02:48] <headius> knu already has been releasing -java versions of the sorted_set gem that just falls back on our shipped impl
+[20:23:52] <headius> https://github.com/knu/sorted_set/issues/7
+[20:40:34] <headius> https://github.com/jruby/jruby/pull/6922
+[20:46:39] <headius> so sorted_set was pulled out because it depends on rbtree... which has no official public repository and no maintainer
+[20:46:55] <headius> might be a while before we can figure out how to add JRuby support to this orphaned gem
+[21:23:14] *** Joins: subbu (~subbu@user/subbu)
+[21:38:45] <headius> enebo: this would be nice to get fixed on master
+[21:38:49] <headius> $ jirb
+[21:38:49] <headius> irb(main):001:0> binding.NoMethodError: undefined method `token' for #<Ripper::Lexer:0x5daad59a>
+[21:38:49] <headius> Did you mean?  tokenize
+[21:38:49] <headius>                        on_error1 at /Users/headius/projects/jruby/lib/ruby/stdlib/ripper/lexer.rb:195
+[21:39:28] <headius> I think ahorek first noticed this method is missing but it prevents some functionality in irb from working (here it is trying to do some formatting or reflection in response to `binding.`
+[21:44:31] <enebo[m]> headius: I just merged a PR from ahorek yesterday I think adding this
+[21:45:38] <headius> hmm I should be current
+[21:45:55] <enebo[m]> yeah it does not work
+[21:46:26] <enebo[m]> I have every intention to support it trhough
+[21:46:51] <headius> ok
+[21:47:10] <headius> I am trying to update checkboxes on 3.0 issue and was hoping to use irb to verify features, but I'll make do
+[21:48:39] <enebo[m]> oh I see what it was...it was just an empty stub and not merged
+[21:51:41] <headius> yeah but I get NoMethodError so did it get put in the wrong place?
+[21:52:07] <enebo[m]> "not merged"
+[21:52:18] <headius> oh not merged
+[21:52:26] <enebo[m]> Making an empty method is not worth it
+[21:52:28] <enebo[m]> I will add an impl now
+[21:52:31] <headius> yeah probably not
+[21:52:33] <headius> cool
+[21:52:48] <headius> this one is interesting: "IO#nonblock? now defaults to true."
+[21:53:05] <headius> in support of the new scheduler, which will probably take a bit of work for us
+[21:53:17] <headius> so they must be setting all IOs to nonblocking now by default
+[22:15:05] <headius> enebo: is this implemented on master yet? https://bugs.ruby-lang.org/issues/9573
+[22:15:16] <headius> this is the change to not copy module contents into include/prepend targets anymore
+[22:16:16] <enebo[m]> no
+[22:21:23] <headius> ok
+[22:22:12] <headius> good be a big job, or could be simple (just add delegation for method/constant lookup in include wrapper)
+[22:24:50] <enebo[m]> yeah I am fairly familiar with it from fixing a recent prepend
+[22:24:51] <headius> enebo: so here's a small conundrum... alias_method now returns the new name instead of the self module
+[22:24:54] <headius> however...
+[22:25:01] <headius>     public RubyModule alias_method(ThreadContext context, IRubyObject newId, IRubyObject oldId) {
+[22:25:33] <headius> so we have to change the return type or deprecate and add some other name
+[22:26:39] <headius> I have no idea how likely this is called by third-party code from Java
+[22:26:41] <enebo[m]> yeah we just make aliasMethod and have that return the proper type I guess
+[22:27:13] <enebo[m]> but if it is called by third party code this will continue to work by just moving the annotation
+[22:27:16] <headius> yeah unfortunate down side of trying to be more strict on return type
+[22:27:29] <enebo[m]> That signature is pre-2008
+[22:27:43] <enebo[m]> I last touched the line when I added ThreadContext
+[22:27:53] <headius> heh wow
+[22:28:15] <headius> I am curious now
+[22:28:28] <enebo[m]> I agree though we should not be sharing any internal method with a @jrubyMethod anno
+[22:28:54] <enebo[m]> mixing two concerns is only going to bite us eventually
+[22:28:57] <headius> wow
+[22:29:04] <headius> that return type goes back to Jan Arne
+[22:29:07] <enebo[m]> I see petersen for private_class_method in 2002
+[22:29:30] <headius> funny
+[22:29:32] <enebo[m]> So an ancient mistake which only took 19 years to be revealed :)
+[22:29:47] <headius> deprecate the old signature?
+[22:29:58] <enebo[m]> yeah or don't
+[22:30:06] <headius> well that's why I asked
+[22:30:27] <enebo[m]> yeah I think we just make a new one for the anno and have old one call new one
+[22:30:32] <headius> sure
+[22:30:41] <headius> I'm fine leaving it undeprecated
+[22:30:50] <enebo[m]> convenient that it returns this
+[22:31:01] <headius> should I make the new signature return RubySymbol? 🤣
+[22:31:09] <enebo[m]> HAHAH no
+[22:31:24] <enebo[m]> in 3 years it will conditionally return nil :)
+[22:31:26] <headius> they will support passing arrays at some point and we'd break again
+[22:31:31] <headius> yeah or that
+[22:32:13] <enebo[m]> In a perfect world we would islate and just rename all things so we cannot easily consume the annos as internally embedding
+[22:32:53] <enebo[m]> That would definitely break things but it could also lead to knowing what the native extension requirements are better
+[22:34:25] <headius> as I go through these features I am tossing quick fixes directly on master
+[22:34:46] <headius> like this thing
+[22:34:59] <headius> about half of the features I have checked you got to in May
+[22:35:18] <headius> most that remain are nontrivial
+[22:36:08] <headius> ahorek: if you want a challenging task that would have a huge payoff, we could start looking at using the FFI-based socket impl
+[22:36:29] <headius> it would immediately improve compatiblity of sockets to at least rubinius/truffleruby level
+[22:36:48] <headius> last I looked at it the main problem was all the socket structures that would need to be generated per-platform
+[22:37:40] <headius> I believe TR generates code for them at build time so we could duplicate that process for as many platforms as possible and reuse the entire library
+[22:38:01] <headius> this all goes back to the rbx folks but I assume there have been minor updates in TR
+[22:49:46] <headius> enebo: hey why did we originally add the "ID" enum for warnings?
+[22:50:17] <headius> I need warning(file, line, message) and not sure if I should be adding new IDs for warnings anymore
+[22:52:17] <headius> the existing form only has warning(id, file, line, message) and it doesn't actually appear to use the ID at all
+[22:52:50] <headius> which makes me wonder why we have ID now
+[22:52:59] <enebo[m]> we don't use them any more but they were for when the parser was used for the IDE
+[22:53:21] <enebo[m]> They have not been removed but could be deprecated and replaced
+[22:53:48] <headius> ok... so for the case I'm doing I'll add a non-ID signature and we can clean out the ID signatures later as a task
+[22:53:58] <enebo[m]> sure
+[23:06:07] <headius> "Mutex is now acquired per-Fiber instead of per-Thread. This change
+[23:06:07] <headius> should be compatible for essentially all usages and avoids blocking when
+[23:06:07] <headius> using a scheduler."
+[23:06:42] <headius> they are basically making fiber easier for us to implement with all the scheduler stuff, because they can't just pretend a lock is acquired across fibers
+[23:06:53] <headius> this is basically done because we couldn't do it another way without a lot of hassle
+[23:08:11] <headius> oh enebo dunno if you saw but there is a backport Ractor impl... likely very inefficient but it is a fallback option for us
+[23:08:37] <headius> it might advise a proper impl if it has the right semantics
+[23:10:03] <enebo[m]> sure
+[23:15:03] <headius> we could even box it up and ship it with 9.4.0 
+[23:15:08] <headius> why not
+[23:15:19] <headius> maybe add it as a default gem so it can be updated
+[23:55:08] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 268 seconds)
+[23:55:55] <headius> we need to reevaluate Ola's profile stuff during init and see whether it's worth keeping
+[23:56:20] <headius> it checks for things like "is Bignum allowed" that if disallowed would break most of JRuby anyway
+[23:56:43] <headius> unsure if it is really practically useful at this point, and if it is it's only useful for a very small subset of core classes

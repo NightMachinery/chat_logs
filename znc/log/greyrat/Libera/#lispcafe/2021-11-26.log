@@ -1,0 +1,521 @@
+[00:22:26] *** Quits: rogersm (~rogersm@90.166.177.48) (Quit: Leaving...)
+[00:40:46] *** Quits: Posterdati (~posterdat@host-87-19-166-231.retail.telecomitalia.it) (Ping timeout: 256 seconds)
+[00:54:30] *** Joins: Posterdati (~posterdat@host-87-19-166-231.retail.telecomitalia.it)
+[00:54:34] *** Joins: dave0 (~davezero@069.d.003.ncl.iprimus.net.au)
+[00:54:54] <dave0> maw
+[00:55:31] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 250 seconds)
+[00:56:17] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[00:56:26] <hayley> https://www.youtube.com/watch?v=GAj89NEqX-M
+[00:56:26] -ixelp- Bombers - YouTube
+[00:58:12] <dave0> maw hayley 
+[00:58:21] <hayley> maw dave0 
+[00:59:20] <hayley> gilberth: So I caved in and wrote a VOP to convince SBCL to do unboxed arithmetic. But I can't tell if it's faster or not; the IPC is lower at least, and more profiler samples land in the load instruction for the ".
+[01:01:32] <sham1> wam
+[01:02:12] <hayley> The trick was to lie and say we return (unsigned-byte 64), thus SBCL has to do unboxed arithmetic. And it doesn't really matter if we do 64-bit CMP or 32-bit CMP.
+[01:02:54] <dave0> what does "boxed" here mean?
+[01:04:32] <hayley> A boxed integer is shifted such that it can be distinguished from some other type. It's completely unnecessary to box in this situation, but SBCL does it anyway.
+[01:04:51] <dave0> ah okay thanks
+[01:05:24] <hayley> And it entails using a SHL instruction in a hot loop, which I don't really want.
+[01:08:49] *** Joins: dra (~dra@2a04:4540:641a:5000:8d7b:e0a:94db:60ef)
+[01:08:53] <dra> Hello!
+[01:09:25] <sham1> Hello
+[01:18:27] <gilberth> dave0: Strictly speaking boxed means to be put in a box. That is having a pointer to that value instead of the value itself. Where the value lives is the box. In principle Lisp could be implemented that way that all integers live in such a box and thus we only have pointers to deal with.
+[01:19:01] <gilberth> dave0: Unboxing then means to get that integer out of its box. Boxing means to put it into a box again.
+[01:19:01] <sham1> Holy indirection, batman
+[01:19:40] <dave0> so you use the low bit to decide if it's a number or a pointer?
+[01:19:57] <gilberth> What however happens is the trick to have immediate types. When tag bits have a certain combination, the value itself is found in the word which was supposed to be a pointer.
+[01:20:26] <sham1> Making the tag for fixnums all zeroes has a nice property with 2's complement
+[01:20:43] <sham1> It remains zero even after negation, meaning that one can use the native negation instruction
+[01:21:42] <gilberth> dave0: Kind of. You have two orthogonal uses of tag bits: One for telling certain types like being a CONS or a SYMBOL. It's only so that the tag bits for a FIXNUM imply that no pointer is to be chased, but some bits of the words are the integer.
+[01:23:07] <gilberth> There are all kinds of tagging schemes. Sometimes high bits are used, sometimes low bits. SBCL has one bit for fixnums. CCL has fixnums with all three low bits being zero.
+[01:25:02] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 240 seconds)
+[01:25:14] <sham1> IIRC bottom two or three bits being zeroes like that is also done by the Franz CL implementation, and that allows them to use their fixnums as pointers in alien data
+[01:25:29] <dave0> i seem to remember someone doing a study that found the most common numbers programmers use are about 12 bits long
+[01:25:33] *** Quits: dra (~dra@2a04:4540:641a:5000:8d7b:e0a:94db:60ef) (Quit: Leaving)
+[01:25:39] <sham1> Referring to 32-bit or 64-bit words instead of individual bytes
+[01:25:40] <gilberth> However when we have that immediate representation, which could be viewed as a funny pointer format, we say an integer is boxed, when it has its tag bits present and unboxed when not and in native machine format.
+[01:26:29] <dave0> 12 bits or less
+[01:26:41] <dave0> so plenty of room for a couple of extra bits
+[01:27:01] <sham1> Just do NaN boxing, it'll be fine /s
+[01:27:14] *** Joins: kevingal (~quassel@2a02:8084:4140:f300:adb9:14ff:5b35:b210)
+[01:27:30] <gilberth> Despite you really don't want to cons characters for instance.
+[01:27:42] <sham1> Nor booleans
+[01:27:52] <sham1> Although that's a more of a concern with Scheme than CL
+[01:28:03] <gilberth> sham1: Yes, this is what I want since amd64 is out. The NaN boxing.
+[01:28:21] * hayley uploaded an image: (235KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/dbgVAfjbxUtEwqpXvQEqgiuF/rust-fandom.png >
+[01:28:54] <gilberth> sham1: That are just two distinct values anyway. You could get away with #f and #t being just two unique objects.
+[01:30:01] <gilberth> You also could, if you're cheap, for integers just pre-cons dave0's 2**12 integers and use those while keeping a uniform everything-is-a-pointer format.
+[01:30:11] <sham1> You can
+[01:30:33] * hayley wants unboxing still
+[01:30:35] <sham1> Although one nice thing with NaN boxing is that since you're doing that, you might as well use the floats as your fixnums
+[01:30:51] <sham1> You get signed 2^52 with full accuracy
+[01:31:02] <gilberth> This is what JS does. Won't be great for CL.
+[01:31:23] <hayley> But now I need to shove 32-bit integers down the SIMD hole.
+[01:31:27] *** Joins: kuao (uid504326@id-504326.helmsley.irccloud.com)
+[01:31:29] <gilberth> This would be horrible actually for CL.
+[01:31:30] <sham1> Nah. JS does 32-bit signed with bitwise operations. But yeah, probably not a good idea
+[01:32:04] <sham1> Although for example V8 uses what is essentially fixnums and relegates actual floating point numbers to be in the heap
+[01:32:11] <gilberth> sham1: For JS it's great as it has no other number data type besides double floats.
+[01:32:13] <sham1> They just call them "SMIs" for whatever reason
+[01:32:21] <sham1> BigInt
+[01:32:26] <sham1> But yes
+[01:33:02] <gilberth> sham1: Is 1000000000000000000000000000000000000 a BigInt in JS? No, it's a float.
+[01:33:14] <sham1> But 1000000000000000000000000000000000000n is
+[01:33:40] * hayley suspects no one reposted that image
+[01:34:08] <sham1> Probably not since I haven't seen any links for the past 2 minutes or so
+[01:36:16] <gilberth> sham1: Which is a recent extension completely distinct from regular numbers. Math.pow(10,50) still is a float. No numeric power there.
+[01:36:39] <gilberth> tower, rather.
+[01:36:40] <sham1> That is true. JS doesn't have the full numeric tower which is sad
+[01:37:28] <gilberth> And the original JS decided to have only double floating point numbers, which is a legit move as small integers are still exact.
+[01:37:31] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[01:39:22] <gilberth> Besides these days FP math is cheap. Not like in ancient times, with no FPU even.
+[01:40:18] <hayley> https://www.youtube.com/watch?v=NIzleISU5jw
+[01:40:18] -ixelp- Beat the Clock - YouTube
+[01:40:23] <sham1> I can't imagine not having an FPU. Well, I can since I've worked with embedded stuff, but I'd rather not
+[01:40:55] <gilberth> For most things you don't really need one.
+[01:40:59] <sham1> Although one doesn't need FPUs in embedded systems yea
+[01:41:00] <selwyn> return to fixed point arithmetic
+[01:41:13] <sham1> Mmm, fixed point is the way
+[01:41:45] <gilberth> For DSP stuff it still is in use.
+[01:41:51] <hayley> fuck it, binary neural network
+[01:43:59] <hayley> gilberth: https://twitter.com/hydo/status/1463892797870600195
+[01:44:03] <hayley> "Just a little bit… Just a little bit -  R-A-X and R-B-P, find out what it means to me, R-A-X and R-B-P!  Come on! Sockittome sockittome sockittome sockittome!"
+[01:49:20] <hayley> https://www.youtube.com/watch?v=tpOVDeQ_wwE
+[01:49:20] -ixelp- [YTP] Kurzgesagt ANNIHILATES the moon using your grandmother and nukes. - YouTube
+[01:49:50] <sham1> https://www.youtube.com/watch?v=j98suMfW1tc
+[01:49:51] -ixelp- Numbers 0 to Absolute Infinity !!! - YouTube
+[01:50:01] <sham1> One has to wonder just how mathematicians name some of these objects
+[01:50:25] <sham1> Some of them seem systematic, and while some... not so much
+[01:52:10] <gilberth> hayley: This is funny. CCL and ACL have that SHL there, too.
+[01:52:44] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 260 seconds)
+[01:52:56] <hayley> gilberth: We'll fix it with a cleavir.
+[01:56:47] <semz> sham1, it's simple: Take a famous mathematician who didn't actually study the object in question, and name it after him.
+[01:58:16] <sham1> I mean Euler aside, some of these aren't even names of mathematicians
+[02:04:44] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[02:10:11] <selwyn> kefir grains arrived
+[02:10:17] <selwyn> now i have to activate them for 2 days
+[02:11:15] <selwyn> these things are quite mysterious, i wonder how they were discovered
+[02:13:02] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 260 seconds)
+[02:42:25] *** Joins: dra (~dra@2a04:4540:641a:5000:9884:54c7:30e2:1e3b)
+[02:55:07] *** Quits: shka (~herr@83.175.151.96.piasta.pl) (Ping timeout: 250 seconds)
+[03:20:56] *** Quits: X-Scale (~ARM@165.201.137.78.rev.vodafone.pt) (Ping timeout: 260 seconds)
+[03:22:34] *** Joins: X-Scale` (~ARM@31.22.203.240)
+[03:23:31] *** X-Scale` is now known as X-Scale
+[03:27:13] *** Joins: sunarch (uid526836@user/sunarch)
+[03:28:02] * hayley has ruled Rust by compiler and DFA power, now needs to cultivate SIMD power on Hyperscan
+[03:35:33] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[03:40:57] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 268 seconds)
+[03:41:21] <kuao> http://www.lisp-book.org/wp-content/uploads/2020/09/13/353091856.jpg
+[03:41:24] <kuao> ^^
+[03:43:10] * hayley still doesn't get it
+[03:45:47] <Alfr> What's that about?
+[03:46:11] <selwyn> horny police?
+[03:46:35] <Alfr> I don't get it.
+[03:47:43] <hayley> (prefix (parse-regular-expression "\"«[0-9]+»x«[0-9]+»\"")) ⇒ ((:LITERAL (34 35)) (:TAGS ((1 0 POSITION))) (:LITERAL (48 58))), [[0-9]]*{2 ← P}x{3 ← P}[0-9][[0-9]]*{4 ← P}"
+[03:48:05] <hayley> I can pull out some fairly useful prefixes apparently.
+[03:48:21] *** Quits: dra (~dra@2a04:4540:641a:5000:9884:54c7:30e2:1e3b) (Ping timeout: 268 seconds)
+[04:00:30] *** Quits: sm2n (~sm2n@user/sm2n) (Ping timeout: 265 seconds)
+[04:00:47] *** Joins: sm2n (~sm2n@user/sm2n)
+[04:05:53] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[04:16:43] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 268 seconds)
+[04:16:46] *** Quits: random-nick (~random-ni@87.116.180.220) (Ping timeout: 260 seconds)
+[04:17:58] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[04:22:48] *** Quits: kevingal (~quassel@2a02:8084:4140:f300:adb9:14ff:5b35:b210) (Read error: Connection reset by peer)
+[04:41:43] <hayley> But I still need to know if it's profitable or not. I don't think it can pull a prefix of ab|ac, and most of the text in the benchmark in the readme is all a's, so a prefix of just "a" is terrible.
+[04:43:32] <hayley> Yet one character might still win, moreso if it is punctuation or an uncommon letter.
+[04:55:27] <hayley> Well, CL gives us ALPHA-CHAR-P and all. So I could weight those.
+[05:32:25] <contrapunctus> Gnuxie: if you store sources in the image when writing Lisp...what does your workflow look like?
+[05:33:27] <contrapunctus> (Assuming it's actually possible - I read somewhere that Lisp images include the source code.)
+[05:53:32] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 268 seconds)
+[05:55:02] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[05:57:20] <gilberth> contrapunctus: More often than not they don't.
+[05:57:47] <contrapunctus> 🙁
+[05:59:36] <gilberth> Also it would be pretty embarrassing that when I distribute a binary, it would also contain the sources.
+[06:02:25] <contrapunctus> Perhaps there is a standard way to specify whether or not one wants to sources in the image?
+[06:02:34] <contrapunctus> wants * sources
+[06:04:18] * hayley rewrites ab|ac as a[bc] and it goes faster yet again.
+[06:04:51] <hayley> 580µs from 810µs. Funny.
+[06:07:52] <gilberth> contrapunctus: There is no standard way to recover sources, and thus there is no standard way to turn that on or off. It's not part of the language and commonly not done. Besides as CL works all sources associated with -- what exactly? -- would only be a guess.
+[06:08:48] <contrapunctus> yikes
+[06:10:01] <gilberth> Consider: (defun adder (n) (lambda (x) (+ x n))), (defvar *x*), (setq *x* (adder 42)); What is the source of *x*? The setq? The ADDER function? Why one and not the other?
+[06:10:19] <gilberth> Or the DEFVAR?
+[06:10:31] * hayley gets screwed as there is a rewrite rule involving EITHER for JOIN, and a rule involving JOIN for EITHER.
+[06:11:14] <gilberth> Yes, milady, make up your mind if you favor either joins or joins either.
+[06:12:03] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 268 seconds)
+[06:12:11] <hayley> More that I have circular compilation dependencies.
+[06:13:07] <contrapunctus> gilberth: the `defvar`, of course...even if the reason is only "because that's how Emacs does it" 😄 But one thing I'd really like from an editing environment is to know what changed a variable last - or a history of such.
+[06:13:23] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[06:13:49] <hayley> I could always define all the hash consing functions after the internal constructors and pattern definitions.
+[06:14:34] <contrapunctus> (In such a case, the `setq` would also have a role to play.)
+[06:15:19] <gilberth> Hmm? I go advertised constructor -> rewrite -> internal constructor -> hash.
+[06:15:59] <gilberth> contrapunctus: What if the application does that SETQ. What about name spaces you define by yourself?
+[06:17:30] <gilberth> As in (defvar *foo-hash* (make-hash-table)) (defmacro define-foo (name value) `(progn (setf (gethash ',name *foo-hash*) ',value) ',name)) (defun find-foo (name) (gethash name *foo-hash*))
+[06:17:52] <hayley> gilberth: Yes, but I have a "specification" like (DEFINE-TYPE (EITHER A B) :SIMPLIFY ((EITHER A A) -> A)) [the syntax is totally bogus, but it does that]. And so the internal constructor and rewrite rules are compiled at the same time. So now if I have a rule where EITHER rewrites a JOIN, and JOIN rewrites an EITHER, the pattern matching compiler complains for one of them.
+[06:18:17] <gilberth> contrapunctus: Now I say (define-foo gilberth a-porsche) (define-foo hayley a-pony)
+[06:19:10] <gilberth> contrapunctus: How will the system know about the source of the foo definitions for those two idiots here playing with REs all day.
+[06:19:30] <contrapunctus> 😂
+[06:19:32] *** Joins: robin (~robin@user/terpri)
+[06:20:13] <gilberth> hayley: I don't get the problem. Doesn't your macro just do what I have written manually?
+[06:20:47] <hayley> Yes, but the pattern matching library I use induces a circular dependency on compilation.
+[06:21:14] <gilberth> Ok then, have fun!
+[06:21:20] <hayley> EITHER wants to match a JOIN, and JOIN wants to match an EITHER. Which do I compile first?
+[06:22:07] <gilberth> Do as Pascal does. Have the constants first, then the types, then the vars and only then the procedures. :-)
+[06:22:50] <gilberth> Or do as CLOS does and allow for forward references.
+[06:22:55] <contrapunctus> gilberth: I wonder how Smalltalk does it. _looks at hayley_
+[06:23:30] <gilberth> Does Smalltalk have macros? Is it common to span new name spaces?
+[06:23:41] <hayley> Nope and nope.
+[06:24:06] <gilberth> This was a rhetorical question.
+[06:25:04] <gilberth> hayley: So what exactly does JOIN need to know about EITHER other than that there is a EITHER data type?
+[06:25:26] <hayley> It has to know the slot names, since those are not embedded in patterns.
+[06:26:06] <contrapunctus> gilberth: le sigh...so what do the implementations which _do_ include sources in images do about this?
+[06:26:49] <gilberth> contrapunctus: Nothing. It's not a feature you depend on. Lisp /= Smalltalk.
+[06:28:55] <gilberth> hayley: So why do need to know the slot names? Won't the promise that there will be a reader enough?
+[06:29:56] <hayley> The problem still holds; given the pattern is just (either p1 p2), how do I know that the slots or readers of EITHER are really called %R and %S or whatever?
+[06:30:46] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[06:31:05] <gilberth> I called them LHS and RHS all the time and have a binop super type.
+[06:31:43] <moon-child> contrapunctus: what exactly do you want to do?  Something like (defmacro mdefun (name lambda-list &body body) `(progn (setf (gethash ',name *functions*) '(,lambda-list ,@body)) (defun ,name ,lambda-list ,@body))) plus a version of LAMBDA that produces a FUNCALLABLE-STANDARD-OBJECT which knows its own source code will probably get you msot of the way there
+[06:31:48] <gilberth> But then I was too cheap for a pattern matcher.
+[06:32:46] <hayley> Sure, but even if I had consistent names, the pattern matching library wants a list of all names up front.
+[06:34:47] <contrapunctus> moon-child: just wondering about solutions to the 'image-source desync' problem. And I like the idea of an application whose sources you can inspect without the additional step of, say, cloning a repo.
+[06:35:15] <hayley> I was thinking the editor would highlight out of date code. Though, of course, you'd need to stash code in the implementation still.
+[06:38:48] <moon-child> contrapunctus: sometimes I _want_ the source to be out of sync with the image.  The problem is knowing when that's the case.  I think something like git's staging area (but with function granularity) is appropriate
+[06:39:04] <moon-child> however there is still the macro problem
+[06:39:36] <moon-child> I think it is unsolvable
+[06:39:46] <contrapunctus> What is the macro problem?
+[06:39:47] <mfiano> or any inlined function for that matter
+[06:40:04] <hayley> But the trouble is that I would still like to have just one DEFINE-REGEX form, rather than pre-declare types and then rewrite rules after. It's quite conducive for changing things.
+[06:42:17] <moon-child> mfiano: well, fair enough!  You can avoid inlining functions, keep entire lexical scopes around and produce calls to EVAL at runtime on every macro invocation
+[06:42:45] <hayley> What, can't you afford a dependency graph of inlined functions -> where they are inlined?
+[06:43:01] <hayley> The MOP even maintains such a graph already.
+[06:44:11] <moon-child> hayley: closures
+[06:44:15] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Ping timeout: 276 seconds)
+[06:44:35] <hayley> Still doable.
+[06:44:36] * mfiano is seriously considering retiring his proprietary NAS with 4x10TB to rip them out and put them in an actually BSD machine with RAID-Z
+[06:45:12] <moon-child> redefine a closure such that it now closes over things it didn't previously
+[06:45:15] <hayley> Self is right there ---->
+[06:45:33] <hayley> Got me there.
+[06:47:35] <hayley> Though, it'd work simply because closures in Self close over everything.
+[06:49:11] <moon-child> heh!
+[06:49:47] <moon-child> in s7 scheme, lexical environments are first-class, so they have to close over everything they possibly can.  But that leads to leaks in the limit so I'm not sure of it
+[06:50:26] <hayley> Or, rather, they are just objects with a hidden parent being the environment they close over. Though it's basically the same in Newspeak, where they actually have to handle environments differently for access control.
+[06:57:27] * hayley convinces herself she can just remove the JOIN -> EITHER rule anyway.
+[06:57:40] <hayley> It probably could end up circular anyway.
+[07:01:25] <hayley> https://twitter.com/TheeHornyyPoPo/status/1463862479348543493 😳
+[07:03:45] <hayley> HOLY SHIT I got 99% for programming studios
+[07:12:00] <hayley> Nope, that rule was very necessary. Oops.
+[07:15:03] <hayley> No, it wasn't that rule either. Something is now very broken with isum.
+[07:17:43] <gilberth> Congrats! I guess. But those rules are crucial. With time the proper terms need to meet and cancel each other in an alternative, otherwise the automaton is not finite.
+[07:18:11] <hayley> I am aware.
+[07:24:02] * hayley kills off FASL caches and it works again.
+[07:24:31] <hayley> Cool, sure, thanks SBCL.
+[07:24:56] <moon-child> speaking of image-source desync... :)
+[07:25:13] <hayley> >:(
+[07:25:15] <hayley> ):<
+[07:26:54] <hayley> I guess it wouldn't hurt so much to put class definitions in one macro, and then rewrite rules in another. As I rarely change the layout of regular expressions.
+[07:31:01] <hayley> Now I have a little ADT too: (define-types (literal set) (empty-string) (kleene r) (tag-set substitutions) (alpha expression history) (grep vector prototype) (either r s) (both r s) (invert r) (join r s))
+[07:34:42] * hayley recompiles, kills FASLs and the bug is back. But all the rules are the same still.
+[07:38:57] *** Joins: ln43 (~ln43@user/ln43)
+[07:46:29] <contrapunctus> cursed compiler
+[07:49:48] <gilberth> Delete packages, too. Python remembers just way too much. That is because it wants to be a batch compiler.
+[07:52:21] * contrapunctus can't decide what project to work on today
+[07:54:09] * hayley wonders why the rule for {A}(B + C) → {A}B + {A}C won't fire.
+[07:55:31] <hayley> Shit, it fires if I change the variable names for the constructor. So my pattern matching is broken somehow.
+[08:17:53] <hayley> Worse, it seems to happen only with MATCH* (takes multiple things to match simultaneously) and not MATCH (which doesn't, so I make a temporary list).
+[08:19:07] * hayley still wonders why a(b|c) is faster than (ab)|(ac), when the DFA is the same.
+[08:21:11] *** Quits: semz (~none@user/semz) (Ping timeout: 245 seconds)
+[08:21:14] <ln43> Hi all !
+[08:21:16] <gilberth> Because a(b|c) is shorter.
+[08:21:25] <hayley> ...it generates a more common branch earlier in one, and later in the other.
+[08:21:55] <hayley> Perhaps I should sort by likelihood, but it's abnormal for a string to have 999,998 #\a and one #\b and one #\c.
+[08:22:13] <gilberth> hayley: What the heck are you doing? The DFAs should be identical.
+[08:22:26] <hayley> gilberth: Yes, but the COND clauses appear in a different order.
+[08:22:33] <hayley> Horrible, isn't it?
+[08:22:56] <gilberth> Yes, a night mare!
+[08:22:59] * hayley under 2\tau today
+[08:24:09] <ln43> i remember using jflap time ago to visualize those things and mybe should be possible
+[08:24:15] <ln43> quite good tool
+[08:24:16] <gilberth> Use genetic programming to optimize the COND clauses order. No ISUM-CASE still?
+[08:24:39] <hayley> Based on experience with the Netfarm virtual machine, binary search has the same problem with branching probability.
+[08:25:07] <gilberth> Hmm. Profile guided optimization?
+[08:25:11] <ln43> https://www.jflap.org/ <- this one
+[08:25:19] <hayley> And I expect to have, say, 5 transitions tops, for which O(log n) isn't notably better than O(n)
+[08:25:36] <gilberth> I'll attack that with time, as it would make sense for a scanner.
+[08:25:40] <hayley> I'd need to get a profile.
+[08:26:01] <hayley> I guess my idea of a "string profile" with probabilities is static PGO, but I still have no idea how to produce a profile.
+[08:26:15] <gilberth> Just count how often each transition is taken?
+[08:26:27] <hayley> I'd need pretty fast counters.
+[08:26:39] <gilberth> Does it need to be fast?
+[08:27:04] <hayley> Ideally, yes.
+[08:27:19] <gilberth> Why?
+[08:28:16] <hayley> Would you just sample for a while, and then generate fast PGO-ed code after?
+[08:28:42] <gilberth> Yes, as you do with gcc or clang.
+[08:28:55] <hayley> Right.
+[08:29:22] <gilberth> But I am not a grepper and thus have all the time I need to compile.
+[08:32:14] <gilberth> Otherwise I believe we can have heuristics. Like prioritize loops. Especially loops with just one state. That would catch initial punctuation the machine is waiting for before it gets more interesting.
+[08:32:51] <hayley> Sure.
+[08:33:04] <gilberth> hayley: Wrt to isums: I win with large dispatches, as a scanner would see it.
+[08:34:03] *** Joins: semz (~none@user/semz)
+[08:34:10] <gilberth> I could perhaps do as compilers do with jump tables and go back to linear if the number of equivalence classes is small.
+[08:34:18] * hayley took a brief break from code generator hacking.
+[08:34:28] <gilberth> Or rather, when it is dominated by singletons.
+[08:34:57] <hayley> "It's funny that people say using closures for control flow is slow, when it's trivial to inline that." "Well, such performance is unnecessary since hardware is faster." "You only get away with unoptimized code if you have a decent compiler though. Else you get CPython."
+[08:36:59] <gilberth> What kind of argument is that? Performance is not needed because machines are fast? Where is my multi THz machine, have you seen it?
+[08:37:29] <hayley> Worse, you only go faster with more cores.
+[08:37:55] <gilberth> These days, yes. We hit a limit, it seems.
+[08:40:18] <hayley> But I now have a rule which lets me "strip mine" out more prefixes. e.g. foo|far rewrites to f(oo|ar), which is trivial to find the prefix from.
+[08:40:48] <hayley> I could probably watch derivative classes and take derivatives, but I already had code to extract "structural" prefixes like that one.
+[08:42:24] <selwyn> good morning everyone
+[08:42:41] <hayley> good morning beach!
+[08:44:56] <gilberth> Besides the wavelength of 1THz is just 0.3mm, a CPU clocked that fast would be interesting.
+[08:45:47] <gilberth> selwyn: Hello there!
+[08:46:13] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 268 seconds)
+[08:47:22] <selwyn> one challenge of building a photonic quantum computer is that you have to process the huge quantity of measurement outcomes (photon detection events) out of the computer for post-processing on a classical computer
+[08:47:45] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[08:47:48] <hayley> You should convince your higher ups to fund producing my 1024-bit lookup table computer.
+[08:47:50] <selwyn> however it seems that the rate of detections is around ghz
+[08:48:00] <selwyn> so it sounds technically feasible
+[08:48:00] <hayley> aka "the Connection Machine for broke people"
+[08:48:14] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Client Quit)
+[08:48:39] <hayley> (prefix (parse-regular-expression "ab|ac")) ⇒ ((:LITERAL (97 98)) (:LITERAL (98 100))), ε
+[08:49:14] <selwyn> hayley: there would be some interesting problems here for you if you are interested in parallel algorithms
+[08:50:54] <selwyn> https://arxiv.org/abs/1307.1740
+[08:55:28] <hayley> selwyn: I'll need the most expensive FPGA dev board you can get and 3 years
+[08:55:58] <selwyn> lol certainly
+[08:56:16] * selwyn unlocks the safe containing all the quantum bux
+[08:56:36] <hayley> :O
+[08:57:38] <hayley> Trust me, I'm qualified, I got 99% for Programming Studio 2
+[09:04:20] <hayley> I could probably guess when PGO would be profitable. If something runs unusually slow, then the profile is probably wrong now.
+[09:05:58] <selwyn> there is an almost-linear time quantum decoder whose performance is known due to the legendary tarjan
+[09:06:07] <selwyn> using union-find
+[09:08:29] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[09:12:27] <hayley> Do we have a union-find structure?
+[09:12:47] <selwyn> we?
+[09:13:03] <hayley> idk, I thought union-find was supposed to be hard to implement.
+[09:13:10] * hayley shrugs
+[09:13:33] * selwyn looks
+[09:13:38] <selwyn> well i don't have one
+[09:14:01] <hayley> Wikipedia and some shit site make it sound an awful like a bunch of linked lists, which is horrible (yes, this is #lispcafe, but)
+[09:17:54] <ln43> i find this description quite good https://en.wikipedia.org/wiki/Disjoint-set_data_structure
+[09:18:08] <ln43> otherwise there is place to improve it... for sure
+[09:18:53] <ln43> and that should valuable for the readers
+[09:19:43] <hayley> It's rather that the "parent" stuff looks like a binary tree. Which isn't a linked list, actually, but still gives me shivers.
+[09:26:55] *** Quits: ln43 (~ln43@user/ln43) (Ping timeout: 268 seconds)
+[09:27:37] <susam> Hello #lispcafe! How are you all doing?
+[09:28:27] <selwyn> not bad
+[09:28:31] <selwyn> how are you?
+[09:29:21] <susam> I have had a very busy last couple of weeks. Work, deadlines, and part-time studies that I began last year. Still can't see the light at the end of the tunnel. Need to keep working hard for another 1.5 weeks.
+[10:00:56] <selwyn> https://thecrow.uk/A-Gov.uk-site-dedicated-to-porn-Absolutely/
+[10:00:58] <selwyn> what the 
+[10:01:00] <selwyn> fuck
+[10:01:02] <selwyn> its real
+[10:01:58] <hayley> https://www.youtube.com/watch?v=quzSArbjbjs
+[10:01:58] -ixelp- YTP Chucklevision: Chuckle Brothers take on MI5 and the Porn Industry - YouTube
+[10:04:34] <hayley> Hey, apparently they teach quantum computing in the "computing theory" class that apparently I don't have credit for.
+[10:04:55] <hayley> "Week 6: [...], NFA -> DFA conversion" bruh
+[10:07:51] <selwyn> do you have a link to the course page?
+[10:08:06] * hayley forgot if she has ever stated which university she goes to.
+[10:08:16] <selwyn> one of the southern hemisphere ones
+[10:08:31] <hayley> Seems about right. I'll PM you the link
+[10:08:41] <selwyn> i mean, if its not inconvenient
+[10:08:52] <selwyn> i could advise more for your benefit if it is worth taking or not
+[10:09:09] * hayley sent the PM
+[10:13:31] *** Quits: edgar-rft (~edgar-rft@HSI-KBW-109-193-249-223.hsi7.kabel-badenwuerttemberg.de) (Quit: Leaving)
+[10:42:51] *** Quits: Alfr (~Alfr@user/alfr) (Ping timeout: 245 seconds)
+[10:47:17] *** Joins: Alfr (~Alfr@user/alfr)
+[10:48:26] *** Quits: Inline (~Inline@2a02:908:1252:7a80:6450:3e1f:fbe5:993b) (Quit: Leaving)
+[10:52:47] * hayley starts to wonder if sb-simd constant folding BROADCAST instructions is a good idea
+[10:53:06] <hayley> The problem is that broadcasts (in AVX) are pretty cheap, and the alternative involves two RIP-relative loads.
+[10:58:02] <moon-child> yeah that's garbage
+[10:58:41] <hayley> Or at least something funky is going on, since I have a lot of loads in a loop where I don't expect them.
+[11:00:10] <hayley> https://plaster.tymoon.eu/view/2723
+[11:00:19] <hayley> The MACROLET is just cause I was trying manual loop unrolling too.
+[11:06:31] <hayley> Seems that the loads are tied to U32.8<= somehow.
+[11:06:37] *** Quits: chiselfuse (~chiselfus@user/chiselfuse) (Quit: leaving)
+[11:06:57] *** Joins: chiselfuse (~chiselfus@user/chiselfuse)
+[11:07:16] * hayley checks the intrinsics guide and there are only instructions for > and =. Probably helps.
+[11:10:31] <moon-child> but > is just backwards <=, no?
+[11:10:42] <hayley> True.
+[11:12:14] *** Joins: edgar-rft (~edgar-rft@HSI-KBW-109-193-249-223.hsi7.kabel-badenwuerttemberg.de)
+[11:13:14] <hayley> "Compare packed signed 32-bit integers in a and b for greater-than, and store the results in dst."
+[11:13:29] <hayley> It's cause they couldn't afford an unsigned compare too?
+[11:14:18] <hayley> As I read off Unicode code points, I can cheat and use signed 32-bit anyway, but that's ridiculous.
+[11:14:25] *** Quits: kuao (uid504326@id-504326.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[11:18:47] <hayley> I just wrote V> to get around it: https://plaster.tymoon.eu/view/2724
+[11:19:43] <sham1> Probably didn't feel it necessary to have unsigned comparisons
+[11:21:33] <hayley> That seems to scan at 5.5Gchar/s with a million characters (L3 cache?) and about 3.3Gchar/s with 100 million (main memory).
+[11:24:05] <hayley> But as I have Zen 1, it's doing two 128-bit ops for every 256-bit instruction.
+[11:50:40] *** Joins: shka (~herr@83.175.151.96.piasta.pl)
+[11:59:52] *** Joins: rogersm (~rogersm@90.166.177.48)
+[12:05:53] <selwyn> https://www.tug.org/texshowcase/cheat.pdf
+[12:06:07] <selwyn> controversial to call it a cheat sheet when its 10 pages long
+[12:16:05] *** Quits: edgar-rft (~edgar-rft@HSI-KBW-109-193-249-223.hsi7.kabel-badenwuerttemberg.de) (Quit: Leaving)
+[12:24:31] <dave0> if you only have signed comparisons but you need the full 32 bit range, offset your numbers by -2**31
+[12:26:08] <moon-child> haha, cute
+[12:26:34] <dave0> thanks :-)
+[12:28:27] *** Quits: Aurora_v_kosmose (~LispyLigh@user/lispylights) (Quit: Aurora_v_kosmose)
+[12:33:10] *** Joins: Aurora_v_kosmose (~LispyLigh@user/lispylights)
+[12:38:23] <ck_> selwyn: nice sheet, that one. I put a printout in my binder when I discovered it first
+[12:38:27] <ck_> never used it much though
+[12:58:07] <ck_> good move though, call anything "quick guide to ..." or "... cheat sheet" for more market appeal
+[13:01:01] <ck_> "Expedited Guide To Mathematics", three volumes, 2000 pages -- https://plato.stanford.edu/entries/principia-mathematica/
+[13:01:03] -ixelp- Principia Mathematica (Stanford Encyclopedia of Philosophy)
+[13:36:40] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 268 seconds)
+[13:52:59] <hayley> AVX2 is about 3.0× as fast as a ab|ac DFA simulation on my Zen 1 desktop, and 3.7× or so on my Comet Lake laptop.
+[13:55:44] <shka> i have zen2, wanna benchmark here?
+[13:56:13] <hayley> I'm about to head to bed.
+[13:56:32] <shka> good night then
+[13:56:35] <dave0> nite hayley !
+[13:56:38] <hayley> Thanks, have fun.
+[13:56:42] <hayley> https://www.youtube.com/watch?v=b6Sv8qF3Wb0
+[13:56:43] -ixelp- Toto, Brian Eno - Prophecy Theme (From "Dune" Soundtrack) - YouTube
+[13:56:55] <shka> that movie had awesome soundtrack
+[13:57:29] <contrapunctus> Chronometrist (Elisp time tracker) has a nagging bug in the pretty printer. There's Terminus, a hopefully-eventually-Common-Lisp web app for OSM contributors. There are a couple McCLIM projects (porting Chronometrist to CLIM, and making a word processor). And lastly there's Clavier, a keyboard customization daemon... 🤔
+[13:57:44] <contrapunctus> Whoops.
+[13:58:49] <contrapunctus> (Draft followup to my last message, which I neglected to send.)
+[14:00:02] <hayley> "On Rust regex, we ruled with DFA and compiler power," gilberth said. "Here, we must scrabble for SIMD power. This is your inheritance, hayley."
+[14:14:30] * hayley wonders if sb-simd did dave0's trick, particuarly because there were more pack loads, and SBCL doesn't do global code motion.
+[14:17:18] <moon-child> it does
+[14:17:20] <moon-child> https://0x0.st/-7yG.txt
+[14:17:58] <hayley> Thanks!
+[14:18:15] * hayley still waits for GCM in the Cleavir of nodes
+[15:09:40] *** Joins: random-nick (~random-ni@87.116.180.220)
+[15:10:31] *** Joins: treflip (~user@95.79.32.99)
+[15:18:28] *** Quits: greyrat (~greyrat@ip202.ip-51-178-215.eu) (Bye)
+[15:18:48] *** Joins: greyrat_ (~greyrat@ip202.ip-51-178-215.eu)
+[15:18:55] *** Joins: X-Scale` (~ARM@31.22.203.240)
+[15:21:50] *** Server sets mode: +nrt 
+[15:25:59] *** Quits: Lulu (~meow@vyos/developer/Lulu) (Ping timeout: 260 seconds)
+[15:25:59] *** Quits: mala (~mala@user/malaclyps) (Ping timeout: 260 seconds)
+[15:25:59] *** Quits: greyrat (~greyrat@ip202.ip-51-178-215.eu) (Ping timeout: 260 seconds)
+[15:25:59] *** Quits: shka (~herr@83.175.151.96.piasta.pl) (Ping timeout: 260 seconds)
+[15:25:59] *** Quits: X-Scale (~ARM@31.22.203.240) (Ping timeout: 260 seconds)
+[15:26:01] *** Quits: micro (~micro@user/micro) (Ping timeout: 260 seconds)
+[15:26:06] *** X-Scale` is now known as X-Scale
+[15:26:17] *** Joins: micro (~micro@user/micro)
+[15:30:16] *** Joins: shka (~herr@83.175.151.96.piasta.pl)
+[15:48:59] *** Joins: notzmv (~zmv@user/notzmv)
+[15:51:21] *** Joins: ln43 (~ln43@user/ln43)
+[15:57:57] *** Quits: ln43 (~ln43@user/ln43) (Quit: ln43)
+[16:16:32] *** Joins: ln43 (~ln43@user/ln43)
+[16:16:49] <ln43> Good morning
+[16:17:40] <dave0> maw ln43 
+[16:17:50] <selwyn> hi
+[16:18:03] <ln43> Hi dave0, Hello selwyn
+[16:19:30] <ln43> i was having an idea... in my car raging game use different colors for roads curves just to classify the difficulty as easy / moderate / hard
+[16:20:15] <ln43> xd ... and that was the only modification i have done, except modify the centrifugal force to help the driver
+[16:20:46] <ln43> ok... really that multiplying factor should be not constant at all... but for now it's constant
+[16:28:32] *** Quits: ln43 (~ln43@user/ln43) (Ping timeout: 240 seconds)
+[16:44:40] *** Quits: random-nick (~random-ni@87.116.180.220) (Ping timeout: 256 seconds)
+[16:52:55] <sham1> wam dave0 
+[16:53:53] <dave0> maw sham1 
+[17:05:28] <ck_> "car raging game" sounds like populated-area-highway-simulator
+[17:08:22] <contrapunctus> ck_: #carmageddon #roadrash
+[17:10:30] <gilberth> Good morning #lispcafe!
+[17:10:37] <selwyn> good morning
+[17:18:28] *** Joins: schulze (~schulze@dynamic-077-010-212-106.77.10.pool.telefonica.de)
+[17:27:03] *** Joins: christophergray (~christoph@190.148.51.123)
+[18:06:28] <selwyn> don't understand why the government hasn't changed the dns record yet, it's already made national news
+[18:07:20] <selwyn> oh, it was cached on my end
+[18:22:03] <amazigh> morning :)
+[18:33:26] <Alfr> Good morning!
+[18:34:18] *** Quits: lisp123 (~lisp123@5.30.23.247) (Remote host closed the connection)
+[18:42:37] <amazigh> all my network is sleepy, seems like saturday morning or something.
+[18:42:42] <amazigh> Did something bad happen?
+[18:42:47] <amazigh> I mean... in the news?
+[18:55:46] <selwyn> was talking about this https://thecrow.uk/A-Gov.uk-site-dedicated-to-porn-Absolutely/
+[19:10:12] <ck_> lol. .oO( have you got a loicense for those smutty depictions, citizen? )
+[19:34:41] <shka> gosh
+[19:34:58] <shka> selwyn: now i need to check what is the best of the best british porn
+[19:36:05] <selwyn> > the porn itself is a mix of magazine covers, pics, and Wikipedia entries for pornstars
+[19:37:06] <selwyn> would love to know the story behind this
+[20:01:06] *** Joins: ln43 (~ln43@user/ln43)
+[20:07:22] <selwyn> it feels like there should be somehow more to it than disgruntled employee
+[20:07:33] <selwyn> seeing as how it appears to have been sold to malaysians
+[20:16:01] <ln43> Hi selwyn
+[20:16:29] <ln43> i was considering that we don't have locally enoigh semiconductor industries
+[20:16:46] <ln43> at east here... and that is an issue
+[20:17:22] <ln43> because i suppose that take years to be competitive in the field
+[20:18:11] <ln43> so basically currently there is a slightly retard in the research
+[20:18:27] <ln43> ...unlikely
+[20:20:04] <ln43> and it's not wise that many researchers are going outside from their nation: see for examples how many from the east are going to the ovest
+[20:20:13] <ln43> unidirectional migration mostly
+[20:20:56] <ln43> because in the east they are more autonomous generally
+[20:21:10] <ln43> ok, maybe i'm wrong but this is my personal impression
+[20:23:22] <selwyn> depends what you mean by east
+[20:23:50] <selwyn> was under the impression all the good stuff is in taiwan which is certainly in the east
+[20:24:08] <ln43> yes all the countries that are exporting engineers or qualified personnel 
+[20:24:26] <ln43> ok... i had to go in taiwan but the borders were closed
+[20:24:33] <selwyn> depends on whether globalised tech splinters
+[20:24:39] <selwyn> apparently russia built a chip recently
+[20:25:26] <ln43> ok but you're luky since in your nation there are significant chip producers
+[20:25:38] <ln43> and that is important for the health of the research
+[20:25:58] <selwyn> meh
+[20:26:08] <ln43> i mean local people add value to local companies
+[20:26:18] <ln43> that should be the idea
+[20:26:39] <selwyn> there is still time for the uk to cheerfully wave goodbye to arm and whatever other companies we have
+[20:27:47] <ln43> yes but the choice of Apple to say in my opinion was not wise decentralizing all the production in other regions
+[20:27:52] *** Joins: edgar-rft (~edgar-rft@HSI-KBW-109-193-249-223.hsi7.kabel-badenwuerttemberg.de)
+[20:28:12] <ln43> specially now that Intel is no more important like decades ago
+[20:28:56] <ln43> currently all the x86* architectures are going to be soon abandoned
+[20:30:21] <ln43> but also consider the producers of digital devices: mobile phones... almost all are located into the east
+[20:30:36] <ln43> with only few exception
+[20:31:58] <ln43> i mean if one wants to have a specifically designed circuit is better that he cares personally for the production 
+[20:32:12] <ln43> design and production... everything
+[20:34:46] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 268 seconds)
+[20:36:37] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[20:46:07] <dave0> nite all
+[20:46:23] <Alfr> Good night, dave.
+[20:46:46] <dave0> byes Alfr 
+[20:47:02] *** Quits: dave0 (~davezero@069.d.003.ncl.iprimus.net.au) (Quit: dave's not here)
+[20:54:41] <contrapunctus> I've been going around reading about SSO and OAuth, but I'm very much in the dark about how I might implement SSO (via osm.org) in my application...
+[20:56:31] <contrapunctus> And as for libraries, there's Clath which is Clack-specific (and I'm wary about using Clack since I hear it doesn't have much in the way of documentation), and cl-oauth2, which is LLGPL...
+[20:56:58] *** Quits: ln43 (~ln43@user/ln43) (Ping timeout: 268 seconds)
+[21:01:12] *** Joins: random-nick (~random-ni@87.116.180.220)
+[21:06:26] <shka> contrapunctus: docker?
+[21:06:42] <contrapunctus> shka: what? O_o
+[21:06:42] <shka> because if yes, just use nginx and be done with it
+[21:07:17] <shka> https://developer.okta.com/blog/2018/08/28/nginx-auth-request
+[21:07:17] -ixelp- Use nginx to Add Authentication to Any Application | Okta Developer
+[21:07:23] <shka> contrapunctus: that's what i do 
+[21:07:35] <shka> also, SSL
+[21:10:01] <contrapunctus> I don't see how Docker is involved here...
+[21:10:29] <contrapunctus> shka: is there no Hunchentoot equivalent?
+[21:10:45] <shka> well, you are running nginx usually as part of a docker
+[21:11:18] <shka> contrapunctus: dunno, i never even looked for it
+[21:11:33] <shka> my applications are behind nginx anyway
+[21:11:47] <shka> so whatever, that works for me
+[21:12:12] <shka> i am not very passionate about minor implementation details, you see
+[21:13:27] <contrapunctus> x-P
+[21:14:57] <shka> i can use middle-ware, it's fine
+[21:16:45] <contrapunctus> I'm not even sure I need to do anything special for SSO...
+[21:17:09] <contrapunctus> (but I don't know much about OAuth)
+[21:18:31] <contrapunctus> I mean...doesn't a successful authorization flow mean that the user provided correct credentials to osm.org, and is therefore a bona fide osm.org user? Isn't that all I need here? 🤔️
+[21:34:06] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 245 seconds)
+[21:35:51] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[21:50:38] <selwyn> https://greekreporter.com/2021/09/10/griffin-warrior-ancient-greece/
+[21:50:38] -ixelp- The Griffin Warrior: A Staggering Discovery from Ancient Greece
+[21:50:52] <selwyn> mycenaen mysteries revealed
+[22:01:27] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Quit: WeeChat 3.3)
+[22:02:00] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[22:15:23] <selwyn> i like to use hunchentoot behind nginx
+[22:15:50] <selwyn> i am not unique in that respect
+[22:19:47] <Gnuxie> <contrapunctus> "Gnuxie 💜🐝: if you store..." <- well, you just change what a file is but i mean, you could do it and keep files if you copy the region a function or a class or whatever was defined and keep them tied together 
+[22:22:32] <Gnuxie> if you kept using files you'd also have to keep track of the original so you could warn someone who tries to edit a function from e.g. 'view-source' that the copy/snippet it is out of date but at least when you're debugging it won't show the wrong source  
+[22:23:59] <Gnuxie> uhh, by keep track of the original i mean keep track of the actual file that you'd normally edit, not the copy of the source code from when the function was compiled
+[22:36:40] *** Quits: christophergray (~christoph@190.148.51.123) (Quit: WeeChat 3.3)
+[22:36:47] <susam> I do pretty much the same thing. Hunchentoot behind an nginx.
+[22:41:38] <shka> susam: ^5
+[22:42:02] <shka> how we stopped worrying and loved nginx
+[22:59:06] *** Quits: treflip (~user@95.79.32.99) (Remote host closed the connection)
+[23:05:39] <selwyn> reminds me that i need to get my website back sigh
+[23:12:49] *** Quits: schulze (~schulze@dynamic-077-010-212-106.77.10.pool.telefonica.de) (Quit: nyaa~)
+[23:14:00] <selwyn> pinebook pro looks nice
+[23:16:30] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[23:17:32] <sham1> It very much does
+[23:18:39] <sham1> It's also quite cheap
+[23:19:23] <White_Flame> [Out of Stock]
+[23:19:38] <sham1> Well probably
+[23:19:50] <sham1> I wonder if the pinebook pro would work with Linux-libre
+[23:20:32] <White_Flame> the raspberry pi 400 is also very nice looking
+[23:20:51] <White_Flame> (although obv not a laptop)
+[23:21:15] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 268 seconds)

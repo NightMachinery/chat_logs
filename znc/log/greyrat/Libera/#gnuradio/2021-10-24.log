@@ -1,0 +1,662 @@
+[00:03:05] *** Quits: Macuser (~Macuser@216.30.159.201) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[00:19:13] <funkylab[m]> couple of things
+[00:20:06] <funkylab[m]> so, you don't need to implement that. GNU Radio already can do that for you: If you need multiples (say, 15) of your FFT length vectors, then use set_output_multiple to 15. Tadah, you're always presented with 15 vectors at a time
+[00:21:08] <clever> one thing i found, is that when your dealing with a FIR filter, the output sample is based on the last N input samples
+[00:21:26] <funkylab[m]> Then: It's very rare that Excel is the right tool for data visualization or signal processing as soon as you have an FFT – these things give complex values at output, and no matter how I turn it, Excel isn't the tool to deal with complex numbers
+[00:21:30] <clever> so you dont want to receive data in multiples of N, but you need to buffer the last N you received
+[00:21:50] <funkylab[m]> clever: that's the "history" feature
+[00:22:35] <funkylab[m]> that works, too, just from the top of my head, I don't know whether we expose it to python
+[00:23:00] <clever> ive also run into some complications when implementing FIR accel on my board, the last N generally should be contiguous
+[00:23:25] <funkylab[m]> in virtual memory in GNU Radio, contiguity is a given
+[00:23:30] <clever> the less contigous it is, the more cpu time you waste making it so
+[00:23:49] <clever> but if your dealing with the last N in a ringbuffer, when you wrap around, it gets sliced in 2
+[00:23:54] <funkylab[m]> no
+[00:24:00] <funkylab[m]> in virtual memory, that's not the case
+[00:24:12] <funkylab[m]> we twice-map the memory
+[00:24:16] <clever> oh, i can see how you might, yeah that
+[00:24:31] <clever> but i'm dealing with a chunk of hw that cant see the mmu
+[00:24:34] <funkylab[m]> https://www.gnuradio.org/blog/2017-01-05-buffers/
+[00:24:43] <clever> so it needs to be contiguous in the physical space
+[00:24:55] <clever> but that is a nice trick, ive never even thought of that before
+[00:25:02] <funkylab[m]> clever: yeah, then no memory larger than 4 kB that looks contiguous in userpsace is guaranteed to be linear
+[00:25:34] <clever> you can use special kernel primitives (often found in the gpu drivers) to allocate a contiguous chunk, and map it back to userland
+[00:25:39] <funkylab[m]> that's why we have dsorber's stuff being on its way to GNU Radio 3.11, to allow for memory coming from some other place
+[00:25:48] <clever> ive implemented exactly that before, for some 3d drivers
+[00:26:00] <funkylab[m]> clever: not for current GNU Radio, unless you can magically make that DRI memory work with shmem
+[00:26:18] <clever> in my case, it was a custom api
+[00:26:44] <funkylab[m]> yeah, GNU Radio's ring buffer emulator as of now requires shared memory, the ongoing work is to change that
+[00:26:49] <clever> ioctl to allocate/free blocks, and to select a block, mmap maps the selected block, all blocks are tied to the filehandle you opened
+[00:26:57] <funkylab[m]> yeah
+[00:27:06] <clever> if you pass a copy of the file handle to somebody (unix sockets, child procs), they can mmap the same handles
+[00:27:11] <funkylab[m]> as said, not currently applicable to GNU Radio
+[00:27:43] <clever> for the FIR filter stuff i was doing, i had an idea
+[00:28:05] <clever> all vector loads, are in multiples of 16, so when the buffer is split at the wrap point, you need to load it in 3 parts
+[00:28:31] <clever> Nx16, 1x16, Mx16, and only the 1x16 part has a copy, to fuse the fragment around the seam
+[00:28:46] <funkylab[m]> yep, that's one way to do it, but GR currently can't
+[00:29:09] <clever> but this also gave me another idea
+[00:29:32] <clever> instead of acting on the last N samples, you can instead act on the last N+16 samples
+[00:29:32] <funkylab[m]> you need that smartness in the buffer_reader/_writer classes, and that's what https://github.com/gnuradio/gnuradio/pull/5028 introduces
+[00:29:49] <funkylab[m]> clever: yeah, that's what "history" does in GNU Radio
+[00:29:49] <clever> load an extra 16 samples (1 more vector row), and then compute output M and M+16
+[00:29:51] *** Quits: Guest28 (~Guest28@2601:5c0:c280:8da0:f546:1d5:7ae0:dc1) (Ping timeout: 256 seconds)
+[00:30:12] <funkylab[m]> ah you want to overlap things
+[00:30:14] <clever> at the cost of loading 1 extra row, you save having to re-load N-16 samples
+[00:30:58] <clever> so its computing multiple outputs, all with an index 16 apart
+[00:31:24] <clever> then you shift your view by +1 sample, and fill in the next set of 16 apart
+[00:31:24] <funkylab[m]> not fully following there
+[00:31:31] <funkylab[m]> this seems like unrelated to GNU Radio, right?
+[00:31:41] <clever> its something that any FIR filter could do
+[00:32:11] <funkylab[m]> yes, but it's expensive, because linear loads from memory are still the best pre-fetchable ones
+[00:32:42] <clever> with a normal FIR filter, you load the last N samples, and compute a single output
+[00:32:50] <funkylab[m]> yes.
+[00:33:07] <clever> and then you re-read the N-1 samples you already had (but shifted over one vector lane), plus 1 new sample
+[00:33:17] <funkylab[m]> I'm sorry, I might really not be getting the full picture here, to be completely honest
+[00:33:18] <clever> and you just wasted a ton of memory bandwidth on data you already had
+[00:33:24] <funkylab[m]> what is the problem you're solving
+[00:33:46] <clever> my idea, is to load the last N+16 samples, and compute outputs 0 and 16
+[00:33:56] <funkylab[m]> problem being solved?
+[00:33:56] <clever> then shift your N+16 window by 1 sample, and compute outputs 1 and 17
+[00:34:05] <clever> and repeat
+[00:34:24] <funkylab[m]> you're describing a direct form type II FIR, yes
+[00:34:31] <clever> so if N was say 32, your now using half the loads, to compute the FIR filter
+[00:34:37] <funkylab[m]> no
+[00:34:50] <funkylab[m]> or yes, loads
+[00:34:53] <funkylab[m]> but these don't matter
+[00:35:02] <funkylab[m]> what matters is the number of cache-missing loads
+[00:35:24] <funkylab[m]> I still repeat my question: what's the problem you're solving
+[00:35:41] <funkylab[m]> I really don't understand, and I think you're on to somethiong, so I'd like to understand
+[00:35:42] <clever> i think the critical difference there, is how much latency an L1 hit still has
+[00:36:06] <funkylab[m]> I don't understand what "difference" you're referring to. What's the problem you're solving, please?
+[00:36:21] <clever> my ideal will have fewer loads, so even if the L1 is slow to respond in a hit, you gain speed
+[00:36:33] <funkylab[m]> I give up.
+[00:36:36] <clever> but what you said, assumes the L1 is very fast (in a hit situation), and we dont need that
+[00:37:03] <clever> i think part of the problem, is that i dont do this kind of programming for a living
+[00:37:08] *** Quits: OnAironaut (~OnAir@user/onaironaut) (Ping timeout: 244 seconds)
+[00:37:10] <clever> so i dont know how expensive loads really are, in general
+[00:37:19] <clever> and i'm just trying to avoid them whenever possible
+[00:37:29] <funkylab[m]> you just don't answer the question I've asked five times now: what is the problem you're solving
+[00:37:46] <clever> the problem is implementing a FIR filter on the VPU of an rpi
+[00:37:54] <funkylab[m]> woah
+[00:37:56] <clever> and optimizing it to be as fast as possible
+[00:38:36] <funkylab[m]> Ok, so this is fully unrelated to GNU Radio :)
+[00:38:41] <funkylab[m]> Context really is key
+[00:38:43] <clever> the VPU can do 16 mult+accumulate (16bit inputs, 32bit output, 48bit accumulator) in just 2 clock cycles at 500mhz
+[00:39:18] <clever> and in theory, i could implement a FIR module for gnu radio, that is VPU accelerated
+[00:39:25] <funkylab[m]> sigh
+[00:39:30] <clever> but there is no cache coherency
+[00:39:31] <funkylab[m]> that would be cool
+[00:40:01] <funkylab[m]> before you do that, show that you can exchange data faster with the VPU than the CPU can compute the convolution
+[00:40:12] <funkylab[m]> otherwise you'll be coding, but not solving a problem
+[00:40:15] <funkylab[m]> which still would be cool
+[00:40:22] <funkylab[m]> but not as useful :)
+[00:41:40] <clever> the question then, is how many clock cycles can an arm-neon opcode do multiply+accumulate, and how many lanes wide is it?
+[00:42:03] <clever> and what kind of clock cycle latency can we expect from an L1 hit?
+[00:42:20] <funkylab[m]> no, the prime question is how much time you need to transport that amount of data in a real-world application with a multithreading OS on the ARM cores
+[00:43:01] <funkylab[m]> including barriers, synchronization, or whatever measures and overhead you need to make that work
+[00:43:16] <clever> knowing how fast the arm can compute things, would give me a line that i must get under
+[00:43:30] <clever> and yeah, then what you said, must go faster then that
+[00:44:08] <clever> lets say the arm side was a cortex-a53 running in aarch64 mode
+[00:44:14] <funkylab[m]> you can run volk_profile and then run a simple stock GNU Radio FIR filter flow graph: null source->filter->benchmark rate->message debug flow graph
+[00:44:30] <funkylab[m]> this will get you a throughput
+[00:48:28] *** Joins: Macuser (~Macuser@216.30.159.201)
+[00:48:36] <clever> dont see a `benchmark rate` module in my gnuradio, version 3.8.2.0
+[00:49:00] <funkylab[m]> err, might be called "probe rate"
+[00:49:10] <clever> yep, that one exists
+[00:51:30] <clever> `Param 'Id', ID "default" is blacklisted`
+[00:52:06] <clever> it isnt clear which module is giving that error, nor how to fix it
+[00:52:53] <funkylab[m]> in your options block
+[00:52:59] <clever> ah there
+[00:53:02] <funkylab[m]> you need to give your flow graph a good ID
+[00:53:11] <funkylab[m]> "benchmark_plain" would be a nice choice
+[00:53:21] <clever> that does explain why the options was the only block in red
+[00:53:29] <funkylab[m]> :D
+[00:54:21] <clever> when i run it on an amd fx-8350, i get (((rate_now . 1.0692e+07) (rate_avg . 9.89322e+06)))
+[00:54:43] <clever> just using that to confirm the flow graph is all good before i test it on an rpi
+[00:55:22] <funkylab[m]> have you run `volk_benchmark` before running on your x86?
+[00:55:23] <clever> so ~9-10 million samples/second?
+[00:55:32] <funkylab[m]> how long is your FIR?
+[00:56:24] <funkylab[m]> here's a post that I wrote 6 years ago on my old PC: https://stackoverflow.com/questions/32916536/is-there-a-constant-time-algorithm-for-generating-a-bandlimited-sawtooth/32931019#32931019
+[00:57:45] *** Joins: Nistar[m] (~nistarmat@2001:470:69fc:105::1f70)
+[00:58:08] <funkylab[m]> this might be more relvant in terms of realistic performance https://dsp.stackexchange.com/questions/31066/how-many-taps-does-an-fir-filter-need/31077#31077
+[00:58:13] *** Joins: katie[m] (~k8ematrix@2001:470:69fc:105::1:21da)
+[00:58:37] <funkylab[m]> 800 taps, x86, fast convolution FIR: 141 MS/s
+[00:58:51] <funkylab[m]> single thread bottleneck
+[00:59:03] <clever> i somehow missed the FIR filter on the first search the above numbers are for a band pass filter
+[00:59:31] <funkylab[m]> that doesn't matter for the computation, low pass, band pass... what matters is the number of taps
+[00:59:42] <clever> and the module doesnt show a tap count
+[00:59:54] <funkylab[m]> which one?
+[00:59:59] <clever> band pass filter
+[01:00:07] <funkylab[m]> ah right
+[01:00:39] <funkylab[m]> that's "internal". You can instead just use the "decimating fir filter", with decimation = 1 (which is exactly what band pass filter does internally)
+[01:01:01] <funkylab[m]> and set the filter to, say, `list(range(127))` if you want to test a 127 length FIR
+[01:02:10] <clever> which box would `list(range(127))` go into? the decimating filter only accepts numbers
+[01:02:34] <funkylab[m]> "Taps"
+[01:02:46] <clever> ah, i thought that was the raw tap count
+[01:03:01] <funkylab[m]> no, the tap count is defined by the tap vector
+[01:03:12] <clever> ooooo
+[01:03:14] <funkylab[m]> https://wiki.gnuradio.org/index.php/Decimating_FIR_Filter
+[01:03:24] <clever> your inputting the raw list of coeffcients
+[01:03:34] <funkylab[m]> 'xactly
+[01:03:41] <clever> that makes more sense, and explains why it doesnt have options for the freq to allow
+[01:04:19] <clever> (((rate_now . 6.7944e+06) (rate_avg . 8.01141e+06)))
+[01:04:37] <clever> now its upwards of 8 million samples/sec
+[01:04:37] <funkylab[m]> so, something like 8 MS/s
+[01:04:45] <funkylab[m]> that's pretty slow for an x86!
+[01:05:13] <clever> https://www.reddit.com/r/hardware/comments/5lc2vo/discussion_ryzen_40_ipc_gains_where_did_bulldozer/dbuvbil/?context=3
+[01:05:15] <funkylab[m]> it's only 127 taps...
+[01:05:30] <clever> funkylab[m]: a detailed post on everything that is wrong with the fx-8350 and its relatives
+[01:05:49] <funkylab[m]> nah
+[01:05:52] <funkylab[m]> it's still very slow
+[01:06:30] <clever> high latency to L2/L3, 20 clock cycle penalty for mis-prediction of a jump, shared FPU between 2 cores, and more
+[01:07:41] <funkylab[m]> it's still very slow
+[01:07:45] <funkylab[m]> seriously
+[01:08:46] <funkylab[m]> you _did_ run `volk_benchmark`, right?
+[01:09:05] <clever> funkylab[m]: yeah, a Intel(R) Core(TM) i7-7700HQ CPU @ 2.80GHz is running at 70% of the freq, manages to beat it
+[01:09:08] <clever> yeah
+[01:09:19] <Yamakaja[m]> Isn't it volk_profile?
+[01:09:27] <funkylab[m]> err yes
+[01:10:35] * cleverca22[m] sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/40d61592165bb3ffefe759607769b5577ffc6a32
+[01:10:40] <clever> from the fx-8350
+[01:11:13] <funkylab[m]> anyway, you can run the same flow graph on the Pi
+[01:11:18] <clever> yep
+[01:11:20] <funkylab[m]> and see what throughput you get there
+[01:11:41] <Yamakaja[m]> Could you please share your benchmark flowgraph so we can take a look? I'd like to try it myself ;)
+[01:11:42] <clever> was preparing it on an x86, just to know what i can kinda compare against, and how it works, before i boot the pi up
+[01:12:06] * cleverca22[m] posted a file: (2KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/GJypwfDkRJsxUEXgiAlEhqPv/fir_benchmark.grc >
+[01:12:56] <cleverca22[m]> oh, but thats changed to 63 taps, i was checking to see if there was a non-linear relationship
+[01:15:57] <clever> booting up a cortex-a72 pi400 ...
+[01:17:04] * funkylab[m] posted a file: (2KiB) < https://libera.ems.host/_matrix/media/r0/download/gnuradio.org/66de8b74d7bb76469c1788f85e5fe8acf02f8ce9/benchmark_plain.grc >
+[01:17:21] <funkylab[m]> Yamakaja: you can benchmark against me, 46 MS/s
+[01:18:11] <clever> funkylab[m]: odd, i cant see that file in element, only on irc
+[01:20:03] <Yamakaja[m]> funkylab: 60 on my laptop
+[01:20:37] <funkylab[m]> 48 after running volk_profile
+[01:20:43] <funkylab[m]> yeah, this desktop isn't brand new
+[01:20:58] *** Joins: __alex (~alex@ip5f5afef3.dynamic.kabel-deutschland.de)
+[01:21:00] <funkylab[m]> core i7-4790
+[01:21:34] <Yamakaja[m]> Ah yes, let me rerun `volk_profile`
+[01:21:58] <clever> does running volk_profile change some mode in the cpu? why does running it matter?
+[01:23:03] <funkylab[m]> it makes VOLK pick the fastest SIMD-optimized implementation for multiplying two vectors
+[01:23:09] <funkylab[m]> and that's what the FIR filter internally does
+[01:23:12] <clever> ahhh
+[01:23:31] <clever> i hadnt let it finish, because i assumed it was only a benchmark
+[01:24:09] <Yamakaja[m]> Uh, my GNU Radio installation may have been built in debug mode .... let me fix that 
+[01:25:27] <funkylab[m]> Yamakaja[m]: Build type RelWithDebInfo is usually not that much slower than "Release"
+[01:25:57] <Yamakaja[m]> I guess that'd be a suitable replacement for Debug :D
+[01:26:05] <Yamakaja[m]> * replacement for "Debug, * Debug" :D
+[01:26:18] <funkylab[m]> definitely is
+[01:26:31] <Yamakaja[m]> I believe we've had that discussion once before, maybe even in this room xD
+[01:28:07] <funkylab[m]> never rule out the forgetfulness of me
+[01:28:13] <funkylab[m]> as reason for anything
+[01:28:21] <Yamakaja[m]> Probably me who was forgetful in this case :P
+[01:28:28] *** Quits: shibboleth (~shibbolet@user/shibboleth) (Quit: shibboleth)
+[01:31:02] <Yamakaja[m]> Hah, knew it!
+[01:31:02] <Yamakaja[m]> ```
+[01:31:02] <Yamakaja[m]> Freenode/#gnuradio/2020-06-24.log:[19:40:16] <funkylab[m|gr]> If you like Debug, wait till you try RelWithDebInfo
+[01:31:02] <Yamakaja[m]> ```
+[01:32:04] <Yamakaja[m]> s/Freenode/#gnuradio/2020-06-24.log:[19:40:16]//
+[01:32:28] <Yamakaja[m]>  * Hah, knew it! 2020-06-24:... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/f8f99f1afe1d190ccd7f371513647f936092ef32)
+[01:32:43] <Yamakaja[m]>  * Hah, called it! 2020-06-24:... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/573b89bfaef752eca7c785837c9ca977c981ac55)
+[01:33:03] *** Quits: AdamHorden (~adam.hord@host81-150-92-55.in-addr.btopenworld.com) (Ping timeout: 265 seconds)
+[01:34:23] <clever> funkylab[m]: letting volk_profile finish (took 8mins), didnt have any real impact in the 127 tap filter performance
+[01:35:27] <funkylab[m]> ha! then the SIMD implementation picked by default was already optimal
+[01:35:28] <funkylab[m]> happens
+[01:35:54] <funkylab[m]> but upside, you don't have to run that again until you either change VOLK version or CPU :D
+[01:36:15] <funkylab[m]> and for all the other things that VOLK also accelerates, your system now picks the optimal implementation
+[01:37:00] <clever> thats a nice variant from the other 2 options ive seen before
+[01:37:48] <clever> some programs will just pick an implementation at compile time, so you have to compile it on the right core
+[01:38:33] <clever> and mplayer will compile multiple, but i think it picks purely on cpuid
+[01:38:40] <funkylab[m]> there's a lot of good things to be said about that approach
+[01:38:48] <clever> but it sounds like volk actually checks which implementation is better
+[01:39:54] <funkylab[m]> namely, volk_profile is a microbenchmark. Your CPU clocks including all cores down when it does AVX2 workloads, but the raw FP performance of AVX is still better? well, volk will happily slow down 15 blocks by 20% to speed up one by 5% :D
+[01:40:22] <clever> cpufreq just doesnt work on this core
+[01:40:30] <clever> so i have no way to monitor or control the cpu clocks
+[01:40:41] <funkylab[m]> let's not get sidetracked
+[01:40:47] <clever> yeah
+[01:41:00] <clever> but X11 isnt coming up on my pi400, so i cant access the gnu radio gui
+[01:43:36] <clever> *facepalm*, ntsc output was enable
+[01:43:37] <clever> d
+[01:43:51] <funkylab[m]> you don't need to
+[01:44:03] <funkylab[m]> just copy the python file over there
+[01:44:14] <funkylab[m]> as long as you have GNU Radio 3.8 on that, it will just run the same
+[01:44:34] <clever> but raspi-os, is running an armv6 build of everything
+[01:45:30] <clever> let me grab an aarch64 gnu-radio....
+[01:48:56] *** Quits: goldrak (~goldrak@bl16-27-108.dsl.telepac.pt) (Ping timeout: 244 seconds)
+[01:56:30] *** Joins: Guest28 (~Guest28@73.251.45.76)
+[01:58:35] <clever> funkylab[m]: checking the math, i think a 127 tap FIR filter, with the vpu asm i wrote earlier, would clock in at around 70 clock cycles, if you dont include the overlapping loads i mentioned earlier, 70 clock cycles to compute a single sample over the last N
+[01:59:03] <clever> and at 500mhz, thats 7.14 MS/s
+[01:59:31] <clever> assuming perfect uptime, no cache misses (there are tricks), and ignoring barrier/flushing costs
+[01:59:46] <funkylab[m]> cool
+[01:59:55] <funkylab[m]> so, now check how much you can do on NEON directly
+[02:00:32] <funkylab[m]> and then write a dummy GNU Radio -> VPU -> GNU Radio block to demonstrate you're getting above that!
+[02:00:32] <clever> neon also has a bit of an unfair advantage, 1.8ghz quad-core
+[02:00:40] <funkylab[m]> exactly
+[02:00:51] <funkylab[m]> but that's not an unfair advantage, that's simply better
+[02:00:55] <clever> the main benefit i can see to my idea, is cpu offload
+[02:00:59] <funkylab[m]> no
+[02:00:59] <clever> let the arm do something else
+[02:01:10] <funkylab[m]> we've talked about this 4 times (literally already)
+[02:01:24] <funkylab[m]> the transfer blocks your arm for an amount of time, too
+[02:01:30] <funkylab[m]> no free lunch, so far
+[02:01:44] <clever> the cache flush and barrier opcodes, yeah
+[02:01:48] <funkylab[m]> that's why I say, write that dummy GNU Radio -> VPU -> GNU Radio block and benchmark that
+[02:02:09] <funkylab[m]> show that pure passing back and forth is faster than your CPU FIR implementation
+[02:02:46] <funkylab[m]> if it is sufficiently faster, then you might win CPU time
+[02:03:11] <clever> the only exploit i can think of, is the write-combining mode that you typically see for /dev/fb0 mappings
+[02:03:24] <clever> where you dont do an explicit flush, and the cpu will just flush whenever you stop writing
+[02:03:53] <funkylab[m]> seriously, idle talk until you demonstrate that you can copy to VPU and back at a significant rate while GNU Radio is running
+[02:04:00] <clever> but then you need extra structures (like xhci), to manage the write pointer
+[02:04:07] <clever> gnuradio is still installing
+[02:04:50] <clever> the SD card is kinda slow
+[02:08:47] <Guest28> Sorry, i got disconnected earlier. 
+[02:09:50] <Guest28> funkylab[m] to be sure if I am understanding correctly on your suggestion on usage of set_output_multiple:   
+[02:11:20] <clever> funkylab[m]: the FIR filter is getting ~1.5 MS/s before volk_profile, so that is kinda good news, but i do still need to profile that whole pipeline of my idea
+[02:13:05] <funkylab[m]> there's a NEON and a NEONV7 optimization of that vector multiplication kernel, so I'd be interested in knowing the speedup
+[02:13:07] <clever> even if you max out all 4 cores (assuming perfect scaling), that only gets you 6 MS/s, while my VPU method would in theory get 7.1 MS/sec, (computed, not measured)
+[02:13:55] <clever> and baring any complications in the axi bus, the cache flush logic can only stall out 1 core directly
+[02:14:20] <clever> so that still leaves 3 arm cores free, even if 1 arm core was 100% stalling on cache flushes to feed the VPU
+[02:15:52] <funkylab[m]> try with NEON first
+[02:16:02] <funkylab[m]> I mean, you know that :) 
+[02:16:10] <clever> volk_profile took 3mins, but it likely tests different things, so no point in comparing it to x86
+[02:16:34] <funkylab[m]> but you can compare before / after volk_profile
+[02:16:48] <clever> no real chance, still 1.5 MS/s
+[02:16:53] <clever> change*
+[02:16:54] <funkylab[m]> huh.
+[02:17:09] <clever> before: (((rate_now . 1.5319e+06) (rate_avg . 1.52295e+06)))
+[02:17:17] <clever> after: (((rate_now . 1.55818e+06) (rate_avg . 1.53899e+06)))
+[02:17:19] *** Joins: AdamHorden (~adam.hord@81.139.71.77)
+[02:17:41] <funkylab[m]> what does `volk-config-info --machine` say? what `volk-config-info --avail-machines`?
+[02:17:43] <clever> how would i debug which implementation volk is using?
+[02:18:18] <clever> neonv8 and generic;neon;neonv8;
+[02:18:57] <funkylab[m]> clever: `grep 32f_x2_dot_prod_32f ~/.volk/volk_config`
+[02:19:18] <clever> volk_32f_x2_dot_prod_32f a_generic neon
+[02:19:56] <funkylab[m]> !
+[02:20:25] <funkylab[m]> in memory-aligned mode, it uses the simple straightforward C implementation, in unaligned memory it uses the neon implementation
+[02:20:38] <clever> i manually changed that line to say neonv8, and then it reports (((rate_now . 1.54818e+06) (rate_avg . 1.54449e+06)))
+[02:21:50] <clever> changing both columns did result in a minor penalty, (((rate_now . 1.4889e+06) (rate_avg . 1.50472e+06)))
+[02:23:18] <funkylab[m]> so, `volk_32f_x2_dot_prod_32f neon neon` (not neonv8) is worse than `volk_32f_x2_dot_prod_32f a_generic neon`, that can happen, but only if the compiler is **damn** smart
+[02:23:54] <Guest28> So, I do have a total of 7680 values. Calculation is 512 point FFT and 15 times iterations. I am collecting the values of FFT at the vector sink. I am not sure if i can even call this iteration. The reason i am calling iteration is because of FFT length is 512. So in the first iteration output of FFT i.e 512 values will be sent to vector sink. I
+[02:23:55] <Guest28> need these 512 values to be in column. and the next 512 points from the FFT goes to vector sink, i need to store these values in the 2nd column and so on until 15 columns.  
+[02:24:25] <Guest28> 1st 512 point FFT. Visualizing the data to be extracted in this manner.
+[02:24:26] <Guest28> [ [1] 
+[02:24:26] <Guest28>   [2] 
+[02:24:27] <Guest28>   [3]
+[02:24:27] <Guest28>    .
+[02:24:28] <Guest28>    .
+[02:24:28] <Guest28>    .
+[02:24:29] <Guest28>   [512]]  
+[02:24:29] <Guest28> 2nd time 512 FFT, 
+[02:24:30] <Guest28> [ [1] , [1]  
+[02:24:30] <Guest28>   [2] , [2]
+[02:24:31] <Guest28>   [3] , [3]
+[02:24:31] <Guest28>    .       .
+[02:24:32] <Guest28>    .       .
+[02:24:32] <Guest28>    .       .
+[02:24:33] <Guest28>   [512], [512]] 
+[02:24:33] <Guest28> So, at the end  of 15 iterations of FFT:  
+[02:24:34] <Guest28> [ [1] , [1]  …………jumping to 15th column………………. [1]
+[02:24:35] <clever> Guest28: use a pastebin
+[02:24:46] *** Joins: shibboleth (~shibbolet@user/shibboleth)
+[02:24:51] <funkylab[m]> "columns" is just and interpretation of the data in the vector sink
+[02:24:52] <clever> funkylab[m]: i believe it got compiled by gcc 9.3.0
+[02:24:58] <funkylab[m]> there's no reason you need to do anything special
+[02:26:40] <clever> funkylab[m]: on the subject of alignment, thats something i did profile fairly in depth, and the VPU's vector loads dont really care about mis-alignment, the cost is the same, as long as the stride is aligned
+[02:26:59] <funkylab[m]> yeah this is about VOLK only
+[02:27:07] <clever> what i think is happening, is that there is a shifter somewhere in the pipeline, that will deal with mis-aligned loads
+[02:27:16] <Guest28> clever am looking on,  what is pastebin? 
+[02:27:30] <clever> but if you need to shift each row differently, you need to flush the pipeline, and it costs way more
+[02:27:41] <clever> Guest28: its considered bad practice to spam irc with 10 lines of pasting
+[02:28:30] <clever> funkylab[m]: what exactly does volk_32f_x2_dot_prod_32f decode as? a dot product of 32bit floats?
+[02:28:30] <funkylab[m]> OK, folks: Guest28, you need to do nothing but get your data out of your vector sink once it's complely in there, all 15 vectors, and then interpret that data as matrix. There's no code to be written there.
+[02:29:00] <Guest28> clever,  I am not aware, thanks for the suggestion. Few days back i started using GNU Radio. Its a bumpy ride for sure. 
+[02:29:15] <funkylab[m]> clever:  you know what you need to figure out: how fast can you make data copy in and out of the VPU in a GNU Radio flow graph? 
+[02:29:19] <funkylab[m]> I'm going to bed
+[02:29:31] <clever> yeah, i'll look into that more
+[02:33:22] <Guest28> funkylab[m], so how is the data stored in vector sink, in the case i have said? I mean, for does vector sink consider each 512 FFT point as one vector? and somehow store these 512 points 15 times as 15 different vectors? 
+[02:35:09] <Guest28> i am able to see the extract the data from vector sink when its just 512 values. But when i try to see for all the values, its blank, not seeing anything in the python output terminal. Not sure whats wrong, debugging this. 
+[02:44:12] <clever> ah, volk_32f_x2_dot_prod_32f.h from the volk source answers my last question
+[02:54:25] <nickoe> What is the best way to convert an old oot to the new style yaml stuff?
+[02:55:46] <drmpeg> I just use gr_modtool.
+[02:56:36] <Hoernchen> isn't there a tool?
+[02:56:52] <drmpeg> Yeah, let me find it.
+[02:58:09] <drmpeg> gr_modtool update --complete
+[02:58:40] <drmpeg> Converts the .xml to .yml
+[03:03:10] *** Quits: Macuser (~Macuser@216.30.159.201) (Remote host closed the connection)
+[03:03:33] <drmpeg> Everyone seems to have their own way of porting.
+[03:04:03] <drmpeg> I like to start from scratch with gr_modtool.
+[03:04:50] *** Joins: Macuser (~Macuser@216.30.159.201)
+[03:05:12] <drmpeg> "gr_modtool newmod" and then "gr_modtool add" all of the old blocks as dummies.
+[03:05:57] <drmpeg> Then copy over the dummy source files with the old blocks source files.
+[03:20:24] <Jacob[m]12> I like this way too as it gets all the module boilerplate code updated too. Can be onerous with large number of blocks though
+[03:21:58] <clever> read over volk_32f_x2_dot_prod_32f_neon and i can see how it works now, the vector unit operates entirely on float[4]'s, but its doing a bit of loop unrolling to act on float[8]'s, possibly so the pipeline in the arm core can overlap the computations for the 2 `float[4] accumulator`'s
+[03:22:48] *** Quits: dd_ (dd_@gateway/vpn/protonvpn/dd/x-95652672) (Remote host closed the connection)
+[03:22:57] <clever> so its basically just a 4 lane vector core, and it doesnt even appear to have a dedicated accumulator, more of a fused mult+add
+[03:30:30] <drmpeg> gcc does generate simple vector code these days. I'll bet it does a reasonable job on dot product.
+[03:33:52] <drmpeg> That's my guess as to why the generic is as fast as the neon.
+[03:35:30] <clever> drmpeg: but where things get more fuzzy, i cant find the source for neonv8
+[03:35:40] <clever> so i dont know how neon and neonv8 differ
+[03:36:05] <Hash[m]> Anyone have an example of sending a PDU message from python? I can get the sample programs to run from the wiki but they just send a message with no data component it seems
+[03:36:14] <Hash[m]> car with no cdr
+[03:37:34] *** Quits: UwRHwZL (~UwRHwZL@user/uwrhwzl) (Read error: Connection reset by peer)
+[03:37:51] *** Joins: UwRHwZL (~UwRHwZL@user/uwrhwzl)
+[03:39:40] <drmpeg> There's no kernel for armv8.
+[03:40:30] <clever> drmpeg: ah, that would explain why neon and neonv8 had basically the same performance
+[03:42:00] <drmpeg> There's an assembly language kernel for armv7.
+[03:42:23] <clever> i did my test in aarch64 mode
+[03:42:38] <drmpeg> But you have to build VOLK with the correct flags to get that (I think).
+[03:42:41] <clever> on a cortex-a72
+[03:43:19] <drmpeg> ok
+[03:44:02] <drmpeg> I only have a cortex-a15 here.
+[03:44:39] <drmpeg> It was pretty good until the Pi4 came out.
+[03:44:53] <clever> ive got access to arm1176 (armv6), cortex-a7 (armv7l), cortex-a53 (aarch64 with 32bit support), and cortex-a72 (also aarch64 with 32bit support)
+[03:48:30] *** Quits: shibboleth (~shibbolet@user/shibboleth) (Quit: shibboleth)
+[04:08:10] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 260 seconds)
+[04:12:50] *** Quits: UwRHwZL (~UwRHwZL@user/uwrhwzl) (Ping timeout: 260 seconds)
+[04:38:25] *** Quits: AdamHorden (~adam.hord@81.139.71.77) (Ping timeout: 244 seconds)
+[04:42:05] *** Quits: mallkrampus (~mallkramp@148.72.164.200) (Ping timeout: 260 seconds)
+[04:42:51] *** Joins: UwRHwZL (~UwRHwZL@user/uwrhwzl)
+[04:49:39] <Guest28> Process finished with exit code 139 (interrupted by signal 11: SIGSEGV)
+[04:49:54] <Guest28> i am seeing this error. 
+[04:50:18] <Guest28> Tried uninstalling pyqt5: if i do this gnuradio is also getting uninstalled
+[04:50:26] <Guest28> so reinstalled gnuradio. 
+[04:51:13] <Guest28> disabled pyqt compatibilty, in pycharm
+[04:51:18] <Guest28> still not progress. 
+[04:51:34] <Guest28> unistalled matplotlib as well. still issue persists
+[04:51:45] <Guest28>  any suggestion, on fixing this error? 
+[04:53:16] *** Joins: mallkrampus (~mallkramp@172.93.207.68)
+[04:54:20] *** Quits: UwRHwZL (~UwRHwZL@user/uwrhwzl) (Read error: Connection reset by peer)
+[04:56:31] *** Joins: UwRHwZL (~UwRHwZL@user/uwrhwzl)
+[04:59:47] *** Quits: drmpeg (~drmpeg@2601:647:4700:284:553e:d7ce:ac0c:abe9) (Ping timeout: 264 seconds)
+[05:00:07] *** Joins: BrianG61UK__ (~BrianG61U@82-69-89-71.dsl.in-addr.zen.co.uk)
+[05:02:00] *** Quits: BrianG61UK_ (~BrianG61U@2a02:8010:66b7:dddd:7dd2:bd1b:d9cf:5296) (Ping timeout: 265 seconds)
+[05:02:30] *** Quits: BrianG61UK (~BrianG61U@2a02:8010:66b7:dddd:18d3:eba5:e72b:e3a0) (Ping timeout: 260 seconds)
+[05:02:42] *** Joins: BrianG61UK (~BrianG61U@82-69-89-71.dsl.in-addr.zen.co.uk)
+[05:05:20] *** Joins: Guest2828 (~Guest28@2601:5c0:c280:8da0:a12b:d28d:2fa:d8aa)
+[05:08:39] *** Quits: Guest28 (~Guest28@73.251.45.76) (Ping timeout: 256 seconds)
+[05:09:24] *** sdfgsdfgs is now known as sdfgsdfg
+[05:10:21] *** Quits: Guest2828 (~Guest28@2601:5c0:c280:8da0:a12b:d28d:2fa:d8aa) (Ping timeout: 256 seconds)
+[05:11:19] *** Joins: Guest28 (~Guest28@2601:5c0:c280:8da0:344b:7c4d:91df:9a2c)
+[05:11:30] *** Quits: linext__ (~linext@pool-108-53-128-199.nwrknj.fios.verizon.net) (Read error: Connection reset by peer)
+[05:12:00] *** Joins: drmpeg (~drmpeg@2601:647:4700:284:7ee:4902:83b3:c497)
+[05:12:07] *** Quits: UwRHwZL (~UwRHwZL@user/uwrhwzl) (Ping timeout: 252 seconds)
+[05:15:40] *** Joins: UwRHwZL (~UwRHwZL@user/uwrhwzl)
+[05:20:22] *** Quits: UwRHwZL (~UwRHwZL@user/uwrhwzl) (Ping timeout: 252 seconds)
+[05:24:45] *** Joins: AdamHorden (~adam.hord@host81-150-131-27.in-addr.btopenworld.com)
+[05:29:02] *** Joins: AdamHord- (~adam.hord@host81-134-67-46.range81-134.btcentralplus.com)
+[05:29:33] *** Quits: AdamHorden (~adam.hord@host81-150-131-27.in-addr.btopenworld.com) (Ping timeout: 244 seconds)
+[05:30:04] <Hash[m]> seems like a pretty low level error, no python conflicts like ver3 libraries by ver2 interpreter? 
+[05:30:12] <Hash[m]> by/but
+[05:34:09] *** Quits: Guest28 (~Guest28@2601:5c0:c280:8da0:344b:7c4d:91df:9a2c) (Ping timeout: 256 seconds)
+[05:37:41] <drmpeg> Guest28: If you're on Ubuntu 18.04, gnuradio-companion with a Qt window always segfaults on exit.
+[06:02:24] *** Joins: UwRHwZL (~UwRHwZL@user/uwrhwzl)
+[06:22:46] *** Joins: Guest28 (~Guest28@2601:5c0:c280:8da0:c45c:bb5:e7e9:22b2)
+[06:24:35] <Guest28> Hash[m] no
+[06:33:16] *** Quits: Macuser (~Macuser@216.30.159.201) (Quit: Textual IRC Client: www.textualapp.com)
+[06:49:28] *** Joins: Vonter (~Vonter@user/vonter)
+[06:54:28] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 265 seconds)
+[07:02:34] *** Quits: AdamHord- (~adam.hord@host81-134-67-46.range81-134.btcentralplus.com) (Ping timeout: 244 seconds)
+[07:22:58] *** Joins: AdamHorden (~adam.hord@host81-148-131-213.in-addr.btopenworld.com)
+[07:38:44] *** Joins: AdamHord- (~adam.hord@host81-130-119-56.range81-130.btcentralplus.com)
+[07:38:56] *** Quits: AdamHorden (~adam.hord@host81-148-131-213.in-addr.btopenworld.com) (Ping timeout: 265 seconds)
+[07:48:18] *** Joins: Vonter (~Vonter@user/vonter)
+[07:57:20] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 244 seconds)
+[08:15:35] *** Joins: AdamHorden (~adam.hord@host81-150-131-62.in-addr.btopenworld.com)
+[08:16:27] *** Quits: AdamHord- (~adam.hord@host81-130-119-56.range81-130.btcentralplus.com) (Ping timeout: 244 seconds)
+[08:20:11] *** Quits: Guest28 (~Guest28@2601:5c0:c280:8da0:c45c:bb5:e7e9:22b2) (Ping timeout: 256 seconds)
+[08:45:14] *** Joins: Vonter (~Vonter@user/vonter)
+[08:49:32] *** Joins: ravan (~ravan@user/ravan)
+[09:05:31] *** Quits: ravan (~ravan@user/ravan) (Ping timeout: 244 seconds)
+[09:06:46] *** Joins: ravan (~ravan@42.201.198.151)
+[09:06:49] *** Quits: ravan (~ravan@42.201.198.151) (Client Quit)
+[09:06:58] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 252 seconds)
+[09:14:32] *** Joins: OnAironaut (~OnAir@user/onaironaut)
+[09:30:34] *** Joins: Vonter (~Vonter@user/vonter)
+[10:29:00] *** Joins: saba4ka-mumu (~efsearfc@176.59.55.31)
+[10:40:48] *** Joins: jstein (~jstein@gentoo/developer/jstein)
+[11:19:53] *** Joins: uros (~Thunderbi@2001:8a0:6074:ad00:9923:ba2e:9791:afeb)
+[11:26:43] *** Quits: darkstarx (~darkstard@2601:1c2:300:c8a0::6c32) (Remote host closed the connection)
+[11:27:03] *** Joins: darkstarx (~darkstard@2601:1c2:300:c8a0::6c32)
+[11:31:25] *** Quits: AdamHorden (~adam.hord@host81-150-131-62.in-addr.btopenworld.com) (Ping timeout: 265 seconds)
+[11:47:24] *** Joins: AdamHorden (~adam.hord@host81-150-131-62.in-addr.btopenworld.com)
+[11:52:02] *** Quits: AdamHorden (~adam.hord@host81-150-131-62.in-addr.btopenworld.com) (Ping timeout: 260 seconds)
+[12:30:13] *** Quits: jamesfletch[m] (~jamesflet@2001:470:69fc:105::ea8e) (Quit: You have been kicked for being idle)
+[12:30:13] *** Quits: Jeff[m]12 (~jeffergnu@2001:470:69fc:105::eaa5) (Quit: You have been kicked for being idle)
+[12:30:13] *** Quits: widlarizer[m] (~widlarize@2001:470:69fc:105::ec8a) (Quit: You have been kicked for being idle)
+[12:30:13] *** Quits: matt_page[m] (~mattpageg@2001:470:69fc:105::fcef) (Quit: You have been kicked for being idle)
+[12:30:13] *** Quits: janschirok[m] (~janschiro@2001:470:69fc:105::1:d) (Quit: You have been kicked for being idle)
+[12:30:13] *** Quits: Apostolos[m] (~M0xcotogn@2001:470:69fc:105::fced) (Quit: You have been kicked for being idle)
+[12:30:13] *** Quits: alynch[m] (~alynchgnu@2001:470:69fc:105::fd21) (Quit: You have been kicked for being idle)
+[12:30:13] *** Quits: abeard_sb[m] (~abeardsbg@2001:470:69fc:105::fcf7) (Quit: You have been kicked for being idle)
+[12:30:13] *** Quits: hmeembedded[m] (~hmeembedd@2001:470:69fc:105::1:24) (Quit: You have been kicked for being idle)
+[12:30:13] *** Quits: spagadar[m] (~spagadarg@2001:470:69fc:105::fd40) (Quit: You have been kicked for being idle)
+[12:30:13] *** Quits: dexterlee[m] (~dexterlee@2001:470:69fc:105::fd54) (Quit: You have been kicked for being idle)
+[12:30:13] *** Quits: lotyde[m] (~lotydegnu@2001:470:69fc:105::fd5c) (Quit: You have been kicked for being idle)
+[12:30:13] *** Quits: AaronSyncopated[ (~huff-duff@2001:470:69fc:105::e152) (Quit: You have been kicked for being idle)
+[12:30:13] *** Quits: eniac[m] (~eniacgnur@2001:470:69fc:105::1:54) (Quit: You have been kicked for being idle)
+[12:30:13] *** Quits: gisdev01[m] (~gisdev01g@2001:470:69fc:105::1:3c) (Quit: You have been kicked for being idle)
+[12:30:13] *** Quits: fgallardo[m] (~fgallardo@2001:470:69fc:105::fe17) (Quit: You have been kicked for being idle)
+[12:30:13] *** Quits: brandonmatthews[ (~brandonma@2001:470:69fc:105::1:58) (Quit: You have been kicked for being idle)
+[12:30:13] *** Quits: ragu[m] (~ragugnura@2001:470:69fc:105::1:84) (Quit: You have been kicked for being idle)
+[12:30:14] *** Quits: briankcg[m] (~briankcgg@2001:470:69fc:105::1:44) (Quit: You have been kicked for being idle)
+[12:30:14] *** Quits: tuc[m] (~tucgnurad@2001:470:69fc:105::fd2c) (Quit: You have been kicked for being idle)
+[12:30:14] *** Quits: boonedoggle[m] (~boonedogg@2001:470:69fc:105::1:25) (Quit: You have been kicked for being idle)
+[12:30:14] *** Quits: peterhcho[m] (~peterhcho@2001:470:69fc:105::f97c) (Quit: You have been kicked for being idle)
+[12:33:02] *** Joins: AdamHorden (~adam.hord@host81-150-131-62.in-addr.btopenworld.com)
+[12:36:10] *** BrianG61UK__ is now known as BrianG61UK_
+[12:41:09] *** Quits: AdamHorden (~adam.hord@host81-150-131-62.in-addr.btopenworld.com) (Ping timeout: 258 seconds)
+[13:22:49] *** Quits: uros (~Thunderbi@2001:8a0:6074:ad00:9923:ba2e:9791:afeb) (Quit: uros)
+[13:32:08] *** Quits: __alex (~alex@ip5f5afef3.dynamic.kabel-deutschland.de) (Ping timeout: 258 seconds)
+[13:45:54] *** Joins: uros (~Thunderbi@2001:8a0:6074:ad00:9923:ba2e:9791:afeb)
+[13:46:00] *** Quits: uros (~Thunderbi@2001:8a0:6074:ad00:9923:ba2e:9791:afeb) (Client Quit)
+[13:54:05] *** Joins: shibboleth (~shibbolet@user/shibboleth)
+[13:59:16] <nickoe> drmpeg: Ah,ok, thank you that appears to work (gr_modtool update --complete)
+[14:02:13] *** Quits: BrianG61UK_ (~BrianG61U@82-69-89-71.dsl.in-addr.zen.co.uk) (Read error: Connection reset by peer)
+[14:09:27] <nickoe> mmm
+[14:13:40] <nickoe> Why can't it my python block be imported? The module it is trying to import is just next to th e__init__.py file.   https://dpaste.com/4U4FHE4BC
+[14:15:02] *** Quits: BrianG61UK (~BrianG61U@82-69-89-71.dsl.in-addr.zen.co.uk) (Read error: Connection reset by peer)
+[14:16:19] <nickoe> What am I forgetting about how python "modules" work?
+[14:37:46] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[14:37:46] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Client Quit)
+[14:39:08] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[14:54:38] *** Joins: nki (~nki@adsl-89-217-141-227.adslplus.ch)
+[15:10:16] *** Joins: AdamHorden (~adam.hord@host81-150-84-179.in-addr.btopenworld.com)
+[15:24:52] *** Joins: DaNeenjah (~jake@adsl-74-230-9-207.hsv.bellsouth.net)
+[15:34:18] <BarryDuggan[m]> Hash: I'm still working on it, but look at https://wiki.gnuradio.org/index.php/Packet_Communications#Message_Strobe
+[15:41:07] * danidubok777[m] uploaded an image: (114KiB) < https://libera.ems.host/_matrix/media/r0/download/gnuradio.org/65e759cdb6c0aa53b708bdb31fc706f112512c0b/ima_9e37cb1.jpeg >
+[15:41:10] <danidubok777[m]> Hi, I’m new to grc, does anyone know how can I replace the old (3.7) WX GUI Constellation sink in grc 3.8? The WX GUI had options to choose mu, gain mu, constellation size etc., is there other block I can use ?
+[15:43:42] <funkylab[m]> danidubok777:  qt has basically the same sink! https://wiki.gnuradio.org/index.php/QT_GUI_Constellation_Sink
+[16:09:05] *** Joins: linext (~linext@pool-108-53-128-199.nwrknj.fios.verizon.net)
+[16:24:39] *** Quits: shibboleth (~shibbolet@user/shibboleth) (Quit: shibboleth)
+[16:32:47] *** Quits: OnAironaut (~OnAir@user/onaironaut) (Remote host closed the connection)
+[16:34:06] *** Quits: linext (~linext@pool-108-53-128-199.nwrknj.fios.verizon.net) (Read error: Connection reset by peer)
+[16:34:50] *** Joins: linext (~linext@pool-108-53-128-199.nwrknj.fios.verizon.net)
+[16:43:49] *** Quits: AdamHorden (~adam.hord@host81-150-84-179.in-addr.btopenworld.com) (Ping timeout: 244 seconds)
+[16:53:43] <Hash[m]> <BarryDuggan[m]> "Hash: I'm still working on it..." <- Really loving when I land on some documentation you’ve recently generated! The quality is fantastic
+[17:03:14] *** Joins: schwach (~schwach@191.96.170.117)
+[17:08:46] *** Joins: uros (~Thunderbi@2001:8a0:6074:ad00:9923:ba2e:9791:afeb)
+[17:22:47] <DerekKozel[m]> We're kicking off the livestream/hackfest now.
+[17:22:47] <DerekKozel[m]> https://twitch.tv/gnuradio
+[17:23:35] <DerekKozel[m]> I'll be starting by doing some work on the Block Development tutorials
+[17:32:17] <funkylab[m]> yay!
+[17:39:45] *** Joins: AdamHorden (~adam.hord@host81-130-116-119.range81-130.btcentralplus.com)
+[17:41:49] <nki> DerekKozel[m], OOT blocks with python please!
+[17:42:52] <danidubok777[m]> <funkylab[m]> "danidubok777:  qt has basically..." <- tried to use QT constellation with clock recovery mm and didn’t work the same as it should
+[17:44:47] *** Joins: tikhonov[m] (~tikhonovg@2001:470:69fc:105::1:224a)
+[17:48:14] <ClaytonargiloVE3> I added syntax highlighting to the Embedded Python Block page: https://wiki.gnuradio.org/index.php/Embedded_Python_Block
+[17:58:07] <MarcLichtman[m]> yea, unless you read through the entire usage manual
+[17:58:12] <MarcLichtman[m]> so we need to fill it out more
+[17:58:51] *** Quits: AdamHorden (~adam.hord@host81-130-116-119.range81-130.btcentralplus.com) (Ping timeout: 245 seconds)
+[18:00:29] <MarcLichtman[m]> yeah i do
+[18:00:56] <MarcLichtman[m]> if someone sends me the 3.9 doxygen i can stick it where it needs to go
+[18:03:11] <MarcLichtman[m]> yeah im just lazy =P
+[18:03:16] <MarcLichtman[m]> ill do it
+[18:06:14] <MarcLichtman[m]> perhpas the BlocksCodingGuide should be the tutorial we link to, since its not part of the usage manual or anything else
+[18:08:21] <MarcLichtman[m]> so one issue is we have a whole other page/tutorial for writing a block in C++ https://wiki.gnuradio.org/index.php/Guided_Tutorial_GNU_Radio_in_C%2B%2B
+[18:08:28] <MarcLichtman[m]> so maybe those 2 should be merged
+[18:10:02] <nki> :)
+[18:10:10] <nickoe> :O
+[18:12:46] <nickoe> Does gr 3.9 still use swig?
+[18:13:16] <MarcLichtman[m]> might help to just remove BlocksCodingGuide, and get its unique content folded into other tutorials or usage manual pages
+[18:13:48] <nickoe> i used "gr_modtool update --complete" in an old 3.7 project but I see in the python moduels __init__.py "# import swig generated symbols into the aausat4 namespace"
+[18:17:13] <ClaytonargiloVE3> One thing that annoys me about embedded Python blocks is that the code looks like a hot mess in the GRC file: https://github.com/argilo/secplus/blob/5a19af5ce1a9d50cadbf6dbe00c0d667098de17b/secplus_rx.grc#L656-L694
+[18:17:20] <ClaytonargiloVE3> I wonder if it's possible to make that better.
+[18:20:09] <MarcLichtman[m]> that would be nice!
+[18:20:27] <MarcLichtman[m]> Derek Kozel: ya def
+[18:21:02] <nickoe> nice mes
+[18:21:04] <nickoe> s
+[18:21:11] *** Joins: harrollld[m] (~harrollld@2001:470:69fc:105::1:224b)
+[18:21:34] <nki> How are these blocks loaded internally? Can I throw anything in the constructor / destructor of a block class? Like load some GUI code
+[18:22:48] <nki> yep that's me
+[18:23:08] <nickoe> What new GUI libs has been discussed?
+[18:23:42] <nickoe> nki: I think you can, but TBH I have not been doing much more than the basics with my custom blocks.
+[18:24:59] <nki> For a project of mine I'd like to have a fullscreen gui with imgui (or rather dearpygui, its python bindings)
+[18:25:20] <nki> not related with gnuradio development or anything like that
+[18:26:20] <nki> exactly, and use the nice DSP features
+[18:26:51] <RyanVolz[m]> I'm here
+[18:29:48] <willcode4[m]> nickoe: No, Pybind11 replaced SWIG in 3.9.
+[18:31:29] <nickoe> Good, I just wonder why my generated code mentions swig then...
+[18:31:49] <nickoe> https://dpaste.com/626KBCMM3
+[18:32:46] <ClaytonargiloVE3> I made a room for Gqrx, in case anyone wants to chat about it or hack on it: #gqrx:gnuradio.org 
+[18:34:39] <nickoe> room where?
+[18:35:37] <willcode4[m]> nickoe: Was that generated by 3.9 or was it a leftover from something before? I don't see the phrase "import swig" anywhere in the 3.9 code.
+[18:36:37] <nickoe> it is an old project I am trying to uplevel. Originally made in 3.7 I guess. I used "gr_modtool update --complete" 
+[18:37:06] <willcode4[m]> `--just-about-complete`
+[18:37:21] <drmpeg> That's not enough. That  just converts the .xml to .yml.
+[18:40:30] <nickoe> This is my current OOT code: https://github.com/nickoe/aausat4_beacon_parser/tree/refactor_2/gr-aausat4
+[18:41:15] <nickoe> So can I remove the swig folder?
+[18:43:16] *** Joins: haroldhopp[m] (~haroldhop@2001:470:69fc:105::1:224e)
+[18:43:33] *** Quits: UwRHwZL (~UwRHwZL@user/uwrhwzl) (Quit: Disconnected)
+[18:43:46] <nickoe> Maybe it is better for me to just create a new oot interacticely and add blocks and overwrite them with my old sourceS?
+[18:44:54] <drmpeg> Yes.
+[18:46:51] <drmpeg> Here's what __init__.py is supposed to look like. https://github.com/drmpeg/gr-dvbs2rx/blob/master/python/__init__.py
+[18:47:39] <nickoe> Ok, thanks. I am just consider what the block should be maed ifI want to sink real data and output pmt
+[18:47:49] <nickoe> is that a sync block?
+[18:48:44] <drmpeg> __init__.py is for all the blocks.
+[18:53:03] <DerekKozel[m]> nickoe: Yes, a sync block is reasonable. Any of them would work since you only have input ports, but sync gives you sensible default implementations of forecast and is most commonly used as the basis for blocks with only inputs or outputs.
+[18:53:52] <nickoe> ok
+[18:54:18] <nickoe> It is a long time since I have played around with this, so I just have to remember the terminology
+[18:58:03] <DerekKozel[m]> My rambling about documentation during the first our of the stream was mostly about making the documentation easier to use for stuff like terminology, and better examples for thinks like Sink and Source blocks.
+[19:02:05] *** Joins: jemius (~imperator@2001:16b8:2de8:f400:c009:bdcc:fb20:5984)
+[19:02:37] *** Joins: white5moke (~white5mok@ip72-219-109-30.oc.oc.cox.net)
+[19:06:55] <nickoe> I have not looked at the blocks doc recently, rellay.
+[19:07:13] <DerekKozel[m]> https://wiki.gnuradio.org/index.php/Types_of_Blocks
+[19:07:18] <DerekKozel[m]> This is up to date and useful
+[19:30:06] *** Quits: Bernard[m] (~bernatei8@2001:470:69fc:105::125c) (Quit: You have been kicked for being idle)
+[19:30:08] *** Quits: kb3kwj[m] (~kb3kwjgnu@2001:470:69fc:105::1:d2) (Quit: You have been kicked for being idle)
+[19:30:08] *** Quits: TomWallace[Vespe (~tomwallac@2001:470:69fc:105::fb2f) (Quit: You have been kicked for being idle)
+[19:30:08] *** Quits: bvernoux[m] (~bvernouxg@2001:470:69fc:105::ff24) (Quit: You have been kicked for being idle)
+[19:30:08] *** Quits: nat[m]1 (~natgnurad@2001:470:69fc:105::eb65) (Quit: You have been kicked for being idle)
+[19:30:08] *** Quits: amlangford[m] (~amlangfor@2001:470:69fc:105::ffeb) (Quit: You have been kicked for being idle)
+[19:30:08] *** Quits: ni_volkan[m] (~nivolkang@2001:470:69fc:105::1:23) (Quit: You have been kicked for being idle)
+[19:30:08] *** Quits: raz[m] (~razgnurad@2001:470:69fc:105::fcc8) (Quit: You have been kicked for being idle)
+[19:30:08] *** Quits: rkiendl[m] (~rkiendlgn@2001:470:69fc:105::1:96) (Quit: You have been kicked for being idle)
+[19:30:08] *** Quits: rpooler[m] (~rpoolergn@2001:470:69fc:105::1:a6) (Quit: You have been kicked for being idle)
+[19:30:08] *** Quits: mohammed1991[m] (~mohammed1@2001:470:69fc:105::1:bd) (Quit: You have been kicked for being idle)
+[19:30:09] *** Quits: DavidProtzman[m] (~davidpgnu@2001:470:69fc:105::1:10) (Quit: You have been kicked for being idle)
+[19:30:09] *** Quits: mike_lutz[m] (~mikelutzg@2001:470:69fc:105::1:b7) (Quit: You have been kicked for being idle)
+[19:32:10] *** Quits: Acinonyx (~acinonyx@user/acinonyx) (Ping timeout: 260 seconds)
+[19:32:38] *** Joins: Acinonyx (~acinonyx@user/acinonyx)
+[19:34:35] *** Quits: miaoski (~miaoski@2001-b011-0001-6a1a-7450-0059-4046-0bf9.dynamic-ip6.hinet.net) (Ping timeout: 260 seconds)
+[19:35:47] <Hash[m]> I have a block outputting a burst at a 96k sample rate and want to resample it up to 100k in preparation for a polyphase synthesizer block. Trying the fractional resampler but it doesn't seem to be working, any way I can see if it's doing what I expect? 
+[19:40:08] <Hash[m]> Nevermind, had the wrong fixed sample rate in my QT Freq Sink... I''m this close to buying a spectrum analyzer because my home built tools keep screwing me! :)
+[19:56:47] *** Quits: Echoz (~chris@user/echoz) (Quit: WeeChat 3.0.1)
+[20:12:21] <BarryDuggan[m]> Hash: For the Fractional Resampler, the Resampling Ratio is the fraction of (input_rate/output_rate), so in your case the ratio would be 96/100
+[20:12:41] *** Quits: white5moke (~white5mok@ip72-219-109-30.oc.oc.cox.net) (Quit: Leaving...)
+[20:18:21] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[20:21:16] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[20:21:36] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[20:22:37] *** Joins: BrianG61UK (~BrianG61U@2a02:8010:66b7:dddd:3500:dcbe:b7b0:1fc)
+[20:23:50] *** Joins: BrianG61UK_ (~BrianG61U@2a02:8010:66b7:dddd:fc6c:1e1:f3c:ef43)
+[20:24:31] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[20:24:49] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[20:27:43] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[20:28:02] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[20:30:57] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[20:31:13] *** Joins: miaoski (~miaoski@2001-b011-0001-04a0-3843-1a22-04e7-45bc.dynamic-ip6.hinet.net)
+[20:31:15] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[20:34:09] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[20:34:28] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[20:37:22] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[20:37:41] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[20:40:36] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[20:40:54] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[20:41:15] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[20:41:47] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[20:42:23] *** Quits: saba4ka-mumu (~efsearfc@176.59.55.31) (Ping timeout: 264 seconds)
+[20:42:59] *** Quits: uros (~Thunderbi@2001:8a0:6074:ad00:9923:ba2e:9791:afeb) (Ping timeout: 264 seconds)
+[20:43:56] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[20:44:52] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[20:47:46] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[20:48:05] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[20:51:00] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[20:51:19] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[20:54:13] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[20:54:30] *** Quits: miaoski (~miaoski@2001-b011-0001-04a0-3843-1a22-04e7-45bc.dynamic-ip6.hinet.net) (Ping timeout: 258 seconds)
+[20:54:33] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[20:57:55] *** Joins: miaoski (~miaoski@2001-b011-0001-297f-5de6-74b5-553d-6931.dynamic-ip6.hinet.net)
+[20:59:10] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Ping timeout: 260 seconds)
+[21:00:10] *** Joins: Macuser (~Macuser@216.30.159.201)
+[21:00:33] *** Quits: miaoski (~miaoski@2001-b011-0001-297f-5de6-74b5-553d-6931.dynamic-ip6.hinet.net) (Client Quit)
+[21:00:50] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[21:00:58] <Hash[m]> <BarryDuggan[m]> "Hash: For the Fractional..." <- Thanks, I found that on the documentation page as well. Super handy to use. Took my 96k samp rate to 200k so I can channelize with the synthesizer and send the same 9600 baud data spaced every 100khz
+[21:01:08] <Hash[m]> * > <@kv4fv:gnuradio.org> Hash: For the Fractional Resampler, the Resampling Ratio is the fraction of (input_rate/output_rate), so in your case the ratio would be 96/100
+[21:01:08] <Hash[m]> Thanks, I found that on the documentation page as well. Super handy to use. Took my 96k samp rate to 100k so I can channelize with the synthesizer and send the same 9600 baud data spaced every 100khz
+[21:02:10] <muaddib[m]> That’s a great use for the synthesizer!
+[21:02:14] *** Joins: OnAironaut (~OnAir@user/onaironaut)
+[21:02:15] *** Joins: miaoski (~miaoski@2001-b011-0001-297f-5de6-74b5-553d-6931.dynamic-ip6.hinet.net)
+[21:02:35] *** Joins: saba4ka-mumu (~efsearfc@176.59.55.31)
+[21:02:55] <Hash[m]> My plan is to transmit on every channel within the ISM band at the same time so no matter where my freq hop receiver is, it gets the message
+[21:03:04] <muaddib[m]> Hash: I’m still intending on testing out your PDU to burst flow graph btw. Just haven’t had time.
+[21:03:29] <muaddib[m]> Hash[m]: A brute force attempt but a smart one (no pun intended)
+[21:03:45] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[21:03:53] <Hash[m]> No prob, I am working on a Python program now to build the clear and bring in to the flowgraph via ZMQ so you can code any packets you want and broadcast
+[21:04:04] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[21:04:55] <Hash[m]> s/clear/packet/
+[21:05:03] <muaddib[m]> are you using the construct library from python? That’s what Dani uses in GR-satellites
+[21:05:26] <Hash[m]> No, I’ll have to look at that to see how he’s doing it
+[21:06:58] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[21:07:18] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[21:08:03] <Hash[m]> I was just creating lists with the different parts of the packet, then converting bytes to bits and adding start/stop bits before converting to a pmt and sending via zmq
+[21:10:13] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[21:10:32] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[21:13:27] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[21:13:47] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[21:16:42] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[21:17:01] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[21:19:55] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[21:20:14] *** Joins: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com)
+[21:21:43] *** Quits: OnAironaut (~OnAir@user/onaironaut) (Remote host closed the connection)
+[21:23:08] *** Quits: AdamHorden (~adam.hord@host81-150-189-121.in-addr.btopenworld.com) (Client Quit)
+[21:25:29] <MarcLichtman[m]> id: cuda... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/6433b7d32ab2bf74b8c1246c9f9c1a113a572d69)
+[21:25:45] * MarcLichtman[m] sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/6433b7d32ab2bf74b8c1246c9f9c1a113a572d69
+[21:30:40] <muaddib[m]> <Hash[m]> "I was just creating lists with..." <- i’ve been doing the same thing, except using an ordered dictionary.   If you clone GR-satellites and look at how he uses construct it’s exactly what we’re talking about. Thought that might be helpful. 
+[21:34:59] *** Joins: UwRHwZL (~UwRHwZL@user/uwrhwzl)
+[21:38:07] *** Joins: Echoz (~chris@user/echoz)
+[21:46:56] <Hash[m]> <muaddib[m]> "i’ve been doing the same thing..." <- which file in gr-satellites?
+[21:52:10] <Hash[m]> I'm reading about Python Construct right now, definitely looks useful as you said
+[21:52:38] *** Quits: mallkrampus (~mallkramp@172.93.207.68) (Ping timeout: 260 seconds)
+[21:54:50] *** Quits: Acinonyx (~acinonyx@user/acinonyx) (Ping timeout: 244 seconds)
+[21:55:19] *** Joins: Acinonyx (~acinonyx@user/acinonyx)
+[22:05:00] *** Joins: mallkrampus (~mallkramp@23.108.92.137)
+[22:30:22] *** Quits: UwRHwZL (~UwRHwZL@user/uwrhwzl) (Quit: Disconnected)
+[22:32:48] <muaddib[m]> I’ve been thinking about making an OOT python block gr-pdu_construct that basically has a drop down for fields and spits it out in binary. That way it can all originate from within the flow graph. No sidecar scripts necessary.
+[22:35:33] <muaddib[m]> Working through where line coding should be involved cause sometimes those fields are encoded differently or not at all. So for single encoding types there’s already NRZI and a couple others I believe.
+[22:35:59] <muaddib[m]> s/those/certain/
+[22:36:02] <Hash[m]> For sending test packets I think that would be cool, I want to be able to alter the packets real-time and even receive other packets and then build a response so need to take it external
+[22:36:15] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[22:37:39] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[22:38:07] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Client Quit)
+[22:39:25] <BarryDuggan[m]> Hash: do you want text files or other data?
+[22:39:29] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[22:40:03] *** Quits: jemius (~imperator@2001:16b8:2de8:f400:c009:bdcc:fb20:5984) (Quit: Leaving)
+[22:51:31] <Hash[m]> For me personally, I just want the data structures in a program so I can send over packets of data that are received, analyze them then build a response and transmit it. If I was just sending the same data over and over than a text file or something like that would be handy.
+[22:52:06] <Hash[m]> The hardest part was just figuring out how to send a PDU from python via ZMQ
+[23:02:12] <BarryDuggan[m]> Hash: look at this https://wiki.gnuradio.org/index.php/Packet_Communications#Using_BPSK_with_a_Hardware_Simulation
+[23:03:00] <BarryDuggan[m]> and this https://wiki.gnuradio.org/index.php/Understanding_ZMQ_Blocks#Python_Program_as_a_REQ_.2F_REP_Server
+[23:05:09] <Hash[m]> Thanks, i'll check those out and share my code with you later so you can see what I am trying to do and if it's already captured somewhere
+[23:22:20] * Hash[m] uploaded an image: (125KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/wqXZzMXjLeRgdUwXLkjYSjuQ/image.png >
+[23:22:31] <Hash[m]> Getting closer!
+[23:27:43] <Jacob[m]12> Nice
+[23:34:03] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Ping timeout: 244 seconds)
+[23:50:37] *** Joins: electrolytic (~electroly@gateway/tor-sasl/electrolytic)
+[23:54:51] <Hash[m]> Pretty fun learning more about GNURadio... I get an idea and I can actually make it happen!
+[23:59:03] <Macuser> installing it is half the battle

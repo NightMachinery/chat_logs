@@ -1,0 +1,126 @@
+[00:53:04] <fendor[m]> the issue is cabal later needs to actually compile stuff (e.g. dependencies)
+[00:53:14] <fendor[m]> for that it needs the correct ghc-pkg version as well
+[00:53:19] <fendor[m]> which is wrapped, too
+[01:00:28] <jneira[m]> uhm the ghc-pkg is also wrapped? did not remember that
+[01:00:46] <jneira[m]> its location usually is the same than ghc itself, no?
+[01:03:02] *** Quits: myShoggoth (~myShoggot@97-120-85-195.ptld.qwest.net) (Ping timeout: 260 seconds)
+[01:07:49] <wz1000> fendor[m], jneira[m]: I think we will have to ship a `ghc` (hls-ghc?) binary with HLS itself and use that to compile all dependencies.
+[01:10:58] <wz1000> That is the only way to have reliable binary distributions
+[01:12:06] <wz1000> (in fact we need to ship a whole GHC distribution with HLS)
+[01:13:53] <wz1000> It is very difficult to get different builds of GHC to reliably co-exist with each other.
+[01:14:47] <wz1000> There is no way to ensure that a GHC built on your machine can load code built with GHC on my machine
+[01:16:02] <wz1000> Most of the time it seems to work so far, but it is mostly a matter of luck. And if you run out of luck you get random segfaults
+[01:16:13] <wz1000> see https://gitlab.haskell.org/ghc/ghc/-/issues/20742
+[01:16:59] <wz1000> for example it is heavily dependent on optimisation settings for one
+[01:18:11] <wz1000> If a constructor field is unboxed in one build of GHC and it is not in one, then if you try to load code linked against the other GHC, you will get a segfault
+[01:24:02] <wz1000> we could have ghcup distributed binaries though, as long as we ensure that the GHC and HLS distributed by ghcup are linked consistently
+[01:50:33] *** Quits: cptwunderlich (~Benjamin@212-186-57-158.cable.dynamic.surfer.at) (Ping timeout: 250 seconds)
+[01:56:19] *** Joins: myShoggoth (~myShoggot@97-120-85-195.ptld.qwest.net)
+[02:22:02] *** Quits: myShoggoth (~myShoggot@97-120-85-195.ptld.qwest.net) (Ping timeout: 268 seconds)
+[04:07:02] *** Joins: libertyprime (~libertypr@203.211.73.21)
+[04:55:35] *** Joins: tgiannak (~theo@pool-71-174-61-77.bstnma.fios.verizon.net)
+[05:01:11] *** Quits: libertyprime (~libertypr@203.211.73.21) (Quit: leaving)
+[05:41:19] *** Quits: tgiannak (~theo@pool-71-174-61-77.bstnma.fios.verizon.net) (Quit: Leaving.)
+[06:42:19] *** Joins: libertyprime (~libertypr@118-92-79-43.dsl.dyn.ihug.co.nz)
+[06:49:14] *** Joins: myShoggoth (~myShoggot@97-120-85-195.ptld.qwest.net)
+[06:50:59] *** Quits: myShoggoth (~myShoggot@97-120-85-195.ptld.qwest.net) (Client Quit)
+[08:49:14] *** Quits: libertyprime (~libertypr@118-92-79-43.dsl.dyn.ihug.co.nz) (Ping timeout: 260 seconds)
+[09:15:59] *** Joins: libertyprime (~libertypr@203.211.73.21)
+[10:18:15] <jneira[m]> wz1000: interesting, wdym with "ship a `ghc`, distribute 2 binaries and make hls use its particular ghc?
+[10:19:03] <jneira[m]> i mean hls is already using and linking ghc as a lib but it would be more reliable having the complete ghc executable?
+[10:19:56] <jneira[m]> however distribution will be more complex, should we build such binary by ourselves to keep github releases?
+[10:29:43] *** Joins: arrowd (~arr@2.93.55.66)
+[10:32:06] <jneira[m]> well ghc is a huge binsdist with multiple executables, we could add hls in the standard binaries location of the bindist, near to ghc, ghc-pkg etc
+[11:30:52] *** Joins: lortabac (~lortabac@2a01:e0a:541:b8f0:859e:604a:c9a4:ff01)
+[11:41:21] *** Joins: cptwunderlich (~Benjamin@212-186-57-158.cable.dynamic.surfer.at)
+[11:42:34] <jneira[m]> seriously flaky tests are killing ci pipeline
+[11:43:16] <jneira[m]> 7 failed attempts in the previous commit of https://github.com/haskell/haskell-language-server/pull/2393
+[11:43:46] <jneira[m]> and i would say that they were 50/50 ubuntu/windows
+[11:45:42] <jneira[m]> please lets not merge more prs until 1.5.1 is out, to get a easy clean commit to release 
+[11:49:31] <wz1000> jneira[m]: yes, we would need to something like that. But we would also need to ship libraries like base, text etc. that GHC ships with
+[11:50:29] <jneira[m]> wz1000 mpickering any clue about what could happen with Richard's ghc loading in hls: https://github.com/haskell/haskell-language-server/issues/2387 ? 
+[11:51:31] <jneira[m]> hls is picking 8.10.7, his actual installation, but the ghc being loaded still thinks is built with 8.10.5, his previous ghc installation
+[11:51:53] <jneira[m]> and all caches, hls and local ghc build ones are supposed to be cleaned up
+[12:23:41] <Hecate> wz1000: wouldn't it be easier to ship HLS with GHC bindists instead of shipping GHC bindists with HLS?
+[12:28:02] <wz1000> Hecate: yes, we could do that with GHCup distributed GHC bindists for example
+[12:28:12] <wz1000> But regular GHC bindists can't really ship with HLS
+[12:28:19] <wz1000> there are too many dependencies
+[12:29:44] <wz1000> Essentially the invariant is that the GHC that HLS is linked against is also the exact same GHC that is used to compile the users code (and dependencies)
+[12:30:55] <wz1000> This is not the case currently for HLS distributions because HLS is linked against whatever GHC CI provides, which is unlikely to be the exact same GHC that users have on their systems
+[12:58:43] *** Quits: arrowd (~arr@2.93.55.66) (Remote host closed the connection)
+[13:05:44] <jneira[m]> jumm next step would be create a hls+ghc combined executable doing all the work
+[13:06:14] <jneira[m]> without using a diff ghc at runtime
+[13:07:11] <wz1000> jneira[m]: the problem isn't just the executable, it is the libraries (like template-haskell for TH or the ghc library for plugins)
+[13:07:40] <jneira[m]> or ship hls with ghc, including it in the bindist
+[13:07:42] <wz1000> and so also base and all the other transitive dependencies
+[13:09:45] <Hecate> wz1000: I imagine that fully static HLS executables are not an option either?
+[13:11:03] <jneira[m]> jneira[m]: I mean include hls within the ghc bindist like haddock is
+[13:11:08] <wz1000> Hecate: that doesn't change things, you still need any TH or plugin code to be linked against the exact same libraries as the static HLS
+[13:11:21] <Hecate> wz1000: I see thanks
+[13:11:36] <wz1000> by plugin I mean GHC plugin
+[13:11:42] <jneira[m]> it would open a new can of worms of course
+[13:12:17] <wz1000> jneira[m]: yes, that would essentially be the idea. Distribute HLS along with a full GHC installation
+[13:12:17] <jneira[m]> move hls to gitlab, include it in the build system, etc
+[13:12:47] <wz1000> I don't think we can support distributing HLS with the GHC bindists on downloads.haskell.org
+[13:13:35] <jneira[m]> but It would not be needed to work with hls against ghc head?
+[13:14:49] <jneira[m]> we can do it in another repo against a source dist of ghc, I guess that is your idea
+[13:29:53] <Hecate> < wz1000> I don't think we can support distributing HLS with the GHC bindists on downloads.haskell.org // What would be the blocker in this instance?
+[13:30:29] <Hecate> and most importantly: Can we establish a plan that we can distribute to a number of people so that we don't have one single person doing this 
+[13:30:35] <jneira[m]> first think i can think off: ghc devlopment should have in account hls one (like haddock right now)
+[13:30:51] <jneira[m]> so hls could block a ghc release f.e.
+[13:45:57] <jneira[m]> or viceversa ;-) 
+[14:02:46] <fendor[m]> HLS will block a ghc release since no one can upgrade before a ghc release, thus HLS can't upgrade
+[14:35:21] <wz1000> jneira[m], Hecate: that is hard considering that HLS has about 70% of hackage in its transitive dependency closure
+[14:35:59] <Hecate> wz1000: okay what the fuck 
+[14:36:02] <Hecate> that's
+[14:36:04] <Hecate> that's a lot
+[14:36:23] <jneira[m]> well 70% of useful hackage i would say
+[14:36:58] <jneira[m]> maybe only 50% but whatever, even a 5% would be bad if ghc does not have them
+[14:37:11] <wz1000> Hecate: I may have exaggerated slightly but the point stands
+[14:38:36] <Hecate> wz1000: I see your point
+[14:38:42] <jneira[m]> so you are right we should set a way to given a ghc version, including ghc head, build hls using that ghc and include hls in the ghc bindist
+[14:39:32] <jneira[m]> could we do it only with ghc bindists? it would be enough for ghc devs working with hls on ghc itself?
+[14:40:53] <jneira[m]> i would prefer to not have to compile ghc of course, but ghc devs will have to do the bindist to get a hls working version
+[14:42:39] <jneira[m]> oh wait ghc is compiled by an older version, and it would have the bindist
+[14:44:15] <jneira[m]> however i would like to make hls less tied to ghc and no more, better separation of concerns blabla, not sure if that is even possible :-( 
+[14:46:16] <wz1000> jneira[m]: we don't need to compile ghc, we just need to ship the exact GHC distribution that we compile HLS with
+[15:03:02] *** Joins: tgiannak (~theo@pool-71-174-61-77.bstnma.fios.verizon.net)
+[15:18:28] *** Quits: greyrat (~greyrat@ip202.ip-51-178-215.eu) (Bye)
+[15:18:48] *** Joins: greyrat_ (~greyrat@ip202.ip-51-178-215.eu)
+[15:20:44] *** Joins: sshine_ (~simon@hubris.eta.solutions)
+[15:20:57] *** Joins: Hecate_ (~mariposa@163.172.211.189)
+[15:21:19] *** Joins: pie__ (~pie_bnc@user/pie/x-2818909)
+[15:21:19] *** Server sets mode: +nt 
+[15:21:25] *** Joins: ts2 (~ts@46.101.20.9)
+[15:25:59] *** Quits: greyrat (~greyrat@ip202.ip-51-178-215.eu) (Ping timeout: 260 seconds)
+[15:25:59] *** Quits: sshine (~simon@hubris.eta.solutions) (Ping timeout: 260 seconds)
+[15:26:00] *** Quits: ts1 (~ts@46.101.20.9) (Ping timeout: 260 seconds)
+[15:26:00] *** Quits: Hecate (~mariposa@user/hecate) (Ping timeout: 260 seconds)
+[15:26:01] *** Quits: pie_ (~pie_bnc@user/pie/x-2818909) (Ping timeout: 260 seconds)
+[15:39:04] *** Quits: tgiannak (~theo@pool-71-174-61-77.bstnma.fios.verizon.net) (Quit: Leaving.)
+[16:03:18] *** Quits: cptwunderlich (~Benjamin@212-186-57-158.cable.dynamic.surfer.at) (Ping timeout: 256 seconds)
+[16:04:22] *** Joins: cptwunderlich (~Benjamin@212-186-57-158.cable.dynamic.surfer.at)
+[16:16:02] *** Joins: tgiannak (~theo@pool-71-174-61-77.bstnma.fios.verizon.net)
+[16:27:35] *** Quits: libertyprime (~libertypr@203.211.73.21) (Quit: leaving)
+[16:34:16] *** Quits: cptwunderlich (~Benjamin@212-186-57-158.cable.dynamic.surfer.at) (Ping timeout: 268 seconds)
+[17:06:58] *** Quits: tgiannak (~theo@pool-71-174-61-77.bstnma.fios.verizon.net) (Quit: Leaving.)
+[17:09:41] *** Hecate_ is now known as Hecate
+[17:35:06] *** Joins: arrowd (~arr@2.93.55.66)
+[17:59:38] *** Joins: cptwunderlich (~Benjamin@212-186-57-158.cable.dynamic.surfer.at)
+[18:19:44] *** Quits: cptwunderlich (~Benjamin@212-186-57-158.cable.dynamic.surfer.at) (Remote host closed the connection)
+[18:20:07] *** Joins: cptwunderlich (~Benjamin@212-186-57-158.cable.dynamic.surfer.at)
+[19:42:26] *** Quits: lortabac (~lortabac@2a01:e0a:541:b8f0:859e:604a:c9a4:ff01) (Quit: WeeChat 2.8)
+[20:05:38] *** Quits: cptwunderlich (~Benjamin@212-186-57-158.cable.dynamic.surfer.at) (Remote host closed the connection)
+[20:16:11] *** Parts: Hecate (~mariposa@163.172.211.189) ()
+[20:40:41] *** Joins: tgiannak (~theo@pool-71-174-61-77.bstnma.fios.verizon.net)
+[21:05:16] *** Quits: tgiannak (~theo@pool-71-174-61-77.bstnma.fios.verizon.net) (Quit: Leaving.)
+[22:29:23] *** Joins: cptwunderlich (~Benjamin@212-186-57-158.cable.dynamic.surfer.at)
+[22:32:51] *** Quits: arrowd (~arr@2.93.55.66) ()
+[23:00:18] *** Quits: cptwunderlich (~Benjamin@212-186-57-158.cable.dynamic.surfer.at) (Ping timeout: 268 seconds)
+[23:23:09] <maralorn> Something really weird broke one updating to 1.5. Firstly projects which until now had working auto-dection now need a hie.yaml with `cradle: cabal: ` that’s all.
+[23:23:48] <maralorn> But with that hie.yaml hls does not recognise bytestring as a dependency even though it’s in specified in the cabal list.
+[23:24:20] <maralorn> Oh, no. I see why that happened.
+[23:24:51] <maralorn> I have a test-suite and an executable with the same hs-src-dir that confused it.
+[23:30:17] *** Joins: cptwunderlich (~Benjamin@212-186-57-158.cable.dynamic.surfer.at)
+[23:35:07] *** Quits: juhp (~juhp@128.106.188.82) (Ping timeout: 250 seconds)
+[23:37:18] *** Joins: juhp (~juhp@128.106.188.82)

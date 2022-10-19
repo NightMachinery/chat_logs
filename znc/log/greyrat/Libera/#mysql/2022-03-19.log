@@ -1,0 +1,90 @@
+[01:07:04] *** Joins: ice9 (~ice9@user/ice9)
+[01:08:06] <thumbs> the solution is not to use a zillion files
+[01:29:13] *** Joins: snedd (~snedd@86.14.114.137)
+[01:51:22] *** Quits: ice9 (~ice9@user/ice9) (Ping timeout: 250 seconds)
+[01:56:31] *** Joins: ferdna (~ferdna@user/ferdna)
+[01:58:12] *** Quits: palasso (~palasso@user/palasso) (Quit: I am not a quitter!)
+[02:05:53] <thumbs> q/53
+[02:36:45] *** Quits: shibboleth (~shibbolet@user/shibboleth) (Quit: shibboleth)
+[02:46:31] *** Quits: snedd (~snedd@86.14.114.137) (Quit: Leaving)
+[03:03:33] *** Quits: gamara (~gamara@cpe9050cade20e3-cm9050cade20e0.cpe.net.cable.rogers.com) (Ping timeout: 256 seconds)
+[03:25:24] *** Quits: Sheilong (uid293653@id-293653.ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[03:30:48] *** Joins: Ada_Lovelace_Lov (~Ada_Lovel@2607:9880:1b18:15a::2bf1)
+[03:31:18] *** Quits: Ada_Lovelace_Lov (~Ada_Lovel@2607:9880:1b18:15a::2bf1) (Client Quit)
+[03:31:49] *** Joins: Ada_Lovelace (~Ada_Lovel@2607:9880:1b18:15a::2bf1)
+[04:00:15] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[04:01:08] <Ada_Lovelace> Hi all,
+[04:01:08] <Ada_Lovelace> Is it necessary to flush the binary log after acquiring a global read lock to have a consistent last binary log file on disk (when sync_binlog=1)?
+[04:07:01] <Ada_Lovelace> I have noticed FLUSH BINARY LOGS and/or FLUSH NO_WRITE_TO_BINLOG ENGINE LOGS in the source code of some tool so I am wondering if these are not too much when sync_binlog=1.
+[04:13:40] <Ada_Lovelace> As far as I understand, FLUSH NO_WRITE_TO_BINLOG ENGINE LOGS is more related to the on-disk consistency of the InnoDB redo log.
+[04:14:18] <Ada_Lovelace> (I use InnoDB.)
+[04:28:32] <Ada_Lovelace> I am asking this question because I believe without the need to flush the binary logs at first, I could then be able to do something like:
+[04:28:33] <Ada_Lovelace> First, acquiring a global read lock (knowing all the consequences).
+[04:28:33] <Ada_Lovelace> Secondly, flushing the engine logs.
+[04:28:34] <Ada_Lovelace> Thirdly, taking a ZFS snapshot.
+[04:28:34] <Ada_Lovelace> Fourthly, flushing the binary log.
+[04:28:35] <Ada_Lovelace> All that to ensure double disk consistency (binary log + InnoDB redo log) and to ensure that the separation of the binary into files is mostly logic (mostly because I am not considering the rotations that are due to restarts or size constraints / max_binlog_size).
+[04:33:18] *** Joins: Ada_Lovelace5 (~Ada_Lovel@2607:9880:1b18:15a::2bf1)
+[04:34:16] *** Quits: Ada_Lovelace5 (~Ada_Lovel@2607:9880:1b18:15a::2bf1) (Client Quit)
+[06:24:25] *** Joins: ferdna (~ferdna@user/ferdna)
+[07:17:18] *** Quits: Vacuity (~Vacuity@user/vovo) (Ping timeout: 252 seconds)
+[07:19:00] *** Joins: Vacuity (~Vacuity@user/vovo)
+[07:53:12] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[09:56:44] *** Quits: Tabmow (~tabmow@user/tabmow) (Quit: ZNC 1.8.2 - https://znc.in)
+[09:57:02] *** Joins: Tabmow (~tabmow@user/tabmow)
+[10:20:22] *** Quits: makani_kai (~makani_ka@73.52.190.1) (Quit: aloha)
+[10:21:01] *** Joins: makani_kai2 (~makani_ka@gateway/vpn/pia/makanikai/x-36391196)
+[10:34:05] <Isotopp> Ada_Lovelace: no special thing is necessary to have consistent binlog when sync_binlog is set
+[10:34:17] <Isotopp> good morning from europe.
+[10:35:01] <Isotopp> the command flush binary logs is one of three ways to get new binlog files started (the old one is closed, a new file is begun)
+[10:35:25] <Isotopp> 1. flush binary logs, 2. binlog max size is reached, 3. the server process is started
+[10:37:07] <Isotopp> i have in the past made consistent lvsnapshots of servers that had everything in one file system (datadir, logdir, config file). not much mandatory flushing is necessary.
+[10:37:11] <Isotopp> the procedure was
+[10:39:40] <Isotopp> 1. flush tables (wait a bit). this forced a writeback of a lot of myisam dirty buffers
+[10:40:20] <Isotopp> 2. flush tables with read lock. this is the same, again, but with locking. due to step 1, the lock duration is a lot shorter (flush tables with read lock locks first, then flushes, so the less there is to flush, the faster things are)
+[10:40:36] <Isotopp> 3. run lvcreate --snapshot
+[10:41:05] <Isotopp> 4. unlock tables again
+[10:41:10] <Isotopp> i now can work with the snapshot.
+[10:42:07] <Isotopp> i wrote a job that did this in a loop, restoring the snapshot and trying to create a replica from it.
+[10:43:44] <Isotopp> turns out there is one more crucial thing: https://dev.mysql.com/doc/refman/8.0/en/server-status-variables.html#statvar_Replica_open_temp_tables needs to be 0 after step 2, before step 3. if it is not, unlock tables, wait a bit and start again
+[10:44:20] <Isotopp> that is, because these explicit temp tables (CREATE TEMPORARY TABLES) will break the snapshot if they are present. If you use rbr, this is immaterial.
+[10:44:48] <Isotopp> there is a tool older than time itself, http://lenzg.net/mylvmbackup/ from Lenz Grimmer, that does all this in code.
+[11:01:32] *** Quits: Forlorn (~Forlorn@83-233-36-221.cust.bredband2.com) (Ping timeout: 240 seconds)
+[11:01:39] *** Joins: Forlorn (~Forlorn@83-233-36-221.cust.bredband2.com)
+[11:02:05] <thumbs> Isotopp: I have used mylvmbackup many times yes
+[11:03:20] *** Quits: spacefrog (uid388336@id-388336.lymington.irccloud.com) (Quit: Connection closed for inactivity)
+[11:39:50] *** Quits: acidsys (~LSD@2a03:4000:55:d20::3) (Excess Flood)
+[11:40:20] *** Joins: acidsys (~LSD@2a03:4000:55:d20::3)
+[11:40:26] *** Quits: acidsys (~LSD@2a03:4000:55:d20::3) (Excess Flood)
+[11:41:03] *** Joins: acidsys (~LSD@2a03:4000:55:d20::3)
+[11:48:17] *** Joins: palasso (~palasso@user/palasso)
+[12:09:15] *** Quits: Ada_Lovelace (~Ada_Lovel@2607:9880:1b18:15a::2bf1) (Ping timeout: 256 seconds)
+[12:31:56] *** Joins: ice9 (~ice9@user/ice9)
+[14:45:40] *** Quits: tercaL (~tercaL@user/tercal) (Quit: enter the Tekken!)
+[15:37:17] *** Quits: palasso (~palasso@user/palasso) (Remote host closed the connection)
+[15:38:42] *** Joins: palasso (~palasso@user/palasso)
+[16:06:58] *** Joins: Aussie_Matt (~quassel@180.150.112.148)
+[16:07:30] *** Quits: ss23 (~ss23@irc.ss23.geek.nz) (Ping timeout: 252 seconds)
+[16:07:38] *** Joins: ss23 (~ss23@irc.ss23.geek.nz)
+[16:25:52] *** Quits: acidsys (~LSD@2a03:4000:55:d20::3) (Excess Flood)
+[16:26:23] *** Joins: acidsys (~LSD@2a03:4000:55:d20::3)
+[16:26:29] *** Quits: acidsys (~LSD@2a03:4000:55:d20::3) (Excess Flood)
+[16:27:06] *** Joins: acidsys (~LSD@2a03:4000:55:d20::3)
+[16:27:33] *** Quits: Aussie_Matt (~quassel@180.150.112.148) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[16:40:15] *** Parts: cromwell (oliver@thunix.net) ()
+[17:28:28] *** Joins: Sheilong (uid293653@id-293653.ilkley.irccloud.com)
+[18:13:46] *** Joins: Guest65 (~Guest65@181.168.191.214)
+[18:15:55] *** Quits: Guest65 (~Guest65@181.168.191.214) (Client Quit)
+[18:16:47] *** Joins: ferdna (~ferdna@user/ferdna)
+[18:42:59] *** Joins: spacefrog (uid388336@id-388336.lymington.irccloud.com)
+[18:57:39] *** Joins: Naktibalda (~Naktibald@88.135.22.17)
+[19:05:30] *** Joins: magga (magga@ti0036a400-3577.bb.online.no)
+[19:54:28] *** Quits: mickey (~user@user/mickey) (Quit: mickey)
+[19:55:21] *** Joins: mickey (~user@user/mickey)
+[20:50:36] *** Quits: spacefrog (uid388336@id-388336.lymington.irccloud.com) (Quit: Connection closed for inactivity)
+[20:55:35] *** Joins: csm3105 (~csm3105@static-214-56-230-77.ipcom.comunitel.net)
+[21:23:52] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[21:59:17] *** Joins: tercaL (~tercaL@user/tercal)
+[22:34:08] *** Quits: kevr (~kevr@user/kevr) (Quit: ZNC 1.7.5+deb4 - https://znc.in)
+[22:34:50] *** Joins: kevr (~kevr@user/kevr)
+[22:53:34] *** Quits: Naktibalda (~Naktibald@88.135.22.17) (Quit: Friends help you move. Real friends help you move bodies.)

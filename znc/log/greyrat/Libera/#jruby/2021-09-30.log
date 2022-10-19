@@ -1,0 +1,90 @@
+[00:01:54] <headius> NotImplementedError: flip-flop is no longer supported in JRuby
+[00:01:57] <headius> my favorite error
+[00:02:46] <headius> updated test:mri:core numbers: 2454 tests, 749897 assertions, 201 failures, 129 errors, 12 skips
+[00:03:17] <headius> this is with a few tests omitted or excluded due to problems loading the files or tests that blow up memory/threads/resources
+[00:03:39] <headius> that's including pretty much everything in test/mri/ruby after updating from 3.0.2 so still pretty good
+[00:23:46] <headius> enebo: I'm going to temporarily vendor a modified pp
+[00:24:01] <enebo[m]> ok
+[02:31:14] *** Joins: byteit101[m] (~byteit101@2001:470:69fc:105::30ec)
+[02:31:15] <byteit101[m]> Is there a built-in classLoader that works for all reified ruby classes?
+[02:55:08] <headius> byteit101: what do you mean? Not runtime.getJRubyClassLoader?
+[02:55:42] <byteit101[m]> java.lang.ClassNotFoundException: rubyobj.Person
+[02:56:01] <byteit101[m]> this is java code (javafx reflecting the fxml file into jva objects)
+[02:56:42] <headius> I guess javafx would have to be loaded in the same or a child classloader of the one that defined Person
+[02:56:52] <byteit101[m]> Yes, so I can pass a classloader
+[02:57:30] <byteit101[m]> and passing Person.java_class.classLoader works
+[02:57:33] <headius> yeah
+[02:57:33] <byteit101[m]> but only for Person
+[02:57:42] <headius> ah right
+[02:57:44] <byteit101[m]> if it tries to access FormattedTableCellFactory, it fails
+[02:57:53] <byteit101[m]> I need a "get me everything, please" CL
+[02:58:00] <headius> I think we might need a way to have related reified classes to load in the same CL
+[02:58:19] <headius> java_class_loader_group :MyJavaFXApp
+[02:58:20] <headius> or something
+[02:58:20] <byteit101[m]> Those are two unrelated classes
+[02:58:30] <headius> hmm
+[02:58:35] <headius> that is a JavaFX class?
+[02:58:50] <headius> if it is loaded anywhere above the Person classloader it should be visible to it
+[02:58:59] <byteit101[m]> No, Ruby
+[02:59:01] <byteit101[m]> https://github.com/jruby/jrubyfx/tree/master/samples/contrib/fxmltableview
+[02:59:07] <byteit101[m]> that's the sample I was testing this with
+[02:59:37] <headius> mmm so the app classes would need to be in same or child classloader as jrubyfx classes
+[02:59:53] <byteit101[m]> No, I pass the classloader as an argument
+[03:00:01] <headius> I would have expected the jrubyfx classes to be in the main JRubyClassLoader and the Parent class to be in a child of it
+[03:00:39] <byteit101[m]> https://github.com/jruby/jrubyfx/blob/master/lib/jrubyfx/controller.rb#L372
+[03:01:38] <byteit101[m]> doing `fxml_root File.dirname(__FILE__), nil, FormattedTableCellFactory.java_class.classLoader` (or Person, or whatever) causes javafx to be able to load that class
+[03:02:18] <byteit101[m]> the sample is being updated, but that is/will be here: https://github.com/jruby/jrubyfx/blob/master/samples/contrib/fxmltableview/FXMLTableView.rb#L40
+[03:07:27] <byteit101[m]> I was debating making a class that extends classloader that is a meta-classloader for the provided ruby classes, but wasn't sure if such a thing existed already
+[17:57:58] <headius> byteit101: yeah not really... but that would be an option
+[17:58:32] <headius> it would also be reasonable to set some config that all reified classes (or some configured subset) go into the same classloader as runtime dependencies, for apps known to behave and not spin new classes constantly
+[17:58:48] <headius> woot, digest gem changes have merged
+[18:01:28] <headius> enebo: I am reviewing the last couple stdlib file updates but then this could merge
+[18:02:00] <headius> when I run sync_ruby there are four files with diffs... I just need to figure out which direction the diffs should go
+[18:02:01] <headius> we are down to just a handful of things copied out of CRuby lib though
+[18:02:09] <enebo[m]> cool
+[18:03:04] <headius> I submitted a PR for open3 yesterday (mostly adding our non-native Windows logic) which will eliminate one more
+[18:03:46] <headius> spec:ruby:fast does not complete, but I will look into that
+[18:11:26] <headius> still can't figure out what is up with that English gem
+[18:11:41] <headius> it does not want to fetch properly through maven and there's very little help in the debug output
+[18:36:23] <headius> e
+[18:36:39] <headius> enebo: need your opinion on something
+[18:36:58] <headius> the ProcessBuilder-based open3 can't do everything, of course, like if you want to redirect stderr to an existing IO, there's no way to do that
+[18:37:27] <headius> should it silently fail (current behavior, redirect does not happen), warn, or hard error?
+[18:37:43] <headius> the silently proceeding and ignoring the unsupported options means some of these specs hang
+[18:38:01] <headius> (I am just trying to get them as green as possible with the PB version)
+[18:38:39] <enebo[m]> well if you ask for something and it cannot do it would you prefer it to do something else?
+[18:38:42] <headius> on the one hand silently ignoring the options will lead to bugs but allow the rest of the system to keep going
+[18:39:03] <headius> where a hard error would break the whole workflow because of one possible bug
+[18:39:16] <headius> but on the other hand if you are explicitly doing a redirect like this you probably need it
+[18:39:27] <enebo[m]> yeah so perhaps this is where we just need to engine tag those tests?
+[18:39:50] <headius> they fail either way but it is either a hang or an error
+[18:40:33] <enebo[m]> If I asked for stderr to end up in an existing IO and it didn't I think I would have to do something else to work around it.  Just having it do something helps move through the test suite (maybe) but I feel like we should unsupported operation exception
+[18:40:51] <headius> these two for example: https://github.com/ruby/open3/blob/6b7ede69e8980946488bf80abb724ea8cf2b12e3/test/test_open3.rb#L89-L104
+[18:40:51] <enebo[m]> then we should skip the test
+[18:41:25] <headius> I probably won't put skips in the open3 gem's repo but we can exclude in ours on Windows
+[18:42:11] <headius> they do test this on Windows so if we want to add JRuby to that we would need another option
+[18:42:12] <enebo[m]> There are two separate things though right?  How we handle a feature we cannot support and how we interact with a gem which is testing that behavior
+[18:42:33] <headius> yeah we are green in the open3 CI on *nix so that is not a problem right now
+[18:42:51] <headius> this is mostly to get the best possible open3 on Windows until we have better native process support
+[18:43:01] <headius> I guess I am leaning toward error as well
+[18:43:27] <enebo[m]> so yeah I agree error on windows until we can do it
+[18:43:29] <headius> so it would detect the piped redirects here and nope out
+[18:43:37] <enebo[m]> for testing until we are testing this on windows with JRuby it perhaps is just deferrable
+[18:43:45] <headius> I think so
+[18:44:02] <headius> it largely works and most folks don't do these redirects since you can just capture the streams directly
+[18:44:37] <headius> mostly affects the popen2/capture2 forms that only handle in and out... you have to do something with err so they redirect
+[19:06:29] <headius> wow, this actually only fails a few things
+[19:06:56] <headius> just two tests with piped redirects and another that expects to get a real pid back from the child process
+[19:21:34] <headius> open3 is done... https://github.com/ruby/open3/pull/3
+[23:24:37] <headius> enebo: language specs run to completion but core gets OOM on some Enumerable::Lazy specs
+[23:24:50] <headius> I will look at tagging them off to get a completed run but I assume this is not new
+[23:25:13] <headius> actually... I think we should merge my branch... it is clearly working and the specs and tests are roughly working
+[23:25:26] <headius> we can have a separate PR to tag off spec killers
+[23:29:12] <headius> loving how stdlib dir is shrinking with 3.0 support
+[23:30:07] <headius> just need to get the rest of these libs gemified
+[23:35:21] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 268 seconds)
+[23:37:02] <enebo[m]> yeah merge it
+[23:37:07] *** Joins: subbu (~subbu@user/subbu)
+[23:37:15] <enebo[m]> the lazy spec was a problem before
+[23:46:06] <headius> Cool
+[23:47:09] <headius> Merged. I will update the jruby gemification issue with latest updates.

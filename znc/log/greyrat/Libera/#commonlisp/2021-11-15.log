@@ -1,0 +1,760 @@
+[00:14:19] <White_Flame> phantomics: since you're inside loop, juse do WHEN blah COLLECT IX, instead of push
+[00:14:21] *** Joins: cjb (~cjbayliss@user/cjb)
+[00:14:43] <White_Flame> (esp for the first example)
+[00:16:36] <phantomics> Right, the second is kind of hackneyed with that approach, have to assign the result anyway to apply the rest of the logic
+[00:17:28] *** Joins: aartaka (aartaka@gateway/vpn/protonvpn/aartaka)
+[00:17:35] *** Quits: frgo (~frgo@p548a30d7.dip0.t-ipconnect.de) ()
+[00:23:26] *** Quits: pve (~pve@178-55-169-23.bb.dnainternet.fi) (Quit: leaving)
+[00:23:47] <phantomics> A question: my project has some tests that depend on float handling that happens differently in different CL implementations. In ABCL and Lispworks I might get 1.999999 from something that gives 2.0 in SBCL and CCL
+[00:24:33] *** Quits: lotuseater (~user@p200300e7871bd300c158d62dc7544d08.dip0.t-ipconnect.de) (Read error: Connection reset by peer)
+[00:24:48] <phantomics> Does it make sense to mark a few tests that will run only in SBCL and other CLs whose floats work the same?
+[00:26:25] <phantomics> Otherwise I don't know if it'll be possible to get full test coverage in every impl, unless I try rebuilding the float operation primitives and that's a whole other can of worms
+[00:28:02] *** Quits: attila_lendvai (~alendvai@catv-89-132-208-37.catv.broadband.hu) (Ping timeout: 260 seconds)
+[00:28:11] <shka> phantomics: it makes more sense to use epsilon IMHO
+[00:28:20] <shka> but i am not sure about this one
+[00:28:39] <shka> thing is, it is possible to swich reader to read in double-floats by default
+[00:28:59] <phantomics> Like check if it's within the range of X+/- epsilon?
+[00:29:14] <shka> yup, that's my gut feeling
+[00:29:24] <phantomics> Most of the differences are greater than the epsilon, unfortunately
+[00:29:26] <shka> but I am not 100% sure if this is the right choice
+[00:29:36] <shka> ok, then
+[00:29:50] <phantomics> All my tests are done in double floats already
+[00:30:00] <shka> wanted to ask about that
+[00:30:23] <Bike> you get different results? really? i can only think they just read/print floats differently
+[00:30:36] <shka> yeah, actually good point
+[00:30:45] <shka> i  would expect double-floats to be the same
+[00:31:20] <shka> good night all
+[00:31:26] <phantomics> Night shka
+[00:31:54] <Bike> i mean there's very little chance they're not using ieee float64 for doubles
+[00:32:00] <Bike> binary64, rather
+[00:32:25] <Bike> but converting to and from decimal can gget weird
+[00:32:28] <phantomics> For instance: #(0.9999999999999998D0 -1.4999999999999998D0) is expected to be #(1.0 -1.5)
+[00:34:20] <phantomics> In SBCL, (expt 8.0d0 1/3) gives 2.0d0
+[00:34:32] <phantomics> In LW, it gives 1.9999999999999998D0
+[00:35:58] *** Quits: aartaka (aartaka@gateway/vpn/protonvpn/aartaka) (Ping timeout: 260 seconds)
+[00:36:47] <phantomics> In these cases, it is within the epsilon, but there was another case of a function inverter that went into an endless loop even with a comparison tolerance much higher than the epsilon
+[00:36:52] *** Joins: lotuseater (~user@p200300e7871bd300c158d62dc7544d08.dip0.t-ipconnect.de)
+[00:37:04] *** Joins: aartaka (aartaka@gateway/vpn/protonvpn/aartaka)
+[00:40:56] *** Quits: theothornhill (~user@217.84-49-191.nextgentel.com) (Ping timeout: 245 seconds)
+[00:41:05] <Bike> what about the actual bits? like, if you do integer-decode-float on the result in both implementations, do you get different results?
+[00:41:16] <phantomics> Let's see
+[00:41:37] <Bike> or use one of the libraries that gets the bits more directly, of course
+[00:41:50] <phantomics> Yes, different
+[00:42:03] *** Quits: shka (~herr@83.175.151.96.piasta.pl) (Ping timeout: 265 seconds)
+[00:42:10] <phantomics> In SBCL: 4503599627370496 -51 1
+[00:42:23] <phantomics> In LW: 9007199254740991 -52 1
+[00:42:41] <Bike> Huh!
+[00:42:57] <Bike> i guess for expt they could be using different algorithms. I wanna say sbcl uses libc cbrt, but don't quote me on that
+[00:43:53] <phantomics> Just checked ECL, CCL and ABCL, they're the same as SBCL
+[00:50:54] *** Quits: aartaka (aartaka@gateway/vpn/protonvpn/aartaka) (Ping timeout: 260 seconds)
+[00:52:15] <Bike> oh, or i suppose if the 8.0d0 was read in differently... that seems unlikely, though, it's not a weird fraction
+[00:52:48] <semz> no chance, 8 is exactly representable as a float
+[00:52:53] <semz> 1/3 isn't though, that might be it
+[00:55:04] <phantomics> (integer-decode-float  (expt 8.0d0 0.333333333333333d0)) is the same in all
+[00:55:31] * Alfr throws ternary floats at semz.
+[00:55:57] * semz takes the crucifix in hand
+[00:56:28] <phantomics> Coercing things to floats doesn't work, (integer-decode-float  (expt 8.0d0 (coerce 1/3 'double-float))) has the same discrepancy between LW and others
+[00:56:48] *** Joins: thomaslewis (6e04fe5c02@mail.nobodyhasthe.biz)
+[00:57:03] *** Joins: ec (~ec@gateway/tor-sasl/ec)
+[00:57:10] *** Joins: theothornhill (~user@217.84-49-191.nextgentel.com)
+[00:57:15] <phantomics> So if I use rationals for accuracy, I end up losing accuracy in this particular case
+[00:57:20] <Alfr> semz, no need for that. I haven't run across an implementation utilizing those--yet.
+[00:57:56] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Client Quit)
+[01:03:00] *** Joins: X-Scale` (~ARM@165.201.137.78.rev.vodafone.pt)
+[01:03:20] *** Quits: X-Scale (~ARM@83.223.243.66) (Ping timeout: 256 seconds)
+[01:04:23] *** Quits: theothornhill (~user@217.84-49-191.nextgentel.com) (Remote host closed the connection)
+[01:04:35] *** Joins: theothornhill (~user@217.84-49-191.nextgentel.com)
+[01:05:00] *** X-Scale` is now known as X-Scale
+[01:10:23] <Guest7426> I wonder why logical operators for integers dont have a - like bit and boole.
+[01:14:24] *** Quits: random-nick (~random-ni@87.116.165.220) (Read error: Connection reset by peer)
+[01:14:30] *** greaser|q is now known as GreaseMonkey
+[01:16:34] <Bike> "a -"?
+[01:16:58] <Guest7426> logand bit-and
+[01:18:54] <borodust> Xach: i'll take a look tmr
+[01:21:00] <lotuseater> hm maybe as "log" is the abbreviation for "logical" and not the whole word
+[01:21:03] <_death> Guest7426: as is often the case with names, historical.. log* are much older
+[01:24:25] <Guest7426> I wonder the reason. I guess because of high level stuff if they're older.
+[01:24:27] <_death> logand for example exists in LISP 1.5 (1958)
+[01:25:57] <_death> it also had logxor and logor (later changed to logior)
+[01:26:34] *** Quits: cosimone (~user@2001:b07:ae5:db26:a7aa:8027:6b4e:2fb3) (Quit: ERC (IRC client for Emacs 27.1))
+[01:40:02] <lotuseater> and who likes it another way can go ahead and rename it :)
+[01:40:36] *** Joins: dre (~dre@2001:8003:c932:c301:e788:c1b2:43c3:18c)
+[01:43:43] *** Quits: dre (~dre@2001:8003:c932:c301:e788:c1b2:43c3:18c) (Remote host closed the connection)
+[01:47:08] *** Joins: Oladon (~olad@98.43.81.226)
+[01:47:38] *** Joins: dre (~dre@2001:8003:c932:c301:c5de:7260:cf6e:da0c)
+[01:49:28] <Guest7426> how?
+[01:52:54] *** Joins: ec (~ec@gateway/tor-sasl/ec)
+[01:56:49] <_death> you can develop your own language, and to make things confusing, use say "bit-and" instead of "logand"
+[01:58:22] <hayley> bit-conjunction
+[02:01:50] <lotuseater> Guest7426: (setf (fdefinition 'log-and) #'logand)
+[02:03:00] <Guest7426> that just sets the fdefintion
+[02:04:38] *** Quits: theothornhill (~user@217.84-49-191.nextgentel.com) (Ping timeout: 260 seconds)
+[02:08:50] *** Joins: akoana (~ah@user/akoana)
+[02:09:10] *** Quits: lottaquestions (~nick@2607:fa49:5041:a200:bdac:69cd:e627:f419) (Quit: Konversation terminated!)
+[02:11:02] <lotuseater> and?
+[02:11:37] *** Joins: blihp (~phil@c-68-43-233-92.hsd1.mi.comcast.net)
+[02:17:23] <Guest7426> try and use that with apply
+[02:20:49] <lotuseater> i did
+[02:22:10] *** Quits: makomo (~makomo@user/makomo) (Quit: WeeChat 3.2)
+[02:23:08] *** Joins: _73 (~user@pool-96-233-64-53.bstnma.fios.verizon.net)
+[02:24:18] <_73> is a function tail recursive if the final expression is an if statement where both brances make a recursive call? For example is the local function `f` in this code tail recursive? http://dpaste.com/69QTXA49F
+[02:25:49] <Alfr> _73, yes. But you're in #CL, so the implementation of your choice may or may not overflow the stack running your code.
+[02:26:30] <Guest7426> ugh these nested arefs are driving me crazy. I'm trying to push to a list inside a vector of lists inside a vector and it pushes to all the lists.
+[02:26:57] <_73> Alfr: What about SBCL?
+[02:27:15] <Alfr> _73, in at least one implementation it may also depend on whether the defun is compiled and the optimization qualities chosen. ;)
+[02:28:02] *** Joins: asarch (~asarch@2806:10ae:7:2cca:f61b:4cfd:2d42:1782)
+[02:28:11] <Alfr> _73, http://www.sbcl.org/manual/index.html#Debug-Tail-Recursion
+[02:28:21] <Guest7426> should (push item (aref (aref outer-array inner-array-index) list-index)) work? or am i doing something stupid?
+[02:28:56] <_73> Alfr: Ill read this thanks
+[02:29:44] <_death> Guest7426: you probably initialized the elements of the outer array with the same inner array object
+[02:30:27] <Guest7426> thanks, that's gotta be it.
+[02:31:00] <Guest7426> for some reason i thought it would create a new array for each.  guess I'll use initial-contents.
+[02:31:29] *** Joins: _73` (~user@pool-96-233-64-53.bstnma.fios.verizon.net)
+[02:31:43] <Guest7426> It's always something stupid.
+[02:31:57] <_death> (map-into (make-array 3) (lambda () (make-array 3 :initial-element nil)))
+[02:33:09] *** Parts: _73` (~user@pool-96-233-64-53.bstnma.fios.verizon.net) ()
+[02:33:59] *** Quits: _73 (~user@pool-96-233-64-53.bstnma.fios.verizon.net) (Ping timeout: 264 seconds)
+[02:34:13] <lotuseater> Guest7426: and if you need such patterns more often use symbol-macros
+[02:34:17] <pjb> Guest7426: (let ((a (make-array '(3 3)))) (aref a 1 2) #|no more nested aref!|#)  #| --> 0 |#
+[02:37:04] <Guest7426> lotuseater: obviously the same problem occurs with symbol macros when you do something stupid like i did.
+[02:37:56] <Guest7426> pjb: that takes more time when I'm iterating over each indice of the inner array.
+[02:41:00] <lotuseater> okay i think it's a process of trying :)
+[02:41:06] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-19-70-31-33-162.dsl.bell.ca)
+[02:41:31] <_death> Guest7426: maybe it depends on how you're iterating.. I think e.g. sbcl uses an underlying vector so that all the elements (which may be pointers or immediate objects) are contiguous memory, while an array of arrays is unlikely to be so local
+[02:41:49] <lotuseater> sometimes i like arr[p] for (aref arr p) especially when SETFing so you can do (setq arr[p] foo)
+[02:43:03] <_death> clhs row-major-aref
+[02:43:03] <specbot> http://www.lispworks.com/reference/HyperSpec/Body/f_row_ma.htm
+[02:44:11] *** Quits: yewscion (~yewscion@72-21-196-65.amazon.com) (Ping timeout: 264 seconds)
+[02:44:25] *** Joins: lottaquestions (~nick@2607:fa49:5041:a200:3917:83a0:3edb:bc3b)
+[02:44:29] <Guest7426> _death: but multdimensional array access is slower than simple aref.... i haven't tested row-major-aref.
+[02:45:38] *** Quits: asarch (~asarch@2806:10ae:7:2cca:f61b:4cfd:2d42:1782) (Quit: Leaving)
+[02:45:59] *** Quits: anddam (~anddam@user/anddam) (Quit: WeeChat 3.3)
+[02:46:29] <Guest7426> but i'll be testing a whole bunch of stuff once the simple refactor implementation is done.
+[02:50:11] *** Quits: gaqwas (~john@dynamic-095-118-081-178.95.118.pool.telefonica.de) (Ping timeout: 264 seconds)
+[02:53:31] *** Quits: rgherdt (~rgherdt@2a02:8109:86c0:d8d:f999:7dbf:ab48:5803) (Ping timeout: 265 seconds)
+[02:57:51] *** Quits: blihp (~phil@c-68-43-233-92.hsd1.mi.comcast.net) (Quit: Leaving)
+[03:08:17] *** Joins: anddam (~anddam@user/anddam)
+[03:10:45] *** Quits: dre (~dre@2001:8003:c932:c301:c5de:7260:cf6e:da0c) (Quit: Leaving)
+[03:11:02] *** Joins: dre (~dre@2001:8003:c932:c301:c5de:7260:cf6e:da0c)
+[03:16:54] *** Quits: Guest7426 (~Guest74@modemcable110.164-177-173.mc.videotron.ca) (Quit: Connection closed)
+[03:19:18] *** Joins: rgherdt (~rgherdt@2a02:8109:86c0:d8d:f999:7dbf:ab48:5803)
+[03:19:27] *** Quits: lotuseater (~user@p200300e7871bd300c158d62dc7544d08.dip0.t-ipconnect.de) (Quit: ERC (IRC client for Emacs 27.2))
+[03:23:35] *** Joins: s-liao (~s-liao@101.86.101.64)
+[03:32:40] *** Quits: rgherdt (~rgherdt@2a02:8109:86c0:d8d:f999:7dbf:ab48:5803) (Ping timeout: 265 seconds)
+[03:33:44] *** Quits: ebrasca (~user@librepanther.com) (Remote host closed the connection)
+[03:58:39] *** Quits: anddam (~anddam@user/anddam) (Quit: WeeChat 3.3)
+[03:59:54] *** Quits: Lord_of_Life (~Lord@user/lord-of-life/x-2819915) (Ping timeout: 260 seconds)
+[04:01:21] *** Joins: Lord_of_Life (~Lord@user/lord-of-life/x-2819915)
+[04:12:30] *** Joins: anddam (~anddam@user/anddam)
+[04:16:11] <dre> I want to practise my lisp
+[04:16:25] <dre> is it possible to make little shell scripts in sbcl ?
+[04:17:00] <dre> like atm I just thought "i want to make a script that finds the last file I just edited" is this possible to do in some SBCL without too much boilerplate and yak-shaving ?
+[04:17:17] <Spawns_Carpet[m]> dre: yes! put #!/usr/bin/env -S sbcl --script at the top of the file
+[04:17:53] <Spawns_Carpet[m]> i love using lisp for scripts as an alternative to python or whatever
+[04:18:08] <dre> nice! thanks!
+[04:18:43] <dre> Spawns_Carpet[m], forgive me as I am a total newb, but do you have links or something to how I can deal with the shell / interface with it  / how I'd go about finding a solution to my problem?
+[04:19:19] *** Joins: NotThatRPG (~NotThatRP@162-219-230-90.fttp.usinternet.com)
+[04:20:13] <NotThatRPG> My emails to common-lisp.net, sent either from my normal email or from Gmail, are bouncing with messages that common-lisp.net is not responding. Since the bug reporting email address is *also* at cl.net, I thought I would post here in the hopes someone will see it.
+[04:21:13] <NotThatRPG> "all hosts for 'common-lisp.net' have been failing for a long time"
+[04:26:54] <Spawns_Carpet[m]> when you say interface with the shell what do you mean exactly?
+[04:27:18] <Spawns_Carpet[m]> you can run shell commands somehow, i don't remember exactly how
+[04:28:17] <Spawns_Carpet[m]> looks like (uiop:run-program "echo hello")
+[04:41:27] <NotThatRPG> Yes, that's how to use `run-program`, but you will need to specify how you want to receive the shell process' output (and possibly how you want it to receive input)
+[04:42:03] *** NotThatRPG is now known as NotThatRPG_away
+[04:44:07] *** Joins: alvaro121 (~akira121@201.230.126.66)
+[04:49:23] <alvaro121> Is there a way for GETF to use EQUAL when searching? My keys are strings and aren't being found.
+[04:51:13] <Bike> nope. you can use MEMBER to right it up yourself.
+[04:51:17] <Bike> rig it up
+[04:54:32] <pjb> alvaro121: there's a reason a-list exists: (assoc string-key a-list :test (function equal))
+[05:00:11] *** Quits: X-Scale (~ARM@165.201.137.78.rev.vodafone.pt) (Ping timeout: 268 seconds)
+[05:00:19] *** Joins: X-Scale` (~ARM@31.22.167.45)
+[05:02:29] *** X-Scale` is now known as X-Scale
+[05:06:18] *** Joins: Guest7481 (~Guest74@modemcable110.164-177-173.mc.videotron.ca)
+[05:06:22] <alvaro121> Nor in an utility library somewhere?
+[05:07:53] <_death> (loop for (key value) on list by #'cddr when (equal key x) return value)
+[05:08:13] <alvaro121> Will probably change to an alist then, how do I write alist literals? When using QUOTE my values are not evaluated and using LIST and CONS gets too verbose.
+[05:09:30] <yitzi> You can use backquote.
+[05:09:52] <Guest7481> acons if you're just adding one.
+[05:12:35] <alvaro121> Thanks. Didn't know about ACONS, will switch to using alists with quasiquotes.
+[05:17:36] <Guest7481> there's also pairlis, i keep forgetting the name of that one.
+[05:19:53] *** Quits: ski (~ski@remote12.chalmers.se) (Ping timeout: 264 seconds)
+[05:59:51] *** Quits: s-liao (~s-liao@101.86.101.64) (Quit: Client closed)
+[06:04:41] *** Joins: s-liao (~s-liao@101.86.101.64)
+[06:05:39] *** Quits: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se) (Quit: WeeChat 3.3)
+[06:28:20] *** Quits: slyrus (~slyrus@192-184-223-165.static.sonic.net) (Quit: Leaving)
+[06:29:46] *** Quits: s-liao (~s-liao@101.86.101.64) (Ping timeout: 256 seconds)
+[06:30:47] *** Joins: s-liao (~s-liao@101.86.101.64)
+[06:39:24] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[06:39:59] *** Quits: alvaro121 (~akira121@201.230.126.66) (Ping timeout: 264 seconds)
+[06:45:04] *** Quits: s-liao (~s-liao@101.86.101.64) (Ping timeout: 256 seconds)
+[06:50:33] <lisp123> yitzi: Thanks for that! The code is very easy to read - just went through it now. And very portable :)
+[06:57:25] *** Quits: Oladon (~olad@98.43.81.226) (Quit: Leaving.)
+[07:15:38] *** Quits: taiju (~taiju@M014013236064.v4.enabler.ne.jp) (Ping timeout: 256 seconds)
+[07:18:09] *** Joins: cjb35394 (~cjbayliss@user/cjb)
+[07:20:07] *** Joins: aartaka (aartaka@gateway/vpn/protonvpn/aartaka)
+[07:20:20] *** Quits: cjb (~cjbayliss@user/cjb) (Ping timeout: 260 seconds)
+[07:21:20] *** Joins: taiju (~taiju@M014013236064.v4.enabler.ne.jp)
+[07:23:43] *** cjb35394 is now known as cjb
+[07:31:39] *** Joins: asarch (~asarch@2806:10ae:7:2cca:f61b:4cfd:2d42:1782)
+[07:31:59] *** Quits: zephyr (~alandiper@ec2-34-230-252-114.compute-1.amazonaws.com) (Quit: Ping timeout (120 seconds))
+[07:32:21] *** Joins: zephyr (~alandiper@ec2-34-230-252-114.compute-1.amazonaws.com)
+[07:32:32] <beach> Good morning everyone!
+[07:36:16] *** Quits: cjb (~cjbayliss@user/cjb) ()
+[07:41:36] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Ping timeout: 276 seconds)
+[07:49:46] *** Quits: aartaka (aartaka@gateway/vpn/protonvpn/aartaka) (Ping timeout: 268 seconds)
+[08:15:51] *** Joins: dec0d3r (~dec0d3r@2001:8003:480a:e00:e07:e7c3:7efc:ed0f)
+[08:17:24] *** Quits: bcasiello (~bcasiello@066-189-087-112.biz.spectrum.com) (Ping timeout: 256 seconds)
+[08:20:09] *** Joins: s-liao (~s-liao@101.86.101.64)
+[08:21:07] *** Quits: lisp123 (~lisp123@5.30.23.247) (Remote host closed the connection)
+[08:27:30] *** Quits: semz (~none@user/semz) (Ping timeout: 265 seconds)
+[08:28:46] *** Quits: asarch (~asarch@2806:10ae:7:2cca:f61b:4cfd:2d42:1782) (Quit: Leaving)
+[08:34:28] *** Joins: ec (~ec@gateway/tor-sasl/ec)
+[08:39:50] *** Joins: semz (~none@user/semz)
+[08:41:57] *** Parts: akoana (~ah@user/akoana) ()
+[08:45:10] *** Quits: Guest7481 (~Guest74@modemcable110.164-177-173.mc.videotron.ca) (Ping timeout: 256 seconds)
+[08:56:38] *** Quits: Oddity (Oddity@user/oddity) (Remote host closed the connection)
+[09:04:40] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-19-70-31-33-162.dsl.bell.ca) (Remote host closed the connection)
+[09:09:39] <Spawns_Carpet[m]> hey beach
+[09:14:32] <susam> Good morning!
+[09:23:55] *** Joins: aartaka (~aartaka@5.1.53.225)
+[09:24:59] <lisp123w> I have an obscure quesiton
+[09:25:10] <beach> Again?
+[09:25:46] <lisp123w> It appears MAKE-LOAD-FORM requires one to write the method for a particular class (please correct me if I'm wrong, if so, my question is invalid)
+[09:26:28] *** Parts: pranavats (3fba1d1b34@jabberfr.org) (Disconnected: Replaced by new connection)
+[09:26:44] <beach> What would be the alternative?
+[09:26:47] <lisp123w> I would have thought it would not have been too difficult for a default MAKE-LOAD-FORM to be written that works on nearly all classes
+[09:26:56] <lisp123w> So am curious if there was a reason this wasn't done
+[09:26:59] *** Joins: pranavats (3fba1d1b34@jabberfr.org)
+[09:27:54] <beach> The system can't possibly know which slots are computed and which slots should be stored.  The application programmer must decide that.
+[09:28:07] <White_Flame> if the slots of 2 objects are shared, that's not very easy to create a default function
+[09:28:27] <White_Flame> or really, any reference value sharing at all
+[09:28:33] <Bike> clhs make-load-form-saving-slots
+[09:28:33] <specbot> http://www.lispworks.com/reference/HyperSpec/Body/f_mk_l_1.htm
+[09:28:45] <Bike> you can just define a method that uses that
+[09:29:48] <lisp123w> White_Flame: Ah okay, so one of the issues is shared slots
+[09:30:26] <White_Flame> and in computed slots as beach brings it up, the side effects from the computation can be very important to the state of the system
+[09:30:51] <lisp123w> What is a computer slot?
+[09:30:56] <White_Flame> eg, if the value in the slot is a key into a hashtable with more info generated at initialization time, just storing the key does nothing useful
+[09:31:05] <lisp123w> computed*
+[09:31:11] <lisp123w> Oh I see
+[09:31:23] <White_Flame> call a function, it "does stuff", and returns a value to be stored that might be contextual to other things
+[09:31:44] <lisp123w> Ok that makes sense
+[09:32:36] <White_Flame> however, for purely standalone data, you can use stuff like what Bike posted, but that's not a general solution
+[09:33:35] <lisp123w> I tried reading both MAKE-LOAD-FORM and MAKE-LOAD-FORM-SAVING-SLOTS and it was a bit hard to follow on the differences
+[09:33:35] <Bike> and making it the default would result in silent errors when it doesn't make conceptual sense for some class
+[09:33:49] <Bike> the compiler wouldn't know there was a problem, so it wouldn't report anything
+[09:33:59] *** Joins: karlosz (~karlosz@47.151.136.69)
+[09:34:21] <Bike> make-load-form is a generic function called by the compiler that the user can specify. m-l-f-s-s is a function designed to be called by users within their m-l-f method in the common case.
+[09:34:54] <lisp123w> Got it! Looks I was basically after m-l-f-s-s (for my very trivial objects) :)
+[09:35:07] <lisp123w> But thanks all for explaining why MAKE-LOAD-FORM is the way it is
+[09:42:26] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[09:47:34] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 260 seconds)
+[09:48:49] <beach> lisp123w: Here is my favorite example of "computed slots".  Suppose you have a class that represents a person.  One initarg is :date-of-birth.  But in this application it turns out that you ask for the age quite frequently, so to avoid computing the age each time it is asked for, you store it as a slot that you then update regularly.
+[09:49:00] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Ping timeout: 276 seconds)
+[09:49:48] <beach> lisp123w: You don't want that cached slot to be saved.  You still want to create the instance with the :date-of-birth initarg.
+[09:50:35] *** Joins: Cymew (~ante@c-e989225c.023-1144-7570702.bbcust.telenor.se)
+[09:50:42] <White_Flame> ah right, that'd be the more common definition
+[09:55:05] *** Quits: Bike (~Bike@71.69.170.70) (Quit: sleep)
+[09:55:18] <beach> I keep saying this frequently, but slots should be considered an implementation detail.  It is not a good idea to expose such details in your MAKE-LOAD-FORM. It is much better to use just the protocol aspects of your classes.
+[09:55:19] <beach> And those are the (usually generic) functions that take instances of those classes as arguments, and the initargs used to create such instances.  Slots are not part of the protocol.
+[10:01:28] <lisp123w> beach: Many thanks, that is a great example
+[10:02:05] <beach> Sure.
+[10:05:41] *** Joins: shka (~herr@83.175.151.96.piasta.pl)
+[10:12:12] *** Joins: gaqwas (~john@dynamic-095-118-138-134.95.118.pool.telefonica.de)
+[10:28:39] *** Quits: luna-is-here (~quassel@2a02:908:f761:2a3c::a) (*.net *.split)
+[10:28:39] *** Quits: rdrg109 (~rdrg109@user/rdrg109) (*.net *.split)
+[10:28:40] *** Quits: samebchase (~thelounge@51.15.68.182) (*.net *.split)
+[10:28:40] *** Quits: dtman34 (~dtman34@c-73-62-246-247.hsd1.mn.comcast.net) (*.net *.split)
+[10:28:49] *** Joins: luna-is-here (~quassel@2a02:908:f761:2a3c::a)
+[10:28:55] *** Joins: samebchase (~thelounge@51.15.68.182)
+[10:29:43] *** Joins: dtman34 (~dtman34@c-73-62-246-247.hsd1.mn.comcast.net)
+[10:34:22] *** Quits: MetaYan (~MetaYan@c-7b5d235c.07-84-7462671.bbcust.telenor.se) (*.net *.split)
+[10:34:22] *** Quits: okflo (~okflo@lisa.diesenbacher.net) (*.net *.split)
+[10:34:23] *** Quits: derelict (derelict@user/derelict) (*.net *.split)
+[10:34:30] *** Joins: MetaYan (~MetaYan@c-7b5d235c.07-84-7462671.bbcust.telenor.se)
+[10:34:57] *** Joins: derelict (~derelict@user/derelict)
+[10:35:00] *** Joins: okflo (~okflo@lisa.diesenbacher.net)
+[10:49:43] <mfiano> beach: as do I and we should continue to say it frequently until it's common knowledge
+[10:49:59] <mfiano> I get upset when I hear of slots being exposed
+[10:50:23] <mfiano> It is my ultimate pet peeve
+[10:50:50] <beach> Good to know I am not alone.
+[10:51:44] *** Quits: gxt (~gxt@gateway/tor-sasl/gxt) (Remote host closed the connection)
+[10:52:05] *** Joins: gxt (~gxt@gateway/tor-sasl/gxt)
+[10:58:02] *** Quits: amb007 (~a_bakic@102.215.76.86.rev.sfr.net) (Ping timeout: 260 seconds)
+[10:58:51] *** Joins: amb007 (~a_bakic@90.199.204.77.rev.sfr.net)
+[11:10:48] *** Joins: attila_lendvai (~alendvai@catv-89-132-208-37.catv.broadband.hu)
+[11:15:22] *** Quits: s-liao (~s-liao@101.86.101.64) (Ping timeout: 256 seconds)
+[11:20:26] *** Quits: aartaka (~aartaka@5.1.53.225) (Ping timeout: 260 seconds)
+[11:21:08] *** Joins: aartaka (aartaka@gateway/vpn/protonvpn/aartaka)
+[11:22:15] *** Joins: rgherdt (~rgherdt@2a02:8109:86c0:d8d:f999:7dbf:ab48:5803)
+[11:25:12] *** Quits: amb007 (~a_bakic@90.199.204.77.rev.sfr.net) (Ping timeout: 265 seconds)
+[11:25:36] *** Joins: pve (~pve@37-33-9-223.bb.dnainternet.fi)
+[11:25:41] *** Quits: aartaka (aartaka@gateway/vpn/protonvpn/aartaka) (Ping timeout: 265 seconds)
+[11:26:02] *** Joins: amb007 (~a_bakic@11.244.204.77.rev.sfr.net)
+[11:28:50] *** Quits: gaqwas (~john@dynamic-095-118-138-134.95.118.pool.telefonica.de) (Ping timeout: 260 seconds)
+[11:37:01] *** Quits: amb007 (~a_bakic@11.244.204.77.rev.sfr.net) (Ping timeout: 250 seconds)
+[11:37:18] *** Joins: amb007 (~a_bakic@166.198.204.77.rev.sfr.net)
+[11:40:20] *** Joins: aartaka (aartaka@gateway/vpn/protonvpn/aartaka)
+[11:48:46] *** Quits: amb007 (~a_bakic@166.198.204.77.rev.sfr.net) (Read error: Connection reset by peer)
+[11:49:45] *** Joins: amb007 (~a_bakic@host.26.88.68.195.rev.coltfrance.com)
+[11:50:11] *** Quits: shka (~herr@83.175.151.96.piasta.pl) (Ping timeout: 264 seconds)
+[11:58:17] *** Quits: karlosz (~karlosz@47.151.136.69) (Ping timeout: 268 seconds)
+[12:00:19] *** Joins: rogersm (~rogersm@90.166.177.48)
+[12:17:36] *** Joins: rotateq (~user@b2b-78-94-235-194.unitymedia.biz)
+[12:18:22] *** Joins: Jach (~Jach@2601:600:8600:307:7e31:e7a7:f1f3:a96b)
+[12:26:51] *** Joins: occ (~occ@user/occ)
+[12:38:21] *** Quits: rogersm (~rogersm@90.166.177.48) (Read error: Connection reset by peer)
+[12:43:59] *** Quits: occ (~occ@user/occ) (Ping timeout: 265 seconds)
+[12:46:58] *** Joins: karlosz (~karlosz@47.151.136.69)
+[12:48:41] *** Joins: cosimone (~user@2001:b07:ae5:db26:a7aa:8027:6b4e:2fb3)
+[12:49:31] *** Joins: rgherdt_ (~rgherdt@ip5f5af420.dynamic.kabel-deutschland.de)
+[12:50:16] *** Quits: rgherdt (~rgherdt@2a02:8109:86c0:d8d:f999:7dbf:ab48:5803) (Ping timeout: 265 seconds)
+[12:51:14] *** Quits: attila_lendvai (~alendvai@catv-89-132-208-37.catv.broadband.hu) (Ping timeout: 265 seconds)
+[13:01:02] *** Joins: s-liao (~s-liao@101.86.101.64)
+[13:05:36] *** Quits: rgherdt_ (~rgherdt@ip5f5af420.dynamic.kabel-deutschland.de) (Ping timeout: 260 seconds)
+[13:12:36] *** Joins: rgherdt (~rgherdt@2a02:8109:86c0:d8d:f999:7dbf:ab48:5803)
+[13:16:04] *** Quits: s-liao (~s-liao@101.86.101.64) (Ping timeout: 256 seconds)
+[13:17:37] *** Joins: s-liao (~s-liao@101.86.101.64)
+[13:24:41] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 245 seconds)
+[13:39:18] *** Quits: s-liao (~s-liao@101.86.101.64) (Ping timeout: 256 seconds)
+[13:40:12] *** Joins: s-liao (~s-liao@101.86.101.64)
+[13:44:47] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[13:49:28] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 256 seconds)
+[13:58:27] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.3)
+[14:08:35] *** Quits: s-liao (~s-liao@101.86.101.64) (Quit: Client closed)
+[14:16:25] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[14:20:58] *** Joins: VincentVega (~user@212.241.28.158)
+[14:22:13] *** Joins: attila_lendvai (~alendvai@catv-89-132-208-37.catv.broadband.hu)
+[14:24:46] *** Quits: Devon (~devon@pool-108-28-172-103.washdc.fios.verizon.net) (Ping timeout: 260 seconds)
+[14:28:34] *** Quits: attila_lendvai (~alendvai@catv-89-132-208-37.catv.broadband.hu) (Ping timeout: 256 seconds)
+[14:56:19] *** Joins: attila_lendvai (~alendvai@catv-89-132-208-37.catv.broadband.hu)
+[15:00:58] *** Joins: s-liao (~s-liao@101.86.101.64)
+[15:00:58] *** Quits: amb007 (~a_bakic@host.26.88.68.195.rev.coltfrance.com) (Read error: Connection reset by peer)
+[15:01:24] *** Joins: amb007 (~a_bakic@166.198.204.77.rev.sfr.net)
+[15:05:53] *** Quits: amb007 (~a_bakic@166.198.204.77.rev.sfr.net) (Ping timeout: 250 seconds)
+[15:06:13] *** Joins: amb007 (~a_bakic@224.144.204.77.rev.sfr.net)
+[15:07:00] <rotateq> Good start into the week for everyone with many parentheses. :)
+[15:12:00] *** Quits: ahc (~ahc@121.98.229.241) (Quit: Client closed)
+[15:13:01] *** Quits: amb007 (~a_bakic@224.144.204.77.rev.sfr.net) (Read error: Connection reset by peer)
+[15:13:20] *** Joins: amb007 (~a_bakic@224.144.204.77.rev.sfr.net)
+[15:13:20] *** Quits: amb007 (~a_bakic@224.144.204.77.rev.sfr.net) (Read error: Connection reset by peer)
+[15:13:35] *** Joins: amb007 (~a_bakic@host.26.88.68.195.rev.coltfrance.com)
+[15:13:40] <lisp123w> Likewise rotateq, may your week be filled with many parentheses
+[15:14:59] <rotateq> I already take care of that, in my mind anyway.
+[15:14:59] *** Quits: amb007 (~a_bakic@host.26.88.68.195.rev.coltfrance.com) (Read error: Connection reset by peer)
+[15:15:10] *** Joins: amb007 (~a_bakic@host.26.88.68.195.rev.coltfrance.com)
+[15:19:40] *** Joins: atgreen (~green@bras-base-toroon0628w-grc-49-142-112-220-24.dsl.bell.ca)
+[15:24:46] <edgar-rft> my mind is full of parentheses, no place left for useful thoughts :-(
+[15:26:50] <Alfr> And they seem unbalanced, edgar-rft. Here you go: )
+[15:34:18] *** Joins: notzmv (~zmv@user/notzmv)
+[15:35:07] *** Quits: karlosz (~karlosz@47.151.136.69) (Quit: karlosz)
+[15:42:59] <edgar-rft> Alfr: thank you for balancing my parentheses :-)
+[15:44:22] <phantomics> Morning everyone
+[15:48:40] <beach> Hello phantomics.
+[15:48:56] <rotateq> Hi there phantomics, hope you come along well with April.
+[15:54:06] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-19-70-31-33-162.dsl.bell.ca)
+[15:54:16] <rotateq> I found a book by Herbert Stoyan with a big chapter about LISP history, from 1980.
+[15:56:36] *** Quits: VincentVega (~user@212.241.28.158) (Read error: Connection reset by peer)
+[16:02:36] *** Joins: yewscion98 (~yewscion@72-21-196-65.amazon.com)
+[16:03:33] *** yewscion98 is now known as yewscion
+[16:04:31] *** Joins: random-nick (~random-ni@87.116.165.220)
+[16:37:58] *** Quits: s-liao (~s-liao@101.86.101.64) (Quit: Client closed)
+[16:38:55] *** Joins: s-liao (~s-liao@101.86.101.64)
+[16:51:23] *** Joins: epolanski (uid312403@helmsley.irccloud.com)
+[16:57:28] * edgar-rft is waiting for a book that says that Lisp had Ancient Alien FFI long before mankind existed
+[17:03:30] *** Joins: occ (~occ@user/occ)
+[17:06:50] <rotateq> I bet so. :)
+[17:07:25] <rotateq> "Which implementation of CL is the most favorite on your planet?" and "What is C?"
+[17:09:12] *** Quits: s-liao (~s-liao@101.86.101.64) (Quit: Client closed)
+[17:09:37] <jackdaniel> "C" is nothing more than the first letter of the programming language name "Common Lisp" :)
+[17:11:47] <phantomics> I remember reading that Symbolics employees were pronouncing CLOS as "C lost"
+[17:12:14] <yitzi> And no human could write a spec like that of Common Lisp therefore aliens exist.
+[17:13:45] <beach> phantomics: I say "C loss", but I say "klimm"
+[17:14:44] <phantomics> Btw jackdaniel, if you have a minute I had questions about ECL, I solved my stack problem but found a couple other things
+[17:24:12] <rotateq> doing some "Klimmzüge" :P
+[17:27:48] <rotateq> and if others hear about CLOS they get CLOStrophobia. okay enough again
+[17:36:37] *** Joins: antonv (~antonv@46.53.241.78)
+[17:39:07] *** Joins: Bike (~Glossina@71.69.170.70)
+[17:39:07] *** ChanServ sets mode: +o Bike
+[17:42:41] *** Quits: aartaka (aartaka@gateway/vpn/protonvpn/aartaka) (Ping timeout: 265 seconds)
+[17:43:23] *** Joins: aartaka (~aartaka@5.1.53.225)
+[17:46:29] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[17:49:53] *** Joins: Nselm (~Nselm@p200300d56f24d7fc990cbcbf196d40ce.dip0.t-ipconnect.de)
+[17:50:59] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 250 seconds)
+[17:58:43] *** Joins: VincentVega (~user@212.241.28.158)
+[18:01:25] *** Joins: Devon (~devon@pool-108-28-172-103.washdc.fios.verizon.net)
+[18:04:34] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-19-70-31-33-162.dsl.bell.ca) (Remote host closed the connection)
+[18:06:47] *** Joins: ym (~ym@5.143.220.3)
+[18:14:51] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.3)
+[18:24:37] *** Joins: tyson2 (~user@cpe688f2ec1f9b3-cm688f2ec1f9b0.cpe.net.cable.rogers.com)
+[18:38:47] <jackdaniel> phantomics: im irc asynchoronous lurkwr. just ask question and ill answer when i see it
+[18:39:07] <jackdaniel> lurjer*
+[18:39:27] <jackdaniel> lurker! ;) also on #ecl other folks may help
+[18:40:55] <phantomics> Cool, first off I noticed (acos) works differently in ECL than other CLs, (acos 2) gives a negative imaginary part. I know that either one is mathematically valid, is there a reason for this?
+[18:46:29] <phantomics> Second, ECL often has problems compiling packages. When I tried to recompile April recently I got this message: LOAD: Could not load file #P"/home/user/.cache/common-lisp/ecl-21.2.1-linux-x64/home/usr/src/lisp/april/library.fas" (Error: "/tmp/eclvnqLph: failed to map segment from shared object")
+[18:47:55] <phantomics> This compilation problem seems to happen mostly for packages that were already compiled and I'm trying to recompile, and sometimes I can get past it and have something compile by choosing the TRY-RECOMPILING, RETRY, CLEAR-CONFIGURATION-AND-RETRY options several times
+[18:48:24] <phantomics> It's puzzling what causes this, feels kind of non-deterministic, at least I haven't found any consistent way to prevent it
+[19:08:07] *** Joins: Guest7470 (~Guest74@modemcable110.164-177-173.mc.videotron.ca)
+[19:11:42] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[19:15:32] *** Quits: Nselm (~Nselm@p200300d56f24d7fc990cbcbf196d40ce.dip0.t-ipconnect.de) (Quit: Client closed)
+[19:16:46] <Bike> the branch cuts of the trig functions are pretty specifically defined by the standard... i think they should always give the same results in different implementations, exception differences due to negative zero and precision
+[19:16:54] <Bike> excepting*
+[19:20:58] *** Quits: aartaka (~aartaka@5.1.53.225) (Ping timeout: 256 seconds)
+[19:21:27] *** Joins: aartaka (aartaka@gateway/vpn/protonvpn/aartaka)
+[19:22:51] *** Quits: rotateq (~user@b2b-78-94-235-194.unitymedia.biz) (Remote host closed the connection)
+[19:25:13] *** NotThatRPG_away is now known as NotThatRPG
+[19:25:38] <NotThatRPG> Sorry -- maybe I missed a response. Does anyone know what's going on with common-lisp.net's email service?
+[19:25:49] *** Joins: ec (~ec@gateway/tor-sasl/ec)
+[19:26:11] *** Quits: Cymew (~ante@c-e989225c.023-1144-7570702.bbcust.telenor.se) (Ping timeout: 264 seconds)
+[19:33:24] <Guest7470> maybe #common-lisp.net would know?
+[19:35:23] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[19:42:01] *** Joins: shka (~herr@83.175.151.96.piasta.pl)
+[19:45:07] <shka> jackdaniel: i have a proposal
+[19:46:40] <shka> i think metering would benefit from using some kind of floating point as a overhead measure for time
+[19:46:57] <shka> on my fairly modern machine, it is around ~0.47
+[19:48:31] <shka> this can significantly boost up reported time for short functions taking 1 or 2 time units
+[19:49:12] <shka> which i do think can be avoided fairly easily, and i don't know if there are any counter arguments
+[19:51:10] *** Quits: tyson2 (~user@cpe688f2ec1f9b3-cm688f2ec1f9b0.cpe.net.cable.rogers.com) (Remote host closed the connection)
+[19:51:16] <jackdaniel> ive heard that good programmers are lazy, so im trying to do as little as possible ;)
+[19:51:46] <jackdaniel> in that spirit i dont mind handling mainainership of metering
+[19:51:57] <jackdaniel> handling over*
+[19:52:46] <shka> i think that stuff i am forcing metering to do go against the spirit of the library, but overhead measurement surely qualifies as a patch
+[19:53:56] <jackdaniel> then submit a merge request and ill review it, thanks
+[19:54:35] <jackdaniel> im not enthusiastic not because i dont appreciate that foss work, it is just quite a long day already
+[19:55:11] <shka> i understand
+[19:55:14] <shka> have a nice evening
+[19:56:21] *** Quits: phantomics (~phantomic@71-218-252-43.hlrn.qwest.net) (Ping timeout: 245 seconds)
+[19:58:28] <NotThatRPG> @Guest7470: Thanks; I didn't know that there was such a channel. Asking now.
+[19:58:44] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[20:00:05] <Guest7470> np
+[20:03:59] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 264 seconds)
+[20:08:07] *** Quits: jasom (~aidenn@2600:8802:7fa0:500:f833:278f:1567:d354) (Ping timeout: 250 seconds)
+[20:08:59] *** Joins: phantomics (~phantomic@97-118-231-120.hlrn.qwest.net)
+[20:15:56] *** Joins: bcasiello (~bcasiello@066-189-087-112.biz.spectrum.com)
+[20:20:01] *** Joins: ebrasca (~user@librepanther.com)
+[20:20:43] *** Joins: jasom (~aidenn@2600:8802:7fa0:500:f833:278f:1567:d354)
+[20:21:33] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-19-70-31-33-162.dsl.bell.ca)
+[20:24:05] *** Quits: dec0d3r (~dec0d3r@2001:8003:480a:e00:e07:e7c3:7efc:ed0f) (Quit: Leaving)
+[20:27:50] *** Joins: cage (~cage@dynamic-adsl-94-34-55-34.clienti.tiscali.it)
+[20:30:54] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[20:38:02] *** Quits: occ (~occ@user/occ) (Ping timeout: 256 seconds)
+[20:45:37] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 250 seconds)
+[20:47:50] *** Joins: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se)
+[21:00:43] *** Quits: lisp123 (~lisp123@5.30.23.247) (Remote host closed the connection)
+[21:04:23] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[21:06:05] *** Joins: bcasiello_ (~bcasiello@2600:380:8d63:6973:b809:997f:c4c0:f439)
+[21:09:53] *** Quits: bcasiello (~bcasiello@066-189-087-112.biz.spectrum.com) (Ping timeout: 250 seconds)
+[21:21:09] *** Quits: amb007 (~a_bakic@host.26.88.68.195.rev.coltfrance.com) (Ping timeout: 250 seconds)
+[21:21:29] *** Joins: amb007 (~a_bakic@208.144.204.77.rev.sfr.net)
+[21:30:38] *** Joins: puchacz (~puchacz@cpc96912-walt25-2-0-cust541.13-2.cable.virginm.net)
+[21:30:50] <puchacz> hello; if I want a "dictionary" with sorted keys, like java.util.TreeMap, what library should I use from quicklisp please?
+[21:31:01] <puchacz> I have records with timestamp that mark beginning of the validity period (valid until next record comes), so I want to quickly retrieve a record that was valid for a specific timestamp (which is of course unlikely to be equal a boundary value between records)
+[21:31:23] <puchacz> (apologies if you've seen it already on #lisp)
+[21:31:38] <shka> puchacz: hi!
+[21:32:08] <puchacz> shka: hi :)
+[21:32:25] <shka> you can use skip-list from cl-data-structures
+[21:32:37] <shka> i can give you a sample code if need be
+[21:32:52] <puchacz> I am trying to figure out now why it does not compile in lispworks...
+[21:33:07] <shka> oh, you are using lispworks
+[21:33:10] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-19-70-31-33-162.dsl.bell.ca) (Remote host closed the connection)
+[21:33:21] <shka> i have no access to lispworks
+[21:33:29] <shka> maybe paste error?
+[21:33:34] <puchacz> is cl-container any good?
+[21:33:36] <puchacz> it looks older
+[21:33:48] <shka> dunno, never used this one
+[21:34:13] <shka> but whatever, you can just use that https://github.com/kraison/cl-skip-list
+[21:34:17] <puchacz> it goes into a loop, which pastebin shall I use?
+[21:34:18] <shka> or something
+[21:34:31] <shka> i have no preferences
+[21:34:34] <puchacz> oh, that one looks like it can actually load
+[21:35:33] <shka> puchacz: i would appreciate that paste, i am author of the cl-data-structures and I would like to fix problem
+[21:35:47] <shka> but i have no access to lispworks
+[21:35:52] <puchacz> so it goes into a loop, I can see there is some wizardry with packages in this file :)
+[21:35:53] <puchacz> https://pastebin.com/qp5itPXw
+[21:35:58] <puchacz> oh, congratulations!
+[21:36:13] <puchacz> and thanks for sharing/maintaining of course
+[21:36:24] <shka> ... ok, that's interesting
+[21:36:26] <puchacz> I would need to set up more verbose messages
+[21:37:24] <shka> i honestly have no idea what is wrong :D
+[21:37:43] <puchacz> I will try (ql:quickload  :cl-data-structures :verbose t)
+[21:37:47] <puchacz> hold on
+[21:37:55] <shka> it is not something that i would expect to be a problem
+[21:38:10] <puchacz> it may be a bug in lispworks
+[21:38:20] <shka> i can't tell
+[21:38:59] <shka> it clearly recurs
+[21:39:02] <shka> but... why
+[21:39:45] <puchacz> verbose was not revealing at all
+[21:39:46] <puchacz> https://pastebin.com/FSrEk7Se
+[21:39:51] <puchacz> this is how this loop starts
+[21:40:06] <shka> can i bother you to check one more thing?
+[21:40:11] <puchacz> sure
+[21:40:44] <puchacz> I have > 1yr old quicklisp as well
+[21:41:01] <shka> huh
+[21:41:01] <puchacz> and I downloaded cl-data-structures from git version 1.0.1
+[21:41:07] <shka> ok
+[21:41:12] <puchacz> so maybe something is not compatible
+[21:41:35] <puchacz> I can try new quicklisp
+[21:41:38] <shka> please, go to the aux-package file, load most of the stuff excluding the final form, and check what happens if you try to macroexpand it
+[21:41:54] <puchacz> okay
+[21:42:03] <shka> i suspect that macroexpand loops
+[21:42:07] <shka> somehow
+[21:42:21] <shka> because i dared to name my own macro defpackage :D
+[21:43:08] <puchacz> it went on a loop when I pasted this macro definition into REPL
+[21:43:16] <puchacz> but - let me try again
+[21:43:17] <shka> gotcha
+[21:43:35] <shka> i bet renaming that macro into something different would solve the problem
+[21:43:51] <puchacz> is this file the only place where you use this macro?
+[21:43:58] <shka> in this system, yes
+[21:44:14] <shka> i use it a lot in other systems
+[21:44:24] <puchacz> so you think I can try to rename it locally into something like cl-ds-defpackage ?
+[21:44:29] <puchacz> locally in this file only
+[21:44:40] <shka> yes, i think that this would do the trick
+[21:44:45] <puchacz> trying :)
+[21:44:47] <shka> i am not sure obviously
+[21:44:55] <shka> but this looks like a bug in the LW
+[21:45:37] <puchacz> I can submit it to them, but I would need a clean quicklisp for it of course
+[21:46:00] <shka> should be easy to replicate as a standalone test
+[21:46:11] <puchacz> I have a bad habit of writing a line here and line there in ql libraries :)
+[21:46:11] <shka> no need to deal with quicklisp
+[21:46:28] <shka> i mean, even this file alone demonstrates the problem
+[21:46:47] <shka> honestly, i should have not use defpackage as a name anyway
+[21:47:16] <puchacz> that one is fixed; now it complains about names
+[21:47:17] <puchacz> **++++ Error in (PACKAGE "CL-DATA-STRUCTURES.AUX-PACKAGE"):
+[21:47:18] <puchacz>   Importing these symbols into the CL-DATA-STRUCTURES.AUX-PACKAGE package causes a name conflict: SERAPEUM:PARSE-FLOAT ALEXANDRIA:IF-LET ALEXANDRIA:WHEN-LET ALEXANDRIA:WHEN-LET* ALEXANDRIA:APPENDF ALEXANDRIA:NCONCF ALEXANDRIA:REMOVEF ALEXANDRIA:WITH-UNIQUE-NAMES ALEXANDRIA:COPY-FILE.
+[21:47:48] <shka> great...
+[21:47:53] <shka> *sigh*
+[21:48:02] <shka> i think that i don't like LW
+[21:48:29] <puchacz> :)
+[21:48:48] <shka> puchacz: thanks for your time though, for what it is worth, i like skip lists for ordered dicts/sets
+[21:48:53] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 250 seconds)
+[21:49:05] <puchacz> thanks as well :)
+[21:49:16] <shka> they are simpler then let's say red black trees
+[21:49:37] <shka> and have a slightly better merge
+[21:50:38] <shka> so i would try to use that cl-skip-list
+[21:51:04] <puchacz> I will for now, and I am browsing your library - plenty of useful data structures
+[21:51:17] <shka> shame that you can't use it :P
+[21:51:40] <puchacz> unless I play with it next weekend
+[21:51:55] <puchacz> something tells me it will require some though
+[21:51:59] <puchacz> thought
+[21:52:03] *** Joins: tyson2 (~user@bras-base-toroon0628w-grc-46-142-112-141-177.dsl.bell.ca)
+[21:52:56] *** Joins: bcasiello__ (~bcasiello@066-189-087-112.biz.spectrum.com)
+[21:55:32] <puchacz> btw, if you ever use LW - the biggest gotcha for me was unicode support in separate functions; the standard ones like cl:alphanumericp don't understand unicode characters
+[21:56:47] *** Quits: bcasiello_ (~bcasiello@2600:380:8d63:6973:b809:997f:c4c0:f439) (Ping timeout: 264 seconds)
+[21:56:57] <puchacz> so I had to change package definitions for cl-pprcre and similar to use my own implementations for equalp (to respect upper/lower case in unicode) and refer to alphanumericp unicode equivalent under the same names.
+[21:57:32] <puchacz> and I changed what make-hash-table meant, so I could pass on my own :test #'equalp and unicode aware hashcode function
+[21:57:33] <Guest7470> isn't equalp suppose to ignore case?
+[21:57:37] <puchacz> yes
+[21:57:51] <puchacz> so it has to understand that A and a is the same letter
+[21:58:32] <Guest7470> ah, misunderstood your wording.
+[21:58:38] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[21:58:58] <lisp123> Hmmm is there such a thing as a tree shaker for ASDF / SBCL?
+[22:00:11] <lisp123> Basically if System A only uses 5% of System B (that it :depends-on), it would be good to remove the rest
+[22:01:28] <shka> puchacz: gosh, that is kinda horrific
+[22:02:19] <puchacz> shka: yes, I spent some time replacing defpackage with defunicodepackage :(
+[22:02:35] <puchacz> but it works
+[22:02:52] <puchacz> and that was the biggest issue I think
+[22:04:03] <puchacz> (of course bad example above, #\A vs #\a works out of the box, but not #\Ą vs #\ą - for these I had to "install" different functions under standard names)
+[22:04:03] *** Joins: frgo (~frgo@p548a30d7.dip0.t-ipconnect.de)
+[22:05:34] <lisp123> pjb: I'm going to adopt your package naming convention COM.INFORMATIMAGO.COMMON-LISP.... :D I have seen the light
+[22:06:28] *** Quits: antonv (~antonv@46.53.241.78) (Ping timeout: 256 seconds)
+[22:06:34] <puchacz> shka, your library is tempting indeed, I can see in sbcl that these conflicting names just refer to original alexandria or serapeum, is it always the case?
+[22:06:44] <puchacz> if so, I can do some more quicklisp hacking locally.....
+[22:06:51] <puchacz> to make it work
+[22:08:06] <Guest7470> that's why i don't :use packages.
+[22:11:57] *** Joins: rain3 (~rain3___@2a02:2f09:d10a:400:9e2f:eb47:e2ae:761d)
+[22:12:18] <shka> Guest7470: neither do i!
+[22:12:55] <puchacz> I guess I would need to enrich the macro by adding shadowing import from?
+[22:12:56] <Guest7470> unfortunately so many packages were created to be used.  Makes me want to go around renaming things.
+[22:13:11] <shka> puchacz: if you are willing to do so, i would appreciate pull request
+[22:14:29] <puchacz> I will try (next weekend), but I never used pull requests, can I just mail you the new version of the file?
+[22:14:55] <puchacz> I may manage to do it earlier
+[22:15:13] <shka> sure!
+[22:15:18] <puchacz> tks
+[22:15:39] <shka> i am afraid that this is just tip of an iceberg though :P
+[22:16:22] <shka> my code is strictly CL, but those errors make me question LW
+[22:16:34] <etimmons> shka: puchacz : Try adding an empty `(:use)` in the defpackage for  cl-data-structures.fancy
+[22:16:57] <etimmons> If there is no :use, it defaults to implementation specific defaults
+[22:17:05] <shka> etimmons: aaaah, you are smart!
+[22:17:08] <etimmons> Which may include cl
+[22:17:21] <shka> that's why it recurs
+[22:17:26] <shka> makes sense, thanks!
+[22:18:29] <etimmons> Yep!
+[22:18:39] <Guest7470> etimmons: that's interesting.  I've kinda depended on empty :use to not pull in cl.
+[22:18:41] <puchacz> I don't understand
+[22:19:05] <puchacz> ah
+[22:19:10] <puchacz> I think I do
+[22:19:11] <etimmons> Guest7470: That behavior is implementation specific
+[22:19:41] <shka> puchacz: try pulling cl-ds
+[22:19:49] <shka> i just added empty :use
+[22:19:51] *** Quits: Alfr (~Alfr@user/alfr) (Remote host closed the connection)
+[22:19:51] <etimmons> Guest7470: Actually... do you mean an empty :use or no :use ?
+[22:19:58] <shka> i wonder if that does the trick
+[22:19:58] <puchacz> shka, I will download zip, thank you very much :)
+[22:20:13] <Guest7470> empty
+[22:20:38] <Guest7470> ah, says if :use is not supplied.  so i guess i'm good.
+[22:20:40] <etimmons> That's fine then. That won't import symbols from the CL package. No :use might
+[22:23:18] <shka> puchacz: it is easier to use git...
+[22:23:43] <puchacz> downloaded already :)
+[22:23:49] <puchacz> yes, I should learn git one day
+[22:24:14] <puchacz> okay, so (:use) solved the tip of the iceberg indeed
+[22:24:37] <shka> still does not compile?
+[22:24:39] <puchacz> but plenty of
+[22:24:40] <puchacz> **++++ Error in (DEFCLASS CL-DATA-STRUCTURES.META:TAKE-OUT!-FUNCTION):
+[22:24:41] <puchacz>   #<STANDARD-CLASS DESTRUCTIVE-FUNCTION 34C0F8BB> is an invalid superclass of #<CLOSER-MOP:FUNCALLABLE-STANDARD-CLASS TAKE-OUT!-FUNCTION 2008FF9B>.
+[22:24:50] <puchacz> not finalized something?
+[22:24:57] <puchacz> wrong order in source files?
+[22:25:06] <puchacz> I can go :verbose t again
+[22:25:12] <shka> order should be fine
+[22:25:15] <shka> let me take a look
+[22:25:25] <puchacz> it is in here
+[22:25:25] *** Quits: amb007 (~a_bakic@208.144.204.77.rev.sfr.net) (Read error: Connection reset by peer)
+[22:25:26] <puchacz> #<ASDF/LISP-ACTION:CL-SOURCE-FILE "cl-data-structures" "api" "meta">
+[22:26:00] <puchacz> so you don't need verbose?
+[22:26:17] <shka> lol
+[22:26:19] <shka> no need
+[22:26:24] <shka> because i am an idiot :D
+[22:26:31] <shka> no wonder this does not load
+[22:26:36] <shka> crap
+[22:26:42] <shka> i should not shit talk LW
+[22:26:54] *** Joins: Alfr (~Alfr@user/alfr)
+[22:27:10] <puchacz> lol. it may be that everybody thinks "common lisp", uses "sbcl"
+[22:27:25] *** Joins: amb007 (~a_bakic@102.215.76.86.rev.sfr.net)
+[22:27:41] <shka> i am guilty of that
+[22:27:42] <puchacz> but I will ask them one day if they plan to merge unicode into regular functions :)
+[22:28:07] <puchacz> not sure why they did not do it, maybe standard forbids...?
+[22:28:35] *** Quits: Alfr (~Alfr@user/alfr) (Remote host closed the connection)
+[22:29:09] <shka> i've just changed those metaclasses
+[22:29:23] <Guest7470> implementation dependent.
+[22:29:27] <shka> interesting that it loads in SBCL actually
+[22:31:48] *** Joins: Alfr (~Alfr@user/alfr)
+[22:33:57] *** Quits: Alfr (~Alfr@user/alfr) (Remote host closed the connection)
+[22:34:10] *** Joins: Jing_ (~hedgehog@2604:a840:3::106f)
+[22:35:31] *** Quits: Jing (~hedgehog@125.105.142.73) (Ping timeout: 245 seconds)
+[22:40:34] *** Quits: pieguy128 (~pieguy128@bras-base-mtrlpq5031w-grc-48-67-70-102-17.dsl.bell.ca) (Quit: ZNC 1.8.2 - https://znc.in)
+[22:41:25] *** Joins: pieguy128 (~pieguy128@bas1-quebec14-67-70-102-17.dsl.bell.ca)
+[22:43:43] *** Quits: specbot (~specbot@common-lisp.net) (Remote host closed the connection)
+[22:43:44] *** Quits: minion (~minion@common-lisp.net) (Read error: Connection reset by peer)
+[22:44:06] *** Joins: specbot (~specbot@common-lisp.net)
+[22:44:43] *** Joins: minion (~minion@common-lisp.net)
+[22:45:51] <puchacz> btw, is it possible to start fresh quicklisp installation and download exactly the same version that I am using now?
+[22:46:12] <puchacz> I would like to find out what I changed locally by using text comparisoin vs original as a reference
+[22:46:38] <puchacz> shka, I saw your message now, trying
+[22:48:04] *** Joins: Alfr (~Alfr@user/alfr)
+[22:49:41] <puchacz> if you want to keep playing, now we are down to 1 error
+[22:49:43] <puchacz> **++++ Error in (DEFCLASS CL-DATA-STRUCTURES:EXPRESSION):
+[22:49:43] <puchacz>   #<STANDARD-CLASS CHUNKING-MIXIN 250181EB> is an invalid superclass of #<CLOSER-MOP:FUNCALLABLE-STANDARD-CLASS EXPRESSION 2008246B>
+[22:49:59] <shka> oh, that should be simple
+[22:50:02] <shka> gimme a second
+[22:51:54] *** Quits: VincentVega (~user@212.241.28.158) (Remote host closed the connection)
+[22:54:06] <shka> puchacz: yup, done, btw, xpr is really funny macro ;-)
+[22:54:18] <puchacz> trying :)
+[22:57:05] <puchacz> the next one
+[22:57:06] <puchacz> [package cl-data-structures.common.hamt]
+[22:57:07] <puchacz> **++++ Error between functions:
+[22:57:07] <puchacz>   The variable +MAXIMUM-CHILDREN-COUNT+ is unbound.
+[22:57:18] <shka> oh, really?
+[22:57:33] <puchacz> in this file  #<ASDF/LISP-ACTION:CL-SOURCE-FILE "cl-data-structures" "common" "hamt" "common">
+[22:57:46] <shka> yeah, i know where it is
+[22:58:21] <puchacz> (one day I will learn git, but I refuse to read *a book* about version control system)
+[22:58:37] <puchacz> (it does not feel right)
+[22:58:57] <shka> puchacz: i think this has to be because those constants need to be evaluated at compile time...
+[22:59:05] <shka> puchacz: but i am not sure about that
+[22:59:13] <mfiano> Are these errors coming from CCL?
+[22:59:14] <shka> what do you think?
+[22:59:19] <shka> mfiano: lispworks
+[22:59:26] <puchacz> checking
+[23:00:08] <mfiano> SBCL is forgiving with regard to not requiring make-load-form
+[23:00:38] <puchacz> wrap in eval-when?
+[23:00:52] <shka> or eval-always
+[23:00:58] <puchacz> or - putting these constants in a separate file, would it help?
+[23:00:58] <shka> it is already accessible
+[23:01:23] <mfiano> Is the value a instance?
+[23:01:31] <shka> no, just a number
+[23:01:34] <puchacz> (ash 1 +hash-level+)
+[23:01:41] <shka> fixnum actually
+[23:01:51] <mfiano> Then it should be fine to define it before its use.
+[23:01:51] <shka> well, should be a fixnum
+[23:02:19] <mfiano> Assuming no macro needs it at macroexpansion time or something.
+[23:02:29] <mfiano> Just use eval-when and see
+[23:03:13] <puchacz> sorry, a typo
+[23:03:17] <puchacz> **++++ Error between functions:
+[23:03:18] <puchacz>   Unknown situation :COMPLILE-TOPLEVEL in (EVAL-WHEN (:COMPLILE-TOPLEVEL :LOAD-TOPLEVEL :EXECUTE) ...)).
+[23:03:20] <puchacz> again
+[23:03:34] <mfiano> mispelled compile
+[23:03:40] <shka> yup
+[23:03:48] <puchacz> yes, I did it in "dead lisp", so I had no autocomplete
+[23:03:57] <shka> i also took a liberty and made a commit
+[23:04:10] <shka> i happen to know other places using constants
+[23:04:20] <shka> so i changed it there as well
+[23:04:51] <puchacz> okay, it worked, now the same complaint in rrb common
+[23:04:55] <puchacz> I will download your newest zip
+[23:05:20] <shka> puchacz: wanna quick git lesson? :D
+[23:05:39] <puchacz> would it hurt my brain? go on
+[23:05:53] <shka> well, are you on linux?
+[23:06:00] <puchacz> yes
+[23:06:08] <shka> good, then install git
+[23:06:26] <shka> open terminal
+[23:06:36] <puchacz> puchacz@vbkub01:~/tmp$ git --version
+[23:06:36] <puchacz> git version 2.17.1
+[23:06:38] <shka> navigate to quicklisp local-projects
+[23:06:48] <shka> remove cl-data-structures folder
+[23:07:01] <shka> and execute git clone https://github.com/sirherrbatka/cl-data-structures.git
+[23:07:17] *** Quits: lisp123 (~lisp123@5.30.23.247) (Remote host closed the connection)
+[23:08:11] <puchacz> thanks, downloaded it
+[23:08:16] <puchacz> I guess I have a local branch now
+[23:08:22] <puchacz> it created .git inside
+[23:08:36] <shka> well, then cd into the fresh folder
+[23:08:41] <shka> and you should be on the master
+[23:08:54] <shka> so to pull changes i make, simply execute git pull
+[23:08:56] *** Quits: rain3 (~rain3___@2a02:2f09:d10a:400:9e2f:eb47:e2ae:761d) (Ping timeout: 265 seconds)
+[23:09:11] <puchacz> ok, tks
+[23:09:18] <shka> and that's it for now
+[23:10:32] <puchacz> LW is relentless
+[23:10:33] <puchacz> Error: Defining (METHOD REINITIALIZE-INSTANCE (T)) visible from package COMMON-LISP { *handle-warn-on-redefinition* is :ERROR }
+[23:10:33] <puchacz>    1 (continue) Define it anyway.
+[23:10:51] <puchacz> we could change *handle-warn-on-redefinition* of course
+[23:11:15] <shka> it is fine i think
+[23:11:38] <puchacz> http://www.lispworks.com/documentation/lw50/LWRM/html/lwref-313.htm
+[23:12:00] <puchacz> I will change it to :warn in my whole setup
+[23:12:03] <shka> just redefine it, let's see how it works out :-)
+[23:12:14] <shka> also, which file?
+[23:12:43] <puchacz> sorry, closed it
+[23:12:54] <shka> well, that's how it is
+[23:12:55] <puchacz> but it is useful to change this variable, give me a second
+[23:14:25] <puchacz> **++++ Error in (DEFCLASS CL-DATA-STRUCTURES.COMMON.EGNAT::EGNAT-RANGE):
+[23:14:25] <puchacz>   Duplicate readers among (ACCESS-STACK READ-INITIAL-STACK READ-INITIAL-STACK READ-CONTAINER) provided for (ENSURE-CLASS EGNAT-RANGE).
+[23:15:30] <shka> wow
+[23:16:45] <shka> puchacz: ok, git pull
+[23:17:08] <puchacz> faster than unzipping :)
+[23:17:11] <shka> yes
+[23:17:14] <shka> that's the point
+[23:17:21] *** Quits: tyson2 (~user@bras-base-toroon0628w-grc-46-142-112-141-177.dsl.bell.ca) (Remote host closed the connection)
+[23:17:51] <puchacz> another eval-when?
+[23:17:52] <puchacz> **++++ Error in (METHOD CL-DATA-STRUCTURES:AT (CL-DATA-STRUCTURES.QUEUES.2-3-TREE::2-3-QUEUE (EQL :FRONT))):
+[23:17:53] <puchacz>   The variable +BUFFER-SIZE+ is unbound.
+[23:18:03] <shka> ok, forgot about this one
+[23:18:21] <puchacz> btw, we may need to move to private... maybe I am spamming too much
+[23:18:36] <shka> yeah
+[23:18:38] <shka> good idea
+[23:18:58] *** Joins: Inline (~Inline@2a02:908:1252:7a80:7c12:e31e:34fb:c517)
+[23:21:42] <etimmons> The complaint about REINITIALIZE-INSTANCE likely comes from <https://github.com/sirherrbatka/cl-data-structures/blob/0a7fe40f2276c7f828b8684223bf57c9cbb76cfc/src/common/rrb/common.lisp#L899>
+[23:21:57] <etimmons> There's no specialization on the first argument
+[23:22:04] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[23:22:37] <puchacz> I muffled it
+[23:23:10] <puchacz> etimmons: do yo think letting this through can cause some issues?
+[23:23:26] *** Quits: ym (~ym@5.143.220.3) (Ping timeout: 265 seconds)
+[23:23:42] <etimmons> It could
+[23:24:08] <puchacz> so if we specialise on T, would it be better?
+[23:24:37] <etimmons> no, T is the implicit specialization (what's there now)
+[23:25:06] <etimmons> Based on context, it's probably supposed to be RRB-RANGE
+[23:35:19] *** Joins: john-a-carroll (~john-a-ca@host-92-28-178-6.as13285.net)
+[23:41:07] *** Quits: john-a-carroll (~john-a-ca@host-92-28-178-6.as13285.net) (Ping timeout: 250 seconds)
+[23:41:11] *** Joins: cjb (~cjbayliss@user/cjb)
+[23:45:23] *** Quits: attila_lendvai (~alendvai@catv-89-132-208-37.catv.broadband.hu) (Ping timeout: 264 seconds)
+[23:45:50] *** Joins: slyrus (~slyrus@192-184-223-165.static.sonic.net)
+[23:46:44] *** Quits: cage (~cage@dynamic-adsl-94-34-55-34.clienti.tiscali.it) (Quit: rcirc on GNU Emacs 27.1)
+[23:52:09] *** Quits: puchacz (~puchacz@cpc96912-walt25-2-0-cust541.13-2.cable.virginm.net) (Quit: Client closed)
+[23:52:21] *** Joins: puchacz (~puchacz@cpc96912-walt25-2-0-cust541.13-2.cable.virginm.net)
+[23:52:44] *** Quits: puchacz (~puchacz@cpc96912-walt25-2-0-cust541.13-2.cable.virginm.net) (Client Quit)
+[23:54:05] *** Joins: Lycurgus (~juan@98.4.112.204)
+[23:55:59] *** Joins: puchacz (~puchacz@cpc96912-walt25-2-0-cust541.13-2.cable.virginm.net)

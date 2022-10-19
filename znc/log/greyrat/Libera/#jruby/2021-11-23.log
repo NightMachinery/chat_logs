@@ -1,0 +1,228 @@
+[00:06:16] <headius> enebo: hey maybe you can give this a go on your linux machine: https://github.com/praj-foss/jnr-demo
+[00:06:35] <headius> I can't really do it in a container because it uses GTK and I don't have any good Linux VMs at the moment
+[00:06:46] <headius> crasher when setting a GTK callback using jnr-ffi
+[00:07:14] <headius> I'm giving it a shot with gtk3 on MacOS to see if it might be platform-specific
+[00:30:09] <enebo[m]> ok will give it a shot
+[00:30:58] <headius> enebo: you want to run ./gradlew gtk3:run
+[00:31:06] <headius> not the basic example as mentioned in the readme
+[00:31:17] <headius> https://github.com/jnr/jnr-ffi/issues/281#issuecomment-975832320
+[00:33:38] <enebo[m]> https://gist.github.com/enebo/225bdbde895c2ab84c57d95678a75fa9
+[00:34:02] <headius> yeah I just got it to repro on macos too
+[00:34:27] <headius> looking into how this GTK callback is supposed to work... might have to figure out how to get a debug build to spit out a line number
+[12:30:15] *** Quits: kai[m] (~kaikdeorg@2001:470:69fc:105::c43) (Quit: You have been kicked for being idle)
+[18:10:27] <headius> enebo: gtk3 thing works for you with my patch?
+[18:10:56] <enebo[m]> headius: yeah. getting latest graal now to test that
+[18:11:20] <enebo[m]> but the report was against a slightly out of date graalvm which made me add the comment to test other versions
+[18:11:32] <headius> I'll be surprised if that is any different
+[18:11:49] <enebo[m]> I don't know.  It works on my machine with openjdk and graal
+[18:12:04] <headius> yeah PEBKAC it seems
+[18:12:44] <headius> I will fork his repo and put my patch in place so I know he is trying the right code
+[18:13:43] <enebo[m]> his latest hs_err seems extremely unclear what is happening
+[18:15:25] <enebo[m]> I will also download the version which fails for him
+[18:16:47] <headius> TIL there's no way to pass JVM arguments to gradle
+[18:18:27] <headius> ok there is, but ick: ./gradlew -Dorg.gradle.jvmargs=-Xmx16g
+[18:18:29] <headius> whatevs
+[18:19:34] <headius> it still doesn't work for me on MacOS but I'm getting Cocoa exceptions so I assume it is some oddity of GTK+JVM+MacOS
+[18:22:14] <headius> this seems to be a -XstartOnFirstThread situation but I am having no luck passing that to Gradle
+[18:25:11] <enebo[m]> There is a ruby gem which uses gtk
+[18:25:50] <enebo[m]> gtk3
+[18:26:57] <enebo[m]> Although it is amusing because all the docs still say it is GTK2
+[18:30:34] <enebo[m]> bleh.  I forgot this does not work with JRuby
+[18:30:57] <enebo[m]> I thought it was an ffi-based thing but you could still try it to see if gtk fails
+[18:33:50] <headius> well there's 15 minutes of my life I won't get back trying to figure out how to pass JVM args in Gradle with a Kotlin build file
+[18:33:53] <headius> but it works for me too
+[18:33:57] <enebo[m]> https://gist.github.com/enebo/7e2fe7691db26b48dba94b87462dd42d
+[18:34:13] <enebo[m]> gem install gtk3 using MRI and see if gtk boostraps
+[18:34:17] <headius> it's just the old -XstartOnFirstThread thing for cocoa
+[18:34:31] <enebo[m]> oh does it work then?
+[18:34:34] <headius> have to pass that for anything using cocoa for rendering
+[18:34:38] <headius> yeah it works
+[18:34:40] <headius> Click me
+[18:34:45] <enebo[m]> nice
+[18:34:53] <enebo[m]> So two systems working...story of our lives
+[18:36:56] <enebo[m]> ok graalvm 21.1.0 does work for me too
+[18:38:34] <headius> https://github.com/headius/jnr-demo/tree/patched
+[18:38:54] <headius> yeah at this point there's no issue here but we'll see what they come back with
+[19:19:28] <nirvdrum[m]> This is probably a dumb question, but JRuby is failing to launch if I don't have `$JAVA_HOME` set. `java` is available on the `$PATH`. If I run `jruby.bash`, everything starts up fine. Is this expected?
+[19:19:59] <headius> not sure what you mean... it works but it doesn't work?
+[19:20:40] <headius> we use the location of `java` and try to infer a JAVA_HOME from that... if we fail then we fall back on Java 8 behavior that doesn't depend on knowing if modules are present
+[19:20:53] <headius> jruby.bash and the native jruby exe should both work the same way
+[19:21:04] <headius> so I'm not sure which way you are trying to run that is failing
+[19:21:07] <headius> nirvdrum: ^
+[19:21:53] <nirvdrum[m]> nirvdrum@melchior-linux ~/d/w/ruby-benchmarks> ruby -v
+[19:21:53] <nirvdrum[m]> execv failed: Permission denied (13)
+[19:22:07] <headius> not sure where that `ruby` is coming from
+[19:22:13] <nirvdrum[m]> I use rbenv.
+[19:22:36] <nirvdrum[m]> Although, I have the same issue if I skip rbenv and just navigate to the installation directory.
+[19:22:47] <headius> try `ruby --environment`
+[19:23:02] <headius> should tell you everything
+[19:23:31] <headius> also `file \`which ruby\``
+[19:23:33] <headius> oops
+[19:23:40] <headius> well you get the idea... is `ruby` the native binary?
+[19:24:44] <nirvdrum[m]> rbenv creates a shim script, but I get the same thing using the launcher directly:
+[19:24:44] <nirvdrum[m]> nirvdrum@melchior-linux ~/.r/v/j/bin (master)> ./jruby -v
+[19:24:44] <nirvdrum[m]> execv failed: Permission denied (13)
+[19:25:09] <headius> execve tells me it is probably the native jruby executable and it is not finding the actual executable java command
+[19:25:15] <headius> what does --environment say
+[19:25:48] <nirvdrum[m]> The same execv error.
+[19:26:11] <nirvdrum[m]> I get output if I use jruby.bash, but I assume that's altering the environment.
+[19:26:20] <headius> seems like the executable is borked... --environment should not try to exec anything
+[19:26:42] <headius> it just prints out where it found java and what command line it would have launched
+[19:27:24] <headius> https://gist.github.com/headius/41b3c1433b4bc839a4b4bce3808da421
+[19:27:38] <nirvdrum[m]> Hmm...
+[19:28:06] <headius> there's no exec in either launcher if you run with --environment so this is something broken with rbenv or your setup
+[19:28:09] <nirvdrum[m]> I just grabbed the tarball and extracted that locally. Now I do get the --environment output.
+[19:28:34] <headius> seems like it is not setting the binary to be launchable by you or something?
+[19:28:36] <nirvdrum[m]> Maybe ruby-build did something weird.
+[19:28:42] <headius> I dunno how rbenv works
+[19:28:50] <headius> or at least I don't know what it does that could cause this
+[19:29:03] <nirvdrum[m]> I've been using it for years. This is the first time I've had a problem with JRuby.
+[19:29:42] <headius> you could try to reproduce with tarball + gem install jruby-launcher and maybe it is a problem with the native launcher
+[19:29:58] <headius> otherwise I don't know what to tell ya... need more input
+[19:30:10] <nirvdrum[m]> Weird. The md5sum is different from the tarball and the ruby-build install.
+[19:30:19] <nirvdrum[m]> I guess I'll dig in on that side. Thanks for confirming that this shouldn't be problematic.
+[19:30:46] <headius> ok
+[19:34:15] <headius> looks like it does install the native launcher, so perhaps start by confirming the native launcher works for you with a clean tarball
+[19:35:19] <headius> I think I see some possible problem
+[19:35:33] <headius> oh maybe not
+[19:36:17] <headius> it does some monkeying around with the other scripts in bin/ but that doesn't seem to affect the main ruby/jruby command
+[19:37:28] <headius> bleh why are they rewriting these shebangs
+[19:37:40] <headius> 🤷‍♂️
+[19:42:30] <headius> what are you benchmarking? I could give it a shot here
+[19:43:01] <headius> enebo: how much do you hate the idea of adding an optimize flag that turns on indy?
+[19:44:03] <enebo[m]> you mean --optimize?
+[19:44:09] <headius> yeah
+[19:44:26] <enebo[m]> I don't know.  It is obviously easier to remember
+[19:44:29] <headius> we have talked about it for years and we are no closer to enabling heavy optz all the time
+[19:44:34] <headius> it just adds too much to startup
+[19:44:35] <enebo[m]> As a name it means nothing
+[19:45:03] <enebo[m]> but as far as other names I don't know java had --server
+[19:45:38] <headius> it would at least be an obvious flag we could put in --help rather than having this buried in --properties
+[19:45:39] <enebo[m]> --optimize > --fast so I think that was an outcome of older discussion
+[19:45:48] <headius> yeah
+[19:46:01] <enebo[m]> --prod is a dual of --dev
+[19:46:05] <headius> I think people understand that "optimize" might mean it takes longer to get going, or other trade-offs
+[19:46:30] <enebo[m]> although --prod implies you should use it for prod
+[19:46:40] <headius> --prod isn't terrible
+[19:46:40] <enebo[m]> and it is not a duality since no options is between them
+[19:46:52] <headius> better than --fast and worse than --optimize to me
+[19:47:28] <headius> I think we talked about --indy too but that means nothing to anyone but us
+[19:47:29] <enebo[m]> well I am ok with --optimize.  It just means something will happen and I am guessing 100% of people who think performance is always good will just use it and then complain about warmup
+[19:47:38] <enebo[m]> but that is on them a bit
+[19:47:43] <headius> --prod might make people think we will also set rails to production or something
+[19:47:45] <headius> maybe
+[19:48:11] <enebo[m]> We have just seen it quite a bit with --fast
+[19:48:30] <headius> --andale
+[19:48:38] <enebo[m]> people look at these terms as positive ones
+[19:48:54] <headius> yeah maybe it is just me but optimize has less of that implied positivity
+[19:48:54] <enebo[m]> but I think --compile.invokedynamic is too tough to remember
+[19:49:07] <headius> more like "we will make more of an effort"
+[19:49:27] <enebo[m]> I don't think I agree but I do think something simpler to remember is a good thing
+[19:50:04] <enebo[m]> --indy is simple too but not something anyone will remember or think of doing
+[19:50:04] <headius> maybe I will poll twitter
+[19:50:12] <enebo[m]> HAHA
+[19:50:13] <enebo[m]> you can try
+[19:50:42] <enebo[m]> twitter is a good way of getting more loud and fringe opinions but I have no other suggestion
+[19:51:20] <enebo[m]> headius: I will say I don't dislike --optimize as much as I think people will optimistically use it
+[19:51:35] <headius> tweeted
+[19:51:41] <headius> it seems like the best option so far
+[19:51:50] <enebo[m]> The only downside will be some reports of confusion why it is not optimized because it runs slower
+[19:51:53] <headius> best single-word flag so far
+[19:52:04] <enebo[m]> slower == slower warmup
+[19:52:23] <enebo[m]> or times without taking warmup into consideration
+[19:57:29] <nirvdrum[m]> headius Looking into this more, ruby-build installs the jruby-launcher and that's what's failing to start. If I install that gem in my local JRuby download, I run into the same problem.
+[19:57:58] <headius> ok perhaps it is not building the binary correctly?
+[19:58:32] <headius> this is the first we have heard of this particular error so we will need more info about your env
+[20:01:57] <nirvdrum[m]> Possibly. I don't really know how that works. If I set `$JAVA_HOME` to a vaild Java home directory, everything works.
+[20:02:10] <nirvdrum[m]> Generally, it's just blank.
+[20:10:40] <headius> check what the `java` command is... executable? symlink to where?
+[20:11:15] <headius> we do need to be able to find JAVA_HOME but it should be inferred on most platforms from the `java` command
+[20:11:33] <headius> I don't understand why it gives the execve error even with jruby --environment
+[20:11:43] <headius> hmm
+[20:12:10] <headius> tracing system calls might show what it actually fails to launch... there are a few system utils we might be using to figure out JAVA_HOME
+[20:12:44] <headius> something non-posix that might not be in a minimal container, for example
+[20:12:53] <nirvdrum[m]> It's a symlink. In this case, it's set up by Homebrew for Linux. But, Ubuntu's update-java-alternatives would also have set a symlink.
+[20:13:15] <nirvdrum[m]> I did set JAVA_HOME to the resolved parent directory in the Homebrew installation and that allowed the launcher to work.
+[20:13:56] <nirvdrum[m]> I can file an issue. I didn't mean to derail your day.
+[20:15:42] <headius> that's what I'm here for
+[20:15:57] <headius> sure, open an issue and dump some env info about how that symlink is set up
+[20:16:23] <headius> we do a best effort to find the real JAVA_HOME from even deeply-nested symlinks, but we can't prepare for all possible rigs
+[20:31:53] <nirvdrum[m]> https://github.com/jruby/jruby-launcher/issues/31 looks to be the same core issue.
+[20:32:01] <headius> tweeters like -O flags 🙄
+[20:32:15] <headius> which mean even less than --dev to me
+[20:32:49] <headius> nirvdrum: that is really more of a meta-issue
+[20:33:19] <headius> the general challenge is inferring JAVA_HOME on all environments when they each chop up JDK installs a different way
+[20:33:34] <headius> it would be best if you filed a more specific issue for this, because I have never seen it before
+[20:33:55] <headius> you're the first to be doing this with a homebrew linux JDK install, perhaps
+[20:34:00] <nirvdrum[m]> Will do.
+[20:36:40] <headius> worst case it should still be able to launch but not use JDK module flags we need for full compat
+[20:36:43] <headius> exec failing is weird
+[20:42:11] <headius> long lunch, bbl
+[20:42:54] <headius> enebo: despite conversations on twitter --optimize is still my favorite
+[20:43:29] <enebo[m]> yeah I am ok with it
+[20:43:53] <enebo[m]> it will have similar problems to --fast but it is easier for people to remember
+[20:43:57] <headius> I like it better than -O* precisely because the -O flags already have meaning to people
+[20:44:05] <headius> it won't mean the same on JRuby so I think that is a messy way to go
+[20:44:36] <enebo[m]> I also think the people suggesting that HIGHLY OVERESTIMATE how many people know anything about a C compiler and its flags
+[20:45:35] <enebo[m]> So it won't really help too many people to remember it.  A strong yet simple name is much easier
+[20:45:53] <enebo[m]> The unfortunate thing is any simple name will be interrpeted simply
+[20:46:21] <enebo[m]> a confusing opaque option will likely not get implied meaning but will probably be hard to remember
+[20:47:23] <enebo[m]> So I am ok with optimize because people will imply some meaning but it will solve the issue of knowing what to type to try out more indy
+[20:47:46] <enebo[m]> More or less my opinion is that a good name is hard to find
+[20:50:14] <headius> I agree
+[20:52:10] <enebo[m]> I just realized a good one!
+[20:52:13] <enebo[m]> -Oi
+[20:52:26] <headius> Oi!
+[20:52:42] <enebo[m]> exclamation point can be even more indy
+[20:52:51] <enebo[m]> -Oi and -Oi!
+[20:52:51] <headius> I did think about having a parameterized flag, like with +indy
+[20:53:05] <headius> But it's unclear if it's any better than what we have now, other than being shorter
+[20:53:38] <enebo[m]> well oi as a term is memorable in the sense it is funny...at least to english speakers how have heard oi
+[20:54:00] <enebo[m]> but I am not really saying i think we should have oi as much as it is pretty funny and memorable (to me)
+[20:54:19] <headius> It also ends up being fine grained again, and I wanted an optimized flag that gives users the "best" settings for straight line perf
+[20:54:29] <enebo[m]> I actually like the notion of something being more opaque just because it removes implicit misunderstanding
+[20:54:38] <headius> Yeah it would be fun
+[20:58:09] <headius> The other problem is that the best optimized mode might be different from runtime to runtime. Like on graal we might want to disable the fixnum cache but should that be in this opaque flag or a separate one?
+[21:02:20] <enebo[m]> headius: I was also thinking about recipes of optimizations
+[21:02:58] <enebo[m]> if we itemized what things did then they could be aggregated by something which encompasses them but then they should also be individually done (like disabling fixnum cache)
+[21:04:04] <enebo[m]> I don't really want to get bogged down on this though.  A common simple to remember name for a realistic workload makes sense.  It just needs to carry some implied notion that it has a warmup tradeoff
+[21:29:00] <headius> Well perhaps this could play off of the .java_opts files we have
+[21:29:17] <headius> --dev tweaks are all in a config file in the bin directory named appropriately
+[21:29:48] <headius> If we added a flag that essentially picked a specifically named optimization config file then people could mix and match as they like but the default file would just turn on invoke dynamic
+[21:30:43] <headius> --config:optimized to load bin/.optimized.java_opts
+[21:31:01] <headius> Just spitballing here but your use of the term recipe makes a lot of sense
+[22:14:50] <enebo[m]> yeah I think the general idea of this makes more sense if we have multiple options which only make sense in particular environments
+[22:15:23] <enebo[m]> we definitely have some so maybe this is mostly something to consider if we decide to add more
+[22:16:04] <enebo[m]> I don't like the idea of custom -- options if when people report we cannot see that trivially in the bug repiort
+[22:16:40] <enebo[m]> but we have a template so people will get a command which will perhaps print out those configs
+[22:23:55] <headius> --environment already includes anything in those opts files so we have that
+[22:35:14] <nirvdrum[m]> I've opened https://github.com/jruby/jruby-launcher/issues/44. Please let me know if you need any other info.
+[22:56:26] <headius> Wow where is it getting that weird path to exec
+[22:57:01] <headius> nirvdrum: you see that path it tries to exec? It looks like a dir
+[22:59:05] <nirvdrum[m]> Yeah. I need to look into that more. That directory does exist. It's OpenJDK 15 installed by Ubuntu.
+[22:59:21] <nirvdrum[m]> But the only reference I can find to it as an env var I have named CUSTOM_JAVA_HOME.
+[22:59:36] <nirvdrum[m]> Maybe jruby-launcher is doing a suffix match?
+[23:01:28] <nirvdrum[m]> It looks like my javac comes from that installation.
+[23:01:42] <nirvdrum[m]> That seems a more likely candidate.
+[23:32:47] <headius> We don't do any suffix matching but that is very interesting
+[23:33:08] <headius> We also don't look for javac so that wouldn't be the vector
+[23:33:49] <headius> And --environment with no other flags does the same thing? I am really confused by that because it shouldn't try to exec anything in that mode
+[23:34:06] <headius> The info it spits out would be a big clue
+[23:34:29] <headius> You could try -Xhelp to the native launcher and there's a debug log we could try
+[23:38:22] <nirvdrum[m]> Same issue.
+[23:38:42] <nirvdrum[m]> I'll dig into the launcher source and see if I can work out what's going on.
+[23:39:09] <headius> readlink("/etc/alternatives/java", "/usr/lib/jvm/java-1.15.0-openjdk"..., 1023) = 38
+[23:44:19] <nirvdrum[m]> Okay. That could be something. /usr/bin/java resolves to that directory.
+[23:44:35] <nirvdrum[m]> As far a I know, Ubuntu manages all of that.
+[23:46:30] <headius> That's seems wrong
+[23:48:53] <headius> I'll have a closer look when I'm off mobile
+[23:48:55] <nirvdrum[m]> So, /usr/bin appears earlier in the PATH than /home/linuxbrew/.linuxbrew/bin. It looks like `findOnPath` is picking the entry out of there and just assuming if it's named "java" that it's an executable.
+[23:49:14] <nirvdrum[m]> The shell resolution logic is evidently different.
+[23:49:24] <headius> Yeah strange
+[23:49:26] <nirvdrum[m]> I'll see if I can reproduce in Docker.
+[23:49:33] <headius> That would be a big help
+[23:50:00] <headius> We need to be checking executable and directory flags
+[23:50:03] <headius> That's a clear miss
+[23:51:17] <headius> If we saw it is a dir we would move on to the later path entries and get the right one
+[23:51:29] <headius> Really weird that this is resolving to a dir though
+[23:53:30] <headius> The bash logic may be doing [ -x ... ]

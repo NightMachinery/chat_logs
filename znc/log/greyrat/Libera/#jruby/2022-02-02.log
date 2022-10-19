@@ -1,0 +1,62 @@
+[00:48:18] *** Quits: sagax (~sagax_nb@user/sagax) (Ping timeout: 260 seconds)
+[01:25:41] <headius> enebo: https://github.com/jruby/jruby/issues/7009#issuecomment-1025241041
+[01:25:53] <headius> this complicates the handling of that rogue break in a thread
+[01:26:26] <headius> might necessitate doing a stack search or tagging frames with a thread ID to be able to raise the LJE early
+[01:26:38] <headius> though I am highly dubious about this use case
+[01:56:47] <headius> I'm going to spike a thread ID. It will make frame larger but the field only gets set once at create time
+[01:57:22] <headius> hmmm not frame though... scope... that is not as good
+[01:57:46] <headius> enebo: do you remember why we have break target a scope and not a frame? I think we have gone back and forth but I can't remember why it uses scope now
+[01:58:29] <enebo[m]> I don't recall but I would think perhaps we have more scopes around more often?
+[01:58:31] <headius> this is the reduced example: def foo(&p); t = Thread.new { begin; p.call; rescue LocalJumpError; p 1; end }; t.join; end; foo { break }
+[01:58:59] <headius> the block has not "escaped" like with a proc so the break would be valid, if it weren't across threads
+[02:04:53] <headius> yeah we used to have a frame ID for this
+[02:05:43] <enebo[m]> hmm perhaps the commit will have a message explaining why
+[02:08:10] <headius> it goes back to IR transition I believe
+[02:09:38] <headius> I'll just spike a change to frame and see what happens
+[02:17:06] <headius> if break_spec and block_spec are reliable, then this breaks nothing so far
+[02:31:46] <enebo[m]> nice
+[02:34:46] <headius> we'll see how this goes: https://github.com/jruby/jruby/pull/7061
+[02:35:03] <headius> if that doesn't break anything I will add in the thread ID object so break can know immediately if it has a valid target
+[02:36:30] <headius> lol
+[02:36:32] <headius> https://github.com/jruby/jruby/blob/8ee2702c28ff5da44cdc013ff250194b19a7b99e/core/src/main/java/org/jruby/ir/runtime/IRRuntimeHelpers.java#L282-L286
+[02:36:39] <headius> guess we know why now
+[03:21:04] <headius> I've pushed the thread ID change there now, which fixes the original issue
+[03:39:55] <headius> something in MRI suite blows up with the frame change
+[03:58:38] <headius> aha
+[03:58:55] <headius> Class.new { break } should just exit Class.new, but there's no frame for it
+[04:01:14] <headius> enebo: maybe we can rewrite that as return when we detect it is a Class.new block? We must be doing something currently to detect this. I will investigate.
+[04:31:14] <headius> ok we will talk through this tomorrow... it looks like CRuby does push a frame for Class.new/module_exec forms that becomes the controlling frame and likely the break target once the block is invoked
+[09:08:13] *** Quits: satyanash (~satyanash@143.110.247.92) (*.net *.split)
+[09:08:14] *** Quits: _whitelogger (~whitelogg@uruz.whitequark.org) (*.net *.split)
+[09:08:14] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (*.net *.split)
+[09:08:14] *** Quits: joast (~rick@cpe-98-146-112-4.natnow.res.rr.com) (*.net *.split)
+[09:08:15] *** Quits: lucerne (~lucerne@ip202.ip-51-178-215.eu) (*.net *.split)
+[09:08:16] *** Quits: yosafbridge (~yosafbrid@static.38.6.217.95.clients.your-server.de) (*.net *.split)
+[09:08:17] *** Quits: siasmj (sid6106@id-6106.lymington.irccloud.com) (*.net *.split)
+[09:21:14] *** Joins: yosafbridge (~yosafbrid@static.38.6.217.95.clients.your-server.de)
+[09:22:45] *** Joins: _whitelogger (~whitelogg@uruz.whitequark.org)
+[09:22:45] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[09:22:45] *** Joins: joast (~rick@cpe-98-146-112-4.natnow.res.rr.com)
+[09:22:45] *** Joins: lucerne (~lucerne@ip202.ip-51-178-215.eu)
+[09:23:34] *** Joins: satyanash (~satyanash@143.110.247.92)
+[09:24:52] *** Joins: siasmj (sid6106@id-6106.lymington.irccloud.com)
+[14:31:24] <kares[m]> pushed jossl 0.12.1 🤞 ping me if anything comes up - going to be also watching the bug tracker(s)
+[17:08:44] *** Joins: sagax (~sagax_nb@user/sagax)
+[17:51:02] <headius> kares: nice, thank you!
+[18:08:36] <enebo[m]> headius: I do not think Class.new or module_exec probably are so common that we would notice a Frame
+[18:10:32] <headius> enebo: I'm going to play with having the module_exec code use the same logic for handling break propagation as if it were implemented in Ruby
+[18:10:59] <headius> I did find that we do push a frame, basically a copy of the previous frame, but there's zero handling of break propagation so it never knows to stop raising it
+[18:11:36] <headius> so this is a quirk of how break handling is done in Ruby versus Java, and if we expect to handle breaks from Java we need to call the same mechanism
+[19:47:27] <headius> this module_exec code is pretty gross
+[19:47:53] <headius> I think the problem here is that the break is suppose to propagate out to the scope above Class.new
+[19:48:16] <headius> with the previous code that used DynamicScope to end the break propagation, it worked fine because Class.new does not monkey around with the scope
+[19:48:35] <headius> it DOES however monkey around with the frame, cloning the block and having it push a new copy of the frame rather than the one it is rooted in
+[19:48:56] <headius> that in turn breaks my frame-based break propagation because the parent frame and the block frame are different and so nobody receives the break
+[19:49:19] <headius> there's multiple tangled layers of binding cloning happening in module_exec that are interfering with this flow
+[19:49:28] <headius> if we fixed that cloning then it should just work
+[19:52:54] <headius> criminy
+[19:53:25] <headius> module_exec clones the block and then calls yieldUnder, which clones the block and calls preExecuteUnder, which clones the frame
+[19:53:48] <headius> when in doubt just clone again I guess
+[20:18:22] <headius> enebo: I made nobu's changes to io-wait and it should be ready to go
+[20:18:34] <enebo[m]> cool
+[20:19:05] <headius> you should be able to build the gem if you wanted to try it with rails, but I'm hopeful we can get a release out today or tomorrow

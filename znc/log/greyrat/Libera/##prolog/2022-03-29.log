@@ -1,0 +1,225 @@
+[00:04:11] <Celelibi> fl0rid, du you really have a huge list of facts?
+[00:04:48] <Celelibi> Du you know where is your performance bottleneck?
+[00:09:10] <fl0rid> Celelibi, for one particular binary, the extensional exporter produces 280k facts; 41k of them lead to direct instantiations of the data flow relations I mentioned
+[00:09:32] *** Quits: skapata (~Skapata@user/skapata) (Remote host closed the connection)
+[00:10:25] <fl0rid> Celelibi, I'm not expert enough with Prolog to understand its performance characteristics. most of what I learned was done through brute-force A/B testing (often involving substantial rewrites) and observing performance differences, then trying to draw conclusions from the results
+[00:14:52] <fl0rid> given that I worked on this project for my first (and only) 3-4 months of Prolog, and that I generally don't use databases very much in my other work, I'm sure I made a lot of mistakes and have a lot of lessons to learn
+[00:19:48] <fl0rid> I'd appreciate any resources you recommended on learning more about performance in Prolog
+[00:21:30] <Celelibi> Well, I've never delt with that many facts. My performance issues with swi prolog were more about the raw performance of execution. Switching to gprolog was a huge improvement.
+[00:22:42] <Celelibi> Maybe look at this: https://www.swi-prolog.org/pldoc/man?predicate=profile/1
+[00:30:40] <fl0rid> for some of them, I wound up stepping through them in the REPL after enabling tracing. I found that the thing making it slow when I tried to go in the "reverse" direction (B->A) was that it was inspecting all of the A entries and seeing if they matched B. so basically, every time I tried to go backwards, it was iterating over all of my forwards data flow facts
+[00:31:37] <fl0rid> that's slow for even one single step backwards, but for a transitive closure... obviously, terrible
+[00:35:58] <Celelibi> Ah, yes. Sometime avoiding this can require a bit of rewriting.
+[00:39:29] <fl0rid> and the "rewriting" that I did ended up being to introduce a new predicate, called "rev_directly_castable_to", which was derived using the same extensional facts and rules as "directly_castable_to", except that I swapped the position of two of the terms in the head of the intensional rules
+[00:40:10] <fl0rid> in so doing, the transitive closure in the reverse direction became as fast as the one in the forward direction, albeit using a predicate with a different name ("rev_" prefix)
+[00:40:39] <fl0rid> but I'm wondering whether I can eliminate that and have a single predicate that lets me iterate in both directions quickly
+[00:41:10] *** Quits: wacki (~wacki@87.122.84.134) (Quit: Leaving.)
+[00:42:43] <fl0rid> one thing I wasn't doing was that I didn't have any +, -, or ? annotations anywhere in my intensional rules; maybe I should see what happens if I mark both the source and destination as "?"
+[00:48:55] <fl0rid> oh, maybe I misunderstood, are those just for documentation purposes?
+[00:50:20] <Celelibi> AFAIK, yes, it's only documentation stating if a parameter is an input, output or both.
+[00:51:11] <Celelibi> Can we see your prolog code? Or at least the part that uses the large list of facts.
+[01:00:49] <fl0rid> I'll try cleaning it up a bit; it's a bit of a mess with a bunch of commented-out stuff, given my hack-and-slash approach of being motivated to succeed at my end goals
+[01:20:41] <Celelibi> BTW, what is your end goal with this?
+[01:26:02] <Celelibi> Looks like taint checking.
+[01:28:52] <fl0rid> various goals, though primarily type reconstruction, analysis of C++ STL functions (particularly inlined functions). automated reverse engineering of C++ binaries overall
+[01:29:03] <fl0rid> sorry I went quiet, am reviewing / cleaning up the code
+[01:29:08] <fl0rid> looks like it'll take a while
+[01:31:29] <Celelibi> No problem.
+[01:32:05] <aindilis> fl0rid: super cool, please link to code when you have a chance!
+[01:34:08] <aindilis> http://dbis.informatik.uni-freiburg.de/index.php?project=Florid
+[01:34:12] <fl0rid> currently crawling through 2100 lines of Prolog commenting etc
+[01:34:33] <aindilis> are you aware of this project which bears a similar name to your irc handle?
+[01:34:43] <fl0rid> not before you linked it just now
+[01:35:07] <aindilis> I had a boss by the last name of Flori, and he moved to Florida, so I told him about Florid :)
+[01:35:26] <aindilis> My knowledge of AI is perhaps "dense"
+[01:36:58] <fl0rid> hehe, is he Italian?
+[01:37:05] <aindilis> extraction yes
+[01:38:29] <aindilis> bbiab
+[01:38:48] <Celelibi> Dense knowledge is better than sparse, right? ^^
+[01:39:07] <aindilis> :)
+[01:39:32] <fl0rid> I'm glad I found this channel, as I had nobody to discuss Prolog with throughout my project -- I was just banging my head into the wall going it alone. that said, my code is a mess and I need some time with it -- I'll come back when I have something presentable
+[01:39:42] <fl0rid> thanks for all of the comments so far
+[01:39:56] <Celelibi> aindilis, That logic-in-database kinda remind me of datalog, if you know it.
+[01:40:36] <Celelibi> fl0rid, why did you choose prolog in the first place?
+[01:46:55] <fl0rid> uh, hmm... let's see. I've been reading program analysis papers since 2007, though I never specialized in logic programming -- I found those papers interesting (e.g. old papers on bddbddb), but I didn't really understand them. then back in 2019, I did a project involving type reconstruction on C++ binaries using data derived from dynamic analysis, and it was clear that my end system was using like a "rule-based saturation engine". 
+[01:46:55] <fl0rid> i.e., if I observe that two structures A and B both contain a field with the same structure type C, then anything I learn about C from A should be merged with the information I learn from B. in trying to make sense of it all, I started to write out how my system worked in terms of logical implications: given input facts that I observed in the dynamic data, I wanted to describe exactly how my code was deriving new facts from it. so 
+[01:46:55] <fl0rid> that lead me more or less directly back to the idea of logic programming; even though I didn't understand it well or know much about it, it just seemed like once I started formally defining logical inference rules that I should learn more about it. then, a few early tests lead me to nice results, which sent me down a rabbit hole for several months (which I had to put down until just recently)
+[01:49:25] <fl0rid> this code really is a mess; I have a predicate named "resolved_indirect_call5" because the previous four attempts failed, although all of the code for the other ones is still in there
+[01:54:07] <Celelibi> Decompilation and program analysis in also somewhere on my todo list.
+[01:55:08] <fl0rid> I let the decompiler do the heavy lifting; the extensional facts are generated via a Hex-Rays plugin, which I eventually whittled down to about 2KLOC of Python
+[01:55:33] <Celelibi> I understand why you went for prolog. But I'm not sure its depth-first search is ideal.
+[01:56:06] <Celelibi> The Hex-Rays plugin is very much rule-based, it's not very smart.
+[01:56:55] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Remote host closed the connection)
+[01:57:07] <fl0rid> yeah, Hex-Rays is very procedural and incremental. but it's what I use when reverse engineering, and ultimately where I want to apply the end results -- and it's the best machine code decompiler in the world from a user's perspective
+[01:57:31] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[01:57:56] <fl0rid> if I ever get it to a solid state, I'll experiment with swapping out the exporter for a Ghidra or even Binary Ninja plugin
+[02:00:33] <Celelibi> At some point I'd like to make my own decompiler that explores the alternatives with a mix of logic deduction and machine learning.
+[02:02:34] <fl0rid> because you like the idea as a research project, or because you find the existing ones lacking from a hands-on usability perspective?
+[02:02:50] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Ping timeout: 252 seconds)
+[02:03:31] <Celelibi> Mostly, because it looks like a fun project. :)
+[02:03:46] <Celelibi> I'm also a big fan of search algorithms.
+[02:03:55] <fl0rid> nothing wrong with that! I like abstract research projects for their own sake
+[02:03:59] <Celelibi> Heuristic ones prefered.
+[02:04:55] <fl0rid> but I'm also a professional reverse engineer, so my goals with this family of projects is to create solid tools that can be used on a daily basis
+[02:04:59] <Celelibi> Before I do anything about it, I should probably take a look at the state of the art. I know I've heared about some decompilers trying to incorporate some AI.
+[02:05:25] <fl0rid> some ML stuff lately, yeah -- academic research though, not stuff that people use day-to-day
+[02:06:47] <Celelibi> BTW, you talked about saturation engine. I learned about it recently with automated theorem provers.
+[02:07:52] <Celelibi> I've been playing with those lately, it's actually not that simple to make them do something useful. ^^
+[02:08:52] <fl0rid> I should really study theorem provers in real depth; I've read a few books about them, read some source code from time to time, but I have a feeling I'd be much more capable if I decided to make serious study out of them
+[02:09:14] <fl0rid> most of my experience with them is as a user of SMT solvers
+[02:09:38] <fl0rid> it'd be great to have a grasp of things like e-graphs at the tip of my fingers
+[02:10:18] <fl0rid> actually, I explored e-graphs a bit before deciding to use logic programming for my current line of research
+[02:11:55] <fl0rid> being based on "equality" (it's right in the name), it seemed like I needed something that handled non-symmetric relations instead, which is why I went with logic programming
+[02:12:12] <Celelibi> I can't find the name of the company that made ML-based reversing.
+[02:14:12] <fl0rid> what makes you interested in this kind of stuff? hobbyist interest? professional?
+[02:16:16] <Celelibi> Well, I've been interested in the hacking scene for quite some time. Since 2003 IIRC. Back when "hacking" wasn't synonymous for security.
+[02:17:05] <Celelibi> Since then I've got a PhD in distributed computed and although I'm no longer in the acamedics, I still enjoy research.
+[02:18:12] <Celelibi> I always liked algorithmics and AI. I love automating stuff. :) And in my first job I discovered the field of machine learning.
+[02:18:44] <Celelibi> I left this job in 2018, but now it's part of me. :)
+[02:18:54] <fl0rid> cool! do you do research-type stuff professionally?
+[02:19:42] <Celelibi> Not really. I mean, sometimes I read papers and tell my client "yeah, this is a know problem, no true solution as of right now".
+[02:20:05] <Celelibi> known*
+[02:20:49] <fl0rid> that's cool stuff
+[02:22:08] <fl0rid> I used to be a software cracker back in 1997, then I got a degree in pure mathematics and started working professionally in security / reverse engineering / automation. I've worked in various parts of the security industry (DRM, vulnerability analysis, malware), then started my own company teaching training classes to give myself the freedom to continue researching whatever I want in my spare time
+[02:23:08] <fl0rid> it's a bit of a ball-and-chain sometimes; I'm working on a new class, so I really ought to be doing that and not focusing on research -- kind of a self-defeating enterprise if my goals involve pursuing my research interests, but it treats me well enough overall
+[02:23:32] <Celelibi> Well, now I'm in freelance. I mostly teach classes. :)
+[02:23:48] <fl0rid> about what kind of stuff?
+[02:23:56] <Celelibi> And I also enjoy having the time to do my own stuff. :)
+[02:24:32] <Celelibi> I teach about python, algorithmics, ML, some big data stuff spark / kafka.
+[02:25:27] <fl0rid> that's cool! you make a decent living doing that?
+[02:25:47] <Celelibi> Enough to get by. And that's my only goal. ^^
+[02:28:18] <Celelibi> But honnestly, I'm not sure teaching is the most efficient way to have money and free time.
+[02:43:36] *** Quits: cmsmcq_ (~cmsmcq@65.19.36.46) (Remote host closed the connection)
+[02:43:54] *** Joins: cmsmcq_ (~cmsmcq@65.19.36.46)
+[02:52:54] *** Quits: slavfox (~slavfox@93.158.232.111) (Ping timeout: 252 seconds)
+[03:05:08] *** Joins: slavfox (~slavfox@93.158.232.111)
+[03:41:34] *** Quits: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340) (Ping timeout: 260 seconds)
+[03:42:30] *** Joins: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340)
+[04:11:43] *** Quits: rgrinberg (~textual@177.248.148.38) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[04:24:37] *** Joins: skapata (~Skapata@2804:14c:87b0:9d2e:f1cd:472c:942a:3925)
+[04:24:37] *** Quits: skapata (~Skapata@2804:14c:87b0:9d2e:f1cd:472c:942a:3925) (Changing host)
+[04:24:37] *** Joins: skapata (~Skapata@user/skapata)
+[04:43:20] *** Quits: ElKowar (~ElKowar@srv-fin.xware-gmbh.de) (Quit: Ping timeout (120 seconds))
+[04:43:38] *** Joins: ElKowar (~ElKowar@srv-fin.xware-gmbh.de)
+[04:44:22] *** Quits: cehteh (~ct@git.pipapo.org) (Remote host closed the connection)
+[04:50:08] *** Joins: cehteh (~ct@git.pipapo.org)
+[05:05:58] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[05:10:21] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Ping timeout: 245 seconds)
+[05:21:06] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[05:42:17] *** Quits: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340) (Ping timeout: 252 seconds)
+[05:55:24] *** Joins: rgrinberg (~textual@177.248.146.16)
+[06:19:27] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Ping timeout: 256 seconds)
+[06:56:02] *** Quits: rgrinberg (~textual@177.248.146.16) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[06:59:23] *** Quits: millido (~millido@84.210.150.128) (Read error: Connection reset by peer)
+[07:06:42] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[07:12:27] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Ping timeout: 260 seconds)
+[07:14:13] *** Joins: millido (~millido@84.210.150.128)
+[07:29:24] *** Joins: rgrinberg (~textual@177.248.146.16)
+[08:04:22] *** Quits: Graham31515 (~Graham@user/Graham31415) (Read error: Connection reset by peer)
+[08:04:28] *** Joins: Graham31415 (~Graham@user/Graham31415)
+[08:12:40] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[08:21:46] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Remote host closed the connection)
+[08:23:16] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[08:27:42] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Ping timeout: 260 seconds)
+[08:30:46] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[08:35:10] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Ping timeout: 246 seconds)
+[09:06:34] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[09:26:31] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Remote host closed the connection)
+[09:27:44] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[09:50:29] *** Quits: fl0rid (~Rolf@157-131-255-36.fiber.dynamic.sonic.net) (Quit: Leaving)
+[10:02:47] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Remote host closed the connection)
+[10:04:19] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[10:06:48] *** Quits: skapata (~Skapata@user/skapata) (Remote host closed the connection)
+[10:09:15] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Ping timeout: 260 seconds)
+[10:21:27] *** Joins: wacki (~wacki@87.123.132.171)
+[10:56:57] *** Joins: Everything (~Everythin@37.115.210.35)
+[11:09:23] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[11:10:27] *** Quits: rgrinberg (~textual@177.248.146.16) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[11:14:32] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Ping timeout: 260 seconds)
+[11:15:11] *** Quits: cmsmcq_ (~cmsmcq@65.19.36.46) (Remote host closed the connection)
+[11:15:24] *** Joins: cmsmcq_ (~cmsmcq@65.19.36.46)
+[11:28:19] *** Joins: lortabac (~lortabac@2a01:e0a:541:b8f0:c0ae:bf23:cf6b:67df)
+[11:38:40] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[12:22:16] *** Joins: skapata (~Skapata@2804:14c:87b0:9d2e:6532:e8e0:dc5d:410)
+[12:22:16] *** Quits: skapata (~Skapata@2804:14c:87b0:9d2e:6532:e8e0:dc5d:410) (Changing host)
+[12:22:16] *** Joins: skapata (~Skapata@user/skapata)
+[12:28:26] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Remote host closed the connection)
+[12:29:03] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[12:34:27] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Ping timeout: 260 seconds)
+[12:36:18] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[12:46:41] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Remote host closed the connection)
+[12:47:20] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[13:36:46] *** Quits: skapata (~Skapata@user/skapata) (Remote host closed the connection)
+[13:42:13] *** Quits: wacki (~wacki@87.123.132.171) (Quit: Leaving.)
+[13:49:01] *** Joins: wacki (~wacki@87.123.132.171)
+[14:00:33] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Remote host closed the connection)
+[14:02:26] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[14:07:43] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Ping timeout: 260 seconds)
+[14:20:07] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[14:50:19] *** Quits: PrologMUD (~PrologMUD@c-98-232-203-68.hsd1.wa.comcast.net) (Remote host closed the connection)
+[14:50:33] *** Joins: PrologMUD (~PrologMUD@c-98-232-203-68.hsd1.wa.comcast.net)
+[14:51:02] *** Joins: RLa (~RLa@85.253.190.236.cable.starman.ee)
+[15:00:04] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Remote host closed the connection)
+[15:01:38] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[15:10:04] *** Quits: econo (uid147250@user/econo) (Quit: Connection closed for inactivity)
+[15:37:10] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Remote host closed the connection)
+[15:37:46] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[15:42:56] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Ping timeout: 272 seconds)
+[15:44:23] *** Quits: RLa (~RLa@85.253.190.236.cable.starman.ee) (Quit: Client closed)
+[16:05:31] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[16:33:28] *** Joins: Lycurgus (~juan@98.4.112.204)
+[16:35:23] *** Quits: Everything (~Everythin@37.115.210.35) (Ping timeout: 260 seconds)
+[16:36:54] *** Joins: Everything (~Everythin@37.115.210.35)
+[16:59:15] *** Quits: Everything (~Everythin@37.115.210.35) (Quit: leaving)
+[17:07:50] *** Joins: pbmagi (~Thunderbi@host-92-14-106-162.as13285.net)
+[17:59:41] *** Quits: millido (~millido@84.210.150.128) (Quit: ZNC 1.8.2 - https://znc.in)
+[18:19:18] *** Joins: millido (~millido@84.210.150.128)
+[18:29:03] *** Quits: lortabac (~lortabac@2a01:e0a:541:b8f0:c0ae:bf23:cf6b:67df) (Quit: WeeChat 2.8)
+[18:34:02] *** Quits: cmsmcq_ (~cmsmcq@65.19.36.46) (Remote host closed the connection)
+[18:37:51] *** Joins: RLa (~RLa@85.253.190.236.cable.starman.ee)
+[18:39:07] *** Quits: Lycurgus (~juan@98.4.112.204) (Quit: Exeunt)
+[18:45:22] *** Joins: cmsmcq (~cmsmcq@65.19.36.46)
+[18:51:36] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Remote host closed the connection)
+[18:52:42] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[18:57:42] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Ping timeout: 260 seconds)
+[19:11:29] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[19:44:05] *** Joins: surobaki (~surobaki@43.84-2-80.static.virginmediabusiness.co.uk)
+[19:50:08] *** Joins: rogersm (~rogersm@90.166.180.250)
+[19:58:32] *** Quits: pie__ (~pie_bnc@user/pie/x-2818909) (Quit: pie__)
+[19:59:06] *** Joins: rgrinberg (~textual@177.248.146.16)
+[19:59:28] *** Joins: pie_ (~pie_bnc@user/pie/x-2818909)
+[20:04:57] *** Quits: pie_ (~pie_bnc@user/pie/x-2818909) (Quit: pie_)
+[20:07:07] *** Joins: pie_ (~pie_bnc@user/pie/x-2818909)
+[20:25:35] *** Quits: rgrinberg (~textual@177.248.146.16) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[20:26:33] *** Quits: wacki (~wacki@87.123.132.171) (Remote host closed the connection)
+[20:34:17] *** Joins: skapata (~Skapata@2804:14c:87b0:9d2e:9c17:a673:394c:f38d)
+[20:34:17] *** Quits: skapata (~Skapata@2804:14c:87b0:9d2e:9c17:a673:394c:f38d) (Changing host)
+[20:34:17] *** Joins: skapata (~Skapata@user/skapata)
+[20:47:14] *** Joins: rgrinberg (~textual@2806:102e:18:79a2:88b9:584f:14c:c37e)
+[20:50:38] <surobaki> I've been looking online for how to test whether or not queries with unknown variables fail (I have around 30 I'd like to turn into an automated test suite), but I'm only really finding information on how to perform unit tests with all known variables. Is there any way enter queries with unknowns and report failure / non-deterministic success en masse? Thanks!
+[20:51:22] <aindilis> example?
+[20:51:56] <surobaki> Ah sorry, I'm working on DCGs so the queries would be of the form phrase(s(Tree), [this,is,a,fixed,sentence]).
+[20:52:27] <aindilis> this is an automatic test generation system I wrote with some help from d miles, it uses goal expansion.  don't know if it's precisely relevant: https://github.com/aindilis/aop-swipl
+[20:52:59] <surobaki> Thank you! I'll definitely see if it could apply to what I'm trying to do
+[20:53:17] *** Quits: pie_ (~pie_bnc@user/pie/x-2818909) (Quit: pie_)
+[20:53:32] <aindilis> sure thing!
+[20:54:00] <aindilis> be careful, it may write .plt files automatically, i don't remember
+[20:57:17] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Remote host closed the connection)
+[20:57:52] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[21:09:37] *** Joins: pie_ (~pie_bnc@user/pie/x-2818909)
+[21:23:18] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Remote host closed the connection)
+[21:29:05] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[21:33:55] *** Quits: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net) (Ping timeout: 246 seconds)
+[21:44:22] *** Joins: econo (uid147250@user/econo)
+[22:11:51] *** Joins: yauhsien (~yauhsien@61-231-25-68.dynamic-ip.hinet.net)
+[22:44:33] *** Quits: rgrinberg (~textual@2806:102e:18:79a2:88b9:584f:14c:c37e) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[22:52:20] *** Quits: Sauvin (~sauvin@about/linux/staff/sauvin) (Ping timeout: 272 seconds)
+[23:02:07] *** Joins: wacki (~wacki@87.123.132.171)
+[23:17:21] *** Joins: Lycurgus (~juan@98.4.112.204)
+[23:19:57] *** Quits: wacki (~wacki@87.123.132.171) (Quit: Leaving.)
+[23:26:24] *** Quits: cmsmcq (~cmsmcq@65.19.36.46) (Remote host closed the connection)
+[23:29:38] *** Joins: cmsmcq (~cmsmcq@65.19.36.46)
+[23:34:30] *** Quits: Lycurgus (~juan@98.4.112.204) (Quit: Exeunt)
+[23:45:06] *** Quits: Haxxa (~Haxxa@202-130-210-100.ip4.superloop.com) (Quit: Haxxa flies away.)
+[23:48:33] *** Joins: Haxxa (~Haxxa@202-130-210-100.ip4.superloop.com)
+[23:49:17] *** Joins: lortabac (~lortabac@2a01:e0a:541:b8f0:23b1:9164:bf8a:2d11)

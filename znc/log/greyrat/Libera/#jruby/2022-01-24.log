@@ -1,0 +1,92 @@
+[03:34:31] <byteit101[m]> headius: when is "this" evening ? :-)
+[03:35:08] <byteit101[m]> I've pushed some tests to that branch
+[05:52:09] *** Quits: MattWelke[m] (~mattwelke@2001:470:69fc:105::1:34bb) (Quit: Client limit exceeded: 20000)
+[07:10:08] <headius> byteit101: sorry I looked at it finally and it looks good, it will be fun to wire into the jit too
+[07:10:08] <byteit101[m]> Oh good
+[07:10:08] <byteit101[m]> I saw that it touched jit-y code, and hoped that by using method handles it was all taken care of for me
+[07:10:09] <byteit101[m]> I'll work on it some more then
+[18:22:23] <headius> good morning y'all
+[18:22:32] <headius> enebo: did you manage to merge 9.3 into master?
+[18:22:44] <enebo[m]> headius: yeah I did it on Friday
+[18:22:51] <headius> ok
+[19:43:08] <headius> enebo: looking at https://github.com/jruby/jruby/issues/7009
+[19:43:47] <headius> the issue here is that the block with the break is still live; the break would be valid if it were called in the same thread, but since it is not it bubbles out of the thread and only gets reported as an internal thread termination exception
+[19:44:48] <headius> we can catch these flow control exceptions right before they terminate the thread, turning them into LJEs, but that doesn't match CRuby which propagates them as LJE immediately
+[19:45:01] <headius> I'm not sure where to look in CRuby to figure out how they determine this is an LJE right away
+[19:46:51] <headius> ah perhaps I found it
+[19:47:00] * headius sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/908dcda149414b27c7cc893e546d6230e086b5b5
+[19:47:35] <headius> so this is another case where they are actively scanning live frames on this thread to see if they match the target
+[19:51:42] <headius> so we need another way to detect that the block's parent scope does not live in this thread, or we just punt this and assume raising the right error in the end is good enough
+[19:54:03] <headius> ok so that search above find the the first non-local scope (method scope) starting from the block, and then a subsequent call to rb_vm_search_cf_from_ep scans the current stack looking for the matching scope, or else returns null
+[19:54:08] <headius> the null then indicates this should raise as LJE
+[19:54:34] <headius> so they basically walk up the scope tree from the block AND up the current thread's scope stack every time
+[19:56:16] <headius> some other maybe-not-feasible options...
+[19:56:53] <headius> * store a reference to the home ThreadContext in the block and if they don't match at `break` time raise error... might keep TC alive longer than it should be, though
+[19:56:56] *** Joins: beholder82 (~beholder@cpc119348-addl5-2-0-cust17.6-3.cable.virginm.net)
+[19:57:36] <headius> * same but store and compare some unique Thread ID... better but still makes the block data a bit larger
+[19:58:13] <headius> * same but on the scopes, also making them bigger... we would detect that the target scope belongs to a different thread
+[19:59:29] <headius> fair bit of plumbing required to add a thread reference to every scope
+[19:59:40] <headius> we construct them through generated code as well
+[20:12:18] *** Quits: beholder82 (~beholder@cpc119348-addl5-2-0-cust17.6-3.cable.virginm.net) (Quit: Ping timeout (120 seconds))
+[20:14:07] *** Joins: beholder60 (~beholder@cpc119348-addl5-2-0-cust17.6-3.cable.virginm.net)
+[20:14:43] <beholder60> hello people — is this an appropriate place to ask a "D'ya think my application will benefit from JRuby?" question or are you just about JRuby internals here?
+[20:14:56] *** Joins: MattWelke[m] (~mattwelke@2001:470:69fc:105::1:34bb)
+[20:15:09] *** Joins: andreimaxim[m] (~andreimax@2001:470:69fc:105::1:6099)
+[20:18:14] <enebo[m]> headius: when you mean scopes which ones in particular?
+[20:34:02] <basshelal[m]> headius: Been looking into the jffi building mechanism, I think most platform-arch combos should be ok with qemu, the only major issue would be AIX which you'd need a license from IBM to get a download from
+[20:41:04] <headius> enebo: target scope for a break
+[20:41:23] <enebo[m]> IR Scope?
+[20:41:25] *** Parts: beholder60 (~beholder@cpc119348-addl5-2-0-cust17.6-3.cable.virginm.net) ()
+[20:41:43] <headius> DynamicScope
+[20:41:59] <headius> the intent is to know whether the target scope lives on this thread without walking stack
+[20:42:06] <enebo[m]> ah ok good...just checking since the chore of removing runtime info from IRScope in 2019
+[20:42:55] <enebo[m]> seems like some features just cause us to add fields so YOLO
+[20:43:19] <headius> yeah wouldn't make sense to have thread info on there anyway
+[20:44:02] <headius> dynscope having a thread ID or reference would make them bigger but we'd always know whether we are using a scope from current thread or not
+[20:45:06] <enebo[m]> There is another problem that during execution MRI also tracks whether we are in topself
+[20:45:31] <enebo[m]> for extra warnings/errors but for some IR instructions I think we end up with the receiver of Object
+[20:46:17] <enebo[m]> This is unrelated to what you are talking about but it is something (I think very minor from compat standpoint) I noticed
+[20:47:32] *** Joins: subbu (~subbu@user/subbu)
+[20:47:42] <enebo[m]> The memory of which specific things need that I don't recall so I am not sure about remedy (but dynscope seems one possibel one)
+[20:49:28] <headius> that should be easy enough for us to detect too
+[20:49:30] <headius> https://github.com/jruby/jruby/pull/7029
+[20:49:55] <headius> there is the simplest fix for this thread/break issue but it is not possible to rescue the LJE within the thread
+[20:52:07] <headius> enebo: another option would be to only add thread to scopes that are break targets, since we can do that statically, at least saving us setting it up (but probably not saving size unless we're going to generate two sets of scopes, with and without thread)
+[20:53:19] <headius> FWIW this thread ID on scope might also help us address threaded $~ and $_ overwriting each other... we could at least detect use across threads and warn or take some action to fix it
+[20:53:43] <headius> oh though we keep that on frame, not dynscope 🤔
+[21:08:26] <headius> enebo: https://gist.github.com/headius/a56d014664fd01413a3ee06c3e478224#file-thread_ident-diff-L62
+[21:09:20] <headius> so there's a naive version of this just using a unique Object per ThreadContext to identify which thread a given dynscope was created for
+[21:34:11] <enebo[m]> early lunch
+[21:34:12] <enebo[m]> back now
+[21:46:41] <headius> enebo: welcome back
+[21:46:53] <headius> I'm going to make a sammy, let me know how that patch makes you feel
+[21:47:05] <enebo[m]> I feel funny inside
+[21:48:13] <enebo[m]> For original PR I think I am ok but I am not sure I can foresee what could break from it
+[21:48:34] <enebo[m]> 9.3 itself is still young enough where we will have a few weeks to tease out any issues if they exist
+[21:49:46] <enebo[m]> In other news shoveling every day sucks
+[21:59:03] <headius> buy a snowblower
+[21:59:08] <enebo[m]> I have one
+[21:59:19] <enebo[m]> but 1" of fluffy snow is not worth it
+[21:59:33] <headius> I probably wouldn't shovel that either
+[21:59:52] <enebo[m]> I should have did the saturday with a snow blower but I just did it by hand
+[22:00:10] <headius> is it done snowing today?
+[22:00:19] <enebo[m]> yeah I think it was only last night
+[22:00:54] <enebo[m]> we have some really icy areas we have to keep clean and since we have a lot of deliveries I try and stay on top of it
+[22:00:56] <headius> so regarding this break thing
+[22:01:11] <enebo[m]> but it is weird to snow so many consecutive days
+[22:01:48] <headius> the PR should be completely safe... it just avoids the break jump from falling off the thread and not being reported as a Ruby exception
+[22:02:10] <headius> the thread ended either way but now it will have a proper join/value to indicate it terminated prematurely
+[22:03:05] <enebo[m]> so long as stuff like getException only is called by these endy-leafy areas then it won't change the exception 
+[22:03:57] <enebo[m]> The other place is at that the edge itself
+[22:04:26] <enebo[m]> I am just randomly commenting and not implying any problem
+[22:05:44] <enebo[m]> I am hopefully finishing up find pattern (which I thought I had already implemented).  It is still experimental in 3.1 but I figured it may as well get in since it is a basic language feature
+[22:06:18] <headius> This is a weird enough case I don't feel inclined to fix it in 9.2 but it seems pretty safe for 9.3
+[22:06:41] <headius> The example case is very synthetic so I think I will ask the reporter if they ran into this in a real world situation
+[22:06:53] <enebo[m]> yeah the example sort of looked like it was a real issue but perhaps this is another carrot if anyone else runs into it
+[22:07:14] <headius> I did not test the behavior of other jumps
+[22:07:35] <enebo[m]> break and next see to follow each other
+[22:08:02] <headius> This is the sort of issue that I fix reluctantly because nobody should be expecting a break across threads to do anything specific since it's just an invalid operation
+[22:08:47] <enebo[m]> yeah
+[22:20:05] <headius> next should not be a problem because it only returns from the block
+[22:33:27] <headius> I merged in the simpler fix and resolved the issue with a question about how the reporter discovered this behavior
+[22:33:40] <headius> and filed this for the remaining behavioral gap, with no target and no particular urgency: https://github.com/jruby/jruby/issues/7030

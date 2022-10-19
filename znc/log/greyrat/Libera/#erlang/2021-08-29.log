@@ -1,0 +1,71 @@
+[00:22:22] *** Quits: kstatz12 (~karl.stat@205.178.87.116) (Ping timeout: 252 seconds)
+[01:01:18] *** Quits: mattil (~mattil@87-92-211-212.rev.dnainternet.fi) (Quit: Leaving)
+[01:20:47] *** Quits: drastik_ (~drastik@user/drastik) (Read error: Connection reset by peer)
+[01:21:26] *** Joins: drastik_ (~drastik@user/drastik)
+[02:18:40] *** Quits: t3hyoshi (~snicf@2600:8804:1b96:4900:1472:5a94:c594:83ca) (Quit: Konversation terminated!)
+[02:36:03] <Ankhers> I'm going crazy trying to figure out where an extra byte is coming from. I'm writing a parser/encoder for a binary protocol. I'm testing my server with two different clients. One of them seems to work as expected, but the other seems to produce an extra byte in a particular message. Normally I would think this an issue with the client, but I'm seeing the expected values in wireshark. No extra byte. I'm using ranch and when I use
+[02:36:03] <Ankhers> the extra byte is there. So it doesn't seem like I am adding it anywhere in my application code. Does anyone have any idea where I could look to try and figure out where this byte is coming from?
+[02:38:48] <Ankhers> I doubt it will be useful, but I am expecting the value <<64, 111, 128, 0, 0, 0, 0, 0>>, but I am getting <<64, 111, 128, 0, 0, 0, 0, 195, 0>> (252.0 is the value I'm expecting to pull from the binary).
+[02:40:28] <Ankhers> This random byte in the middle of the sequence changes the value of the float I'm expecting, and messes up everything coming after it. And since it is an extra byte, the last byte is not seen by my program.
+[02:43:20] <darkling> How large is the complete messsage, and how far through it is the bad element?
+[02:45:49] <darkling> And, just to check, it's definitely being sent on the wire correctly from both clients?
+[02:49:40] *** Quits: vidbina (~vid@dynamic-089-012-013-012.89.12.pool.telefonica.de) (Ping timeout: 240 seconds)
+[02:50:19] <Ankhers> The length of the body of this message is 156 bytes (I'm actually getting 157 bytes) and the random byte is in position 129.
+[02:50:41] <Ankhers> I'm thinking yes? This "problem" client is considered the defacto client to test servers.
+[02:52:03] <darkling> I'd double check the assumption with wireshark -- dump both clients and see what the bytes on the wire look like in each case.
+[02:54:14] <Ankhers> That's what I have been doing. The messages between the two clients are slightly different, but wireshark shows what I am expecting for both clients. But this second client seems to generate a random byte that wireshark can't see. It is also consistent. Every run from this second client generates this same unexpected byte.
+[02:54:48] <darkling> If it's not shown in wireshark, it's unlikely to have come from the client.
+[02:55:09] <darkling> Wireshark doesn't tend to miss things. :)
+[02:55:38] <Ankhers> Agreed. But this is the first time I have had an issue with erlang/ranch giving me unexpected values as well.
+[02:58:03] <darkling> And if you print the packet immediately it comes out of ranch, does it have the extra byte?
+[02:58:15] <Ankhers> Yes.
+[02:59:19] <darkling> Definitely sounds like a bug in there somewhere.
+[03:03:00] <darkling> I wonder if the difference between the clients is the way they split up the stream when sending? Does the bad client send it as multiple packets, for example?
+[03:06:04] <Ankhers> I think the "bad" client has a smaller chunk size. So it would be sending more, smaller messages.
+[03:07:35] <darkling> I'm thinking about the individual TCP packets. (I'm assuming this is TCP, not UDP or SCTP)
+[03:11:41] <Ankhers> Yes, TCP.
+[03:12:19] <Ankhers> And that I'm not really knowledgeable enough to tell.
+[03:13:33] <darkling> Wireshark initially gives you individual packet dumps in the capture window, from which you can inspect the stream.
+[03:14:40] <darkling> You should be able to get it to show just the related packets for your stream.
+[03:16:16] <darkling> Then you can look at each packet individually -- they'll have the data in it. See if the problem byte happens across a packet boundary.
+[03:18:56] <Ankhers> Oh okay. I think I understand. I'll check that in a few minutes.
+[03:20:17] <darkling> I may be barking up the wrong tree entirely, of course.
+[03:20:56] *** Quits: xulfer (uid452788@id-452788.charlton.irccloud.com) (Quit: Connection closed for inactivity)
+[03:54:12] *** Joins: arpunk (~arpunk@user/arpunk)
+[04:19:42] <Ankhers> With my limited knowledge, it LOOKS like it is happening at a packet boundary. I was originally testing on my local machine, but I decided to test from my windows machine to my local machine and it still has the same problem (different position though). Still the same value being randomly placed in the stream.
+[04:20:51] <Ankhers> I guess my next step is to take ranch out of the equation and just use gen_tcp to see if I still have the same issue.
+[04:22:17] <Ankhers> Just in case it helps tracking this down, the value in the stream is 195 (C3 in hex).
+[04:31:04] *** Quits: Corbit (~Corbit@2001:a61:2b61:c101:262b:bc2:bbe7:cb9d) (Quit: WeeChat 3.1)
+[04:47:46] <Ankhers> The good news is that this is happening with directly using gen_tcp as well. The bad news is I don't know how to keep looking. If anyone has any tips, it would be appreciated.
+[05:06:38] *** Joins: BadRequest (uid3514@user/badrequest)
+[05:13:18] *** LXGHTNXNG is now known as lxghtnxng
+[06:15:14] *** lxghtnxng is now known as AmyMalik
+[06:25:07] *** Quits: drastik_ (~drastik@user/drastik) (Ping timeout: 240 seconds)
+[06:40:35] *** Joins: t3hyoshi (~snicf@2600:8804:1b96:4900:759f:c8d1:b667:e4fb)
+[07:58:22] *** Joins: Guest55 (~Guest55@103.5.134.18)
+[09:11:07] *** Quits: james_lavin (~jameslavi@ool-457981b2.dyn.optonline.net) (Ping timeout: 240 seconds)
+[09:12:17] *** Parts: Guest55 (~Guest55@103.5.134.18) ()
+[09:43:06] *** Joins: voltone (~voltone@2a02:14c:8a60:2a:b440:869f:9d9f:3744)
+[10:05:34] *** Quits: BadRequest (uid3514@user/badrequest) (Quit: Connection closed for inactivity)
+[10:27:05] *** Joins: james_lavin (~jameslavi@ool-457981b2.dyn.optonline.net)
+[10:31:46] *** Quits: james_lavin (~jameslavi@ool-457981b2.dyn.optonline.net) (Ping timeout: 252 seconds)
+[10:58:17] *** Joins: phaleth (~phaleth@user/phaleth)
+[12:22:37] *** Joins: Corbit (~Corbit@2001:a61:2b61:c101:262b:bc2:bbe7:cb9d)
+[12:35:49] *** Joins: hendursa1 (~weechat@user/hendursaga)
+[12:39:30] *** Quits: hendursaga (~weechat@user/hendursaga) (Ping timeout: 276 seconds)
+[13:37:48] *** duponin0 is now known as duponin
+[14:28:16] *** Joins: james_lavin (~jameslavi@ool-457981b2.dyn.optonline.net)
+[14:32:40] *** Quits: james_lavin (~jameslavi@ool-457981b2.dyn.optonline.net) (Ping timeout: 240 seconds)
+[16:09:44] *** Joins: vidbina (~vid@x4dbfd69a.dyn.telefonica.de)
+[16:59:40] *** Joins: james_lavin (~jameslavi@ool-457981b2.dyn.optonline.net)
+[17:18:13] *** Quits: james_lavin (~jameslavi@ool-457981b2.dyn.optonline.net) (Ping timeout: 252 seconds)
+[18:31:15] *** Quits: voltone (~voltone@2a02:14c:8a60:2a:b440:869f:9d9f:3744) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[18:46:00] *** Quits: Corbit (~Corbit@2001:a61:2b61:c101:262b:bc2:bbe7:cb9d) (Ping timeout: 250 seconds)
+[18:56:48] *** Joins: blaze (~blaze@user/blaze)
+[20:13:40] *** Quits: vidbina (~vid@x4dbfd69a.dyn.telefonica.de) (Ping timeout: 240 seconds)
+[21:43:54] *** Quits: yanmaani (~yanmaani@gateway/tor-sasl/yanmaani) (Remote host closed the connection)
+[21:46:37] *** Joins: yanmaani (~yanmaani@gateway/tor-sasl/yanmaani)
+[22:22:05] *** Quits: t3hyoshi (~snicf@2600:8804:1b96:4900:759f:c8d1:b667:e4fb) (Quit: Konversation terminated!)
+[22:53:03] *** Quits: blaze (~blaze@user/blaze) (Quit: WeeChat 3.0.1)
+[23:17:42] *** Quits: phaleth (~phaleth@user/phaleth) (Quit: phaleth)
+[23:23:08] *** Joins: Corbit (~Corbit@2001:a61:2b61:c101:262b:bc2:bbe7:cb9d)

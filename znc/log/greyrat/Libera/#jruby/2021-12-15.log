@@ -1,0 +1,129 @@
+[01:15:39] <enebo[m]> headius: You do not have permission to push to this gem. Ask an owner to add you with: gem owner rake-ant --add tom.enebo@gmail.com
+[01:24:33] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[01:43:00] <headius> enebo:  picking up kid from school, I'll get you it in there in a sec
+[02:12:47] *** Joins: subbu (~subbu@user/subbu)
+[04:39:50] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[16:41:56] <headius> enebo: added
+[17:40:55] <enebo[m]> headius: thanks.  I am just knocking off individual issues to make all our other test pass
+[17:41:24] <enebo[m]> yesterday I got the overall set to look much more green
+[17:41:42] <headius> nice
+[17:51:53] <enebo[m]>   1) Java::JavaNet::URL can used with 'open-uri' and passed to #open and yield an IO
+[17:53:20] <enebo[m]> That is the last failure of spec:ji
+[17:53:48] <enebo[m]> After this the only red is sequel/concurrent-ruby/spec-ruby/test:mri
+[17:54:09] <headius> I can look into that before I get back to kwargs
+[17:54:25] <enebo[m]> Look at sequel
+[17:55:01] <headius> I want to see that JI error
+[17:55:32] <enebo[m]>        no implicit conversion of Java::JavaNet::URL into String
+[17:55:38] <headius> heh
+[17:55:50] <headius> odd thing to break
+[17:56:10] <enebo[m]> yeah and the only thing to break
+[17:57:52] <headius> something changed in open-uri I would guess
+[17:57:57] <enebo[m]> a) it somehow had to_path and lost it b) convertToString stopped working
+[17:58:08] <headius> or it is not patching Kernel#open right
+[17:58:34] <enebo[m]> oh does it patch kernel#open.  Ok that makes sense since it is dying in kernel#open
+[17:58:40] <enebo[m]> it is likely not patching it at all
+[17:59:03] <headius> well I'm checking that now
+[17:59:09] <headius> they may have stopped patching it
+[17:59:27] <enebo[m]>     elsif name.respond_to?(:to_str) &&
+[17:59:27] <enebo[m]>           %r{\A[A-Za-z][A-Za-z0-9+\-\.]*://} =~ name &&
+[17:59:27] <enebo[m]>           (uri = URI.parse(name)).respond_to?(:open)
+[17:59:27] <enebo[m]>       uri.open(*rest, &block)
+[17:59:33] <enebo[m]> There is logic here
+[18:00:04] <headius> commit 53862fa35887a34a8060aebf2241874240c2986a (tag: v0.1.0)... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/00889fefec5da298529be0e433b2a6713ec8fb9f)
+[18:00:18] <headius> so they did remove the override in 3ish
+[18:00:33] <headius> deprecated in 2.7
+[18:00:38] <enebo[m]> heh
+[18:00:40] <headius> so this just needs to switch to calling URI.open
+[18:02:06] <enebo[m]> yeah.  I will change it
+[18:02:11] <headius> ok
+[18:02:34] <headius> there's a 0.2.0 open-uri, I will check if they have shifted 3.0 to that yet
+[18:03:33] <headius> and the answer is no
+[18:03:40] <headius> it was just released in oct
+[18:04:41] <enebo[m]> https://github.com/jruby/jruby/runs/4526093910?check_suite_focus=true
+[18:05:11] <enebo[m]> The literal/maybekwarg change I think caused these extra params.  I think this is all that is broken on concurrent-ruby
+[18:06:23] <headius> yeah that could be
+[18:06:35] <headius> what is on master is kinda half switched to that new flag
+[18:07:45] <headius> I have glanced at sequel before and at least a few of these are due to kwargs breakage
+[18:07:59] <enebo[m]> ruby-concurrent and sequel might both be fallout from the start of this.  It is less clear on sequel since it appears to be using ruby2_keywords directly
+[18:09:12] <enebo[m]> I am going to switch over to pruning down errors on one of the two large suites today
+[18:09:26] <enebo[m]> I should work on prepend but I am not feeling that quite yet :)
+[18:14:35] <headius> ok
+[18:32:17] <headius> I will look into why test:mri:core is hanging
+[18:32:23] <headius> looks like stdlib hanging too
+[18:32:48] <headius> so much of this:
+[18:32:49] <headius> test/mri/ruby/test_literal.rb:581: warning: ... at EOL, should be parenthesized?
+[18:45:11] <enebo[m]> hanging?
+[18:45:23] <headius> they are hanging on CI
+[18:45:43] <enebo[m]> I am seeing results at the bottom
+[18:45:50] <enebo[m]> am I looking at the wrong runs?
+[18:45:58] <headius> https://github.com/jruby/jruby/runs/4535226541?check_suite_focus=true
+[18:46:23] <enebo[m]> I cancelled the run
+[18:46:27] <headius> oh
+[18:46:28] <enebo[m]> Look at last one run
+[18:46:47] <headius> yeah I didn't want to look there because it was still running several
+[18:46:52] <enebo[m]> Our queue is small enough where if I  push something else I am just killing the last running one
+[18:47:05] <headius> ok they are completing
+[18:47:15] <headius> you shouldn't need to kill some of these but I'm not sure the rule... it will not run stale jobs that have not started
+[18:47:31] <headius> I'm not sure what granularity that is on though
+[18:47:56] <enebo[m]> I although thought both these were about 200-250 F/E for each and they are over 400 so maybe the literal changes?
+[18:48:30] <headius> could be
+[18:48:41] <enebo[m]> TypeError: wrong argument type Integer (expected Symbol)
+[18:48:41] <headius> I see a lot of Integer coercion errors in the test framework
+[18:48:42] <headius> looking into that
+[18:48:44] <enebo[m]> This is weird message
+[18:48:54] <headius> yeah they are all in core_assertions
+[18:48:55] <enebo[m]> I see those but through multiple seemingly unrelated methods
+[18:49:59] <headius> this looks like another kwargs problem
+[18:50:35] <headius> it is trying to munge some **opts and getting integer keys that are unrelated
+[18:50:52] <enebo[m]> ah ok
+[18:51:13] <headius> hmm
+[18:51:21] <headius> or this has not been updated for ruby 3 kwargs
+[18:51:43] <headius> res_p, res_c = IO.pipe
+[18:51:43] <headius> opt[res_c.fileno] = res_c.fileno
+[18:51:45] <headius> and then it does **opt later
+[18:51:46] <headius> that
+[18:51:54] <headius> that would seem wrong for 3.0 kwargs
+[18:52:15] <headius> I will gank the test/lib stuff from CRuby 3 branch again and see if this changes
+[18:52:28] <headius> our copy scripts don't copy that so it is a bit manual
+[18:53:29] <headius> hmm it seems to match
+[18:53:58] <headius> oh test/tool
+[18:59:29] <headius> ok we are just wrong here I guess
+[18:59:30] * headius sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/9ca4d7b7cacba939d0a36e005177f2a12a9ff2e8
+[19:00:44] <enebo[m]> yeah makes sense that they ratcheted down actual kwargs to require proper symbol keys
+[19:00:54] <headius> you are not reading that right
+[19:00:55] <enebo[m]> does that also fail if key is a string?
+[19:00:57] <headius> they allow this through
+[19:01:04] <enebo[m]> oh they allow it
+[19:01:06] <headius> bottom is us
+[19:01:19] <enebo[m]> that does not make sense but nothing surprises me
+[19:01:35] <headius> I think the rule is bare **opts without other keywords will still allow weird keys through?
+[19:01:35] <headius> unsure
+[19:01:40] <enebo[m]> hahah
+[19:01:49] <enebo[m]> These things make me wonder if it is intentional or not
+[19:02:12] <headius> Ruby 2.6.5 also errors so this changed in 2.7
+[19:05:05] <headius> I can remove our check for symbols but then it splits the opts into a separate hash and passes that as an argument
+[19:05:12] <headius> so that is not a sufficient change to fix this
+[19:07:32] <headius> it seems clear to me that we have too many failures due to broken kwargs to really iterate properly
+[19:07:51] <headius> I'm going to go back to my branch and see if I can start to bifurcate the two kwarg-processing paths
+[19:12:41] <headius> I've merged master to my kwargs branch and will push that to see how test runs look
+[19:12:55] <headius> it may be better but still needs ruby2_keywords logic restored along some path
+[19:13:21] <enebo[m]> and ruby2_keywords was not really too hooked up to begin with
+[19:13:40] <enebo[m]> it was mostly implemented enough for a hash to just know it was one or not
+[19:14:56] <headius> [] ~/projects/jruby $ rvm ruby-3.0 do ruby -e 'def foo(**opts); opts[1] = 2; bar(**opts); end; def bar(**opts); p opts; end; foo(a: 1)'... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/9ca4d7b7cacba939d0a36e005177f2a12a9ff2e8)
+[19:14:58] <headius> oops
+[19:15:01] <headius> https://github.com/jruby/jruby/pull/6969
+[19:16:18] <headius> heh ok
+[19:16:25] <headius> it can't bundle so it won't get far
+[19:18:24] <headius> I will try a local run since I'm already bundled here but this needs a lot more work
+[19:18:48] <headius> seems a bit too broken though
+[19:35:59] <headius> Yeah I'm going to have to back this change off even though it was a good experiment
+[19:36:16] <headius> Restart the work by taking current logic and setting it aside for Ruby two keywords
+[20:36:03] <headius> uff-da this code
+[21:11:19] <headius> I'm restarting by getting ruby2keywords and keyword arguments flags in the right places and propagating them
+[21:11:42] <headius> rather than having a separate concrete subtype for KeywordsHash it will be less cumbersome to just use a flag on RubyHash
+[21:12:15] <headius> also added a ruby2keywords flag to IRScope and trying to honor that in frobnicate and other places
+[21:18:26] <headius> hmm well conservative start doesn't break bundler so that's progress
+[21:21:49] <headius> enebo: https://github.com/headius/jruby/tree/new_kwargs2
+[21:22:12] <headius> this only splits frobnicate and processBlockArgs and doesn't add much logic in either but let me know if the flags and propagation seem right
+[21:58:56] <enebo[m]> headius: looks reasonable as a start. We keep old logic through that variable
+[21:59:34] <enebo[m]> we obviously need the state around to know what to do too

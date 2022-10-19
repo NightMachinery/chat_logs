@@ -1,0 +1,580 @@
+[00:08:33] *** Quits: rv1sr (~rv1sr@user/rv1sr) ()
+[00:14:46] *** Joins: jkwnki (~jkwnki@p4ff31c99.dip0.t-ipconnect.de)
+[00:18:09] *** Joins: Buster_ (~Buster@46.160.36.66)
+[00:27:17] *** Quits: leshaste (~lesshaste@82-69-126-43.dsl.in-addr.zen.co.uk) (Remote host closed the connection)
+[00:27:21] *** Joins: lessshaste (~lesshaste@82-69-126-43.dsl.in-addr.zen.co.uk)
+[00:27:42] *** Quits: Blacker47 (~Blacker47@user/blacker47) (Quit: Life is short. Get a V.90 modem fast!)
+[00:27:46] *** Quits: mentallyinspired (~mentallyi@h-85-24-146-18.A400.priv.bahnhof.se) (Remote host closed the connection)
+[00:27:57] *** Joins: MajorBiscuit (~MajorBisc@86-88-79-148.fixed.kpn.net)
+[00:28:02] *** Joins: mentallyinspired (~mentallyi@h-85-24-146-18.A400.priv.bahnhof.se)
+[00:31:43] *** Quits: MajorBiscuit (~MajorBisc@86-88-79-148.fixed.kpn.net) (Client Quit)
+[00:33:19] <thebombzen> Is there a way to get ffmpeg.c to cut at specific timestamps and only re-encode the GOPs at the beginning and end if necessary?
+[00:34:17] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Ping timeout: 246 seconds)
+[00:34:19] <thebombzen> like, I want to start at 5 seconds in, and end at 68 seconds in. and the first GOP ends at 7 seconds in, and the last GOP starts at 64s. could I, say, have ffmpeg.c re-encode from 5-7s, streamcopy from 7s to 64s, and then re-encode from 64s to 68s?
+[00:35:01] <thebombzen> and if I have to do this manually, how can I report these GOP boundaries? Assuming no other streams are limiting factors (e.g. no audio)
+[00:49:17] *** ChanServ changes topic to 'Welcome to the FFmpeg USER support channel | Development channel: #ffmpeg-devel | Bug reports: https://ffmpeg.org/bugreports.html | Wiki: https://trac.ffmpeg.org/ | FFmpeg 5.0.1 is released'
+[01:04:00] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 272 seconds)
+[01:09:05] *** Joins: Volgaar (~volgaar@eth-west-pareq2-46-193-0-64.wb.wifirst.net)
+[01:10:25] *** Quits: durandal_1707 (~computer@95.168.118.51) (Ping timeout: 248 seconds)
+[01:11:22] *** Joins: AbleBacon_ (~AbleBacon@user/AbleBacon)
+[01:11:40] *** Quits: galex-713 (~quassel@galex-713.eu) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[01:14:27] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Ping timeout: 256 seconds)
+[01:41:17] *** Quits: Volgaar (~volgaar@eth-west-pareq2-46-193-0-64.wb.wifirst.net) (Quit: WeeChat 3.5)
+[01:41:56] <kepstin> thebombzen: no existing way using ffmpeg. could probably build such a tool using ffmpeg libraries, i dunno if anyone already has?
+[01:41:58] <kepstin> thebombzen: main complication is that the newly encoded bits have to quite precisely match the settings used for encoding the existing bits, which can be really challenging to do, and sometimes requires encoding in a concatenation-friendly mode.
+[01:42:20] *** Quits: lavaball (felix@31.204.155.215) (Remote host closed the connection)
+[01:42:34] <thebombzen> In my specific instance I plan on re-encoding the whole bitstream later. I was just hoping I could skip a transcode to lossless if possible.
+[01:42:39] *** Joins: lavaball (felix@31.204.155.215)
+[01:42:46] *** Quits: lavaball (felix@31.204.155.215) (Remote host closed the connection)
+[01:42:55] <thebombzen> or skip a transcode to some high-bitrate intermediary
+[01:43:21] <JEEB> thebombzen: the problem with half-re-encoding is the whole thing of matching parameter sets
+[01:43:28] <JEEB> (for H.264 / HEVC etc)
+[01:43:48] <JEEB> so you'd have to have a mapping written down from parsed parameter sets to how you mimic that with a specific encoder
+[01:43:58] <JEEB> like H.264 <-> libx264 for example
+[01:44:34] <thebombzen> well in my case what I want to do is ideally encode, say, the first GOP to part1.mkv, streamcopy to part2.mkv, and then encode the last GOP to part3.mkv. using -qp:v 0 for part1 and part3
+[01:44:35] <JEEB> not impossible but it explains why a generic API client like ffmpeg.c doesn't do it
+[01:44:57] <thebombzen> then I can potentially use the concat filter to just decode them all and transcode
+[01:44:57] <JEEB> oh, so multiple parameter sets
+[01:45:12] <thebombzen> well the final result is going to be transcoded since this is a raw capture with a massive bitrate
+[01:45:20] <thebombzen> impractical for deployment
+[01:45:36] <thebombzen> I'm hoping to reduce intermediary transcodes-to-lossless
+[01:45:43] <thebombzen> or something similar
+[01:45:44] <BtbN> you can't concat lossless h264 with lossy. The extradata does not match.
+[01:45:55] <thebombzen> not even with the concat filter?
+[01:46:01] <BtbN> oh, with the filter sure
+[01:46:06] <JEEB> well with multiple parameter sets you can, but it's *messy*
+[01:46:24] <JEEB> like, seeking goes right out of the window if the right parameter sets aren't given to the right stuff
+[01:46:26] <thebombzen> my goal for the final render would be to decode all of the parts, concat filter them, and then transcode the rawvideo
+[01:46:28] <JEEB> or am I misunderstanding something
+[01:47:09] <kepstin> i'm kind of unclear what's going on, why aren't you just doing this transcode with cutting in one step?
+[01:47:12] <BtbN> But I don't see the advantage here over any other lossless intermediade codec
+[01:47:23] <kepstin> no need for an intermediate at all
+[01:47:27] <BtbN> Or just doing it all in one step, yeah
+[01:47:57] <JEEB> for A->B it is possible to have [parameter sets]->[video packets]->[parameter sets]->[video packets]->[parameter sets]->[video packets] , but that's fragile as all hell with seeking
+[01:48:32] <thebombzen> basically I have a massive bitrate screen capture recorded in realtime. like 100 Mbps kind of massive. I'd like to extract specific subparts from the capture, which probably won't lie on GOP boundaries, concatenate the sub-parts, and then render it. Something which I'm aware would be far easier to do with an NLE.
+[01:48:34] <BtbN> I don't see where you see seeking issue, when the final step is a full re-encode and mux
+[01:49:10] <thebombzen> My current process involves rendering each invidual subparts with identical x264 parameters and then concatenating them without transcoding
+[01:49:12] <kepstin> thebombzen: assuming your raw input file is seekable, you can just use multiple inputs with -ss and -t, and concat filter. no intermediates needed.
+[01:49:18] <BtbN> thebombzen, just add that massive file as input multiple times, set the desired cuts, and then concat filter it?
+[01:49:31] <JEEB> or utilize some frame server?
+[01:49:40] <JEEB> if the idea is to just encode [x,y] + [z,a]
+[01:49:41] <JEEB> etc
+[01:49:53] <thebombzen> well the input file isn't seekable (.ts) but I could very easily streamcopy it to a matroska or mp4 or something seekable
+[01:50:03] <thebombzen> I suppose that could work, that's... a really obvious solution lmao.
+[01:50:18] <thebombzen> Now that I think about it.
+[01:51:10] <thebombzen> thanks
+[01:53:04] <thebombzen> can you use -t as an input option to avoid needing trim filters?
+[01:59:50] *** Quits: dgcampea (~dgc@user/dgcampea) (Remote host closed the connection)
+[02:01:08] *** Quits: jkwnki (~jkwnki@p4ff31c99.dip0.t-ipconnect.de) (Remote host closed the connection)
+[02:02:54] *** Quits: fkaa (~fkaa@user/fkaa) (Remote host closed the connection)
+[02:10:49] *** Quits: Flabb (~Flabb@109-252-10-119.nat.spd-mgts.ru) (Read error: Connection reset by peer)
+[02:12:50] *** Quits: palasso (~palasso@user/palasso) (Remote host closed the connection)
+[02:25:42] <thebombzen> apparently yes
+[02:30:46] *** Quits: MrZeus_ (~MrZeus@185.206.227.135) (Ping timeout: 272 seconds)
+[02:43:29] *** Joins: jkwnki (~jkwnki@p4ff31c99.dip0.t-ipconnect.de)
+[02:45:31] *** AbleBacon_ is now known as AbleBacon
+[02:51:01] *** Quits: jkwnki (~jkwnki@p4ff31c99.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[02:52:21] *** Quits: zumba_addict (~zumba_add@c-71-194-58-34.hsd1.il.comcast.net) (Quit: Client closed)
+[02:53:30] *** Quits: Mister_Magister (~Mister_Ma@user/mister-magister/x-2636733) (Ping timeout: 260 seconds)
+[02:55:20] *** Quits: yhnujmikV (~yhnujmikV@45.83.220.203) (Ping timeout: 246 seconds)
+[02:57:28] *** Joins: yhnujmikV (~yhnujmikV@193.138.218.215)
+[02:59:51] <bencc1> is it possible to change a 30 fps video to 60 fps video by duplicating frames without lossing quality?
+[03:01:37] <BtbN> no
+[03:01:50] <DeHackEd> what would that even accomplish?
+[03:01:56] <BtbN> It's what every player playing it will do anyway
+[03:02:01] <BtbN> so not much point to it
+[03:02:11] *** Quits: Atsuko (~x@91.243.85.4) (Remote host closed the connection)
+[03:03:02] <another|> BtbN: of course it's possible. encode to lossless
+[03:03:18] <BtbN> well, if you got the space
+[03:04:21] <bencc1> I'm editing several videos in blender
+[03:04:32] <bencc1> and read that it works best with all videos at the same frame rate
+[03:05:06] <BtbN> You can make lossless intermediates then, if blender is bad at handling framerates
+[03:05:10] <bencc1> so I should I use -r 60 or fps=60?
+[03:05:29] <bencc1> which format to use for loseless intermediates?
+[03:06:21] *** Joins: galex-713 (~quassel@galex-713.eu)
+[03:06:33] <BtbN> something blender supports
+[03:06:46] <bencc1> it's supports mp4 and webm
+[03:06:56] <BtbN> that's not codecs.
+[03:07:29] *** Joins: Atsuko (~x@91.243.85.4)
+[03:07:42] <bencc1> h264, vp9...
+[03:07:53] <BtbN> Those ain't typical intermediate doecs
+[03:08:03] <BtbN> you'd typically use something like huffyuv, utvideo, ffv1, ..
+[03:08:20] <BtbN> *codecs
+[03:08:53] <bencc1> I see it has huffyuv
+[03:08:53] <bencc1> thanks
+[03:19:54] <bencc1> what about 60 fps to 30 fps?
+[03:20:02] <bencc1> possible without re-encoding or same thing?
+[03:20:30] <BtbN> You cannot alter the video without re-encoding
+[03:20:49] <BtbN> and you obviously throw away half the frames if you do that. I'd call that quality loss
+[03:21:34] <bencc1> with huffyuv 1 minute of video takes 2.5GB
+[03:21:58] <DeHackEd> there's a hack where some containers support a null frame which is treated as a "duplicate previous frame" without having the decoder process them... but I still see no real benefit to doing this in the first place if you just want to go 30->60 globally
+[03:22:29] <BtbN> like, literally everything playing a 30 fps video as 60 fps will just double each frame
+[03:22:46] <BtbN> Unless you use one of those fancy motion estimators that tries to calculate an intermediate
+[03:23:00] *** Joins: MrZeus_ (~MrZeus@194.37.96.151)
+[03:23:01] <bencc1> I only want to be compatible with blender in an easy way
+[03:23:12] <BtbN> Why would blender not be compatible with 30 fps?
+[03:23:42] <bencc1> blender doesn't like when you have one video at 30fps and another at 60fps
+[03:24:03] <BtbN> Why would it care about that?
+[03:24:16] <BtbN> It either has to double the one, or throw away every other frame of the other
+[03:24:41] <bencc1> I don't know
+[03:25:03] <bencc1> just tried with first video at 60fps and second at 30fps and it played the second part at double speed
+[03:25:24] <BtbN> It's a very poorly written piece of software then if that's what it does oO
+[03:26:29] *** Quits: realies (~realies@user/realies) (Quit: Ping timeout (120 seconds))
+[03:26:49] *** Joins: realies (~realies@user/realies)
+[03:28:10] <bencc1> :(
+[03:29:34] <bencc1> I'll try with: ffmpeg -i in.mkv -c:v huffyuv -filter:v fps=60 -an out.mkv
+[03:29:51] <bencc1> any recommended open source video editor on ubuntu?
+[03:30:00] <bencc1> blender seems nice beside this limitation
+[03:32:07] <BtbN> That'll pointlessly transcode the audio and reduce its quality
+[03:32:10] <BtbN> add -c:a copy
+[03:32:34] <BtbN> There really isn't any good open source full on video editor
+[03:32:37] *** Quits: itsalexjones (~itsalexjo@82.4.99.241) (Read error: Connection reset by peer)
+[03:32:55] <BtbN> I'm not even aware of any good video editor for not Windows or OSX to begin with
+[03:33:14] <BtbN> Like, there's stuff like avidemux, but that's highly limited in what it can do
+[03:33:15] <vulpine> kdenlive?
+[03:33:18] <bencc1> what's good on Windows?
+[03:33:26] <bencc1> is devinci resolve decent?
+[03:33:28] <BtbN> Davinci would come to mind.
+[03:33:45] <bencc1> I only need basic stuff. I'll try it
+[03:33:53] <bencc1> I have old hardware so might not work
+[03:34:22] <BtbN> Video editing/processing and underpowered hardware does not usually mix well
+[03:35:17] <bencc1> yes
+[03:47:27] *** Quits: galex-713 (~quassel@galex-713.eu) (Ping timeout: 256 seconds)
+[03:49:19] *** Joins: galex-713 (~quassel@galex-713.eu)
+[03:55:49] *** Quits: iive (~iive@87.119.101.204.client.entry.bg) (Quit: They came for me...)
+[04:10:50] *** Quits: Ionic (~ionic@home.ionic.de) (Ping timeout: 252 seconds)
+[04:11:23] *** Joins: Ionic (~ionic@home.ionic.de)
+[04:13:19] *** Quits: emagex (~user@user/emagex) (Quit: ERC (IRC client for Emacs 27.1))
+[04:19:42] *** Quits: MrZeus_ (~MrZeus@194.37.96.151) (Ping timeout: 272 seconds)
+[04:28:42] *** Quits: thebombzen (~thebombze@c-68-41-54-207.hsd1.mi.comcast.net) (Quit: Quit)
+[04:37:31] *** Joins: KDDLB9 (kevin@user/kddlb)
+[04:37:41] *** Joins: Retr0id8 (~Retr0id@user/retr0id)
+[04:37:42] *** Joins: irwiss4 (~irwiss@user/irwiss)
+[04:37:47] *** Joins: kuba-orlik3 (~kuba-orli@nyuno.kuba-orlik.name)
+[04:37:47] *** Joins: mven1 (~mven@ip68-104-39-54.lv.lv.cox.net)
+[04:37:47] *** Quits: KDDLB (kevin@user/kddlb) (Killed (NickServ (GHOST command used by KDDLB9)))
+[04:37:48] *** KDDLB9 is now known as KDDLB
+[04:38:09] *** Quits: MatthewAllan93 (~MatthewAl@user/matthewallan93) (Quit: ZNC 1.8.2+deb2+b1 - https://znc.in)
+[04:38:10] *** Quits: hjckr (~nikolay@86-87-34-132.fixed.kpn.net) (Quit: ZNC 1.8.2 - https://znc.in)
+[04:38:18] *** Quits: babyface (~babyface@user/babyface) (Remote host closed the connection)
+[04:38:19] *** Joins: MatthewAllan93 (~MatthewAl@2001:4b99:1:2:216:3eff:feed:5e45)
+[04:38:22] *** Quits: yuri6037 (~quassel@yuristudio.net) (Remote host closed the connection)
+[04:38:27] *** Joins: hjckr (~nikolay@86-87-34-132.fixed.kpn.net)
+[04:38:29] *** Quits: novaphoenix_ (~quassel@163-172-98-86.rev.poneytelecom.eu) (Quit: No Ping reply in 180 seconds.)
+[04:38:31] *** Joins: babyface (~babyface@user/babyface)
+[04:38:32] *** Quits: blinky42 (~quassel@user/blinky42) (Read error: Connection reset by peer)
+[04:38:42] *** Quits: mven (~mven@ip68-104-39-54.lv.lv.cox.net) (Read error: Connection reset by peer)
+[04:38:43] *** mven1 is now known as mven
+[04:38:54] *** Quits: Retr0id (~Retr0id@user/retr0id) (Read error: Connection reset by peer)
+[04:38:54] *** Retr0id8 is now known as Retr0id
+[04:39:05] *** Quits: irwiss (~irwiss@user/irwiss) (Read error: Connection reset by peer)
+[04:39:05] *** irwiss4 is now known as irwiss
+[04:39:07] *** Quits: wolfshappen (~waff@irc.furworks.de) (Read error: Connection reset by peer)
+[04:39:09] *** Quits: kuba-orlik (~kuba-orli@nyuno.kuba-orlik.name) (Write error: Connection reset by peer)
+[04:39:09] *** kuba-orlik3 is now known as kuba-orlik
+[04:39:15] *** Quits: meklu (~meklu@holmes.meklu.org) (Ping timeout: 256 seconds)
+[04:39:31] *** Joins: yuri6037 (~quassel@yuristudio.net)
+[04:39:34] *** Joins: meklu (~meklu@holmes.meklu.org)
+[04:39:41] *** Joins: blinky42 (~quassel@jabber.blinkylight.net)
+[04:39:41] *** Quits: blinky42 (~quassel@jabber.blinkylight.net) (Changing host)
+[04:39:41] *** Joins: blinky42 (~quassel@user/blinky42)
+[04:39:45] *** Joins: novaphoenix (~quassel@163-172-98-86.rev.poneytelecom.eu)
+[04:40:03] *** Joins: wolfshappen (~waff@irc.furworks.de)
+[04:42:39] *** Quits: Flat (~flat@35.137.99.241) (Ping timeout: 256 seconds)
+[04:42:39] *** Quits: woky_ (~woky@li1651-31.members.linode.com) (Ping timeout: 256 seconds)
+[04:42:58] *** Joins: woky (~woky@li1651-31.members.linode.com)
+[04:43:02] *** Joins: Flat (~flat@35.137.99.241)
+[04:43:47] *** Quits: emanuele6 (~emanuele6@user/emanuele6) (Ping timeout: 256 seconds)
+[04:43:47] *** Quits: lullerhaus (SAI@aws.imelik.info) (Ping timeout: 256 seconds)
+[04:43:47] *** Quits: anticw (~anticw@157-131-153-146.fiber.dynamic.sonic.net) (Ping timeout: 256 seconds)
+[04:43:47] *** Quits: staircase (~staircase@sasha.sector-alpha.net) (Ping timeout: 256 seconds)
+[04:43:47] *** Quits: Ekho (~Ekho@user/ekho) (Ping timeout: 256 seconds)
+[04:43:59] *** Joins: staircase (~staircase@sasha.sector-alpha.net)
+[04:44:21] *** Quits: APic (apic@apic.name) (Ping timeout: 256 seconds)
+[04:44:21] *** Quits: Koniiiik_ (~koniiiik@astrohippus.koniiiik.org) (Ping timeout: 256 seconds)
+[04:44:21] *** Quits: Darxus (~darxus@panic.chaosreigns.com) (Ping timeout: 256 seconds)
+[04:44:21] *** Quits: fjmorazan (~quassel@user/fjmorazan) (Ping timeout: 256 seconds)
+[04:44:21] *** Quits: yaymukund (~yaymukund@185.21.216.136) (Ping timeout: 256 seconds)
+[04:44:21] *** Quits: tyep (~hatseflat@hatsuseno.rootaccess.nl) (Ping timeout: 256 seconds)
+[04:44:29] *** Joins: fjmorazan_ (~quassel@user/fjmorazan)
+[04:44:37] *** Joins: koniiiik (~koniiiik@astrohippus.koniiiik.org)
+[04:45:45] *** Joins: tyep (~hatseflat@hatsuseno.rootaccess.nl)
+[04:45:46] *** Joins: anticw (~anticw@157-131-153-146.fiber.dynamic.sonic.net)
+[04:45:47] *** Joins: Darxus (~darxus@panic.chaosreigns.com)
+[04:45:48] *** Joins: yaymukund (~yaymukund@185.21.216.136)
+[04:48:06] *** Joins: Ekho (~Ekho@user/ekho)
+[04:50:37] *** Joins: lullerhaus (SAI@aws.imelik.info)
+[04:53:03] *** Joins: Mister_Magister (~Mister_Ma@user/mister-magister/x-2636733)
+[04:53:17] *** Quits: Buster_ (~Buster@46.160.36.66) (Ping timeout: 246 seconds)
+[04:56:19] *** Joins: APic (~apic@apic.name)
+[05:01:30] *** Quits: vlm (~vlm@user/vlm) (Quit: "")
+[05:04:58] *** Quits: Forsaken87 (~quassel@2a02:908:1866:e360:4d2a:597c:d813:f407) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[05:14:57] *** Joins: vlm (~vlm@user/vlm)
+[05:34:38] *** Joins: hans (uid529825@id-529825.helmsley.irccloud.com)
+[05:36:27] *** Quits: minimal (~minimal@user/minimal) (Quit: Leaving)
+[05:46:59] *** Quits: bencc1 (~bencc1@2a00:a040:197:3af:1f:5d07:7dcb:25bc) (Ping timeout: 260 seconds)
+[06:01:34] *** Joins: clock (~clock@167.179.38.107)
+[06:02:21] *** Quits: clock (~clock@167.179.38.107) (Remote host closed the connection)
+[06:02:45] *** Joins: clock (~clock@167.179.38.107)
+[06:13:29] *** Joins: Kei_N_ (~Kei_N@user/kei-n/x-2886111)
+[06:16:28] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Ping timeout: 260 seconds)
+[06:29:46] *** Joins: Themis3000 (~Thunderbi@user/themis3000)
+[06:30:16] <Themis3000> Hey can anyone point me in a direction of how to do something real quick?
+[06:30:27] <\> depends on what that thing is
+[06:31:16] <Themis3000> I've got a whole lot of pixel art images that are low resolution that I'm converting into a video that I want to be 1080p. It works okay, but the output video is very blurry, the pixels don't have defined edges
+[06:31:36] <Themis3000> Is their a way to change the upscaler to not do that?
+[06:31:54] <Themis3000> It's a timelapse of pixel art
+[06:32:06] <\> hm... it might be applying some kind of filtering to it (bilinear, maybe?) when you should be using nearest-neighbor instead
+[06:32:15] <\> I don't know if there's an option to change that though, let me look
+[06:32:44] <Themis3000> Okay thank you so much! I'm not familiar with ffmpeg at all so I wasn't sure where to start to figure something like this out
+[06:33:04] *** Quits: Kei_N_ (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[06:33:04] <\> are you using a scale=WIDTH:HEIGHT sorta argument?
+[06:33:19] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[06:33:21] <Themis3000> yeah, specifically using -s 1920x1080
+[06:33:33] <\> alright after that -s, put "-sws_flags neighbor"
+[06:33:36] <BlueSwordM[m]> `ffmpeg -i input.mkv -c:v libx264 preset slow -crf XX -vf scale=w=XXX:h=XXX -sws_flags neighbor output.mkv`
+[06:33:37] <\> without the quotes, of course
+[06:33:58] <Themis3000> Alright I'll give that a shot
+[06:36:26] <Themis3000> Hmm that surprisingly didn't fix it, I thought that'd do it. There must be an issue somewhere else
+[06:36:32] <Themis3000> BlueSwordM[m]: I'll give that a shot too
+[06:38:57] <Themis3000> BlueSwordM[m]: I modified your command a little bit to fit my use case and it worked perfectly!
+[06:39:19] <Themis3000> Ty so much both of you for your time, you probably just saved me a few hours of learning ffmpeg
+[06:39:19] *** Joins: signalhunter2 (~boom@user/signalhunter)
+[06:39:23] *** Quits: ops (~ops@user/echelon) (Ping timeout: 256 seconds)
+[06:39:28] <Themis3000> have a good night
+[06:39:31] <\> you as well!
+[06:39:57] *** Quits: nikos (~nikos@nikos.dev) (Ping timeout: 256 seconds)
+[06:40:05] <furq> just scale=123:456:flags=neighbor works
+[06:40:10] *** Joins: smashgra_ (~smashgrab@bare.metal.computer)
+[06:40:14] *** Joins: rhys- (~rhys@mill.in.net)
+[06:40:29] <furq> you might want to double with neighbor and then use lanczos to go to your final dimension
+[06:40:49] <furq> -vf scale=iw*2:ih*2:flags=neighbor,scale=1920:1080:flags=lanczos
+[06:40:53] *** Joins: uartie_ (~uartie@134.134.139.70)
+[06:41:05] *** Quits: rhys (~rhys@mill.in.net) (Ping timeout: 256 seconds)
+[06:41:05] *** Quits: signalhunter (~boom@user/signalhunter) (Ping timeout: 256 seconds)
+[06:41:05] *** Quits: rcombs (rcombs@irc.rcombs.me) (Ping timeout: 256 seconds)
+[06:41:05] *** Quits: hyperfekt (liv@user/hyperfekt) (Ping timeout: 256 seconds)
+[06:41:05] *** Quits: smashgrab (~smashgrab@bare.metal.computer) (Ping timeout: 256 seconds)
+[06:41:05] *** Rhvs is now known as Rhys
+[06:41:05] *** signalhunter2 is now known as signalhunter
+[06:41:15] *** Parts: uartie_ (~uartie@134.134.139.70) ()
+[06:41:39] *** Quits: occivink (~occivink@ns3100784.ip-176-31-250.eu) (Ping timeout: 256 seconds)
+[06:42:07] *** Joins: rcombs (rcombs@irc.rcombs.me)
+[06:42:13] *** Quits: uartie (~uartie@134.134.139.70) (Ping timeout: 256 seconds)
+[06:42:19] *** Joins: nikos (~nikos@nikos.dev)
+[06:43:25] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[06:43:40] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[06:46:24] *** Joins: ops (~ops@user/echelon)
+[06:49:17] *** Joins: Kei_N_ (~Kei_N@user/kei-n/x-2886111)
+[06:50:18] *** Joins: hyperfekt (~liv@user/hyperfekt)
+[06:51:45] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Ping timeout: 248 seconds)
+[06:54:29] *** Joins: occivink (~occivink@2001:41d0:8:bbf::1)
+[06:56:23] *** Quits: Kei_N_ (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[06:56:38] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[07:03:02] *** Joins: troyt (troyt@2601:681:4101:5911:44dd:acff:fe85:9c8e)
+[07:06:54] *** Quits: jos1 (~jos3@host-091-097-184-243.ewe-ip-backbone.de) (Ping timeout: 272 seconds)
+[07:14:03] *** Joins: Kei_N_ (~Kei_N@user/kei-n/x-2886111)
+[07:16:51] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Ping timeout: 250 seconds)
+[07:19:28] *** Joins: jos1 (~jos3@dyndsl-091-248-050-116.ewe-ip-backbone.de)
+[07:20:25] *** Quits: Kei_N_ (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[07:20:40] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[07:26:13] *** Quits: Themis3000 (~Thunderbi@user/themis3000) (Quit: Themis3000)
+[07:34:14] *** Joins: clock_ (~clock@202.53.146.2)
+[07:37:21] *** Quits: clock (~clock@167.179.38.107) (Ping timeout: 268 seconds)
+[07:40:53] *** Quits: clock_ (~clock@202.53.146.2) (Remote host closed the connection)
+[07:43:31] *** Joins: Kei_N_ (~Kei_N@user/kei-n/x-2886111)
+[07:45:48] *** Quits: rpthms (~rpthms@user/rpthms) (Remote host closed the connection)
+[07:47:13] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Ping timeout: 248 seconds)
+[07:48:27] *** Joins: rpthms (~rpthms@user/rpthms)
+[07:48:41] *** Quits: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340) (Ping timeout: 245 seconds)
+[07:57:37] *** Joins: clock (~clock@167.179.38.107)
+[07:58:19] *** Quits: clock (~clock@167.179.38.107) (Remote host closed the connection)
+[07:58:48] *** Joins: clock (~clock@167.179.38.107)
+[08:03:54] *** Quits: anticw (~anticw@157-131-153-146.fiber.dynamic.sonic.net) (Remote host closed the connection)
+[08:05:42] *** Joins: anticw (~anticw@157-131-153-146.fiber.dynamic.sonic.net)
+[08:09:16] *** Joins: patricia (~patricia@82-64-100-19.subs.proxad.net)
+[08:12:14] *** Joins: clock_ (~clock@202.53.146.2)
+[08:14:58] *** Quits: clock (~clock@167.179.38.107) (Ping timeout: 268 seconds)
+[08:37:24] *** Quits: troyt (troyt@2601:681:4101:5911:44dd:acff:fe85:9c8e) (Ping timeout: 240 seconds)
+[08:38:23] *** Quits: Muzer (~muzer@tim32.org) (Ping timeout: 256 seconds)
+[08:38:57] *** Quits: xxzz_ (~xxzz@ec2-3-133-104-162.us-east-2.compute.amazonaws.com) (Ping timeout: 256 seconds)
+[08:39:31] *** Quits: sqz (~sqz@51.158.167.63) (Ping timeout: 256 seconds)
+[08:39:53] *** Joins: sqz (~sqz@51.158.167.63)
+[08:40:57] *** Joins: xxzz (~xxzz@ec2-3-133-104-162.us-east-2.compute.amazonaws.com)
+[08:48:11] *** Joins: troyt (troyt@2601:681:4101:5911:44dd:acff:fe85:9c8e)
+[08:52:03] *** Quits: patricia (~patricia@82-64-100-19.subs.proxad.net) (Quit: patricia)
+[08:55:40] *** Joins: Muzer (~muzer@tim32.org)
+[09:02:36] *** Quits: KombuchaKip (~kip@192.252.230.5) (Quit: Leaving.)
+[09:07:00] *** Quits: fling (~fling@user/fling) (Remote host closed the connection)
+[09:07:23] *** Joins: fling (~fling@user/fling)
+[09:11:46] *** Joins: KombuchaKip (~kip@192.252.230.5)
+[09:14:19] *** Joins: thebombzen (~thebombze@c-68-41-54-207.hsd1.mi.comcast.net)
+[09:28:11] *** Quits: l4yer (~l4yer@user/l4yer) (Ping timeout: 260 seconds)
+[09:41:50] *** Joins: l4yer (~l4yer@user/l4yer)
+[09:54:17] *** Quits: zmt00 (~zmt00@user/zmt00) (Quit: Leaving)
+[09:56:17] *** Joins: zmt00 (~zmt00@user/zmt00)
+[09:56:17] *** Quits: clock_ (~clock@202.53.146.2) (Read error: Connection reset by peer)
+[09:57:43] *** Joins: clock_ (~clock@167.179.38.107)
+[10:01:13] *** Joins: clock__ (~clock@202.53.146.2)
+[10:04:07] *** Quits: clock_ (~clock@167.179.38.107) (Ping timeout: 268 seconds)
+[10:11:15] *** Quits: fling (~fling@user/fling) (Ping timeout: 240 seconds)
+[10:13:14] *** Joins: fling (~fling@user/fling)
+[10:29:47] *** Quits: troyt (troyt@2601:681:4101:5911:44dd:acff:fe85:9c8e) (Ping timeout: 260 seconds)
+[10:42:37] *** Joins: troyt (troyt@2601:681:4101:5911:44dd:acff:fe85:9c8e)
+[10:45:09] *** Joins: bencc1 (~bencc1@2a00:a040:197:3af:fe72:6cbf:aab1:b11a)
+[10:49:45] *** Joins: Volgaar (~volgaar@eth-west-pareq2-46-193-0-64.wb.wifirst.net)
+[10:59:27] *** Joins: georgereynolds (~georgerey@203.229.204.205)
+[11:00:05] <georgereynolds> This is killimg me. Whenever I import "libavutil/imgutils.h" my program segfaults.
+[11:00:25] <georgereynolds> Could there be anything that would lead to this?
+[11:03:32] *** Quits: epony (epony@user/epony) (Quit: QUIT)
+[11:05:39] *** Joins: palasso (~palasso@user/palasso)
+[11:08:25] *** Quits: thebombzen (~thebombze@c-68-41-54-207.hsd1.mi.comcast.net) (Quit: Quit)
+[11:09:19] *** Joins: thebombzen (~thebombze@c-68-41-54-207.hsd1.mi.comcast.net)
+[11:13:46] *** Joins: luc4 (~luc4@151.46.64.69)
+[11:15:55] *** Quits: fling (~fling@user/fling) (Ping timeout: 240 seconds)
+[11:17:22] *** Joins: fling (~fling@user/fling)
+[11:21:07] *** Quits: therobin (~UserNick@dhcp-108-168-75-150.cable.user.start.ca) (Ping timeout: 260 seconds)
+[11:23:15] *** Joins: therobin (~UserNick@dhcp-108-168-75-150.cable.user.start.ca)
+[11:26:07] *** Joins: Forsaken87 (~quassel@2a02:908:1866:e360:4d2a:597c:d813:f407)
+[11:26:33] *** Quits: Forza (~Forza@user/forza) (Quit: http://quassel-irc.org - Chat comfortably. Anywhere.)
+[11:31:16] *** Joins: Forza (~Forza@user/forza)
+[11:37:08] *** Joins: durandal11707 (~computer@212.15.178.3)
+[11:45:51] *** Quits: durandal11707 (~computer@212.15.178.3) (Ping timeout: 260 seconds)
+[11:46:09] *** Joins: durandal_1707 (~computer@95.168.120.62)
+[11:57:25] *** Quits: codebam (~codebam@user/codebam) (Ping timeout: 240 seconds)
+[11:58:36] *** Joins: MajorBiscuit (~MajorBisc@c-001-028-054.client.tudelft.eduvpn.nl)
+[12:00:52] *** Quits: bencc1 (~bencc1@2a00:a040:197:3af:fe72:6cbf:aab1:b11a) (Quit: Leaving)
+[12:05:31] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[12:06:37] *** Quits: MajorBiscuit (~MajorBisc@c-001-028-054.client.tudelft.eduvpn.nl) (Ping timeout: 240 seconds)
+[12:07:39] *** Quits: clock__ (~clock@202.53.146.2) (Read error: Connection reset by peer)
+[12:09:12] *** Joins: clock__ (~clock@202.53.146.2)
+[12:09:19] *** Joins: lavaball (felix@31.204.155.215)
+[12:18:20] *** Joins: dvanloon3 (~dvanloon@user/dvanloon)
+[12:18:43] *** Quits: dvanloon (~dvanloon@user/dvanloon) (Ping timeout: 260 seconds)
+[12:18:43] *** dvanloon3 is now known as dvanloon
+[12:19:14] *** Quits: fling (~fling@user/fling) (Quit: ZNC 1.8.2+deb2+b1 - https://znc.in)
+[12:19:14] *** Joins: emanuele6 (~emanuele6@user/emanuele6)
+[12:19:30] *** Joins: fling (~fling@user/fling)
+[12:20:29] *** Joins: epony (epony@user/epony)
+[12:21:56] *** Joins: MajorBiscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e)
+[12:27:45] *** Quits: galex-713 (~quassel@galex-713.eu) (Ping timeout: 248 seconds)
+[12:27:55] *** Quits: thebombzen (~thebombze@c-68-41-54-207.hsd1.mi.comcast.net) (Quit: Quit)
+[12:28:36] *** Joins: galex-713 (~quassel@galex-713.eu)
+[12:30:54] *** Quits: luc4 (~luc4@151.46.64.69) (Read error: Connection reset by peer)
+[12:32:09] *** Joins: luc4 (~luc4@151.44.79.235)
+[12:36:35] *** Quits: bitblit_ (~bitblit@gateway/tor-sasl/bitblit) (Ping timeout: 240 seconds)
+[12:39:29] *** Rhys is now known as Guest6037
+[12:39:29] *** Quits: Guest6037 (Rhys@help.lux.melted.me) (Killed (strontium.libera.chat (Nickname regained by services)))
+[12:39:29] *** rhys- is now known as rhys
+[12:39:36] *** Joins: bitblit_ (~bitblit@gateway/tor-sasl/bitblit)
+[12:39:46] *** Joins: Rhvs (Rhys@help.lux.melted.me)
+[12:49:15] *** Quits: milkt (~debian@gateway/tor-sasl/milkt) (Ping timeout: 240 seconds)
+[12:52:24] *** Joins: milkt (~debian@gateway/tor-sasl/milkt)
+[12:58:14] *** Quits: cosimone (~user@93-47-228-79.ip115.fastwebnet.it) (Remote host closed the connection)
+[12:58:42] *** Joins: rv1sr (~rv1sr@user/rv1sr)
+[13:07:17] *** Joins: cosimone (~user@93-47-228-79.ip115.fastwebnet.it)
+[13:14:13] *** Joins: Blacker47 (~Blacker47@user/blacker47)
+[13:18:03] *** Quits: lavaball (felix@31.204.155.215) (Remote host closed the connection)
+[13:21:40] *** Quits: clock__ (~clock@202.53.146.2) (Remote host closed the connection)
+[13:23:26] *** Quits: fling (~fling@user/fling) (Quit: ZNC 1.8.2+deb2+b1 - https://znc.in)
+[13:23:45] *** Joins: fling (~fling@user/fling)
+[13:26:52] *** Joins: rsx (~dummy@ppp-188-174-132-120.dynamic.mnet-online.de)
+[13:29:18] *** Quits: Volgaar (~volgaar@eth-west-pareq2-46-193-0-64.wb.wifirst.net) (Ping timeout: 260 seconds)
+[13:43:45] *** Joins: x1845 (~x1845@d246.sub4.net78.udm.net)
+[13:50:27] *** Joins: Volgaar (~volgaar@nat-wifi-eduroam.reseau.univ-paris13.fr)
+[14:04:03] <x1845> hi, when i use obs to record games with vaapi  30 fps and 1080p convert to 720p i got smooth video. But when i use ffmepg and use h264_vaapi with 30fps and convert 1080p to 720p i got choppy video. But if i set 60 fps and record games with ffmpeg with other same settings i got smooth video. Why record with 30 fps is broken on ffmpeg?
+[14:09:34] <x1845> How i can set Keyframe Interval: 2 seconds in ffmpeg?
+[14:10:56] <x1845> ffmpeg -y -vaapi_device /dev/dri/renderD128 -f x11grab -video_size 1920x1080 -r 30 -i :0 -f alsa -i default -vf 'hwupload,scale_vaapi=1280:720:format=nv12' -c:v h264_vaapi -b:v 3M -c:a aac -f flv 30.flv
+[14:11:19] <x1845> ffmpeg -y -vaapi_device /dev/dri/renderD128 -f x11grab -video_size 1920x1080 -r 60 -i :0 -f alsa -i default -vf 'hwupload,scale_vaapi=1280:720:format=nv12' -c:v h264_vaapi -b:v 3M -c:a aac -f flv 60.flv
+[14:19:08] *** Quits: emanuele6 (~emanuele6@user/emanuele6) (Quit: emanuele6)
+[14:24:28] <x1845> 356 people in chat nad no answers?
+[14:25:35] *** Joins: thebombzen (~thebombze@c-68-41-54-207.hsd1.mi.comcast.net)
+[14:27:35] *** Quits: fling (~fling@user/fling) (Ping timeout: 240 seconds)
+[14:29:39] *** Joins: fling (~fling@user/fling)
+[14:30:47] *** Quits: dvanloon (~dvanloon@user/dvanloon) (Quit: 🖖)
+[14:32:37] *** Joins: dvanloon (~dvanloon@user/dvanloon)
+[14:40:58] *** Joins: emagex (~user@user/emagex)
+[14:42:52] <x1845> nice dead chat
+[14:42:56] *** Quits: x1845 (~x1845@d246.sub4.net78.udm.net) (Quit: Client closed)
+[14:46:47] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[14:51:59] *** Joins: lavaball (felix@31.204.155.215)
+[14:55:38] *** Quits: durandal_1707 (~computer@95.168.120.62) (Ping timeout: 246 seconds)
+[15:02:53] *** Quits: darkapex (~darkapex@user/darkapex) (Ping timeout: 250 seconds)
+[15:12:47] *** Quits: someuser (~user@197.54.114.173) (Ping timeout: 246 seconds)
+[15:18:52] *** Joins: someuser (~user@197.54.104.225)
+[15:24:34] *** Joins: durandal11707 (~computer@95.168.120.62)
+[15:29:23] *** Joins: clock (~clock@202.53.146.2)
+[15:33:12] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[15:33:27] *** Quits: Atsuko (~x@91.243.85.4) (Remote host closed the connection)
+[15:34:09] *** Quits: clock (~clock@202.53.146.2) (Read error: Connection reset by peer)
+[15:34:18] *** Joins: Atsuko (~x@91.243.85.4)
+[15:35:18] *** Joins: clock (~clock@167.179.38.107)
+[15:37:17] *** Quits: therobin (~UserNick@dhcp-108-168-75-150.cable.user.start.ca) (Ping timeout: 246 seconds)
+[15:41:32] *** Quits: cluelessperson (~cluelessp@user/cluelessperson) (Quit: ZNC - https://znc.in)
+[15:42:40] *** Joins: cluelessperson (~cluelessp@user/cluelessperson)
+[15:49:21] *** Quits: galex-713 (~quassel@galex-713.eu) (Ping timeout: 248 seconds)
+[15:59:27] *** Joins: galex-713 (~quassel@galex-713.eu)
+[15:59:42] *** Joins: anotheruser (~user@197.54.70.191)
+[16:00:48] *** Quits: someuser (~user@197.54.104.225) (Ping timeout: 272 seconds)
+[16:02:10] *** Joins: minimal (~minimal@user/minimal)
+[16:03:52] *** Quits: Kei_N_ (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[16:04:07] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[16:08:47] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Ping timeout: 246 seconds)
+[16:09:08] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[16:13:45] *** Quits: wolfshappen (~waff@irc.furworks.de) (Quit: later)
+[16:13:47] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Ping timeout: 260 seconds)
+[16:14:09] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[16:14:10] *** Joins: wolfshappen (~waff@irc.furworks.de)
+[16:14:23] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 260 seconds)
+[16:16:50] *** Quits: Volgaar (~volgaar@nat-wifi-eduroam.reseau.univ-paris13.fr) (Ping timeout: 246 seconds)
+[16:17:25] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[16:19:09] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[16:31:18] *** Quits: luc4 (~luc4@151.44.79.235) (Read error: Connection reset by peer)
+[16:32:15] *** Quits: fling (~fling@user/fling) (Ping timeout: 240 seconds)
+[16:33:28] *** Joins: luc4 (~luc4@151.68.1.98)
+[16:33:58] *** Joins: fling (~fling@user/fling)
+[16:34:23] *** Quits: agrosant (~agrosant@79.103.182.92.dsl.dyn.forthnet.gr) (Read error: Connection reset by peer)
+[16:34:57] *** Joins: agrosant (~agrosant@79.103.182.92.dsl.dyn.forthnet.gr)
+[16:42:01] *** Joins: Kei_N_ (~Kei_N@user/kei-n/x-2886111)
+[16:43:42] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[16:43:42] *** Joins: uartie (~uartie@134.134.139.70)
+[16:45:53] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Ping timeout: 248 seconds)
+[16:54:59] *** Joins: Volgaar (~volgaar@nat-wifi-eduroam.reseau.univ-paris13.fr)
+[16:56:33] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 248 seconds)
+[16:58:34] *** Joins: jkwnki (~jkwnki@p4ff31c99.dip0.t-ipconnect.de)
+[17:01:36] *** Quits: Volgaar (~volgaar@nat-wifi-eduroam.reseau.univ-paris13.fr) (Ping timeout: 268 seconds)
+[17:03:53] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[17:04:21] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[17:06:32] *** Quits: Kei_N_ (~Kei_N@user/kei-n/x-2886111) (Ping timeout: 246 seconds)
+[17:08:54] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[17:10:12] *** Quits: jkwnki (~jkwnki@p4ff31c99.dip0.t-ipconnect.de) (Quit: WeeChat 3.0)
+[17:10:33] *** Joins: jkwnki (~jkwnki@p4ff31c99.dip0.t-ipconnect.de)
+[17:28:25] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[17:28:45] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[17:29:48] *** Joins: Volgaar (~volgaar@eth-west-pareq2-46-193-0-64.wb.wifirst.net)
+[17:36:04] *** Joins: Kei_N_ (~Kei_N@user/kei-n/x-2886111)
+[17:36:15] *** Quits: fling (~fling@user/fling) (Ping timeout: 240 seconds)
+[17:38:02] *** Joins: fling (~fling@user/fling)
+[17:38:41] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Ping timeout: 250 seconds)
+[17:49:06] *** Quits: jkwnki (~jkwnki@p4ff31c99.dip0.t-ipconnect.de) (Ping timeout: 272 seconds)
+[17:50:34] *** Joins: clock_ (~clock@202.53.146.2)
+[17:51:40] *** Quits: Kei_N_ (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[17:51:55] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[17:53:25] *** Quits: clock (~clock@167.179.38.107) (Ping timeout: 250 seconds)
+[18:09:19] *** Joins: iive (~iive@87.119.101.204.client.entry.bg)
+[18:15:49] *** Joins: Kei_N_ (~Kei_N@user/kei-n/x-2886111)
+[18:19:24] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Ping timeout: 240 seconds)
+[18:28:40] *** Quits: pikapika (~pikapika_@pika.powered.by.lunarbnc.net) (Quit: Free ZNC ~ Powered by LunarBNC: https://LunarBNC.net)
+[18:29:50] *** Joins: pikapika (~pikapika_@pika.powered.by.lunarbnc.net)
+[18:36:42] *** Quits: __Myst__ (~Myst@net-93-151-172-39.cust.dsl.teletu.it) (Ping timeout: 260 seconds)
+[18:37:09] *** Joins: __Myst__ (~Myst@net-130-25-32-156.cust.vodafonedsl.it)
+[18:38:22] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[18:39:55] *** Quits: fling (~fling@user/fling) (Ping timeout: 240 seconds)
+[18:40:33] *** Joins: fling (~fling@user/fling)
+[18:42:18] *** Quits: Kei_N_ (~Kei_N@user/kei-n/x-2886111) (Ping timeout: 272 seconds)
+[18:46:42] *** Joins: Jerrk (~Jerrk@185.195.233.156)
+[19:00:55] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[19:01:09] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[19:08:43] *** Joins: Kei_N_ (~Kei_N@user/kei-n/x-2886111)
+[19:09:16] *** Joins: dgcampea (~dgc@user/dgcampea)
+[19:11:42] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Ping timeout: 260 seconds)
+[19:24:09] *** Quits: hans (uid529825@id-529825.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[19:24:50] *** Quits: Kei_N_ (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[19:25:06] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[19:26:46] *** Joins: jkwnki (~jkwnki@p4ff31c99.dip0.t-ipconnect.de)
+[19:35:26] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[19:36:59] *** Quits: clock_ (~clock@202.53.146.2) (Read error: Connection reset by peer)
+[19:37:34] *** Joins: clock_ (~clock@167.179.38.107)
+[19:43:48] *** Quits: fling (~fling@user/fling) (Remote host closed the connection)
+[19:44:04] *** Joins: fling (~fling@user/fling)
+[19:48:48] *** Joins: Kei_N_ (~Kei_N@user/kei-n/x-2886111)
+[19:51:24] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Ping timeout: 240 seconds)
+[20:00:02] <jnbek> what are the rules about posting videos for the purpose of establishing context for questions?
+[20:07:10] *** Quits: jkwnki (~jkwnki@p4ff31c99.dip0.t-ipconnect.de) (Ping timeout: 272 seconds)
+[20:11:20] *** Quits: anotheruser (~user@197.54.70.191) (Ping timeout: 246 seconds)
+[20:12:27] *** Quits: Kei_N_ (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[20:12:43] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[20:17:15] <kepstin> personally, i wouldn't post a video or screenshots unless you have a specific question about something going wrong with a particular video which can't be reproduced with synthetic content.
+[20:17:45] <kepstin> as far as it goes, no particular policies that I've heard of? Any concerns about copyright or fair use are all on you.
+[20:21:05] <kepstin> policies of the irc network itself (libera.chat) also apply of course.
+[20:30:59] *** Quits: luc4 (~luc4@151.68.1.98) (Read error: Connection reset by peer)
+[20:31:54] *** Joins: ivanich (~ivanich@45-140-123-239.broadband.tenet.odessa.ua)
+[20:36:11] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[20:36:26] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[20:40:01] *** Joins: luc4 (~luc4@151.82.209.250)
+[20:46:17] *** Quits: rsx (~dummy@ppp-188-174-132-120.dynamic.mnet-online.de) (Quit: rsx)
+[20:48:15] *** Quits: fling (~fling@user/fling) (Ping timeout: 240 seconds)
+[20:48:31] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[20:49:36] *** Joins: fkaa (~fkaa@user/fkaa)
+[20:50:06] *** Joins: fling (~fling@user/fling)
+[20:54:05] *** Joins: clock__ (~clock@202.53.146.2)
+[20:54:31] *** Quits: galex-713 (~quassel@galex-713.eu) (Ping timeout: 245 seconds)
+[20:55:08] *** Quits: luc4 (~luc4@151.82.209.250) (Quit: luc4)
+[20:57:10] *** Quits: clock_ (~clock@167.179.38.107) (Ping timeout: 268 seconds)
+[20:57:27] *** Joins: dvanloon3 (~dvanloon@user/dvanloon)
+[20:58:08] *** Quits: troyt (troyt@2601:681:4101:5911:44dd:acff:fe85:9c8e) (Quit: AAAGH!  IT BURNS!)
+[20:58:24] *** Quits: dvanloon (~dvanloon@user/dvanloon) (Ping timeout: 268 seconds)
+[20:58:24] *** dvanloon3 is now known as dvanloon
+[20:59:02] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[20:59:17] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[20:59:19] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 260 seconds)
+[21:02:21] *** Joins: galex-713 (~quassel@galex-713.eu)
+[21:03:45] *** Joins: troyt (troyt@2601:681:4101:5911:44dd:acff:fe85:9c8e)
+[21:04:58] *** Quits: wolfshappen (~waff@irc.furworks.de) (Read error: Connection reset by peer)
+[21:16:17] *** Joins: a0z (~a0z@90.244.181.185)
+[21:16:54] *** Quits: MajorBiscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e) (Ping timeout: 268 seconds)
+[21:21:56] *** Joins: xkuru (~xkuru@user/xkuru)
+[21:22:25] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[21:22:41] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[21:24:40] *** Quits: microchip_ (~neutrino@user/microchip/x-0766185) (Quit: There is no spoon!)
+[21:24:50] *** Quits: fkaa (~fkaa@user/fkaa) (Read error: Connection reset by peer)
+[21:25:24] *** Joins: fkaa (~fkaa@user/fkaa)
+[21:26:06] *** Joins: microchip_ (~neutrino@user/microchip/x-0766185)
+[21:33:02] *** Quits: microchip_ (~neutrino@user/microchip/x-0766185) (Quit: There is no spoon!)
+[21:33:02] *** Joins: Kei_N_ (~Kei_N@user/kei-n/x-2886111)
+[21:34:36] *** Joins: microchip_ (~neutrino@user/microchip/x-0766185)
+[21:35:43] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Ping timeout: 250 seconds)
+[21:44:19] *** Joins: troyt_ (troyt@2601:681:4101:5911:44dd:acff:fe85:9c8e)
+[21:44:39] *** Quits: troyt (troyt@2601:681:4101:5911:44dd:acff:fe85:9c8e) (Ping timeout: 252 seconds)
+[21:45:29] *** Quits: Kei_N_ (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[21:45:44] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[21:49:07] *** Joins: Copy_of_nrg (~NRG@user/nrg)
+[21:50:23] *** Quits: nrg (~NRG@user/nrg) (Ping timeout: 260 seconds)
+[21:50:23] *** Copy_of_nrg is now known as nrg
+[21:51:03] *** Quits: lessshaste (~lesshaste@82-69-126-43.dsl.in-addr.zen.co.uk) (Remote host closed the connection)
+[21:51:14] *** Joins: lessshaste (~lesshaste@82-69-126-43.dsl.in-addr.zen.co.uk)
+[21:51:55] *** Quits: fling (~fling@user/fling) (Quit: ZNC 1.8.2+deb2+b1 - https://znc.in)
+[21:52:14] *** Joins: fling (~fling@user/fling)
+[21:53:37] <jnbek> kepstin: thanks, the content isn't a concern, I'm using my backyard as a 'dog' cam and making timelapses. my problem is, I want to use FFMPEG to show the date/time, but advancing at the speed of the timelapse not current time in real time. Just curious if that's even possible in one pass or not
+[22:01:18] *** Quits: LuKaRo (~LuKaRo@p200300dfa72b1d372a0e3d5e954163f2.dip0.t-ipconnect.de) (Ping timeout: 268 seconds)
+[22:01:19] *** Joins: LuKaRo_ (~LuKaRo@p4fc32565.dip0.t-ipconnect.de)
+[22:02:50] *** Joins: mthall_ (~quassel@mail.thalliman.com)
+[22:03:04] *** Quits: mthall (~quassel@mail.thalliman.com) (Ping timeout: 272 seconds)
+[22:03:19] *** Quits: yhnujmikV (~yhnujmikV@193.138.218.215) (Quit: WeeChat 3.5)
+[22:08:18] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[22:08:33] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[22:11:47] *** Quits: mentallyinspired (~mentallyi@h-85-24-146-18.A400.priv.bahnhof.se) (Ping timeout: 268 seconds)
+[22:12:19] <klaxa> jnbek: i found this https://stackoverflow.com/questions/71633262/ffmpeg-create-timestamp-based-on-actual-creation-time
+[22:13:06] <jnbek> klaxa: tyvm!!!
+[22:18:56] *** Quits: microchip_ (~neutrino@user/microchip/x-0766185) (Quit: There is no spoon!)
+[22:19:36] *** Joins: microchip_ (~neutrino@user/microchip/x-0766185)
+[22:23:55] *** Joins: JGod-P666-45 (~JGod-P666@213.237.86.55)
+[22:29:52] *** Quits: ivanich (~ivanich@45-140-123-239.broadband.tenet.odessa.ua) (Remote host closed the connection)
+[22:32:05] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[22:42:22] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[22:44:29] *** Quits: lavaball (felix@31.204.155.215) (Remote host closed the connection)
+[22:45:31] *** Quits: cosimone (~user@93-47-228-79.ip115.fastwebnet.it) (Quit: ERC (IRC client for Emacs 27.1))
+[22:47:46] *** Joins: cosimone (~user@93-47-228-79.ip115.fastwebnet.it)
+[22:53:31] *** Joins: jkwnki (~jkwnki@p4ff31c99.dip0.t-ipconnect.de)
+[22:54:45] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[22:55:01] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[22:56:55] *** Quits: fling (~fling@user/fling) (Ping timeout: 240 seconds)
+[22:58:09] *** Joins: fling (~fling@user/fling)
+[22:58:42] *** Joins: wolfshappen (~waff@irc.furworks.de)
+[22:59:33] *** Joins: emanuele6 (~emanuele6@user/emanuele6)
+[23:02:06] *** Joins: mentallyinspired (~mentallyi@h-85-24-146-18.A400.priv.bahnhof.se)
+[23:04:32] *** Joins: AbleBacon (~AbleBacon@user/AbleBacon)
+[23:14:59] *** Joins: Flabb (~Flabb@109.252.10.119)
+[23:15:11] *** Joins: waleee (~waleee@2001:9b0:213:7200:cc36:a556:b1e8:b340)
+[23:18:38] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[23:18:52] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)

@@ -1,0 +1,1068 @@
+[00:00:05] <cbreak> just do a proper test with static_cast
+[00:00:07] <aegon> i've been using reinterpret_cast as a "hands off" way to move bytes around between funcs that expect std::byte_t and char* is this undefined behavior? I understand reinterpret_cast to be "dont touch the bits"
+[00:00:17] <PJBoy> nah I have to do it this awkward way to prevent conversions
+[00:00:17] <cbreak> { char c(100); f(static_cast<bool>(c));  } void f(bool x) { cout << +*static_cast<char*>(static_cast<void*>(&x)); }
+[00:00:17] <cbreak> [21:28:08]
+[00:00:18] <geordi> 1
+[00:00:21] <cbreak> there
+[00:00:53] <rpav> http://eel.is/c++draft/basic.types#basic.fundamental-10
+[00:01:16] <cbreak> PJBoy: you're trying to prove that bool can contain values other than true and false?
+[00:01:17] <PJBoy> oh so bool actually has no padding bits
+[00:01:20] <PJBoy> and the bit_cast is well defined
+[00:01:41] <PJBoy> I'm proving that bool can contain non 0/1 values
+[00:02:23] <cbreak> by invoking the creation of indeterminate values?
+[00:02:30] <PJBoy> there's no indeterminate values there
+[00:02:40] <PJBoy> the char is well initialised, the bit_cast is well defined
+[00:03:05] <cbreak> { char c(64); f(bit_cast<bool>(c));  } void f(bool x) { cout << (x == true); } // let's see what this does
+[00:03:05] <PJBoy> I mean maybe I should have used an unsigned char, but you get the point
+[00:03:06] <geordi> true
+[00:03:27] <cbreak> PJBoy: I'm not sure if the bit cast is well defined
+[00:04:19] <PJBoy> or the equivalent memcpy
+[00:04:53] <PJBoy> which is much more lenient on behaviour
+[00:05:00] *** Joins: meator (~meator@user/meator)
+[00:05:18] <cbreak> all you prove is that you can put a char value into the space of a bool
+[00:05:21] <rpav> PJBoy: the standard specifies two values for bool, and none others
+[00:05:32] <PJBoy> and it's blessed with implicit object creation
+[00:05:37] <PJBoy> which automatically solves all UB
+[00:05:39] <rpav> thus UB by omission
+[00:06:10] <PJBoy> that just means `true` has many value representations
+[00:07:05] <PJBoy> and potentially false I guess, but false is probably hardcoded to 0 somewhere
+[00:07:17] <rpav> the values _aren't_ specified though
+[00:07:43] <rpav> but conversion from zero is false, and anything else is true; conversion back is 0 or 1
+[00:08:34] <rpav> but literal is true or false, and if you examine the bits i don't see anything indicating that being anything other than one of those is defined behavior
+[00:08:37] *** Quits: _flood (flooded@gateway/vpn/protonvpn/flood/x-43489060) (Ping timeout: 252 seconds)
+[00:09:10] <rpav> by literal i mean actual value
+[00:09:10] <aegon> { int -30; f(static_cast<bool>(int)); } void f(bool x) { cout << +*static_cast<char*>(static_cast<void+>(&x)); }
+[00:09:10] <geordi> error: expected '>' before '+' token
+[00:09:15] <aegon> :X
+[00:09:34] <aegon> what does the + do in this case? is that an overload for ostream<string>?
+[00:09:56] <aegon> or some semantic modifying the pointer dereference
+[00:11:31] <PJBoy> yeah alright, I'll give you that false and true have no defined object/value repreesntation
+[00:11:35] <cbreak> PJBoy: https://godbolt.org/z/Wjz8G1Gfe
+[00:11:49] <PJBoy> and so that bit_cast crap gives you some non well defined result
+[00:12:13] <rpav> it sortof doesn't matter unless you look at the bytes, and there's not a ton of reason to do so
+[00:12:26] <rpav> and to be fair i'd be surprised if it was non-0-or-1
+[00:12:41] <rpav> especially since `struct S { bool b : 1; };` must be supported no
+[00:12:48] <PJBoy> I wouldn't be
+[00:13:11] <PJBoy> messing with assembly, there's a lot of instances of zeroy vs non-zeroy type return values
+[00:13:12] <rpav> i suppose you might have some random bit pattern that might generate some special case code for bitfields
+[00:13:14] <PJBoy> and that kind of thing
+[00:13:24] <PJBoy> as opposed to zeroy vs oney
+[00:13:34] <PJBoy> it can be a waste of time to force conversion to 1
+[00:13:38] <cbreak> PJBoy: https://godbolt.org/z/s4ae98rKT
+[00:13:59] <cbreak> I think the result of bar2 and bar3 are interesting
+[00:15:10] *** Joins: flooded (flooded@gateway/vpn/protonvpn/flood/x-43489060)
+[00:15:17] <rpav> huh, UB in practice
+[00:15:22] *** Quits: meator (~meator@user/meator) (Quit: Leaving)
+[00:15:29] <cbreak> and a comparison between compilers: https://godbolt.org/z/Y18M6zszf
+[00:15:35] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Ping timeout: 252 seconds)
+[00:15:39] *** Quits: proller (~p@80.240.216.69) (Ping timeout: 256 seconds)
+[00:15:39] <PJBoy> yup makes sense
+[00:16:57] *** flooded is now known as _flood
+[00:17:23] <cbreak> I'd add msvc if I knew how to make it accept bit cast
+[00:17:45] <cbreak> I've encountered this exact type of UB a few years ago in research code
+[00:18:04] <cbreak> but there it was caused by uninitialized memory, not bit casting, of course
+[00:18:17] <PJBoy> /std:c++latest
+[00:18:38] <PJBoy> or /std:c++20 I guess
+[00:18:55] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[00:19:43] <cbreak> https://godbolt.org/z/WczdWrGc8
+[00:20:19] <PJBoy> yup that makes sense too
+[00:20:21] <cbreak> it seems for clang, both 0xf0 and 0xf1 are true, for msvc, both 0xf0 and 0xf1 are false, and for gcc 0xf0 is false and 0xf1 is true
+[00:20:31] <cbreak> -> UB :D
+[00:21:07] <rpav> worse than i'd thought D:
+[00:21:36] <rpav> otoh there _should_ be no case in which bool's bits are arbitrarily assigned
+[00:22:21] <rpav> though not being able to load and dump binary values across the same program compiled by different compilers on _the same OS/architecture_ is one of those "oh C++"
+[00:22:57] <PJBoy> it shouldn't be surprising that UB optimises completely differently on different compilers
+[00:23:11] *** Joins: cart_man (~rynot@host-78-144-121-71.as13285.net)
+[00:23:14] <rpav> err, actually that doesn't show that i guess .. none of those _are_ the value of true/false, which is likely to be treated identically
+[00:23:37] <rpav> just the test for non-bitwise-true/false
+[00:28:17] *** Joins: proller (~p@80.240.216.69)
+[00:28:48] <PJBoy> so yeah, I *think* that means the result of `bit_cast<int_t>(some_bool)` is undefined
+[00:29:06] <PJBoy> because nothing in the standard ever defines its object/value representation
+[00:29:48] <rpav> well implementation-defined yeah
+[00:30:01] <PJBoy> although there might be some logic that says that the bit_cast of a value init'd bool is definitely 0
+[00:30:12] <PJBoy> implementation defined would require the vendor to document it
+[00:30:20] <PJBoy> so it's either unspecified or undefined
+[00:30:21] <rpav> ah
+[00:30:37] *** Quits: ARoxdale (~ARoxdale@84.203.26.40) (Ping timeout: 252 seconds)
+[00:30:42] <PJBoy> and I honestly can never remember the difference
+[00:32:38] <Alipha> whupdup: -O3 generally has only marginal improvment over -O2 at the cost of increase build time. sometimes -O3 is actually slower than -O2. someone wrote a paper comparing them... i don't know where it is though, unfortunately.
+[00:33:15] <whupdup> oh I see
+[00:36:11] <ville> ...the speed up from -O2 to -O3 is less than from changing function addresses and getting better icache utilization
+[00:36:15] <PJBoy> Alipha, https://scholarworks.umass.edu/cgi/viewcontent.cgi?article=1687&context=dissertations_2 ?
+[00:43:13] <Alipha> PJBoy: I don't think that was it, but it's also interesting
+[00:43:25] *** Quits: proller (~p@80.240.216.69) (Ping timeout: 256 seconds)
+[00:43:54] <PJBoy> I'd be curious to see how these experiments hold up today
+[00:44:54] <PJBoy> this paper on the causal profiler guy's experiments were both done on GCC 4
+[00:45:14] <PJBoy> and clang does stupid crazy shit on -O3
+[00:46:05] <PJBoy> oh wait that paper is the causal profiler guy's
+[00:47:06] <PJBoy> here's the refined version of the paper then https://arxiv.org/pdf/1608.03676v1.pdf
+[00:47:33] <ville> https://users.cs.northwestern.edu/~robby/courses/322-2013-spring/mytkowicz-wrong-data.pdf ?
+[00:48:51] <rpav> can a paper be refined, if it wasn't fined a first time
+[00:49:37] <ville> and "related" video: https://www.youtube.com/watch?v=r-TLSBdHe1A
+[00:49:55] <ashafq> Is typedef still used for defining function pointer?
+[00:50:07] <ashafq> Or I should be using `using`?
+[00:51:43] <rpav> i think generally avoid typedef
+[00:52:09] <PJBoy> there's nothing wrong with using typedef, but there's no reason to
+[00:52:30] <PJBoy> so I'd advise `using`
+[00:53:15] <ashafq> PJBoy: using CallbackType = void (int, int); ?
+[00:53:26] <PJBoy> sure
+[00:54:45] <aegon> how do you define opaque types with using?
+[00:54:55] <aegon> i thought you had to use typedef in that case
+[00:55:49] <aegon> i wonder how much of the cruft i've been working through to keep things c compat is non-sense :P
+[00:56:00] *** Joins: proller (~p@2a02:6b8:b081:8811::1:28)
+[00:56:21] <rpav> 🤔
+[00:56:54] <rpav> { } using T = struct T;
+[00:56:55] <geordi>  
+[00:57:24] <rpav> er
+[00:57:29] <rpav> also just `struct T;` i mean
+[00:57:40] <ashafq> << using CallbackType = int (*)(int, int);
+[00:57:40] <geordi> error: expected primary-expression before 'using'
+[00:57:42] <rpav> trick question tricked me :(
+[00:57:47] <ashafq> , using CallbackType = int (*)(int, int);
+[00:58:06] <ashafq> , using CallbackType = int (*)(int, int); << typeof(CallbackType);
+[00:58:12] <rpav> {} using F = int(*)(int,int);
+[00:58:12] <geordi>  
+[00:58:17] <InPhase> { using CallbackType = int (*)(int, int); }
+[00:58:17] <geordi>  
+[00:58:41] <ashafq> I guess that works :). I'll take it.
+[00:58:43] <rpav> you only need `typedef struct T;` in C if you don't want to say `struct T* t;` later
+[00:58:58] <rpav> in C++ you only need `struct T;` for a forward decl in any case
+[00:59:24] <rpav> (class/struct obvs; beware msvc)
+[00:59:37] <ashafq> rpav: Not to bring in C talk here: but I really don't like the abuse of typedef struct {} stuff_t;
+[00:59:49] <rpav> ashafq: ?
+[01:00:00] <rpav> i mean, abuse how
+[01:00:29] <rpav> what's more annoying abuse is `typedef struct stuff_t {} stuff_t;`
+[01:00:44] <ashafq> rpav: Abuse like this: typedef struct SomethingElse { int stuff; } something_t;
+[01:00:53] <aegon> hmm, maybe i've been doing it wierd, for opaque types i've been doing
+[01:00:59] <aegon> typedef TYPE TYPE;
+[01:00:59] <ashafq> rpav: Yes that too...
+[01:01:02] <rpav> ashafq: i'm not sure what exactly you consider abuse
+[01:01:27] <rpav> in C++ i think there's a specific exception for `typedef struct X {} X;`? 🤔
+[01:01:47] <PJBoy> oh now that you mention it
+[01:01:58] <rpav> oh _nice_
+[01:02:14] <PJBoy> C++ has a "typedef name for linkage purposes"
+[01:02:16] <rpav> err n/m broken code
+[01:02:25] <PJBoy> which roughly equates to a C style struct
+[01:02:41] <PJBoy> so maybe there is something special about typedef in that case
+[01:02:49] <ashafq> rpav: Well, I guess it's just personal taste :). In type unsafe languages like C, I like to know when I deal with structs. So, I like typing the extra `strcut` before declaring the type. :)
+[01:03:04] <rpav> ashafq: you and literally no one else :p
+[01:03:17] <rpav> it was so bad they did away with it entirely in C++
+[01:03:27] *** Joins: Hashida (~DaSH@ro2.flokinet.is)
+[01:03:43] <ashafq> rpav: C++ is a different language :)
+[01:03:44] <rpav> especially since typedef otherwise is next to useless outside generalizing a few type sizes
+[01:03:48] <rpav> it wasn't always
+[01:04:54] <InPhase> ashafq: I regularly used those sorts of typedefs in my C days.  There's no fear of misinterpreting it for a primitive type, and there's in context not really anything else a type can be.
+[01:04:58] <PJBoy> http://eel.is/c++draft/dcl.typedef#4
+[01:05:27] <PJBoy> special semantics for that `typedef struct {} S;` crap
+[01:05:41] <PJBoy> seems C++ hasn't done away with it entirely
+[01:05:44] <ashafq> PJBoy: Thanks for the doc
+[01:05:51] *** Quits: Hashida (~DaSH@ro2.flokinet.is) (Remote host closed the connection)
+[01:06:19] *** Joins: Hashida (~DaSH@ro2.flokinet.is)
+[01:06:33] *** Quits: Itaru (~DaSH@ro2.flokinet.is) (Ping timeout: 252 seconds)
+[01:06:59] <PJBoy> {} typedef struct { int f() {} } X;
+[01:07:00] <geordi> warning: no return statement in function returning non-void
+[01:07:06] <PJBoy> stupid example
+[01:07:15] <PJBoy> {} typedef struct { void f() {} } X;
+[01:07:15] <geordi>  
+[01:07:22] <PJBoy> standard says that should be an error
+[01:08:41] <rpav> i wonder how funky the breakage would look for an ODR violation there
+[01:09:57] <InPhase> PJBoy: But why bother to implement a separate compilation pathway for structs just to introduce a new compilation error?
+[01:10:07] <PJBoy> for C compatibility
+[01:10:26] *** Joins: xkuru (~xkuru@user/xkuru)
+[01:10:29] *** Quits: great_taste (~great_tas@user/great-taste/x-5798414) (Quit: Client closed)
+[01:10:41] <InPhase> That doesn't increase C compatibility really.  C code would still compile fine, and C++ containing code doesn't compile in C anyway.
+[01:10:43] *** Joins: great_taste (~great_tas@user/great-taste/x-5798414)
+[01:10:52] *** Quits: Hashida (~DaSH@ro2.flokinet.is) (Client Quit)
+[01:11:11] <aegon> anyone got advice for how to make a switch statement with case scopes not look like trash? :P
+[01:11:13] <PJBoy> that's the best explanation I've got
+[01:11:17] <InPhase> The standard is just saying basically that if it has that spelling, it needs to be C compatible.  Seems useless though.
+[01:11:25] <rpav> InPhase: no code in C
+[01:11:39] <InPhase> rpav: Yes I know.  It's not a C compiler though.  :)
+[01:11:43] <rpav> it would compile but not link fine
+[01:12:04] <rpav> and they're reserving the behavior across broader C++ classes
+[01:12:08] <rpav> i mean, afaict
+[01:13:06] <PJBoy> it should in theory cause you to get a compile time error in C++ if you want a C compatible struct
+[01:13:07] <rpav> C should introduce member functions
+[01:13:07] <InPhase> The reasonable choice would have been no functions in structs, but only in classes.  However, the ship has long since sailed on that option.
+[01:13:11] <PJBoy> which has some value
+[01:13:53] *** Joins: Itaru (~DaSH@ro2.flokinet.is)
+[01:17:55] *** Quits: Tobbi (~Tobbi@2a02:8108:1240:48ec:601e:9883:7933:840a) (Ping timeout: 268 seconds)
+[01:18:06] <PJBoy> that typedef for linkage purposes was there in C++11
+[01:18:18] <PJBoy> I only learnt about it last year or so :/
+[01:18:19] <johnny> aegon, like what?
+[01:18:50] <aegon> uh, let me godbolt an example, i think its better than an if else chain but i cant get it to look reasonable so maybe not
+[01:18:52] <johnny> i saw some folks recommend the break; case ...; approach
+[01:19:05] <johnny> i don't think i like it tho
+[01:19:59] <johnny> i guess it's not that different from the way alot of folks handle class initialization though. C++ is the only place where i have commas starting lines
+[01:20:11] <PJBoy> I like my case labels indented
+[01:20:24] <PJBoy> and my braces on the same horizontal position as the case
+[01:21:42] <johnny> assuming you need braces
+[01:21:51] *** Quits: Terminus (~null@user/terminus) (Quit: ZNC 1.8.2 - https://znc.in)
+[01:21:55] <PJBoy> yeah
+[01:22:25] <johnny> it's funny though, i'll go forever without needing braces in cases, and then all of the sudden i need a lot
+[01:22:25] <aegon> you know, looking at it in isolation its not so bad, felt worse writing it than looking at it. I've just not seen the extra curlies for scope in a switch https://godbolt.org/z/cK1GccKfa
+[01:22:26] <PJBoy> I will generally add redundant braces anyway if the statement is more than 1 or 2 lines
+[01:22:47] <PJBoy> for my text editor's folding :)
+[01:22:55] <johnny> i only add them if the scope needs them
+[01:23:14] <aegon> in general I think switch's are hard to read though would be curious about what you'all found to be better
+[01:23:24] *** Joins: Terminus (~null@user/terminus)
+[01:23:26] <aegon> maybe trying to make them not take up as much vertical space is a mistake
+[01:23:33] <johnny> aegon, for me, if i ccan avoid it, i would make output handling all together rather than in separate places, but that's really up to you
+[01:23:57] <PJBoy> looks kinda painful to me with the misaligned opening brace
+[01:23:59] <johnny> maye i just hate those side effects so much i wanna segregate them as much as possible
+[01:24:06] <PJBoy> but that's probably not related to the swith-case formatting
+[01:24:08] <johnny> lol PJBoy
+[01:24:21] <johnny> that's how i prefer to write it
+[01:24:35] <PJBoy> fair
+[01:24:44] <johnny> aegon, in a language like rust you'd use pattern matching since switches/ifs can just be expressions
+[01:24:47] *** Quits: Terminus (~null@user/terminus) (Client Quit)
+[01:24:51] <PJBoy> I don't think I've seen it about before
+[01:24:56] <johnny> but that's about the best you can do in C++ atm
+[01:25:33] *** Joins: Terminus (~null@user/terminus)
+[01:25:45] <aegon> johnny: i did the prototype in Haskell, so a lot of this is coming from trying to translate pattern matching. I noticed quick switch is much more limited in C++ land :P
+[01:25:47] <johnny> i don't bother adding new lines after though
+[01:26:37] <johnny> well there some macros that could help, and some non syntax integrated ways of doing pattern matching available as libraries, but not sure if you wanna bother
+[01:27:13] <johnny> it's really up to you in that case
+[01:27:27] <PJBoy> how about https://godbolt.org/z/oqMTno7hr
+[01:27:43] <PJBoy> that uses expressions rather than statements
+[01:27:47] <johnny> aegon, didn't mean to diss haskell .. i was just keeping it to languages that can fulfilla similiar role
+[01:28:22] <johnny> PJBoy, i'm so not used to that, i acn't even read it.. hmm
+[01:28:32] <PJBoy> ahaha
+[01:28:47] <johnny> ah.. it's not that bad i guess
+[01:29:02] <aegon> i'm trying to stick to as vanilla c++ as possible, I'm hoping at the end of the day today i can get this cross compiling to ios / android / windows / linux so i've been really stingy on dependencies
+[01:29:06] <johnny> actually it's not that different from the js way
+[01:29:18] <PJBoy> indeed
+[01:29:40] *** Quits: Simplar (~Simplar@188.163.93.76) (Quit: Going offline, see ya! (www.adiirc.com))
+[01:29:44] <aegon> i don't think you dissed haskell :P. Whoa PJBoy thats wild, what is the + modifier i'm seeing you guys use a ton of places. I don't even know how I would search cpp reference for details given + is such an overloaded symbol
+[01:29:57] <johnny> i do prefer to do the dictinoary key approach over the swich approach when i can, but then i wouldn't want to have any side effects in the cases
+[01:30:05] *** Quits: robod34 (Username@79.113.195.239) (Quit: Goe offline! ( http://marius.sucan.ro/ ))
+[01:30:06] *** Quits: seninha (~seninha@user/seninha) (Quit: Leaving)
+[01:30:15] *** Quits: Terminus (~null@user/terminus) (Client Quit)
+[01:30:20] <johnny> aegon, i assume the real one is different, because otehrwise you yourself wouldn't be putting the side effects in the cases
+[01:30:21] <PJBoy> it's unary plus, it invokes the decay conversion on its argument
+[01:30:37] <PJBoy> for lambdas that means conversion to function pointer
+[01:30:44] <aegon> johnny: yeah the real case is not side effecty, i jsut did that in godbolt for example
+[01:30:44] <PJBoy> which is what I need to do to make an array of them
+[01:30:57] <PJBoy> before it was being used to convert a char to int
+[01:31:17] <PJBoy> and that's just so that `cout << c` doesn't print `c` as a character
+[01:31:28] <PJBoy> so `cout << +c`
+[01:31:50] <PJBoy> it's honestly just abuse
+[01:31:51] <johnny> hmm, an array can be initialized by it's member without specifying size now
+[01:32:03] <rpav> C++ is abuse
+[01:32:08] <PJBoy> or its type
+[01:32:10] <johnny> so that makes your approach a lot nicer in newer C++
+[01:32:12] <rpav> i didn't know +c worked for chars D:
+[01:32:16] <PJBoy> that's C++17 class template argument deduction
+[01:32:26] <aegon> are lambdas function objects at creation? I thought they were implictly convertable to function pointers
+[01:32:41] <johnny> for the type yet, but isn't the size from C++20 ?
+[01:32:45] <PJBoy> they are indeed implicitly convertible to function pointer
+[01:32:47] <johnny> s/yet/yes/
+[01:33:02] <PJBoy> the + does it somewhat more explicitly is all
+[01:33:20] <rpav> functions aren't objects; lambdas are structs
+[01:33:37] <PJBoy> johnny, it's actually not possible to only specify the type
+[01:33:49] <johnny> PJBoy, i didn't mean to imply that you could
+[01:33:52] <PJBoy> C++20 added the functio std::to_array for this
+[01:33:56] <PJBoy> ah
+[01:34:06] <johnny> i just thought it was only ecently that you could avoid putting the size at all
+[01:34:12] <PJBoy> well std::array does need a deduction guide for its size argument to be deduced
+[01:34:55] <johnny> how it happens isn't my concern. seems like it's always been possible to deduce the size if it's all specificied up front, it's just the standard didn't change to allow it until recently
+[01:35:30] <PJBoy> fair, well it's always been possible from C++17
+[01:35:53] <aegon> PJBoy: that is a crazy use of array but also cool. I didn't know + could be used to decay a type but decay is a monster for future me to grok :P
+[01:36:18] <PJBoy> yeah it's something alright
+[01:37:21] <PJBoy> those `+[]{` character sequences are a bit perlescent for my taste
+[01:37:44] *** Quits: spaceangel (~spaceange@ip-78-102-216-202.net.upcbroadband.cz) (Remote host closed the connection)
+[01:37:51] <PJBoy> also it flat out doesn't work if you need the lambdas to capture anything
+[01:38:56] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[01:39:03] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[01:39:03] *** ChanServ sets mode: +v npaperbot
+[01:39:59] <PJBoy> that said, pattern matching will be here in C++ any year now
+[01:40:34] *** Joins: seninha (~seninha@user/seninha)
+[01:41:24] <aegon> so lambdas are anonymous structs with a operator() under the hood? Does that mean captures get copied into member variables and does it mean i can cast a strcut to a std::function if it has an operator() without undefined behavior?
+[01:41:43] <johnny> it's too bad we have to rely on syntax changes for the most reasonable looking implementation :(
+[01:42:10] <aegon> PJBoy: i'm frustrated with apple. I really wanted to use c++20 concepts but nothing on osx or ios supports them. Part of me wonders if its to push swift
+[01:42:50] <johnny> clang itself isn't moving that fast either though, apple or not
+[01:43:07] <PJBoy> your comments on lambdas are correct
+[01:43:35] <PJBoy> and yeah, clang's development is questionably slow atm
+[01:43:36] <johnny> aegon, for basic concepts i'm using clang from homebrew, but i guess that work for the ios case :(
+[01:44:06] <PJBoy> to be fair though, they've just about finished migration of their bug tracker from whatever it was to github
+[01:44:17] <PJBoy> so the pace might start to pick up now
+[01:44:17] <johnny> i wonder why
+[01:44:31] <PJBoy> because their old one was shit
+[01:44:32] *** Quits: Serpent7776 (~Serpent77@90-156-31-193.internetia.net.pl) (Quit: leaving)
+[01:44:41] <johnny> github's bug tracker is nice for smaller projects, but not so sure about for bigger ones
+[01:45:06] <PJBoy> there's so many big projects on github, there's more than enough evidence that it works
+[01:45:44] <rpav> dunno not sure what much else you'd want
+[01:45:45] <PJBoy> I'll quote the email
+[01:46:00] <PJBoy> > The ultimate goal is to shut down the Bugzilla instance and allow the use of GitHub issues and pull requests across LLVM repositories. We hope that this will lower the bar for newer contributors and allow much smoother user experience than we're having now
+[01:46:04] <rpav> GH issues are a lot nicer to use than a lot of things that _are_ used for bigger projects; they have a bit of automation and stuff ..
+[01:46:20] *** Quits: Burgundy (~yomon@79.115.213.171) (Ping timeout: 252 seconds)
+[01:46:25] <johnny> well jira is often a big over the top for a lot of projects, i know that
+[01:46:31] <PJBoy> and now I'm an LLVM contributer on github
+[01:46:34] <rpav> jira/bugzilla/etc suck
+[01:46:34] <PJBoy> which is cool
+[01:46:37] <rpav> horrific to use
+[01:47:02] <johnny> i don't mind bugzilla, but it could use some QoL changes that's for sure
+[01:47:08] <rpav> otoh so does being tied to 3rd party services on principle, but practically speaking there are still better alterantives
+[01:47:19] <aegon> yeah i don't want to complain because clangd is a massive project and I have no clue what to force behind it is, it seems altruistic in nature? But i wish concepts were available on iOS.
+[01:47:44] <rpav> i think clangd is a smaller project, and clang is the bigger project
+[01:48:08] *** Quits: bdt (~bdt@2a01:799:39e:7d00:e65f:1ff:fe08:8a88) (Ping timeout: 268 seconds)
+[01:48:10] <PJBoy> they're both tools that leverage llvm
+[01:48:12] <johnny> aegon, it's not altrustic really. it's that gcc was used before, but apple hate the GPL
+[01:48:14] <PJBoy> as I understand it
+[01:48:22] <aegon> i don't usually like monolithic solutions but gitlab has continued to add really nice things over the years. I tried using that php based pull request tracker and it was not great
+[01:48:23] <rpav> kinda, clang is the heavy lifting for C/C++
+[01:48:32] <rpav> llvm is the heavy lifting for compilation and optimization
+[01:48:44] <rpav> well, the lower level part of compilation
+[01:48:52] <johnny> and non open compilers are mostly on the way out
+[01:49:20] <johnny> at least for general purpose compilation, still got some closed stuff in the embedded world and for gpu stuff
+[01:49:22] <aegon> i ran into a pretty bad bug with clangd this week. I have a library and a smoke test client in one cmake project. They both use similar folder structures and clangd gets confused thinking a source file from one is part of the other which makes includes show up as errors in its linting
+[01:49:38] <PJBoy> clang/llvm team went out on a mission to make tooling in C++ good
+[01:49:42] <johnny> clangd config and setup is confusing for no reason, but that's how it is
+[01:49:51] <aegon> ended up having to rename my folder heirchy to something that makes less sense, but hey, clangd seems to be the only way to get good intellisense like stuff on linux at the moment
+[01:49:53] <PJBoy> so I'd definitely claim it's the most altruistic thing going in C++
+[01:49:55] *** Joins: bdt (~bdt@2a01:799:39b:9500:e65f:1ff:fe08:8a88)
+[01:50:15] <johnny> aegon, what editor was with that?
+[01:50:29] <PJBoy> but it also has a better IR language, and the BSD guys want a non GPL compiler too
+[01:50:37] <PJBoy> Intel want the permissive licensing, so do MS etc
+[01:50:39] <johnny> ah, i realize that clangd does a silly thing in that it stores everything in /tmp rather than project local
+[01:50:48] <aegon> johnny: vim using coc to interface with clangd
+[01:50:58] <aegon> er neovim
+[01:51:12] <PJBoy> I setup clangd just last week, and I found it super easy
+[01:51:16] <johnny> you can override the TMP variable if you want to force it to use a different directory iirc
+[01:51:51] <johnny> so it'd be like TMP=$XDG_CACHE_DIR/clangd/projectname clangd or moething
+[01:52:06] <johnny> that *might* fix your problem
+[01:52:10] <aegon> oh, maybe thats it. I was wondering if it was a caching issue. I wiped my ~/.cache/clangd and project local .cache but didn't look at anything in tmp and it was just after a refactor of the structure without a reboot
+[01:52:48] <johnny> clangd does not use XDG_CACHE AT ALL by itself. it's possible that the clangd language server does though  i guess
+[01:53:08] <johnny> it really depends on how coc or the language server works
+[01:53:41] *** Quits: rnsanchez (~rnsanchez@2804:14d:8a81:94a4:8ccf:d40:d4e6:2ebe) (Ping timeout: 268 seconds)
+[01:53:42] <johnny> i know the indexer can at least be project local, but i don't know how it actually works
+[01:54:37] <johnny> aegon, since a lot of distros thes days have /tmp as a tmpfs, i ended up filling up almost all my ram when i was switching between branches and generating a lot of errors during a refactor!
+[01:55:04] <johnny> since tmpfs for /tmp is growable
+[01:55:19] <aegon> awesome. I'll try clearing stuff out after this feature is wrapped and see if the same collision happens
+[01:56:13] <johnny> looking back, i sure do have a lot of battle scars when it comes to playing with C++ , and i've only been doing it for a short time :(
+[01:56:43] <johnny> i guess it was hubris to want to build cross platform
+[01:57:31] *** Quits: Itaru (~DaSH@ro2.flokinet.is) (Ping timeout: 252 seconds)
+[01:57:36] *** Joins: rnsanchez (~rnsanchez@2804:14d:8a81:94a4:8ccf:d40:d4e6:2ebe)
+[01:58:04] *** Joins: Itaru (~DaSH@ro2.flokinet.is)
+[02:05:02] *** Quits: bdt (~bdt@2a01:799:39b:9500:e65f:1ff:fe08:8a88) (Ping timeout: 252 seconds)
+[02:06:17] *** Joins: blyat-73 (~hjgkjhgkj@46.235.96.249)
+[02:07:15] *** Joins: bdt (~bdt@155.51-174-24.customer.lyse.net)
+[02:10:30] *** Quits: Ivii (~Ivyy@2001:a62:4c3:8e01:9261:bbf4:ebed:535e) (Remote host closed the connection)
+[02:10:51] *** Joins: markong (~kvirc@213.146.188.203)
+[02:14:02] *** Quits: proller (~p@2a02:6b8:b081:8811::1:28) (Ping timeout: 268 seconds)
+[02:23:48] *** Joins: Terminus (~null@user/terminus)
+[02:25:25] *** Quits: Itaru (~DaSH@ro2.flokinet.is) (Remote host closed the connection)
+[02:27:41] *** Quits: uzer1 (~uzer@dsl-trebng11-54f912-114.dhcp.inet.fi) (Ping timeout: 256 seconds)
+[02:36:30] *** Joins: proller (~p@2a02:6b8:b081:8825::1:d)
+[02:41:19] <cbreak> johnny: the best way to program C++ is cross-platform
+[02:41:27] <cbreak> write code to the C++ spec, not an implementation
+[02:41:35] <johnny> that's not the problem cbreak !
+[02:41:44] <johnny> the problem is the build systems and al that other junk
+[02:41:54] <cbreak> the second best is to write code for a specific platform. That's usually done if you write drivers or some things like that. Or platform wrappers
+[02:42:05] <cbreak> well. CMake. Least bad I've found so far :)
+[02:42:07] <johnny> and just simply getting the softwre where you need it
+[02:42:17] <cbreak> and ignore windows
+[02:42:21] <cbreak> it's a weirdo outlier
+[02:42:25] <johnny> well indeed windows is the tough one
+[02:42:49] <johnny> but coding to the spec does not help at all if you want to use something unsupported by apple's clang
+[02:42:59] <johnny> which last i checked is far behind real clang
+[02:43:04] <cbreak> just use an old spec
+[02:43:12] <johnny> and thats' not omethin i should have to do
+[02:43:13] <cbreak> some of my code still has to compile on GCC6
+[02:43:21] <johnny> well that's your problem :)
+[02:43:53] <johnny> i wouldn't have to worry about that with other languages though
+[02:44:27] *** Quits: Juliu (~Juliu@2a02:810b:c640:3ec0:e42e:1c87:feed:ec28) (Quit: Leaving)
+[02:44:52] <cbreak> you would.
+[02:45:03] <cbreak> a lot of my code still has to support Python 2.7
+[02:47:11] <johnny> man, you sure like giving yourself trouble
+[02:47:14] <cbreak> nah
+[02:47:17] <cbreak> it's the users
+[02:47:18] <johnny> i assume you actually like this job
+[02:47:27] <cbreak> some of them run RHEL 7
+[02:47:32] <cbreak> yeah :)
+[02:47:37] <johnny> rhel lets you install alternative pythons iirc
+[02:47:39] <cbreak> not because of this part, but in general it's nice
+[02:47:43] <cbreak> yes, it does
+[02:47:50] <johnny> side by side i mean without overwriting the system one
+[02:47:57] <cbreak> it's because of vfxplatform.com/
+[02:48:18] <cbreak> pixar's on 2020 I think, but wdas is still on 2019
+[02:48:32] <johnny> what's the difference?
+[02:48:52] <cbreak> they're already on python3.7 :)
+[02:50:21] <johnny> well 3.4 is the first really reasonable python 3, so at least you'll be quite far ahead
+[02:50:38] <johnny> well really 3.3 i guess
+[02:51:05] <johnny> i wouldn't mind so much working with python 3.3 at least
+[02:51:34] <johnny> but if my target platform was rhel, i'd probably be shipping my own python :)
+[02:51:35] <cbreak> well. As long as the others are on 2.7...
+[02:53:26] <aegon> my biggest worry cross platform is cppzmq links against some headers of boost and boost is terrible to get to compile anywhere. I'm hoping since it just uses the headers i'll have a relatively smooth time
+[02:54:27] <aegon> but compared to 2010 when i last was in c++ land for a long time, i'm pretty amazed by what the standard can do / abstract. Maybe it's that i'm a more seasoned dev at this point but, aside from needing to care about the details *all* the time, working in c++ has been pretty high level compared to what I remember.
+[02:55:16] <cbreak> aegon: I found boost to be very nicely portable
+[02:55:48] <cbreak> before c++11, I even used boost for a lot of the cross platform coding
+[02:56:04] <cbreak> like boost::thread for threading, and boost::asio for networking / file IO
+[02:56:31] <aegon> i've had bad experiences with it as it relates to gentoo and different versions of gcc / llvm but maybe thats more a gentoo problem
+[02:57:10] <aegon> if i'm upgrading my system or trying to pull in a package that needs even a minor different revision of boost, i get prepared to spend a week hashing out some kind of small change that breaks in one circumstance on one compiler and needs a 4 line patch
+[02:57:54] <aegon> I hope doing this project changes my thoughts though. If it "just works" across ios / windows / linux with the headers being used i'd be super happy
+[02:59:27] <aegon> i guess those errors could be more coming from people hacking boost in odd ways too though. so maybe its not even boosts "fault"
+[03:01:19] *** Quits: pulse (~pulse@user/pulse) (Quit: Join a community of rain shamans at https://indiedevs.net/)
+[03:01:35] <aegon> seeing boost as a dependency to something I wanna use causes moderate anxiety for me though :P
+[03:04:20] <johnny> aegon, and that's why i prefer project local deps, but it's hard to do that with boost without vendoring
+[03:05:51] <aegon> hmm, can you statically link boost?
+[03:05:57] * aegon researches
+[03:10:16] <aegon> looks like it maybe. I'm new to packaging on c++. Been using CMake, seems like folks are moving to meson. They seem really similar to me though and I already ate the CMake bullet.
+[03:10:55] *** Quits: plastico (~plastico@neomutt/plastico) (Quit: WeeChat 3.3)
+[03:13:56] <cbreak> aegon: you can
+[03:14:13] <cbreak> but I'd recommend using system boost
+[03:14:22] <cbreak> or host boost
+[03:14:30] <cbreak> that way, your code is actually compatible with the rest
+[03:14:35] <cbreak> instead of isolating itself
+[03:15:03] <cbreak> this is primarily important for plugins and libraries
+[03:15:41] <aegon> well, either late today or tomorrow I'll be figuring that out :P. Whats wrong with static linkage for plugins (aside from increasing the library size)
+[03:15:58] <cbreak> potential incompatibility
+[03:16:04] <cbreak> potential symbol conflicts
+[03:16:22] <cbreak> it's just pointless risks
+[03:16:44] <cbreak> if you write your library properly, it can be compiled with any boost version you want to support
+[03:17:34] <cbreak> (and when I write boost, I mean any dependency)
+[03:18:00] <cbreak> usually, I require library X, version A.B or newer
+[03:18:22] <aegon> oh wierd, i didn't know you could get symbol conflicts like that
+[03:18:36] <cbreak> it depends
+[03:18:47] <aegon> so if you staticly link a version of alib, and someone links against your lib, but dynamically links against a different version of the other lib, the linker will likely run into issues?
+[03:18:53] <cbreak> you're not guaranteed to get conflicts
+[03:19:10] <cbreak> maybe
+[03:19:11] <johnny> aegon, they aren't realy similiar .. i use meson because i can't stand all the stringy stuff
+[03:19:28] <cbreak> if your library is a static lib, then the chances are higher than if it's a shared lib
+[03:19:29] <johnny> cmake is a nice build system, but i can't hang with the scripting language
+[03:20:13] <ashafq> johnny: cmake is more like a build pre-processor
+[03:20:27] <johnny> well they refer it as a meta build system don't they
+[03:20:40] <ashafq> something like that
+[03:20:40] <johnny> i know how cmake works, it gnereates makefiles or visualstudio projects or whatever
+[03:20:51] <aegon> oh yeah, learning cmake felt like learning bash. just a bunch of stuff hacked together over time. I like the promise of meson to clean that up. I dont like that meson relies on python though.
+[03:21:05] <johnny> aegon, python is so required on linux that it doesn't matter to me
+[03:21:27] <johnny> although muon and meson++ are both written in C/C++ respectively. they aren't drop in replacements yet tho
+[03:21:43] <johnny> ok.. dinner time
+[03:21:45] *** Quits: sprout_ (~quassel@2a02:a467:ccd6:1:54db:f79f:90dc:3ee5) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[03:22:04] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:54db:f79f:90dc:3ee5)
+[03:24:05] <aegon> yeah, not an argument against it, just personal preference. Jugglign python versions on a system can be a pain
+[03:26:54] <aegon> i tried rewriting a cmake project to a meson project and fwiw it read much clearer in the end in meson form
+[03:28:27] <aegon> er maybe not cleare but less noise, i'm not teh right person to have an opinion outside of i don't want to deal with python in a c++ project :P
+[03:30:32] <Terminus> i can't be bothered to give meson a serious try. i'm thinking at some point, i'll find something that'll annoy me on it same as on cmake. better the devil i know.
+[03:36:08] *** Quits: zen_coder (~zen_coder@2a02:8109:a280:2d8d:4062:de04:7533:33ac) (Quit: Konversation terminated!)
+[03:37:01] *** Joins: night_wulfe_ (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[03:37:35] *** Quits: Fairy (~Fairy@2001:464a:4992:0:78b9:dd77:b9a4:c92d) (Ping timeout: 250 seconds)
+[03:39:05] *** Quits: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 256 seconds)
+[03:42:54] *** Joins: Fairy (~Fairy@ti0004a400-3806.bb.online.no)
+[03:53:38] *** Quits: great_taste (~great_tas@user/great-taste/x-5798414) (Quit: Client closed)
+[03:55:03] *** Quits: Stryyker (~stryyke1@about/windows/staff/stryyker) (Remote host closed the connection)
+[03:55:54] *** Joins: Stryyker (~stryyke1@about/windows/staff/stryyker)
+[04:04:15] <Hello71> with cmake, *everything* is annoying
+[04:04:21] <Hello71> with meson that only happens occasionally
+[04:07:42] *** Joins: lh_mouse (~lh_mouse@mingw-w64/developer/lhmouse)
+[04:08:14] *** Quits: m_tadeu (~quassel@bl11-135-102.dsl.telepac.pt) (Ping timeout: 252 seconds)
+[04:10:30] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[04:15:59] *** Quits: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net) (Quit: Going offline, see ya! (www.adiirc.com))
+[04:16:43] *** Joins: ferdna (~ferdna@user/ferdna)
+[04:17:09] *** Quits: cart_man (~rynot@host-78-144-121-71.as13285.net) (Quit: Konversation terminated!)
+[04:19:48] *** Joins: m_tadeu (~quassel@bl11-135-102.dsl.telepac.pt)
+[04:20:11] <smallville7123> senoraraton: consider moving from makefile to cmake
+[04:20:35] <smallville7123> cmake is a lot easier than makefile
+[04:20:58] <smallville7123> i only use makefile as a front-end to cmake
+[04:25:26] *** Quits: Jupp_S (~quassel@ip-88-153-154-129.hsi04.unitymediagroup.de) (Remote host closed the connection)
+[04:27:00] *** Joins: cart_man (~rynot@host-78-144-121-71.as13285.net)
+[04:27:29] *** Quits: PJBoy (~PJBoy@user/pjboy) (Ping timeout: 252 seconds)
+[04:28:39] *** Joins: ARoxdale (~ARoxdale@84.203.26.40)
+[04:37:12] *** Joins: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse)
+[04:39:13] *** Quits: cart_man (~rynot@host-78-144-121-71.as13285.net) (Quit: Konversation terminated!)
+[04:41:54] <Hello71> backend
+[04:42:03] *** night_wulfe_ is now known as night_wulfe
+[05:02:11] *** Quits: seninha (~seninha@user/seninha) (Quit: Leaving)
+[05:03:40] <johnny> Terminus, if your'e already an expert at cmake then there's certainly no reason. I'd only messed wth cmake a few times before. it was certainly an improvement over autotools
+[05:03:56] <aegon> i think alot of the problems with cmake are a poor understanding of how linking etc works as well as documentation that assumes you are very comfortable with all that. For me, coming from working in interpreted languages for years and using raw make for small projects in school that was a huge smack in the face.
+[05:04:23] <johnny> but then going to meson, i didn't have to think about how how you have to assemble the perfect cmake file if you want static analysis, address sanitizers that works across all compilers, and things like that
+[05:04:33] <aegon> the larger projects i'd worked on at companies were already all set up with whatever build tools the company chose.
+[05:04:39] <johnny> but sure, meson definitely has some issues, that's for sure.. but still..
+[05:05:09] <johnny> aegon, why do you feel you need a deeper understanding?
+[05:05:17] <johnny> what problems with linking do you have?
+[05:05:40] <johnny> i feel like i have a pretty shallow understanding of linking, but i've been able to resolve all my linker problems til this point
+[05:06:00] <aegon> i don't now, but CMake definitely made me get into the headspace before the scripting language made sense to me
+[05:06:06] <johnny> it doesn't feel all tha different from what i've done in any other language, it's just in a different place
+[05:07:08] <johnny> well if you're fighting the scripting language, then indeed there'd be trouble
+[05:07:17] <johnny> that's why i was happy with meson, because it was clear what i had to do
+[05:07:19] <aegon> for the most part linking has been straight forward, I ran into issues with llvm name mangling things differently on different versions that cause hell. The introspection tools are definitely better on linux than windows
+[05:07:35] <johnny> so do you mainly use windows or linux?
+[05:08:00] <johnny> i have not had any name mangling problems to this point yet luckily
+[05:08:14] <aegon> linux, but I need to support compilation on windows which makes me go there.
+[05:08:18] <johnny> yeah.. same
+[05:08:28] <johnny> i wish i understood more about the windows apis sometimes.. i know that
+[05:09:10] <aegon> the main barrier for me there is they don't have good analysis tools for what libs are getting pulled in from where. The best i've found is dependencies but it's spotty and when things are failing not very clear why
+[05:09:44] <aegon> er, this one https://lucasg.github.io/Dependencies/
+[05:09:46] <johnny> what libraries are you linking against on winows?
+[05:10:18] <johnny> i'm lucky in that i'm not linking against anything complicated on there
+[05:10:45] <aegon> I think when i ran into the issue it was a driver for steamvr that neaded to load dependencies dynamically
+[05:10:52] <johnny> ah
+[05:10:57] <johnny> sounds like you're in for a fun time ther
+[05:11:30] <johnny> well it does say LoadLibrary for example is not supported
+[05:12:14] <johnny> i guess LoadLibrary is somewhat equivalent to dl?
+[05:12:34] <johnny> "Recursive : Full recursive analysis. You better have time and RAM on your hands if you activate this setting."
+[05:12:35] <aegon> the answer was digging through steamvr's code. if it wasn't open source i think i'd be screwed. There's no mention of it but they override the load library path to first look in your drivers lib foldier so you can put any direct dependencies bundled with your driver but afaik theres no example of that and no mention
+[05:12:57] <johnny> so documentation issue?
+[05:13:32] <aegon> on steamvr's part, but now that i'm thinking about it, it had to do with runtimes needed by the dll i was making and i couldn't find out a sane way of figuring out what i needed to bundle to make it portable
+[05:13:34] <johnny> you're working in area i've spent my entire career avoiding
+[05:13:54] <aegon> ended up going with a guess and check and getting some bug reports on some folks machines that resulted in adding more
+[05:13:58] <InPhase> johnny: Yeah.  Pretty close to a straight swap, just returning an HMODULE type instead of void*, and requiring GetProcAddress then instead of dlsym.
+[05:14:00] <johnny> luckily my interestes don't lie there
+[05:14:32] <aegon> and then windows says explicitly not to redistribute certain runtimes so that leads to requiring that people run a redist or get errors that aren't straight forward
+[05:14:43] <aegon> its a mess. I'd like to just bundle all the stuff so it works for the end user
+[05:15:02] <johnny> can't you just rely on the windows store for that sort of thing now?
+[05:15:26] <johnny> i don't actually know.. i'm just hoping they fixed that sort of thing for folks who can rely on that
+[05:15:51] *** Joins: great_taste (~great_tas@user/great-taste/x-5798414)
+[05:16:22] <johnny> man... windows development sounds like a drag
+[05:16:33] <aegon> not sure, i'm not thrilled about being bounded by a marketplace when i'm used to giving people a binary either so I haven't really paid much attention to the windows store :P
+[05:17:17] <aegon> i worked at a gaming company when it was first coming online for windows 10 and at the time you needed to build as a UWP app which obfuscated stuff like mouse / keyboard input and display so that was... fun... and interesting.
+[05:17:27] <johnny> so you want a dependency manager like you get on linux, but you can't get one without forcing people to use development tools like vcpkg or winget or whatver
+[05:18:07] <aegon> as far as i can tell, yeah
+[05:18:25] <johnny> some people seem to solve that by handling the redist issues in their installer
+[05:18:27] <aegon> and i'm not sure if its legal to grab a redist and package it with your stuff. so for the moment i just have big text in the readme pointing to redists'
+[05:18:41] <TingPing> the windows store manifest does list the redist you depend on and the store handles it for you
+[05:18:43] <johnny> nah.. avoid that by downloading the redist in the installer :)
+[05:18:49] <johnny> omg it's TingPing
+[05:19:10] <johnny> i haven't heard from you in awhile TingPing
+[05:19:24] <TingPing> o/
+[05:19:34] <johnny> you used to be around #r/linux for a time there
+[05:19:53] <johnny> hope you're still hangin in there
+[05:20:23] <TingPing> i'm doing well
+[05:20:31] *** Quits: markong (~kvirc@213.146.188.203) (Ping timeout: 256 seconds)
+[05:20:31] <johnny> i'm not used to running into people doing C++ stuff on linux that aren't doing Qt stuff
+[05:20:40] <johnny> or KDE in general
+[05:21:10] <TingPing> my day job is working on WebKit now, which is C++
+[05:21:28] <johnny> since when?
+[05:21:43] <smallville7123> my logger can now output to a std::string instead of printing output
+[05:21:48] <smallville7123> :)
+[05:22:16] <johnny> ah that's right, a lot of the browser stuff is indeed C++
+[05:22:37] <TingPing> webkit started out as a c++ kde project :P
+[05:22:42] <johnny> indeed
+[05:22:49] <johnny> but even gecko is a lot of C++
+[05:23:01] <johnny> so all the browser stuff has a lot of C++
+[05:23:16] <johnny> well all the commonly used general purpose browser stuff anyways
+[05:23:38] <johnny> what are you doing  with webkit though?
+[05:24:18] *** Quits: Gaboradon (~Gaboradon@cpe-86-58-57-5.static.triera.net) (Quit: Shutdown)
+[05:24:38] <TingPing> i work on the linux port, webkitgtk and wpe (embedded)
+[05:25:00] <johnny> aegon, i liked the idea of uwp, but i was trying to deal with node/rt and bluetooth and the windows 10 bluetooth api don't let you change how often to scan for advertisements
+[05:26:02] <johnny> ah, webkitgk. so is it better integration for the webview(or some such), implementing features there, or something higher level like say a browser (like epiphany)?
+[05:26:23] <johnny> diddn't know if it's more related to gnomey stuff or something more broad
+[05:27:07] <TingPing> epiphany sadly doesn't make money, so its usually maintenance work for companies embedding it in their own products, my focus has mostly been on networking and security features
+[05:27:55] <johnny> hmm? i guess i'm not familiar with what more you need than what is already done.. or is it more in exposing them from applications which embed webkit?
+[05:28:06] <johnny> exposing to*
+[05:29:19] <TingPing> no its mostly internal work, the web is constantly changing, new specs being added, new protocols (HTTP/3), etc
+[05:30:02] <johnny> i bet that keeps you busy enough then
+[05:30:33] <TingPing> it is a never ending task. Google will literally make new standards and then pay to get them implemented in webkit :P
+[05:30:59] <johnny> hmm? they still contribute back to webkit even now?
+[05:32:16] <TingPing> Far less than when they used it. They want Safari to support modern features still though, both so Chrome standards are uh.. more standard, and so their websites are fully featured on ios
+[05:32:19] <johnny> i figured they would have just done everything new with blink and interested folks would just have to try to backport or reimplemnt
+[05:32:22] <johnny> aha
+[05:32:39] <johnny> well that does help linux a bit i suppose
+[05:33:04] <aegon> does the deleter associated with a shared pointer get copied around on assignment?
+[05:33:38] <johnny> did somebody recetly ask that question? i swear i read the answer to that yesterday
+[05:36:43] <aegon> cppreference says yes :X, i should have looked there first
+[05:38:56] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[05:39:06] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[05:39:06] *** ChanServ sets mode: +v npaperbot
+[05:42:01] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:54db:f79f:90dc:3ee5) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[05:42:26] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:54db:f79f:90dc:3ee5)
+[05:42:51] *** Quits: lionkor (~lionkor@beammp/staff/lionkor) (Ping timeout: 245 seconds)
+[05:43:16] *** Joins: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com)
+[05:52:24] *** Quits: malloy (~jimery@116.30.222.115) (Ping timeout: 250 seconds)
+[05:54:22] *** Joins: malloy (~jimery@116.30.222.115)
+[06:04:02] *** Quits: unyu (~pyon@user/pyon) (Quit: WeeChat 3.3)
+[06:04:53] *** Quits: KombuchaKip (~kip@192.252.230.5) (Quit: Leaving.)
+[06:11:02] *** Joins: unyu (~pyon@user/pyon)
+[06:26:58] *** Joins: varioust (~Srain@cpe-108-167-11-88.neb.res.rr.com)
+[06:32:26] *** Joins: peeps[zen] (~peepsalot@openscad/peepsalot)
+[06:33:26] *** Quits: peepsalot (~peepsalot@openscad/peepsalot) (Ping timeout: 252 seconds)
+[06:50:42] <aegon> lol, i messed up something about this ffi. I'm passing opaque objects around that need to be shared by different threads. so i end up with this crazy signature around the code base
+[06:50:59] <aegon> std::shared_ptr<std::optional<std::unique_ptr<T>>>
+[06:51:58] <aegon> except i can't use atomic pointers from c++ 17 so it ends up being std::shared_ptr<std::AtomicBox<std::optional<std::unique_ptr<T>>>> am i missing something or is this the reality for sharing nullable objects between threads
+[06:52:21] <aegon> AtomicBox<T> is a derpy wrapper i made that uses mutex's to control access / modification of T with lambdas
+[06:53:21] <Alipha> aegon: the deleter doesn't get copied. It's stored in the control block.
+[06:53:29] <Alipha> aegon: why the unique_ptr there?
+[06:54:05] <Alipha> And the std::optional seems bizarre too
+[06:54:37] <Alipha> Simply std::shared_ptr<T>?
+[06:54:50] *** Quits: blyat-73 (~hjgkjhgkj@46.235.96.249) (Quit: Leaving)
+[06:55:14] <Alipha> Maybe std::shared_ptr<AtomicBox<T>>
+[06:55:24] <aegon> oh your right ,with the AtomicBox as a shared object already i can go straight to unique_ptr
+[06:55:50] <aegon> the T is an opaque object so I only ever get references to it, i want to put it in a shared or unique ptr to call a custom deleter
+[06:57:05] *** Quits: varioust (~Srain@cpe-108-167-11-88.neb.res.rr.com) (Ping timeout: 252 seconds)
+[06:58:47] *** Joins: KombuchaKip (~kip@192.252.230.5)
+[06:58:55] <aegon> the unique ptr is to automatically call the library freeing function on the refreence when the whole thing goes out of scope eventually.
+[06:58:56] *** Joins: varioust (~Srain@cpe-108-167-11-88.neb.res.rr.com)
+[07:00:36] <Alipha> aegon: you can store opaque pointers in a shared_ptr. You just have to provide a deleter
+[07:00:48] <Alipha> { std::shared_ptr<struct OpaqueObject> p(nullptr, [](void*){}); }
+[07:00:49] <geordi>  
+[07:00:51] <aegon> is there a reason the shared_ptr is better than a unique_ptr in this case?
+[07:01:36] *** Quits: Roughy (~mdaw45ns@user/roughy) (Quit: Meadow Fresh milk)
+[07:05:50] <Alipha> aegon: unique_ptr is preferred over shared_ptr, but a shared_ptr to unique_ptr just seems silly. And I assumed that you had a valid reason to use shared_ptr, so I suggested getting rid of the unique_ptr. Though it's possible you don't have a valid reason for shared_ptr :-)
+[07:07:00] <Alipha> And how does this AtomicBox work, such that it actually wraps access appropriately?
+[07:08:41] <aegon> Alipha: it takes lamdbas const T& -> void for side efficts, T& -> void for modification, const T& -> V for viewing
+[07:08:57] <aegon> those lambdas wait an internal mutex before running on the wrapped object
+[07:11:13] <aegon> Alipha: https://godbolt.org/z/exrExPG47 far from perfect, takes some mental load off of working with it
+[07:12:35] *** Joins: arandomcomrade (~arandomco@user/arandomcomrade)
+[07:16:45] *** Quits: arandomcomrade (~arandomco@user/arandomcomrade) (Quit: Leaving)
+[07:20:15] <aegon> needed an escape hatch to be safer about operations that need to aquire multiple boxes i'm using the stdlibs deadlock avoidance utilities and keeping an ordering on aquiring lock on boxes that need to be used together in some places
+[07:20:27] <Alipha> aegon: nice. your destructor doesn't need a lock though.
+[07:21:27] <Alipha> or at least, if you're in a situation where you think you need a lock on the destructor, then you probably should redesign your code, heh
+[07:22:09] <aegon> your right! i can use the default destructor
+[07:23:19] <Alipha> so, why aren't you using either std::unique_ptr<AtomicBox<T>, Deleter> or std::shared_ptr<AtomicBox<T>>?
+[07:25:41] *** Quits: varioust (~Srain@cpe-108-167-11-88.neb.res.rr.com) (Ping timeout: 252 seconds)
+[07:26:22] <aegon> i guess i could, it would need to always be std::shared_ptr<AtomicBox<T*>> theres one instance where i'm waiting on a callback to be received and once it is the callback itself is thread safe so i want to unbox it
+[07:26:43] <aegon> but aside from that i could do away with the internal unique_ptr and have it on the shared_ptr to have a special deleter for the box
+[07:28:14] <Alipha> oh, right, it would be T*
+[07:30:12] *** Joins: varioust (~Srain@cpe-108-167-11-88.neb.res.rr.com)
+[07:30:13] *** Quits: CodeMouse92 (~CodeMouse@user/codemouse92) (Read error: Connection reset by peer)
+[07:37:13] <Alipha> aegon: i guess i see why you'd have std::shared_ptr<AtomicBox<std::unique_ptr<T, Deleter>>>... i would probably create a SharedAtomicBoxPtr<T, Deleter> or such to wrap that nonsense though, heh.
+[07:38:00] <Alipha> i see why you had unique_ptr in there, as it makes sense to have the Deleter "closer" to the T*
+[07:48:36] *** Joins: Hokedli (~lasliedv@gateway/tor-sasl/hokedli)
+[07:50:45] *** Quits: ARoxdale (~ARoxdale@84.203.26.40) (Ping timeout: 256 seconds)
+[07:50:56] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[07:59:03] *** Quits: varioust (~Srain@cpe-108-167-11-88.neb.res.rr.com) (Ping timeout: 252 seconds)
+[08:10:29] *** Joins: Jupp_S (~quassel@ip-88-153-154-129.hsi04.unitymediagroup.de)
+[08:13:06] *** Joins: Burgundy (~yomon@79.115.213.171)
+[08:24:07] *** Quits: senoraraton (~senorarat@192-195-83-130.static.monkeybrains.net) (Ping timeout: 256 seconds)
+[08:30:02] *** Quits: emerent (~quassel@p200300cd571578eaba27ebfffed28a59.dip0.t-ipconnect.de) (Remote host closed the connection)
+[08:31:51] *** Joins: emerent (~quassel@p200300cd571578eaba27ebfffed28a59.dip0.t-ipconnect.de)
+[08:35:25] *** Quits: Hokedli (~lasliedv@gateway/tor-sasl/hokedli) (Quit: Konversation terminated!)
+[09:12:19] *** Joins: chozorho (~chozorho@2601:146:300:c30::e14)
+[09:23:57] *** Joins: senoraraton (~senorarat@192-195-83-130.static.monkeybrains.net)
+[09:31:30] <aegon> Alipha: yeah, i'm runnign with it for now, thanks for the sanity check, feels odd having that structure but it sounds like its not 100% looney
+[09:38:57] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[09:39:04] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[09:39:04] *** ChanServ sets mode: +v npaperbot
+[09:44:58] *** Quits: johnny (~johnny@user/johnny) (Remote host closed the connection)
+[09:45:21] *** Quits: great_taste (~great_tas@user/great-taste/x-5798414) (Quit: Client closed)
+[09:47:11] *** Joins: johnny (~johnny@user/johnny)
+[10:03:17] *** Quits: scoobydoo (~scooby@user/scoobydoo) (Ping timeout: 256 seconds)
+[10:03:51] *** Joins: scoobydoo (~scooby@user/scoobydoo)
+[10:19:29] *** Quits: senoraraton (~senorarat@192-195-83-130.static.monkeybrains.net) (Ping timeout: 252 seconds)
+[10:29:37] *** Joins: sord937 (~sord937@gateway/tor-sasl/sord937)
+[10:31:00] *** Joins: JohnMS_WORK (~kvirc@185.73.229.242)
+[10:32:45] *** Quits: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse) (Ping timeout: 256 seconds)
+[10:33:11] *** Joins: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse)
+[10:33:52] *** Joins: Serpent7776 (~Serpent77@90-156-31-193.internetia.net.pl)
+[10:59:27] *** Quits: chozorho (~chozorho@2601:146:300:c30::e14) (Ping timeout: 252 seconds)
+[11:01:51] *** Joins: chozorho (~chozorho@c-69-250-72-103.hsd1.md.comcast.net)
+[11:06:36] *** Quits: skapata (~Skapata@user/skapata) (Remote host closed the connection)
+[11:12:47] *** Joins: sprout_ (~quassel@2a02:a467:ccd6:1:acfd:d7bd:8c5c:5aef)
+[11:16:42] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:54db:f79f:90dc:3ee5) (Ping timeout: 268 seconds)
+[11:25:47] *** Quits: chozorho (~chozorho@c-69-250-72-103.hsd1.md.comcast.net) (Quit: WeeChat 3.0)
+[11:38:54] *** Joins: Tobbi (~Tobbi@2a02:8108:1240:48ec:2d70:be4:aaac:8b09)
+[12:01:47] *** Quits: Terminus (~null@user/terminus) (Quit: ZNC 1.8.2 - https://znc.in)
+[12:07:17] *** Joins: Haohmaru (~Haohmaru@195.24.53.110)
+[12:13:54] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:8149:2184:782c:2882)
+[12:16:49] *** Quits: sprout_ (~quassel@2a02:a467:ccd6:1:acfd:d7bd:8c5c:5aef) (Ping timeout: 252 seconds)
+[12:24:57] *** Joins: ent58 (~ent58@rrcs-97-76-214-244.se.biz.rr.com)
+[12:27:03] *** Joins: seninha (~seninha@user/seninha)
+[12:31:19] *** Quits: dld (~dld@2601:197:600:1210:4c8f:59ca:20e7:8c51) (Ping timeout: 268 seconds)
+[12:32:02] *** Joins: andreasbuhr (~quassel@p548dd9b8.dip0.t-ipconnect.de)
+[12:32:02] *** Quits: andreasbuhr (~quassel@p548dd9b8.dip0.t-ipconnect.de) (Client Quit)
+[12:33:22] *** Joins: robod34 (Username@79.113.195.239)
+[12:33:24] *** Joins: dld (~dld@2601:197:600:1210:3148:3480:a32a:c902)
+[12:46:55] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[12:48:40] *** Joins: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net)
+[12:48:43] *** Quits: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net) (Client Quit)
+[12:51:35] *** Quits: seninha (~seninha@user/seninha) (Quit: Leaving)
+[12:57:08] *** Joins: asen (~asen@2408:821b:618:2ef0:ab85:814b:bf8f:a143)
+[12:57:27] *** Joins: lionkor (~lionkor@beammp/staff/lionkor)
+[13:01:51] *** Quits: artok (~azo@mobile-access-5672c9-83.dhcp.inet.fi) (Ping timeout: 256 seconds)
+[13:03:01] *** Joins: uzer1 (~uzer@dsl-trebng11-54f912-114.dhcp.inet.fi)
+[13:03:52] *** Joins: Juliu (~Juliu@2a02:810b:c640:3ec0:2129:7998:3c7b:2425)
+[13:08:09] *** Quits: proller (~p@2a02:6b8:b081:8825::1:d) (Ping timeout: 252 seconds)
+[13:12:48] <Haohmaru> !rq
+[13:12:48] <nolyc> Haohmaru: <Raziel> when will they learn that we want both fast AND deep, at the same time
+[13:13:23] <Raziel> :^)
+[13:13:33] *** Joins: plastico (~plastico@neomutt/plastico)
+[13:16:15] *** Quits: lionkor (~lionkor@beammp/staff/lionkor) (Remote host closed the connection)
+[13:17:51] *** Joins: lionkor (~lionkor@beammp/staff/lionkor)
+[13:19:24] *** Joins: Ivii (~Ivyy@2001:a62:4c3:8e01:7c39:aad5:22e:d595)
+[13:23:39] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[13:28:36] *** Joins: x_kuru (~xkuru@user/xkuru)
+[13:31:15] *** Quits: xkuru (~xkuru@user/xkuru) (Ping timeout: 252 seconds)
+[13:38:57] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[13:39:06] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[13:39:06] *** ChanServ sets mode: +v npaperbot
+[13:42:16] <Haohmaru> !fact
+[13:42:17] <nolyc> Haohmaru: A type can also be named (often more easily) by using a typedef.
+[13:42:40] <Haohmaru> "using" ^
+[13:43:39] <Haohmaru> {} using Typedef = constexpr bool;
+[13:43:39] <geordi> error: expected type-specifier before 'constexpr'
+[13:46:56] *** Quits: givemeyourpies (~givemeyou@c-66-235-2-202.sea.wa.customer.broadstripe.net) (Quit: Going offline, see ya! (www.adiirc.com))
+[13:48:54] *** Joins: givemeyourpies (~givemeyou@c-66-235-2-202.sea.wa.customer.broadstripe.net)
+[13:52:00] *** Joins: pulse (~pulse@user/pulse)
+[13:55:49] *** Joins: cart_man (~rynot@host-78-144-121-71.as13285.net)
+[14:01:52] *** Quits: cart_man (~rynot@host-78-144-121-71.as13285.net) (Quit: Konversation terminated!)
+[14:06:50] *** Quits: ent58 (~ent58@rrcs-97-76-214-244.se.biz.rr.com) (Quit: Client closed)
+[14:08:24] *** Joins: ent58 (~ent58@rrcs-97-76-214-244.se.biz.rr.com)
+[14:15:26] *** Joins: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net)
+[14:19:44] *** Quits: malloy (~jimery@116.30.222.115) (Quit: WeeChat 3.0)
+[14:23:33] *** Joins: cart_man (~rynot@host-78-144-121-71.as13285.net)
+[14:32:42] *** Quits: ent58 (~ent58@rrcs-97-76-214-244.se.biz.rr.com) (Quit: Client closed)
+[14:46:37] *** Quits: unixpro1970 (~unixpro19@c-73-181-185-205.hsd1.wa.comcast.net) (Ping timeout: 256 seconds)
+[14:48:18] *** Joins: unixpro1970 (~unixpro19@c-73-181-185-205.hsd1.wa.comcast.net)
+[14:59:29] *** Joins: proller (~p@2a02:6b8:0:40c:772:87b8:cc13:9193)
+[15:00:11] <LordKalma> https://github.blog/2021-12-01-github-availability-report-november-2021/
+[15:00:17] <LordKalma> github uses mysql, interesting
+[15:04:58] <TinoDidriksen> MySQL is quite fine these days.
+[15:10:15] *** Quits: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse) (Ping timeout: 252 seconds)
+[15:22:25] *** Joins: seninha (~seninha@user/seninha)
+[15:24:54] <PJBoy> man seriously
+[15:25:11] *** Joins: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse)
+[15:25:20] <PJBoy> TIL you can tab complete `sudo apt install partial-package-nam`
+[15:25:31] <PJBoy> that's so useful
+[15:26:09] <PJBoy> including mashing tab to get the list of possible autocompletions of course
+[15:27:53] <Haohmaru> PJBoy yes you can, if you've done "update" before that
+[15:28:07] <Haohmaru> it sorta downloads a list of what's available and keeps it on your HDD
+[15:28:25] <Haohmaru> it's still amazing tho
+[15:28:36] <PJBoy> good point
+[15:30:15] *** Quits: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse) (Ping timeout: 256 seconds)
+[15:31:06] <PJBoy> bah, this cmake build config doesn't make a working ninja build config somehow
+[15:36:05] <Haohmaru> cmakedbg
+[15:38:34] *** Quits: _flood (flooded@gateway/vpn/protonvpn/flood/x-43489060) (Remote host closed the connection)
+[15:40:45] *** Joins: flooded (flooded@gateway/vpn/protonvpn/flood/x-43489060)
+[15:41:04] *** Quits: flooded (flooded@gateway/vpn/protonvpn/flood/x-43489060) (Remote host closed the connection)
+[15:41:28] *** Joins: flooded (flooded@gateway/vpn/protonvpn/flood/x-43489060)
+[15:42:34] *** Joins: JohnMS_AWAY (~kvirc@185.73.229.242)
+[15:43:12] *** flooded is now known as _flood
+[15:43:43] *** Quits: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net) (Quit: Going offline, see ya! (www.adiirc.com))
+[15:44:36] *** Joins: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse)
+[15:45:03] <PJBoy> there is the --trace-source option
+[15:45:05] *** Quits: JohnMS_WORK (~kvirc@185.73.229.242) (Ping timeout: 252 seconds)
+[15:45:11] <PJBoy> which is somewhat helpful
+[15:46:48] *** Quits: dld (~dld@2601:197:600:1210:3148:3480:a32a:c902) (Ping timeout: 268 seconds)
+[15:53:25] <PJBoy> and ninja -d explain is potentially helpful
+[15:53:47] *** Joins: Roughy (~mdaw45ns@user/roughy)
+[15:54:10] <PJBoy> but I still don't get why this build works with makefile generation and not ninja
+[15:56:36] <Haohmaru> maybe the ninja got injured in the woods ;P~
+[15:57:32] *** Joins: markong (~kvirc@213.146.188.203)
+[16:00:04] *** Joins: ARoxdale (~ARoxdale@84.203.26.40)
+[16:00:53] *** Joins: interop_madness (~interop_m@user/interop-madness/x-0950004)
+[16:08:12] <Haohmaru> explorer.exe is so dumb
+[16:08:28] *** Quits: asen (~asen@2408:821b:618:2ef0:ab85:814b:bf8f:a143) (Quit: Leaving)
+[16:08:40] <Haohmaru> (that's nothing new)
+[16:09:07] <PJBoy> dumbest thing I know about explorer.exe is there's seemingly no way to exit a search
+[16:09:26] <PJBoy> if I back out of a search and leave the window alone for a bit, it automatically starts the search again anyway
+[16:10:07] <Haohmaru> hm, there's an [X] button on the address bar IIRC on crapdows7
+[16:10:36] <PJBoy> yeah it doesn't affect this behaviour
+[16:10:39] <Haohmaru> on winXP i don't even wanna.. <Merlin.gif>
+[16:11:35] <Haohmaru> now, explorer.exe does not want to let me name a folder that starts a dot
+[16:11:53] <Haohmaru> "that's sooooo linuxy, eww"
+[16:21:16] *** Joins: gehn (~gehn@user/gehn)
+[16:21:41] *** Joins: Terminus (~null@user/terminus)
+[16:21:41] *** Quits: Terminus (~null@user/terminus) (Read error: Connection reset by peer)
+[16:26:10] *** Joins: JohnMS_WORK (~kvirc@89-64-71-70.dynamic.chello.pl)
+[16:27:16] *** Joins: JohnMS_WORK|2 (~kvirc@89-64-71-70.dynamic.chello.pl)
+[16:27:35] *** Quits: JohnMS_AWAY (~kvirc@185.73.229.242) (Read error: Connection reset by peer)
+[16:29:54] *** Quits: cart_man (~rynot@host-78-144-121-71.as13285.net) (Quit: Konversation terminated!)
+[16:30:55] *** Quits: JohnMS_WORK (~kvirc@89-64-71-70.dynamic.chello.pl) (Ping timeout: 252 seconds)
+[16:31:04] *** Quits: aegon (~mike@174.127.249.180) (Remote host closed the connection)
+[16:34:18] *** Joins: lkor (~lionkor@beammp/staff/lionkor)
+[16:35:08] *** Quits: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse) (Ping timeout: 252 seconds)
+[16:35:08] *** Quits: lionkor (~lionkor@beammp/staff/lionkor) (Ping timeout: 252 seconds)
+[16:40:02] *** Joins: flooded (flooded@gateway/vpn/protonvpn/flood/x-43489060)
+[16:42:17] *** Quits: _flood (flooded@gateway/vpn/protonvpn/flood/x-43489060) (Ping timeout: 252 seconds)
+[16:45:42] *** Joins: dld (~dld@148.59.24.6)
+[16:48:33] *** Quits: gehn (~gehn@user/gehn) (Quit: Leaving)
+[16:50:47] *** Quits: dld (~dld@148.59.24.6) (Ping timeout: 256 seconds)
+[16:51:24] *** Joins: gehn (~gehn@user/gehn)
+[16:54:58] *** Joins: dld (~dld@148.59.24.15)
+[16:55:44] *** Joins: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net)
+[16:59:24] <ashafq> Haohmaru: You can use a msys2 terminal to create a dotfile
+[17:02:11] <PJBoy> explorer lets me name a directory starting with .
+[17:03:56] *** flooded is now known as _flood
+[17:04:37] <Raziel> yes, my explorer is also not broken
+[17:05:16] <Raziel> and besides, there's nothing special about dot as a starting character in windows
+[17:05:25] <Raziel> you can even make a file that's just ".txt"
+[17:05:37] <Raziel> and it works, and does get interpreted as a text file
+[17:06:20] <ashafq> Raziel: that's new... I have not tried it. Is that a windows 10 thing?
+[17:06:48] <Raziel> ashafq, I am indeed on windows 10. can't say that I remember if it was fine on earlier ones
+[17:08:41] *** Joins: varioust (~Srain@cpe-108-167-11-88.neb.res.rr.com)
+[17:13:35] <RandomReader> IIRC it's filesystem dependent, I think FAT has logical trouble with zero-length filename components
+[17:13:46] <RandomReader> (FAT has separate name and extension storage)
+[17:13:51] *** Joins: Terminus (~null@user/terminus)
+[17:14:33] <RandomReader> I don't remember if explorer also had issues in earlier windows versions, but that does sound familiar
+[17:15:07] <PJBoy> I've made .htaccess files on windows XP at least
+[17:15:14] <PJBoy> but I did have to use the command prompt to do it
+[17:17:24] <RandomReader> that would have been an explorer issue then
+[17:17:29] *** Quits: johnny (~johnny@user/johnny) (Ping timeout: 252 seconds)
+[17:18:13] *** Quits: frost (~frost@user/frost) (Ping timeout: 252 seconds)
+[17:19:27] <rpav> if you want to infuriate a linux user, make a file called "​.bashrc" or something
+[17:19:44] <rpav> note the zero-width space which renders quite well (which is to say not at all) in many terminals
+[17:21:15] <Haohmaru> ashafq that's what i did
+[17:21:27] <Haohmaru> PJBoy crapdows7 here
+[17:25:09] <ashafq> Haohmaru: Is win7 still supported?
+[17:25:24] <Haohmaru> who cares
+[17:25:28] <ashafq> I thought they stopped supporting it in 2020
+[17:25:33] *** Quits: varioust (~Srain@cpe-108-167-11-88.neb.res.rr.com) (Ping timeout: 252 seconds)
+[17:25:50] <ashafq> Haohmaru: You may want the security patches :)
+[17:26:17] <ashafq> Haohmaru: Unless you're running it in a VM disconnected from the internet :)
+[17:27:46] <Haohmaru> i want to stop using crapdows completely
+[17:27:52] *** Joins: aleios (~aleios@119-18-2-194.771202.syd.nbn.aussiebb.net)
+[17:28:17] <Haohmaru> that's the better plan
+[17:28:35] <Raziel> and I want my suspension arms to get shipped already, but what can ye do
+[17:30:16] *** Quits: lkor (~lionkor@beammp/staff/lionkor) (Remote host closed the connection)
+[17:30:41] *** Quits: dld (~dld@148.59.24.15) (Ping timeout: 252 seconds)
+[17:31:45] *** Joins: lkor (~lionkor@beammp/staff/lionkor)
+[17:38:58] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[17:39:06] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[17:39:06] *** ChanServ sets mode: +v npaperbot
+[17:40:40] <gehn> rpav, Satan would like to see you in his office
+[17:41:51] <gehn> Raziel, historically no you couldn't do that, at least not through the `explorer.exe` GUI, but it should still have always been doable with cmd
+[17:41:59] <Raziel> fair enuff
+[17:47:57] <rpav> gehn: after the last time?!
+[17:51:20] <PJBoy> hahahaha
+[17:53:25] <Haohmaru> rpav you're getting a promotion
+[17:53:37] *** Joins: Guest17 (~Guest17@eth-west-pareq2-46-193-4-100.wb.wifirst.net)
+[17:55:53] *** Joins: dld (~dld@148.59.24.15)
+[18:03:51] <rpav> dude, i thought i was getting a dell :(
+[18:04:45] <Raziel> a dell and a promotion?
+[18:06:00] <rpav> hell is an obtuse API
+[18:08:35] <LordKalma> if Gamer's Nexus taught me something is that Dell has quite the capacity to make the worst possible desktops
+[18:09:05] <LordKalma> speaking of windows shenanigans
+[18:09:52] <LordKalma> sometimes I like to have fun and do my python printing with `with open("CON","w") as cmd: cmd.write("Hello world!")`
+[18:11:01] <LordKalma> when I learned about the windows file-to-device mapping it explained something to me I never understood. If you go on windows package manager you can go to any serial device and set the baudrate/parity from there. And I always wondered what was the use, since every software/API has that setting also. Then I understood it's for when you use "COM4" as a file
+[18:11:36] <PJBoy> <rpav> no no no, you need to change your mental model, Satan, you're too used to Hell-like languages, there are other ways to be evil
+[18:11:59] <rpav> saving GB-size downloads ot the serial port is so 2021
+[18:12:32] <LordKalma> let's make a uSD to Serial adapter
+[18:12:54] <kaichiuchu> funny you're all talking about this
+[18:13:07] <kaichiuchu> right next to me is a packard bell from '93
+[18:13:11] <rpav> PJBoy: ;)
+[18:13:19] <kaichiuchu> i am waiting patiently for the RAM to come in because the onboard one appears to be dead
+[18:13:37] <rpav> kaichiuchu: _why_ ;)
+[18:13:45] <kaichiuchu> because I'd like to do programming on it
+[18:13:55] <kaichiuchu> i know, I know, get it out of your system before you get like diabetes or something
+[18:14:03] <rpav> i think the same question applies
+[18:14:16] <rpav> like nostalgia or what
+[18:14:19] <Haohmaru> vintage computing
+[18:14:31] <kaichiuchu> well, I wrote an emulator once, I want to see if I can get it performant on garbage hardware
+[18:14:45] <kaichiuchu> it's a 486SX
+[18:14:52] <kaichiuchu> so I'm not hopeful
+[18:14:55] <kaichiuchu> but hey
+[18:15:11] <Haohmaru> how much MHz?
+[18:15:18] <kaichiuchu> 33MHz I _think_
+[18:15:19] <rpav> 16 if it's an SX
+[18:15:19] <kaichiuchu> not sure yet
+[18:15:28] <Haohmaru> wtf
+[18:15:43] <rpav> DX was 33, DX2 was 66, though maybe you could upclock an SX? i forget, been a bit
+[18:15:45] <kaichiuchu> I'm really bummed that the onboard RAM is dead
+[18:16:05] <Haohmaru> it died of old age maybe?
+[18:16:32] <rpav> a bit surprising it died really, that era tended to last a bit longer i thought
+[18:18:20] <kaichiuchu> it could be dust on the contacts
+[18:18:24] <kaichiuchu> but that's a shot in the dark
+[18:18:35] <rpav> probably not if you tried reseating
+[18:18:37] <kaichiuchu> I have to go out and buy an air can
+[18:18:51] <kaichiuchu> I haven't done that yet either because I'm too afraid I'll somehow bust the chip
+[18:20:14] <kaichiuchu> but I think I'm going to try doing that later on today
+[18:20:26] <rpav> yeah the slots weren't as user-friendly as now but
+[18:20:45] <kaichiuchu> it took me a while to decode the stupid beeping
+[18:20:48] <rpav> i think i broke off the end of one trying to get out a stick before .. still worked as i recall, but
+[18:20:52] <kaichiuchu> bit 0 first 64K failure
+[18:21:14] <rpav> first 64k failure? wait that's not just dead cmos or somthing?
+[18:21:31] <kaichiuchu> I don't think so
+[18:21:33] <rpav> did 486 still have the onboard 640k, i forget
+[18:21:45] <kaichiuchu> full disclosure: this thing works _sometimes_
+[18:21:59] <kaichiuchu> so it's not completely dead
+[18:23:22] <kaichiuchu> 2 long beeps, pause, 2 more long beeps
+[18:23:49] <kaichiuchu> 2-1-2 actually
+[18:23:52] *** Joins: great_taste (~great_tas@user/great-taste/x-5798414)
+[18:23:53] <rpav> well, there's a big difference between mostly dead and all dead, after all
+[18:24:15] <kaichiuchu> well I got this off of ebay, and it seems to be a time machine otherwise
+[18:24:26] <kaichiuchu> 3.1 is still on it with a bunch of this guy's work stuff on it
+[18:24:33] <kaichiuchu> and strangely, twinsock's source code
+[18:26:38] <rpav> https://www.computerhope.com/beep.htm .. first i found, i don't see any 2-1-2 .. mostly 1, 2, or 4 beeps
+[18:26:45] <kaichiuchu> yeah I ended up at the same link
+[18:26:57] <rpav> ok insyde has a couple 3-beep but
+[18:27:05] <kaichiuchu> it's a pheonixbios
+[18:27:05] * rpav has never even heard of that one
+[18:27:25] <kaichiuchu> insyde i've seen exactly once in real life
+[18:27:37] <rpav> what was it on
+[18:28:03] <kaichiuchu> i think an HP?
+[18:28:22] * rpav wonders what the beep is for "broken beeper"
+[18:28:33] <rpav> ahh
+[18:30:01] *** Quits: JohnMS_WORK|2 (~kvirc@89-64-71-70.dynamic.chello.pl) (Quit: KVIrc 5.0.1 Aria http://www.kvirc.net/)
+[18:52:43] *** Joins: Itaru (~DaSH@ro2.flokinet.is)
+[18:56:10] *** Joins: lionkor (~lionkor@beammp/staff/lionkor)
+[18:57:05] *** Quits: lkor (~lionkor@beammp/staff/lionkor) (Ping timeout: 256 seconds)
+[19:06:31] *** Quits: aleios (~aleios@119-18-2-194.771202.syd.nbn.aussiebb.net) (Quit: WeeChat 3.3)
+[19:15:17] *** Quits: dld (~dld@148.59.24.15) (Ping timeout: 256 seconds)
+[19:48:28] *** Quits: lh_mouse (~lh_mouse@mingw-w64/developer/lhmouse) (Read error: Connection reset by peer)
+[19:49:39] *** Quits: Guest17 (~Guest17@eth-west-pareq2-46-193-4-100.wb.wifirst.net) (Quit: Client closed)
+[19:53:31] *** Quits: Itaru (~DaSH@ro2.flokinet.is) (Quit: Leaving)
+[19:53:54] *** Joins: Itaru (~DaSH@ro2.flokinet.is)
+[19:55:22] *** Quits: interop_madness (~interop_m@user/interop-madness/x-0950004) (Read error: Connection reset by peer)
+[19:56:45] *** Quits: Terminus (~null@user/terminus) (Quit: ZNC 1.8.2 - https://znc.in)
+[20:03:50] *** Joins: pinchartl (~laurent@perceval.ideasonboard.com)
+[20:04:00] <pinchartl> hello
+[20:06:27] <pinchartl> I'm writing a class that wraps a file descriptor (it's Linux-specific, so it's an int), and manages its lifetime like std::unique_ptr<> does for pointers. I thus have a UniqueFD constructor that takes an int argument, and takes over ownership of the fd. I'm pondering about whether the constructor should take an int or an int &&, and assign the parameter to -1 in the latter case so that the caller
+[20:06:33] <pinchartl> will not mistakenly use an fd whose ownership has been transferred. std::unique_ptr<> takes a pointer * and not a pointer *&& though, so I was wondering if this was a good idea/practice
+[20:06:57] <pinchartl> if anyone has thoughts no this topic, I'd appreciate hearing them
+[20:07:36] <rpav> probably not a good idea to modify the caller
+[20:08:07] <rpav> consider the original int fd to be a "non-owning reference" much like a T* would be
+[20:09:54] * imMute would copy what unique_ptr does.
+[20:10:33] <imMute> when you use that ctor of unique_ptr you're basically saying "yes, I gurantee that this pointer can now be owned by you"  it's up to the programmer to ensure that that's correct
+[20:11:09] <rpav> also it's occasionally useful to _use_ the original pointer anyway, rather than trying to juggle the unique_ptr and call .get()
+[20:12:05] <Alipha> pinchartl: I would just have the ctor take an int and make the ctor explicit. If someone's using your class, they should know what it's for
+[20:12:06] <rpav> e.g. you want to actually return a T*/T& to the resource you created, but you're owning it internally, and you created it someplace slightly incovenient (e.g. a map or similar)
+[20:12:26] <pinchartl> I agree there are valid uses for the original pointer after the ownership transfer constructor call, I've seen some myself
+[20:12:27] <rpav> similarly you may want to have-owned an fd but still return its value for select() or something
+[20:12:51] <rpav> tldr, "own" doesn't mean "hide" i guess
+[20:13:05] <pinchartl> an int && constructor would possibly even cause bugs there, but on the other hand, it could catch use-after-free bugs too
+[20:13:17] <pinchartl> that's why I was torn between the two options, there are pros and cons
+[20:13:36] <pinchartl> Alipha: thanks. I've already made it explicit
+[20:14:33] <pinchartl> UniqueFD fd(num); doSomethingWithFd(num); is a valid use case and is safe
+[20:15:02] <pinchartl> while: UniqueFD fd(num); consumeFdAndPossibleCloseIt(std::move(fd)); doSomethingWithFd(num); is not valid
+[20:15:59] <pinchartl> an int && constructor wouldn't make the compilation fail, but could help catching invalid uses of num as it will be -1 and will more reliably fail than an old integer that may become a valid fd number
+[20:16:27] <pinchartl> but I suppose it's quite unlikely that it will catch real issue. possible, but uncommon
+[20:17:06] <pinchartl> rpav: imMute: Alipha: do you mind if I quite this conversation in an e-mail reply on a public mailing list ?
+[20:19:07] <rpav> it's semi-public as it is, but summarizing reasons would probably be more coherent in an email
+[20:19:53] <Alipha> I don't mind
+[20:20:17] <imMute> same for me with both those statements.
+[20:21:42] <pinchartl> thank you
+[20:21:49] <Alipha> I think int&& would introduce confusion. Though I suppose that confusion would prompt people to look at the documentation, heh
+[20:22:15] *** Quits: Itaru (~DaSH@ro2.flokinet.is) (Quit: Leaving)
+[20:22:36] <pinchartl> I know a few developers who would tell me "use rust" ;-)
+[20:22:43] *** Joins: Itaru (~DaSH@ro2.flokinet.is)
+[20:23:08] <Alipha> { int x = 3; int y = std::move(x); cout << x, y; } // I would not expect moving an int to modify the moved-from int
+[20:23:09] <geordi> 3, 3
+[20:23:25] <rpav> probably avoid people selling you a language as the solution to all your problems, especially those who haven't used what they're selling much
+[20:23:28] *** Quits: letto (~letto@188.25.118.240) (Read error: Connection reset by peer)
+[20:24:02] *** Joins: letto (~letto@188.25.118.240)
+[20:27:59] *** Quits: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com) (Quit: WeeChat 3.0.1)
+[20:32:18] *** Joins: varioust (~Srain@72-46-48-28.lnk.ne.static.allophone.net)
+[20:32:33] *** Quits: tesuji (~quassel@2a02:908:180:9500:ed81:4afc:8e41:e7c1) (Ping timeout: 252 seconds)
+[20:38:01] *** Quits: lionkor (~lionkor@beammp/staff/lionkor) (Remote host closed the connection)
+[20:39:38] *** Joins: lionkor (~lionkor@beammp/staff/lionkor)
+[20:40:15] *** Quits: sord937 (~sord937@gateway/tor-sasl/sord937) (Quit: sord937)
+[20:44:03] *** Joins: lkor (~lionkor@beammp/staff/lionkor)
+[20:44:11] *** Quits: lionkor (~lionkor@beammp/staff/lionkor) (Ping timeout: 256 seconds)
+[20:45:06] *** Quits: givemeyourpies (~givemeyou@c-66-235-2-202.sea.wa.customer.broadstripe.net) (Quit: Going offline, see ya! (www.adiirc.com))
+[20:49:38] *** Quits: Haohmaru (~Haohmaru@195.24.53.110) ()
+[20:53:12] *** Joins: meator (~meator@user/meator)
+[20:57:46] <PJBoy> taking an int rvalue reference might have some niche uses
+[20:58:00] <PJBoy> like if it represents a file descriptor or something like that
+[20:58:05] <PJBoy> or some other kind of handle
+[20:58:43] * PJBoy reads up
+[20:58:45] <PJBoy> oh
+[20:59:32] *** Joins: AbleBacon (~AbleBacon@user/AbleBacon)
+[21:00:07] <PJBoy> actually you know
+[21:00:17] <PJBoy> making unique_ptr take a pointer rvalue reference might have been a sensible play
+[21:01:36] <pinchartl> PJBoy: I've been wondering about that
+[21:02:19] <PJBoy> the difference is purely cosmetic and doesn't really amount to anything significant
+[21:02:23] *** Joins: krishnac (~krishnac@c-67-188-37-26.hsd1.ca.comcast.net)
+[21:02:32] <pinchartl> (my latest pedandic investigation in C++ world was N4318 (http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2014/n4318.pdf), the proposal to introduce std::abs_diff())
+[21:02:33] <PJBoy> but yeah I think it would have been a neat approach
+[21:03:25] <PJBoy> abs_diff would be welcomed by me
+[21:04:31] <PJBoy> though I would tweak some details from that proposal
+[21:04:57] <pinchartl> I saw a std::abs(static_cast<int>(a - b)) the other day, where both a and b are unsigned int
+[21:05:01] <PJBoy> [n4318]
+[21:05:01] <npaperbot> N4318: [Library Evolution] Proposal to add an absolute difference function to the C++ Standard Library <https://wg21.link/n4318> (by Jeremy Turnbull) (2014-09-21)
+[21:05:05] <pinchartl> and it bothered me
+[21:05:12] <PJBoy> and it should
+[21:05:40] <PJBoy> though I think it might be correct in C++20 with its guaranteed two's complement
+[21:06:02] <pinchartl> I failed to find discussions about N4318, I don't know if it was rejected, or just disappeared from view
+[21:06:09] *** Joins: artok (~azo@193.65.96.98)
+[21:06:24] <PJBoy> yeah I think that was from the dark era where discussions were behind closed doors
+[21:07:54] <PJBoy> here https://groups.google.com/a/isocpp.org/g/std-proposals/c/yZBrLrwhfAQ/m/wC4DXftjgFQJ
+[21:08:51] <PJBoy> think it just died from lack of action from anyone
+[21:10:06] <pinchartl> thanks
+[21:12:05] <PJBoy> { constexpr signed t = abs_diff(1, 2), tt = abs_diff(2, 1); SHOW(t), SHOW(tt); } constexpr signed abs_diff(unsigned a, unsigned b) { return abs(signed(a - b)); }
+[21:12:06] <geordi> t = 1, tt = 1
+[21:12:17] <PJBoy> yeah I think that abs(int(...)) thing actually worked out
+[21:13:34] <PJBoy> implementation defined prior to C++20, guaranteed after
+[21:13:43] <PJBoy> but all implementations did the same thing
+[21:14:01] <pinchartl> which I assume is why it's now guaranteed :-)
+[21:14:13] <PJBoy> yup :)
+[21:14:27] <PJBoy> still a surprising move to me
+[21:15:56] <PJBoy> { constexpr signed t = abs_diff(0, UINT_MAX); SHOW(t); } constexpr signed abs_diff(unsigned a, unsigned b) { return abs(signed(a - b)); }
+[21:15:57] <geordi> t = 1
+[21:16:00] <PJBoy> there's your problem case
+[21:18:01] <PJBoy> { constexpr signed t = abs_diff(0, UINT_MAX/2+1); SHOW(t); } constexpr signed abs_diff(unsigned a, unsigned b) { return abs(signed(a - b)); }
+[21:18:01] <geordi> warning: 't' may be used uninitialized
+[21:18:07] <PJBoy> now that's a weird warning
+[21:18:15] *** Quits: letto (~letto@188.25.118.240) (Ping timeout: 256 seconds)
+[21:19:13] *** Joins: tesuji (~quassel@2a02:908:180:9500:3852:8ba:a318:ea61)
+[21:19:24] <PJBoy> it hits the case where abs gives you a negative number
+[21:20:09] <PJBoy> or an "undefined" result as it were
+[21:24:34] *** Quits: artok (~azo@193.65.96.98) (Quit: gaaaaaa)
+[21:24:38] <InPhase> The UB is at the cast on return.
+[21:25:34] <InPhase> Oh.  I missed the cast inside abs.
+[21:26:57] <rpav> UB-oriented programming
+[21:27:05] <InPhase> Yeah.  The C++ standard really needs to redefine signed integer overflow as defined so these opaque UB issues stop showing up.
+[21:27:42] <rpav> i think it differs all over
+[21:28:09] <InPhase> The optimizers have long since not required this UB to be able to write optimized code.
+[21:29:24] <rpav> i think it's more UB because it's unpredictable outcome dependent on the platform .. not sure if you can have actual hardware exceptions for it but i wouldn't be surprised i guess
+[21:30:21] *** Joins: letto (~letto@188.25.118.240)
+[21:31:33] <InPhase> rpav: But the standard already defines signed integers as two's complement, which mandates the mathematical result of overflow.
+[21:32:18] <InPhase> This was done because every processor in use is already doing this.
+[21:33:09] <rpav> i'm thinking more bitshift ops which i think the cpu still counts as overflow
+[21:34:07] *** Quits: krishnac (~krishnac@c-67-188-37-26.hsd1.ca.comcast.net) (Ping timeout: 256 seconds)
+[21:35:00] <hnOsmium0001[m]> it would be nice if we can get opt-in defined signed integer operations (and maybe undefined overflow for unsigned integers), something like std::signed_add(a, b) etc.
+[21:36:46] *** Joins: AmR (~AmREiSa@156.199.223.24)
+[21:38:58] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[21:39:06] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[21:39:06] *** ChanServ sets mode: +v npaperbot
+[21:40:25] <PJBoy> The optimizers have long since not required this UB to be able to write optimized code. <-- not true
+[21:43:53] *** Joins: paul424 (~tom@ip-37-248-154-21.multi.internet.cyfrowypolsat.pl)
+[21:44:03] <PJBoy> here's the latest testcase https://godbolt.org/z/sc911orfq
+[21:44:27] <rpav> oh, yeah, i think a lot of _basic_ code generation is predicated on things not overflowing isn't it?
+[21:44:36] <PJBoy> the signed size never overflows, so it doesn't need overflow handling
+[21:44:51] <rpav> that was one of the "this is why UB" things in that one post from awhile back
+[21:45:33] * rpav still thinks UB is a terrible way to handle it, but
+[21:46:46] <PJBoy> you can even out the codegen a bit with a well placed mask https://godbolt.org/z/r89a57eYb
+[21:46:58] <PJBoy> but yeah it's undeniable that well defined overflow can be a pessimisation
+[21:47:13] <hnOsmium0001[m]> I'm surprised something like std::signed_add with defined overflow hasn't been proposed, at least I can't seem to find a paper related
+[21:47:54] <PJBoy> like `signed signed_add(signed a, signed b) { return unsigned(a) + unsigned(b); }`?
+[21:48:14] <hnOsmium0001[m]> does that work properly?
+[21:48:29] <PJBoy> it works properly in some respect
+[21:48:42] <PJBoy> conversion from unsigned to signed is valid and well defined in C++20
+[21:48:49] <PJBoy> and unsigned overflow is valid and well defined
+[21:49:00] <hnOsmium0001[m]> wouldn't it get implementation defined behavior if a or b is negative?
+[21:49:16] <PJBoy> signed to unsigned conversion has always been well defined
+[21:49:30] <hnOsmium0001[m]> what about the other way around, when unsigned is converted back to signed if it's larger than the respective MAX?
+[21:49:43] <PJBoy> it's defined to be a two's complement no-op
+[21:50:26] <PJBoy> basically unsigned addition there is what ASM addition is
+[21:50:35] <PJBoy> and the signed and unsigned conversions are just to appease C++
+[21:50:48] <PJBoy> but they're ASM no-ops
+[21:51:19] <rpav> reasons why sign should be operation-oriented and not type-oriented
+[21:51:38] <PJBoy> I agree
+[21:51:49] <PJBoy> I'm totally swayed by that now
+[21:52:01] <PJBoy> that said I wouldn't mind if it was type based anyway
+[21:52:19] <rpav> i'm not 100% sure i do, but given there are many fewer _actual_ signed operations, and most of the time if you're doing some of the operations that cause UB, you want the unsigned variation and not to get caught in casting hell, it would help in at least some cases
+[21:52:42] <PJBoy> like if we had signed/unsigned/wrap_signed/wrap_unsigned kinda way
+[21:53:54] <PJBoy> but because you can write that signed_add function I just wrote, having a non-wrapping unsigned would be enough
+[21:54:19] <PJBoy> someone should propose it >_>
+[21:55:51] <rpav> `class sane_int`
+[22:02:01] *** Quits: markong (~kvirc@213.146.188.203) (Ping timeout: 252 seconds)
+[22:05:13] *** Joins: Cheaterman (~Cheaterma@user/cheaterman)
+[22:07:33] *** Joins: TheGuestMovie (~TheGuestM@173.231.114.74)
+[22:11:03] *** Joins: senoraraton (~senorarat@192-195-83-130.static.monkeybrains.net)
+[22:14:14] *** Joins: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it)
+[22:20:12] *** Joins: kenanmarasli (~kenanmara@user/kenanmarasli)
+[22:22:42] *** Quits: proller (~p@2a02:6b8:0:40c:772:87b8:cc13:9193) (Ping timeout: 268 seconds)
+[22:31:32] <rpav> heh i just realized you could do like `auto x = A ? B : [&]() { ... }();
+[22:31:45] <rpav> i mean you could have a called lambda for A and/or B too, but
+[22:43:38] <Alipha> <PJBoy> here's the latest testcase https://godbolt.org/z/sc911orfq - - that's an awesome example
+[22:45:29] <PJBoy> ty ty
+[22:46:18] <PJBoy> I don't remember where I got it from
+[22:48:00] *** Joins: sprout_ (~quassel@2a02:a467:ccd6:1:654a:7e1b:4ab5:b4bb)
+[22:49:25] *** Quits: ARoxdale (~ARoxdale@84.203.26.40) (Ping timeout: 256 seconds)
+[22:51:20] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:8149:2184:782c:2882) (Ping timeout: 252 seconds)
+[22:55:35] *** Joins: kbingham (~kbingham@core.do.nakedgeek.co.uk)
+[22:56:06] <hnOsmium0001[m]> I should start bookmarking good godbolt examples
+[23:02:55] *** Joins: dextercd (~dexter@2a02-a450-f25d-1-76d4-35ff-fefe-34c.fixed6.kpn.net)
+[23:12:16] <PJBoy> that's what I do
+[23:16:38] *** Quits: meator (~meator@user/meator) (Quit: Leaving)
+[23:17:31] *** Joins: Leone (~Leo@216.154.50.172)
+[23:19:45] *** Quits: gehn (~gehn@user/gehn) (Quit: Leaving)
+[23:21:00] *** Quits: lkor (~lionkor@beammp/staff/lionkor) (Read error: Connection reset by peer)
+[23:24:38] *** Joins: lkor (~lionkor@beammp/staff/lionkor)
+[23:27:18] <rpav> #define like(T) decltype(T)
+[23:30:09] *** Parts: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it) ()
+[23:40:05] *** Joins: skapata (~Skapata@2804:14c:87b0:a6f9:ec04:5b98:87f7:9e92)
+[23:40:05] *** Quits: skapata (~Skapata@2804:14c:87b0:a6f9:ec04:5b98:87f7:9e92) (Changing host)
+[23:40:05] *** Joins: skapata (~Skapata@user/skapata)
+[23:48:56] *** Joins: givemeyourpies (~givemeyou@c-66-235-2-202.sea.wa.customer.broadstripe.net)

@@ -1,0 +1,1462 @@
+[00:00:16] <aegon> i think i'm closer but static_cast with pointers seems odd to me. I thought of static cast as calling the constructor but i'm def wrong on that
+[00:00:23] <Alipha> PJBoy had an example the other day illustrating "unexpected behavior" caused by breaking aliasing rules with reinterpret_cast. PJBoy, do you have that handy?
+[00:01:13] <RandomReader> pointers aren't special, they're just objects too, they store values  .. the value is simply an address/location
+[00:01:37] <RandomReader> static_cast converts one value to another using static type information (what's immediately available at the usage site)
+[00:02:04] <aegon> so would you ever realistically want to static_cast the pointer vs reinterpret_cast, that seems like the same operation to me eventhough reinterpret_cast is probably wrong stylistically
+[00:02:13] <RandomReader> dynamic_cast converts one pointer to another using dynamic type information in polymorphic class hierarchies
+[00:02:27] <aegon> lets say they are flat objects
+[00:02:35] <aegon> no inheretence or virtual
+[00:02:54] <RandomReader> why would you want to reinterpret_cast a pointer?
+[00:03:12] <aegon> just change the object type
+[00:03:23] <RandomReader> but that makes no sense, conceptually
+[00:03:32] <RandomReader> you can't change an object, you can only convert it to a different kind
+[00:03:38] <RandomReader> otherwise they wouldn't be separate types in the first place
+[00:03:57] <RandomReader> a uint32_t is never a uint16_t, no matter how you squint at it
+[00:04:02] <Alipha> You're not changing the object's type. You're only changing what type of object the compiler THINKS it's pointing to
+[00:05:17] <aegon> where as static cast will do pointer conversion of managed objects even on a pointer type, and dynamic cast will make sure its casting correctly between virtual tables -- close yet? :\
+[00:05:56] <Alipha> << static_cast<Base2*>(p), reinterpret_cast<Base2*>(p); struct Base1 { int x; }; struct Base2 { int y; }; struct Derived : Base1, Base2 {}; Derived *p = new Derived; // reinterpret_cast does the wrong thing here
+[00:05:57] <geordi> 0xf4d324, 0xf4d320
+[00:06:08] <RandomReader> static_cast will convert a value when there's a defined path between the source and destination types
+[00:06:49] <RandomReader> if there isn't a defined path, then (with a couple exceptions covered by the other forms) the fundamental idea of converting between the two doesn't make sense to begin with
+[00:07:01] <aegon> i have a *LOT* of undefined behavior to clean up :!
+[00:07:45] <RandomReader> e.g. static_cast<uint32_t>( uint16_t{42} ) is defined, they're both integer types, so you can extract the value from one object and create a new object with that same value
+[00:07:50] <aegon> Alipha: why wouldn't you need dynamic_cast there?
+[00:08:37] <Alipha> << dynamic_cast<Base2*>(p); struct Base1 { int x; }; struct Base2 { int y; }; struct Derived : Base1, Base2 {}; Derived *p = new Derived;
+[00:08:38] <geordi> 0x19d21c4
+[00:09:03] <Alipha> Interesting. I thought that'd be an error actually, since there's no virtual functions
+[00:09:32] <PJBoy> Alipha, https://godbolt.org/z/oWEM416c6
+[00:12:06] <aegon> oh ok, i'm rereading through the cppreferences stuff after what we've talked about and things are clicking more
+[00:12:09] <RandomReader> for pointers, static_cast can walk a class hierarchy (because it knows how to determine the location to each part of that hierarchy), and can also convert to/from void*
+[00:12:30] <Alipha> aegon: you only* need dynamic_cast if you wish to check to see if the pointed-to object is actually of the destination class. (Most commonly, you have a Base* and you want to know if that Base* points to a Derived object) If you already know the object is of the destination class, then you can static_cast to do an unchecked conversion and not bother with runtime checking.
+[00:13:04] <aegon> yeah so if i'm grokking things better now, dynamic cast actually goes and checks the vtable for the object to determine its type or something similar?
+[00:13:13] <Alipha> aegon: yes
+[00:13:22] <RandomReader> in order of use, it generally goes: static_cast, dynamic_cast, and then much more rarely const_cast and reinterpret_cast (with both of these being red flags for special behavior)
+[00:13:35] <Alipha> aegon: which is a rather slow runtime check
+[00:14:10] <Alipha> Because dynamic_cast has to also handle more complex scenarios, lkke "cross casts"
+[00:14:17] <Alipha> *like
+[00:14:27] <aegon> that means to be "safe" if your using dynamic_cast, you should also be ready to catch exceptions if the vtable isn't as expected right?
+[00:14:37] <artok> ville: väärä tab-completetion, but understood =)
+[00:14:49] <RandomReader> manuels - maybe post an example? I can't interpret what you asked
+[00:15:19] <Alipha> aegon: dynamic_casting a pointer results in nullptr if the object isn't of the destination type, and so you should check to see if that pointer is null
+[00:16:02] <Alipha> dynamic_casting a reference results in an exception being thrown (I don't remember the exception name off the top of my head)
+[00:16:35] <RandomReader> (std::bad_cast)
+[00:17:58] <aegon> interesting, is therea move_static_cast or similar? :P or is that std::move(static_cast<dest>(src)) and it does what i think it will
+[00:18:36] <RandomReader> std::move doesn't actually do anything, so there's probably a bit there that doesn't work as you think it would :P
+[00:18:38] <Alipha> aegon: PJBoy posted https://godbolt.org/z/oWEM416c6 which is an example of a reinterpret_cast (you can change that c-style cast to reinterpret_cast) changing the value of a variable but then the compiler assuming the value hasn't changed because you broke aliasing rules
+[00:18:59] <RandomReader> for moving, perhaps:
+[00:19:01] <RandomReader> !&&
+[00:19:02] <nolyc> http://thbecker.net/articles/rvalue_references/section_01.html explains rvalue references, moving and forwarding.
+[00:19:41] <RandomReader> after you understand the mechanics of moving (it's an expression of an idea, not what physically happens), you can probably reason it out
+[00:21:15] <Alipha> { std::vector<int> v{2, 5, 9}; std::move(v); std::cout << v; }
+[00:21:16] <geordi> warning: ignoring return value of 'constexpr remove_reference<_Tp>::type&& move(_Tp&&) [with _Tp = vector<int>&; remove_reference<_Tp>::type = vector<int>]', declared with attribute 'nodiscard'
+[00:21:19] <manuels> RandomReader nevermind. I guess its a smell anyway to use virtual functions in a ctor of base classes while keeping interface unimplemented interfaces.
+[00:21:30] <Alipha> geordi: -w { std::vector<int> v{2, 5, 9}; std::move(v); std::cout << v; }
+[00:21:31] <geordi> {2, 5, 9}
+[00:22:04] <Alipha> { std::vector<int> v{2, 5, 9}; std::vector<int> w = std::move(v); std::cout << v; }
+[00:22:05] <geordi> {}
+[00:22:16] <RandomReader> manuels - it doesn't make sense to have base class constructors attempt to use derived implementations, no .. the derived don't even exist until the base is fully constructed
+[00:23:16] <aegon> interesting, are all c_style casts reinterpret_casts?
+[00:23:26] <RandomReader> if you're coming from other languages, then you probably need to pay attention to C++'s creation order: https://en.cppreference.com/w/cpp/language/constructor#Initialization_order
+[00:23:46] <manuels> yes I though its an okaish way to implement skeleton pattern
+[00:23:48] <Alipha> Oh, I was totally going to reply to manuels but I forgot. Seems perhaps your "utility base classes" should derive from the interfaces?
+[00:23:55] <manuels> but nope, not okayish :D
+[00:23:57] *** Quits: meator (~meator@user/meator) (Quit: Leaving)
+[00:23:58] <InPhase> manuels: Second-pass initialization functions are the general solution to those sorts of sequencing problems.  It's not ideal to have to use them, but sometimes you need it.
+[00:24:25] <aegon> crud, i have to run for 30, brb Alipha RandomReader thanks for all the info an help, :)
+[00:24:39] <manuels> Alipha they do, but they dont implement the interface. thats why I ran into problems
+[00:25:34] <RandomReader> aegon - we tend not to like C-style casts in C++ because it's actually a bit difficult to tell what they are, see item 1 here: https://en.cppreference.com/w/cpp/language/explicit_cast
+[00:26:03] <RandomReader> we just happen to know it is reinterpret_cast in that example .. and usually the biggest risk of the C-style syntax is that it turns into a reinterpret_cast when you didn't want it to
+[00:26:41] *** Quits: Codaraxis (~Codaraxis@user/codaraxis) (Ping timeout: 256 seconds)
+[00:26:54] <Alipha> !give aegon c-style cast
+[00:26:55] <nolyc> aegon: The semantics for a cast-expression (aka a 'C-Style Cast') are defined as the first of these that succeeds: const_cast, static_cast, static_cast followed by const_cast, reinterpret_cast, reinterpret_cast followed by const_cast.  See 5.4 [expr.cast] for more details.
+[00:29:09] <RandomReader> someone gave a production example in here a few years ago, it was a simple   auto interface_ptr = (Interface*)implementation_ptr;    kind of line
+[00:29:48] <RandomReader> originally it behaved as a static_cast, the Interface was available in the implementation, everything worked fine
+[00:29:53] *** Quits: voltron (~voltrin_@ip4d16bdc6.dynamic.kabel-deutschland.de) (Remote host closed the connection)
+[00:30:09] *** Quits: cm007magnum (~Rheanna@61.171.21.169) (Remote host closed the connection)
+[00:30:26] <RandomReader> IIRC what happened was the implementation was later refactored and no longer provided that Interface .. at which point that line silently became a reinterpret_cast
+[00:30:47] <RandomReader> took a while to track down the source of the crashes, which was why they mentioned it
+[00:31:48] *** Joins: cm007magnum (~Rheanna@101.89.150.168)
+[00:35:40] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[00:40:15] <manuels> however I have another question😬. I wonder how to correctly expose an extension manager from the executable to libraries/plugins. will it work and does it make sense to do `extern const ExtensionManager* mgr;` in the ExtensionManagers interface header and define the variable in the executables implementation?
+[00:40:39] <InPhase> { ValueStr<float> v(5); cout << v.t; } template<class T> struct ValueStr { T t; template<class T2> ValueStr(T2 val) { t = move(T(val)); } };  // RandomReader Accepted C++ method of template object construction.
+[00:40:40] <geordi> 5
+[00:40:55] <InPhase> { int i = 5; ValueStr<float*> v(&i); cout << *v.t; } template<class T> struct ValueStr { T t; template<class T2> ValueStr(T2 val) { t = move(T(val)); } };  // RandomReader C-style cast...
+[00:40:56] <geordi> 7.00649e-45
+[00:41:03] <manuels> its basically just an observable object pool.
+[00:42:03] <InPhase> RandomReader: Alas, it is not so easy to avoid.
+[00:45:01] <RandomReader> InPhase - yeah those are both casts .. although I usually try to avoid that scenario
+[00:45:31] <RandomReader> e.g. prefer braces for logical value handling, since that gets the narrowing checks
+[00:45:41] <RandomReader> but I'd need a more concrete template purpose to reason about
+[00:45:59] <RandomReader> I certainly don't get that perfect, even with the patterns I try to follow
+[00:46:26] <KombuchaKip> kalven: Yeah that's what I thought. I had a hunch this morning on the source of my memory leak, and I think it's exactly that. For some reason I thought get() was returning a reference to the pointer value, but it's not. So any attempt to change the value returned by get() doesn't change the the actual pointer that is being managed, and thus won't be cleaned up later.
+[00:47:32] <RandomReader> the smart pointers have .reset() for that
+[00:50:03] *** Quits: paul424 (~tom@ip-37-248-155-189.multi.internet.cyfrowypolsat.pl) (Quit: Leaving)
+[00:51:17] <RandomReader> I wonder how many templates I've written that have "holes" like effective reinterpret_casts if you just explicitly supply template arguments...
+[00:53:52] *** Joins: luizfrds (~Luiz@152.250.243.147)
+[00:56:48] *** Quits: Juliu (~Juliu@2a02:810b:c640:3ec0:7515:120c:400a:3571) (Quit: Leaving)
+[00:58:19] *** Quits: magla (~gelignite@55d41880.access.ecotel.net) (Quit: Stay safe!)
+[01:04:12] *** Joins: badone (~badone@209.132.189.152)
+[01:13:20] <KombuchaKip> RandomReader: Indeed.
+[01:13:55] <KombuchaKip> RandomReader: The problem began with the shared_ptr holding a pointer, but some of the functions I am using needed a pointer to the pointer.
+[01:15:44] <RandomReader> hm, that sounds like it'd result in really unclear ownership .. is this a wrapper for some other API?
+[01:20:56] *** Quits: cm007magnum (~Rheanna@101.89.150.168) (Remote host closed the connection)
+[01:22:29] *** Joins: cm007magnum (~Rheanna@61.171.21.169)
+[01:22:50] *** Quits: robod34 (Username@79.113.195.239) (Quit: Goe offline! ( http://marius.sucan.ro/ ))
+[01:28:53] *** Quits: Roughy (~mdaw45ns@user/roughy) (Quit: Meadow Fresh milk)
+[01:30:38] *** Joins: johnny (~johnny@user/johnny)
+[01:31:42] <xkoncek> guys, general question: how much real code can you compile into a 170 kb .so file?
+[01:32:25] <xkoncek> i mean real code, not theoretical experiments
+[01:32:53] <InPhase> KombuchaKip: That sounds like it calls for a wrapping layer to isolate medline raw pointer code from the shared_ptr contents, updating the shared_ptr after the fact.
+[01:32:58] <xkoncek> and assume that it already contains procedures to decompress zip files
+[01:33:10] <InPhase> s/medline/meddling/
+[01:34:00] <InPhase> xkoncek: Maybe 230kB worth?
+[01:34:22] *** Quits: RoKenn (~RoKenn@user/rokenn) (Quit: NSA proxy service interrupted)
+[01:37:41] <InPhase> xkoncek: It's not a lot if you're using common patterns.  It's easy to jump over that including some libraries that we would normally consider lightweight before you've even done anything.  If you're very careful in your approach though you can fit many applications into this space.  We used to program on computers with less than this amount of storage.  :)
+[01:39:05] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[01:39:14] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[01:39:14] *** ChanServ sets mode: +v npaperbot
+[01:39:28] <xkoncek> InPhase i am trying to guess whether this shared object is capable of doing anything more than opening a .jar file and executing it
+[01:40:08] <InPhase> Judging just by the size?  Absolutely it could be capable of more.
+[01:40:10] <xkoncek> fortunately it still contains unobfuscated symbols
+[01:40:49] <xkoncek> i see a lot of deflation and zip
+[01:41:12] <xkoncek> but there is more
+[01:43:16] *** Joins: Terminus (~null@user/terminus)
+[01:44:41] *** Joins: markong (~kvirc@213.146.188.203)
+[01:45:06] *** Quits: kenanmarasli (~kenanmara@user/kenanmarasli) (Quit: Leaving)
+[01:45:43] *** Quits: Leone (~Leo@216.154.50.172) (Read error: Connection reset by peer)
+[01:49:23] <RandomReader> like assuming it's hostile? there's an incredible amount that could be done in 170KB of code
+[01:49:48] <RandomReader> if you can't trust it, there's pretty much nothing you're going to be able to discover from a distance that will be terribly reassuring
+[01:50:24] <RandomReader> at most the size just tells you it's not shipping a lot of *data*
+[01:51:11] <RandomReader> code that makes smart use of the system around it doesn't need to carry much logic with it to be effective
+[01:54:31] <xkoncek> not assuming it is hostile, i am really trying to figure out if the implementation is in there or rather in that 17 MB .jar file
+[01:55:24] <RandomReader> ah
+[01:58:04] *** Joins: lh_mouse (~lh_mouse@mingw-w64/developer/lhmouse)
+[01:58:53] <xkoncek> wait... there are 4 symbols like these: Java_com_zeroturnaround_reload_jvmti_MinimalInstrumentation_redefineClassesImpl
+[02:01:37] <xkoncek> guess what i am doing my mgr. thesis about: Java
+[02:03:51] *** Quits: ss4 (~wootehfoo@user/wootehfoot) (Read error: Connection reset by peer)
+[02:08:35] *** Quits: Burgundy (~yomon@79.115.213.171) (Ping timeout: 252 seconds)
+[02:08:47] *** Joins: ezzieyguywuf (~Unknown@user/ezzieyguywuf)
+[02:10:14] *** Quits: cm007magnum (~Rheanna@61.171.21.169) (Remote host closed the connection)
+[02:13:00] *** Joins: cm007magnum (~Rheanna@218.78.79.129)
+[02:13:28] *** Joins: gggp (~gggp@60.10.23.168)
+[02:18:14] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[02:19:17] *** Quits: spaceangel (~spaceange@ip-78-102-216-202.net.upcbroadband.cz) (Remote host closed the connection)
+[02:22:47] *** Quits: pulse (~pulse@user/pulse) (Quit: Join a community of oompa loompas at https://indiedevs.net/)
+[02:31:05] <KombuchaKip> RandomReader: Yeah. Not a wrapper for an entire API, but just managing some resources from libav* (ffmpeg).
+[02:32:21] *** Quits: cm007magnum (~Rheanna@218.78.79.129) (K-Lined)
+[02:37:38] *** Quits: hgkjhgkjgkj (~hjgkjhgkj@46.235.96.249) (Remote host closed the connection)
+[02:38:01] *** Joins: hgkjhgkjgkj (~hjgkjhgkj@46.235.96.249)
+[02:41:57] *** Quits: Ivii (~Ivyy@2001:a62:4c3:8e01:7af8:48a4:d785:9ce7) (Remote host closed the connection)
+[02:43:21] <johnny> uggh ffmpeg
+[02:43:37] <johnny> the bane of my non free existence on linux :(
+[02:45:14] <NyB> johnny: errm... can you elaborate? Is "bane of ... non free" supposed to be taken as a double negation?
+[02:45:47] <NyB> (unless having a "non free existence" is desirable? Which would be kinda weird...)
+[02:47:14] <johnny> NyB, ffmpeg can't be (or isn't) built modularly in regards to support for various codecs
+[02:47:55] <johnny> the codecs themselves can be dynamically loaded, but not the ffmpeg interface parts for say h264 or whatever
+[02:49:17] *** Quits: hackinghorn (~hackingho@user/hackinghorn) (Ping timeout: 252 seconds)
+[02:49:42] <johnny> it'd be nice if you could have say ffmpeg-core and ffmeg-plugin-$codec or something like that
+[02:50:23] <NyB> johnny: ah, so that you won't need multiple version of ffmpeg
+[02:51:54] <johnny> so you can have package ffmpeg-core and ffmpeg-plugin-$royaltyfreecodec in regular distro repos and the ffmpeg-plugin-$patentencumberedcodec elsewhere
+[02:52:52] *** Quits: plastico (~plastico@neomutt/plastico) (Quit: WeeChat 3.3)
+[02:53:06] <johnny> it's not something that really matters to most windows and mac users, since windows and mac ship with most of the important codecs
+[02:53:43] <johnny> gstreamer however does operate like i suggested
+[02:55:07] *** Joins: rajkosto (~rajkosto@93-86-99-67.dynamic.isp.telekom.rs)
+[02:58:08] *** Joins: Roughy (~mdaw45ns@user/roughy)
+[02:58:27] *** Quits: jkaye (~jkaye@2601:281:8300:7530:3bdb:266b:f9cc:b3bc) (Ping timeout: 252 seconds)
+[03:02:49] *** Joins: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it)
+[03:04:03] *** Joins: cm007magnum (~Rheanna@101.89.150.168)
+[03:10:08] *** Quits: gggp (~gggp@60.10.23.168) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[03:15:21] *** Parts: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it) ()
+[03:16:31] *** Quits: cm007magnum (~Rheanna@101.89.150.168) (K-Lined)
+[03:31:16] *** Joins: aleios (~aleios@user/aleios)
+[03:32:55] *** Quits: PJBoy (~PJBoy@user/pjboy) (Ping timeout: 252 seconds)
+[03:38:13] *** Quits: seninha (~seninha@user/seninha) (Quit: Leaving)
+[03:38:35] *** Joins: hackinghorn (~hackingho@user/hackinghorn)
+[03:39:01] *** Joins: seninha (~seninha@user/seninha)
+[03:45:26] <aegon> johnny: what about libav
+[03:46:08] <aegon> curous because I've wrangled ffmpeg for some stuff in the past and haven't tried anything with libav, it ended up being a toss up as to which one seemed easiest to integrate at the time
+[03:48:27] <aegon> that took longer than the estimated 30 minutes :| back to casting fun for me
+[03:58:04] *** Quits: Colt (~Colt@user/colt) (Remote host closed the connection)
+[03:58:09] *** Joins: cm007magnum (~Rheanna@61.171.21.169)
+[03:58:45] *** Joins: Colt (~Colt@user/colt)
+[04:07:32] <Hello71> libav is long-dead
+[04:08:37] *** Joins: Codaraxis (~Codaraxis@user/codaraxis)
+[04:19:07] *** Quits: markong (~kvirc@213.146.188.203) (Ping timeout: 252 seconds)
+[04:19:25] *** Quits: seninha (~seninha@user/seninha) (Remote host closed the connection)
+[04:22:49] *** Joins: cart_man (~rynot@host-78-144-121-71.as13285.net)
+[04:23:17] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:38e1:73a2:ce5d:fb32)
+[04:24:32] *** Quits: cart_man (~rynot@host-78-144-121-71.as13285.net) (Client Quit)
+[04:24:41] *** Joins: seninha (~seninha@user/seninha)
+[04:25:27] *** Quits: Jupp_S (~quassel@ip-88-153-154-129.hsi04.unitymediagroup.de) (Remote host closed the connection)
+[04:26:36] *** Quits: sprout_ (~quassel@2a02:a467:ccd6:1:bde9:c3fb:c9c:3dee) (Ping timeout: 245 seconds)
+[04:28:55] *** Quits: TheHermann (~TheHerman@gateway/tor-sasl/thehermann) (Quit: Leaving)
+[04:33:29] <johnny> it's the same thing aegon
+[04:33:42] <johnny> nothing about libav changed the architecture
+[04:39:06] *** Joins: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse)
+[04:40:00] *** Quits: cm007magnum (~Rheanna@61.171.21.169) (Remote host closed the connection)
+[04:40:18] *** Joins: krishnac (~krishnac@c-67-188-37-26.hsd1.ca.comcast.net)
+[04:42:37] *** Joins: cm007magnum (~Rheanna@101.91.232.166)
+[04:50:45] *** Quits: CaCode (~CaCode@user/cacode) (Ping timeout: 256 seconds)
+[04:53:08] *** Joins: gggp (~gggp@60.10.23.168)
+[04:53:39] *** Quits: gggp (~gggp@60.10.23.168) (Client Quit)
+[05:01:35] *** Quits: unixpro1970 (~unixpro19@c-73-181-185-205.hsd1.wa.comcast.net) (Ping timeout: 256 seconds)
+[05:11:08] *** Joins: unixpro1970 (~unixpro19@c-73-181-185-205.hsd1.wa.comcast.net)
+[05:16:05] *** Joins: Hokedli (~lasliedv@gateway/tor-sasl/hokedli)
+[05:20:44] *** Quits: rajkosto (~rajkosto@93-86-99-67.dynamic.isp.telekom.rs) (Read error: Connection reset by peer)
+[05:28:51] *** Quits: seninha (~seninha@user/seninha) (Quit: Leaving)
+[05:29:34] *** Quits: Hokedli (~lasliedv@gateway/tor-sasl/hokedli) (Quit: Konversation terminated!)
+[05:30:02] *** Quits: cm007magnum (~Rheanna@101.91.232.166) (Remote host closed the connection)
+[05:32:23] *** Joins: minto (~mintograd@47.201.5.61)
+[05:32:51] *** Quits: mintograde (~mintograd@47.201.5.61) (Ping timeout: 245 seconds)
+[05:33:05] *** Joins: cm007magnum (~Rheanna@218.78.109.69)
+[05:39:05] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[05:39:14] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[05:39:14] *** ChanServ sets mode: +v npaperbot
+[05:39:47] *** Quits: krishnac (~krishnac@c-67-188-37-26.hsd1.ca.comcast.net) (Ping timeout: 252 seconds)
+[05:44:35] *** Quits: artok (~azo@mobile-access-5672c9-83.dhcp.inet.fi) (Ping timeout: 256 seconds)
+[05:46:28] *** Joins: Itaru (~DaSH@ro2.flokinet.is)
+[05:49:41] *** Joins: ferdna (~ferdna@user/ferdna)
+[05:53:57] *** Joins: vdamewood (~vdamewood@fedora/vdamewood)
+[05:57:41] *** Joins: artok (~azo@mobile-access-5672c9-83.dhcp.inet.fi)
+[05:59:23] *** Quits: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse) (Ping timeout: 256 seconds)
+[06:02:16] *** Joins: vinleod (~vdamewood@fedora/vdamewood)
+[06:03:13] *** Quits: vdamewood (~vdamewood@fedora/vdamewood) (Killed (osmium.libera.chat (Nickname regained by services)))
+[06:03:13] *** vinleod is now known as vdamewood
+[06:06:16] *** Quits: emerent (~quassel@p200300cd571645bfba27ebfffed28a59.dip0.t-ipconnect.de) (Ping timeout: 268 seconds)
+[06:09:21] *** Joins: emerent (~quassel@p200300cd5715b0a8ba27ebfffed28a59.dip0.t-ipconnect.de)
+[06:10:57] *** Joins: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse)
+[06:15:14] *** Joins: seninha (~seninha@user/seninha)
+[06:16:27] *** Quits: cm007magnum (~Rheanna@218.78.109.69) (K-Lined)
+[06:21:10] *** Joins: cm007magnum (~Rheanna@61.171.21.169)
+[06:28:18] <hnOsmium0001[m]> I wish some terminal emulator on windows had a GUI directory navigator for switching the cwd of the shell
+[06:29:23] <hnOsmium0001[m]> maybe I could try to make KDE dolphin work with powershell, though it looks horrendously ugly to the point it affects my productivity just staring at it...
+[06:30:09] *** Quits: cm007magnum (~Rheanna@61.171.21.169) (K-Lined)
+[06:34:35] <aegon> hnOsmium0001[m]: ranger is pretty easy to pick up and run with if your used to vim like commands
+[06:44:01] *** Quits: Roughy (~mdaw45ns@user/roughy) (Quit: Meadow Fresh milk)
+[06:58:57] *** Quits: ravan (~ravan@user/ravan) (Remote host closed the connection)
+[07:00:17] *** Quits: Tobbi (~Tobbi@2a02:8108:1240:48ec:5052:6286:866e:fc49) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[07:06:56] <RandomReader> if it's just a matter of getting a path easily, you can click in the explorer path bar and then copy
+[07:08:18] <RandomReader> you can also drag & drop a folder onto the console, same as macOS
+[07:10:34] <hnOsmium0001[m]> my use case is switching navigating deep folder trees quickly, and switching between distant folders quickly, so that doesn't exactly help; though RandomReader the second tip is useful, I've always right clicked and Copy Path
+[07:11:36] <RandomReader> ah
+[07:19:20] *** Quits: proller (~p@80.240.216.69) (Ping timeout: 252 seconds)
+[07:19:52] *** Quits: hgkjhgkjgkj (~hjgkjhgkj@46.235.96.249) (Quit: Leaving)
+[07:37:36] *** Joins: sprout_ (~quassel@2a02:a467:ccd6:1:39f3:76e9:9ca1:32bd)
+[07:40:47] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:38e1:73a2:ce5d:fb32) (Ping timeout: 252 seconds)
+[07:48:12] <aegon> hnOsmium0001[m]: you can use tabs in ranger for that from the terminal
+[07:49:48] <aegon> i think it has bookmarks too but i've never used em. I live in tmux a full screen tmux session pretty much unless I'm playing one of those hip new roguelikes that are too cool to render in a real terminal
+[08:05:16] *** Joins: Burgundy (~yomon@79.115.213.171)
+[08:19:17] *** Quits: CarloWood (~LdK13@212-127-230-18.cable.dynamic.v4.ziggo.nl) (Ping timeout: 256 seconds)
+[08:22:45] *** Quits: vdamewood (~vdamewood@fedora/vdamewood) (Quit: My MacBook Pro has gone to sleep. ZZZzzz…)
+[08:32:46] *** Quits: johnny (~johnny@user/johnny) (Read error: Connection reset by peer)
+[08:33:21] *** Joins: CaCode (~CaCode@user/cacode)
+[08:34:10] *** Quits: skapata (~Skapata@user/skapata) (Read error: Connection reset by peer)
+[08:39:23] *** Joins: johnny (~johnny@user/johnny)
+[08:40:25] *** Joins: frost (~frost@user/frost)
+[08:49:57] *** Quits: great_taste (~great_tas@user/great-taste/x-5798414) (Quit: Client closed)
+[08:54:54] *** Quits: chozorho (~chozorho@2601:146:300:c30::fae2) (Quit: AoC)
+[08:56:28] *** Quits: deepy (deepy@user/deepy) (*.net *.split)
+[08:56:28] *** Quits: dextaa (~DV@user/dextaa) (*.net *.split)
+[08:56:28] *** Quits: tobs (~tobs@taboege.de) (*.net *.split)
+[08:56:28] *** Quits: zinc_ (~zinc@163.ip-51-254-203.eu) (*.net *.split)
+[08:56:28] *** Quits: manuels (~manuel@80.211.205.88) (*.net *.split)
+[08:56:28] *** Quits: lmat (~Lmat@c-68-58-60-231.hsd1.in.comcast.net) (*.net *.split)
+[08:56:29] *** Quits: rdrg109 (~rdrg109@user/rdrg109) (*.net *.split)
+[08:56:29] *** Quits: pieguy128 (~pieguy128@bas1-quebec14-67-70-102-17.dsl.bell.ca) (*.net *.split)
+[08:56:29] *** Quits: CaCode (~CaCode@user/cacode) (*.net *.split)
+[08:56:29] *** Quits: Burgundy (~yomon@79.115.213.171) (*.net *.split)
+[08:56:29] *** Quits: emerent (~quassel@p200300cd5715b0a8ba27ebfffed28a59.dip0.t-ipconnect.de) (*.net *.split)
+[08:56:29] *** Quits: Colt (~Colt@user/colt) (*.net *.split)
+[08:56:29] *** Quits: ezzieyguywuf (~Unknown@user/ezzieyguywuf) (*.net *.split)
+[08:56:29] *** Quits: Terminus (~null@user/terminus) (*.net *.split)
+[08:56:29] *** Quits: CalamityBlue (~CalamityB@cpe-108-185-144-94.socal.res.rr.com) (*.net *.split)
+[08:56:29] *** Quits: m_tadeu (~quassel@bl11-135-102.dsl.telepac.pt) (*.net *.split)
+[08:56:29] *** Quits: Fairy (~Fairy@ti0004a400-3806.bb.online.no) (*.net *.split)
+[08:56:30] *** Quits: ashafq (~ashafq@pool-96-237-238-252.bstnma.fios.verizon.net) (*.net *.split)
+[08:56:30] *** Quits: z8z (~x@ac255238.ppp.asahi-net.or.jp) (*.net *.split)
+[08:56:30] *** Quits: Brewster (~Brewster@104.145.226.5) (*.net *.split)
+[08:56:30] *** Quits: Maximus (~sevalecan@user/sevalecan) (*.net *.split)
+[08:56:30] *** Quits: obiwahn (~heini@user/obiwahn) (*.net *.split)
+[08:56:30] *** Quits: yolo (~xxiao@159.89.184.51) (*.net *.split)
+[08:56:30] *** Quits: ethoxy (~caretaker@cx21.havox.ru) (*.net *.split)
+[08:56:30] *** Quits: Spydar007 (~spydar007@user/spydar007) (*.net *.split)
+[08:56:30] *** Quits: dblsaiko (~saiko@crispy.dblsaiko.net) (*.net *.split)
+[08:56:31] *** Quits: radu242407 (~radu242@pool-96-250-79-242.nycmny.fios.verizon.net) (*.net *.split)
+[08:56:31] *** Quits: mitch0 (~mitch@94-21-221-155.pool.digikabel.hu) (*.net *.split)
+[08:56:31] *** Quits: Kebianizao (~Kebianiza@188.127.172.253) (*.net *.split)
+[08:56:31] *** Quits: elemongw (~elemongw@20.107.36.50) (*.net *.split)
+[08:56:31] *** Quits: letto (~letto@188.25.118.240) (*.net *.split)
+[08:56:31] *** Quits: cbreak (~cbreak@77-58-201-132.dclient.hispeed.ch) (*.net *.split)
+[08:56:31] *** Quits: TheCoffeMaker (~TheCoffeM@user/thecoffemaker) (*.net *.split)
+[08:56:31] *** Quits: ville (~ville@82-181-178-111.bb.dnainternet.fi) (*.net *.split)
+[08:56:31] *** Quits: _flood (flooded@gateway/vpn/protonvpn/flood/x-43489060) (*.net *.split)
+[08:56:31] *** Quits: KombuchaKip (~kip@192.252.230.5) (*.net *.split)
+[08:56:31] *** Quits: peeps[zen] (~peepsalot@openscad/peepsalot) (*.net *.split)
+[08:56:31] *** Quits: bdt (~bdt@155.51-174-24.customer.lyse.net) (*.net *.split)
+[08:56:31] *** Quits: simpl_e (~user@user/simpl-e/x-8589812) (*.net *.split)
+[08:56:31] *** Quits: mackal (~mackal@pool-96-237-249-63.bstnma.fios.verizon.net) (*.net *.split)
+[08:56:31] *** Quits: mathu (~matt@user/mathu) (*.net *.split)
+[08:56:31] *** Quits: alex88 (~alex88@ip72-207-140-105.lv.lv.cox.net) (*.net *.split)
+[08:56:31] *** Quits: NyB (~archon@81.6.39.62) (*.net *.split)
+[08:56:31] *** Quits: gnomesort (~gnomesort@user/gnomesort) (*.net *.split)
+[08:56:32] *** Quits: cursey (~cursey@user/cursey) (*.net *.split)
+[08:56:32] *** Quits: ZeroKnight (zeroknight@dimensionzero.net) (*.net *.split)
+[08:56:32] *** Quits: Dijky (~Dijky@user/dijky) (*.net *.split)
+[08:56:32] *** Quits: urdh (~urdh@user/urdh) (*.net *.split)
+[08:56:32] *** Quits: ac_slater (~ac_slater@c-67-168-6-19.hsd1.wa.comcast.net) (*.net *.split)
+[08:56:32] *** Quits: lh_mouse (~lh_mouse@mingw-w64/developer/lhmouse) (*.net *.split)
+[08:56:32] *** Quits: joilerv_ (~joilerv@host86-191-93-41.range86-191.btcentralplus.com) (*.net *.split)
+[08:56:32] *** Quits: ghenry (~ghenry@ghenry.plus.com) (*.net *.split)
+[08:56:32] *** Quits: raekye (~raekye@creatifcubed.com) (*.net *.split)
+[08:56:32] *** Quits: sonic (~sonic@user/sonic) (*.net *.split)
+[08:56:32] *** Quits: ullbeking_ (sid5364@id-5364.ilkley.irccloud.com) (*.net *.split)
+[08:56:32] *** Quits: EdFletcher (~PKD@user/edfletcher) (*.net *.split)
+[08:56:32] *** Quits: fluter (~fluter@user/fluter) (*.net *.split)
+[08:56:32] *** Quits: Praise (~Fat@user/praise) (*.net *.split)
+[08:56:32] *** Quits: Cheaterman (~Cheaterma@user/cheaterman) (*.net *.split)
+[08:56:32] *** Quits: greenbagels (~gb@user/greenbagels) (*.net *.split)
+[08:56:32] *** Quits: Moult (~sevenstro@sevenstrokes.net) (*.net *.split)
+[08:56:33] *** Quits: Svitkona (~Svitkona@157.245.38.135) (*.net *.split)
+[08:56:33] *** Quits: taiyu (~taiyu@user/taiyu) (*.net *.split)
+[08:56:33] *** Quits: ahlk (~user@2600:1700:31c0:3a10::43) (*.net *.split)
+[08:56:33] *** Quits: jiffe (~jiffe@mail.nsab.us) (*.net *.split)
+[08:56:33] *** Quits: kbingham (~kbingham@core.do.nakedgeek.co.uk) (*.net *.split)
+[08:56:33] *** Quits: scruffyfurn (scruffyfur@turbous.xshellz.com) (*.net *.split)
+[08:56:33] *** Quits: InPhase (~InPhase@openscad/inphase) (*.net *.split)
+[08:56:33] *** Quits: Ara (~Ara@user/ara) (*.net *.split)
+[08:56:33] *** Quits: Khoyo_ (~khoyo@ns328946.ip-37-187-115.eu) (*.net *.split)
+[08:56:33] *** Quits: TingPing (sid2800@id-2800.helmsley.irccloud.com) (*.net *.split)
+[08:56:33] *** Quits: Bodger1234_ (sid503511@id-503511.uxbridge.irccloud.com) (*.net *.split)
+[08:56:33] *** Quits: renopt (~renopt@lisp.us.to) (*.net *.split)
+[08:56:33] *** Quits: headline (sid102736@tinside.irccloud.com) (*.net *.split)
+[08:56:33] *** Quits: Youmu (uid129469@user/condy) (*.net *.split)
+[08:56:33] *** Quits: derwolf (~DerWolf@2a01:4f8:c0c:554a::1) (*.net *.split)
+[08:56:33] *** Quits: andi_ (~andi@user/andi/x-3467420) (*.net *.split)
+[08:56:33] *** Quits: m42e (~m42e@pb42.de) (*.net *.split)
+[08:56:33] *** Quits: eck (~root@user/eck) (*.net *.split)
+[08:56:34] *** Quits: antto (~pewpew@imightbe.antonsavov.net) (*.net *.split)
+[08:56:34] *** Quits: jkl1337 (~jkl@user/jkl) (*.net *.split)
+[08:56:34] *** Quits: Cienisty (Cienisty@user/cienisty) (*.net *.split)
+[08:56:34] *** Quits: blackbeard420 (blackbeard@2600:3c03::f03c:91ff:fe92:3f2a) (*.net *.split)
+[08:56:34] *** Quits: bv (~bv@user/bv) (*.net *.split)
+[08:56:34] *** Quits: d12fk (~heiko@exit0.net) (*.net *.split)
+[08:56:34] *** Quits: Soliton (~Soliton@wesnoth/developer/soliton) (*.net *.split)
+[08:56:34] *** Quits: roxlu (~roxlu@2a01:7c8:aac0:286:8c3a:b01c:3830:245b) (*.net *.split)
+[08:56:34] *** Quits: OnlineCop (~OnlineCop@user/onlinecop) (*.net *.split)
+[08:56:34] *** Quits: slavfox (~slavfox@ipv4-93-158-232-111.net.internetunion.pl) (*.net *.split)
+[08:56:35] *** Quits: nolyc (~nolyc@tinodidriksen.com) (*.net *.split)
+[08:56:35] *** Quits: cncr04s (~cncr04s@afxr.net) (*.net *.split)
+[08:56:35] *** Quits: shad0w (~shad0w@user/xshadow) (*.net *.split)
+[08:56:35] *** Quits: useful_idiot (~useful_id@gateway/vpn/pia/usefulidiot/x-43226899) (*.net *.split)
+[08:56:35] *** Quits: kalven (~calvin@2a02:470:84:102::24) (*.net *.split)
+[08:56:35] *** Quits: biberu (~biberu@user/biberu) (*.net *.split)
+[08:56:35] *** Quits: causative (~halberd@user/causative) (*.net *.split)
+[08:56:35] *** Quits: LordKalma (~LordKalma@server.ruilvo.com) (*.net *.split)
+[08:56:35] *** Quits: shtumf[m] (~shtumfmat@2001:470:69fc:105::1:1b21) (*.net *.split)
+[08:56:35] *** Quits: hnOsmium0001[m] (~hnosmium0@2001:470:69fc:105::15d4) (*.net *.split)
+[08:56:36] *** Quits: tinloaf (~tinloaf@2a03:94e0:163c:57e:bc51:5c66:86e7:1) (*.net *.split)
+[08:56:36] *** Quits: DrMax_ (~DrMax@132.215.96.36) (*.net *.split)
+[08:56:36] *** Quits: aleko1[m] (~aleko1@2001:470:69fc:105::1:1016) (*.net *.split)
+[08:56:36] *** Quits: epiktitos[m] (~epiktitos@2001:470:69fc:105::f76) (*.net *.split)
+[08:56:36] *** Quits: Friithian (gunqqer@friithian.dev) (*.net *.split)
+[08:56:36] *** Quits: sonOfRa (sonOfRa@user/sonofra) (*.net *.split)
+[08:56:36] *** Quits: edr (~edr@user/edr) (*.net *.split)
+[08:56:36] *** Quits: BrandonArnold (~brandon@ec2-52-27-188-210.us-west-2.compute.amazonaws.com) (*.net *.split)
+[08:56:36] *** Quits: dzz007 (~dzz007@user/dzz007) (*.net *.split)
+[08:56:36] *** Quits: talisein (~talisein@user/talisein) (*.net *.split)
+[08:56:36] *** Quits: purplex_ (~purplex@user/purplex) (*.net *.split)
+[08:56:37] *** Quits: markand (~markand@markand.fr) (*.net *.split)
+[08:56:37] *** Quits: celphi_ (sid97751@user/celphi) (*.net *.split)
+[08:56:37] *** Quits: geordi (~geordi@tinodidriksen.com) (*.net *.split)
+[08:56:37] *** Quits: mcfrdy (~mcfrdy@user/mcfrdy) (*.net *.split)
+[08:56:37] *** Quits: xkoncek (xkoncek@lounge.fi.muni.cz) (*.net *.split)
+[08:56:37] *** Quits: Nixx (~quassel@bulbasaur.sjorsgielen.nl) (*.net *.split)
+[08:56:37] *** Quits: ambasta (~ambasta@2001:470:69fc:105::1:3973) (*.net *.split)
+[08:56:37] *** Quits: dostoyevsky2 (~sck@user/dostoyevsky2) (*.net *.split)
+[08:56:38] *** Quits: ivan (~ivan@user/ivan) (*.net *.split)
+[08:56:38] *** Quits: milia[m] (~mlliarmma@2001:470:69fc:105::1:4631) (*.net *.split)
+[08:56:38] *** Quits: scjg (~scjgmatri@2001:470:69fc:105::f5d6) (*.net *.split)
+[08:56:38] *** Quits: tm604 (~tom@perlsite.default.entitypark.uk0.bigv.io) (*.net *.split)
+[08:56:38] *** Quits: greyblue9 (sid500829@id-500829.ilkley.irccloud.com) (*.net *.split)
+[08:56:38] *** Quits: kristjansson_ (sid126207@id-126207.tinside.irccloud.com) (*.net *.split)
+[08:56:38] *** Quits: computerquip (sid423484@user/computerquip) (*.net *.split)
+[08:56:38] *** Quits: Dragoon (~Dragoon@user/dragoon) (*.net *.split)
+[08:56:38] *** Quits: miklcct (~quassel@vps2.miklcct.com) (*.net *.split)
+[08:56:38] *** Quits: orkim (~orkim@user/orkim) (*.net *.split)
+[08:56:38] *** Quits: andreyv (~andrey@user/andreyv) (*.net *.split)
+[08:56:38] *** Quits: wyre (~wyre@user/wyre) (*.net *.split)
+[08:56:38] *** Quits: MaddHatter (~maddhatt@user/maddhatter) (*.net *.split)
+[08:56:38] *** Quits: Hobbyboy (Hobbyboy@hobbyboy.co.uk) (*.net *.split)
+[08:56:38] *** Quits: kkd (~kkd@255.205.154.104.bc.googleusercontent.com) (*.net *.split)
+[08:56:38] *** Quits: shenghi (~shenghi@chrysocolla.mutablevoid.org) (*.net *.split)
+[08:56:39] *** Quits: oj (oj@user/oj) (*.net *.split)
+[08:56:39] *** Quits: hackkitten (~hackkitte@94.31.103.136) (*.net *.split)
+[08:56:39] *** Quits: djinni (~djinni@static.38.6.217.95.clients.your-server.de) (*.net *.split)
+[08:56:39] *** Quits: HeTo (henkka@beer.modeemi.fi) (*.net *.split)
+[08:56:39] *** Quits: tct (~tct@8.200.173.83.static.wline.lns.sme.cust.swisscom.ch) (*.net *.split)
+[08:56:39] *** Quits: arconte[m] (~arcontema@2001:470:69fc:105::1:2fe4) (*.net *.split)
+[08:56:39] *** Quits: DrinkyBird (~drinkybir@idlerpg/player/DrinkyBird) (*.net *.split)
+[08:56:39] *** Quits: fruitypunk (~user@2a01:7c8:aaaa:12:5054:ff:fe69:1df9) (*.net *.split)
+[08:56:39] *** Quits: Artea (~Lufia@artea.com.pt) (*.net *.split)
+[08:56:39] *** Quits: Latexi95 (late@banhammer.fi) (*.net *.split)
+[08:56:39] *** Quits: chris123123 (~bnc123@streuwerte.de) (*.net *.split)
+[08:56:39] *** Quits: klys_ (~mdasoh@show.op8.us) (*.net *.split)
+[08:56:39] *** Quits: Karyon (~Karyon@user/karyon) (*.net *.split)
+[08:56:39] *** Quits: buhman (sid411355@user/buhman) (*.net *.split)
+[08:56:40] *** Quits: Argorok (sid195487@id-195487.hampstead.irccloud.com) (*.net *.split)
+[08:56:40] *** Quits: imMute (~immute@user/immute) (*.net *.split)
+[08:56:40] *** Quits: naur___ (naur@user/naur) (*.net *.split)
+[08:56:40] *** Quits: lhtseng (sid15322@id-15322.helmsley.irccloud.com) (*.net *.split)
+[08:56:40] *** Quits: m1cl[m] (~m1cl@2001:470:69fc:105::2d57) (*.net *.split)
+[08:56:40] *** Quits: beanzilla (beanzilla@user/beanzilla) (*.net *.split)
+[08:56:40] *** Quits: phoenix (phoenix@user/phoenix) (*.net *.split)
+[08:56:40] *** Quits: malinus (~malinus@172.245.158.16) (*.net *.split)
+[08:56:40] *** Quits: rpav (~rpav@user/rpav) (*.net *.split)
+[08:56:40] *** Quits: Guest19 (~Guest19@2601:647:5280:2a50:a4d0:e86d:318c:d3f8) (*.net *.split)
+[08:56:40] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (*.net *.split)
+[08:56:41] *** Quits: teepee (~teepee@openscad/teepee) (*.net *.split)
+[08:56:41] *** Quits: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao) (*.net *.split)
+[08:57:19] *** Quits: Itaru (~DaSH@ro2.flokinet.is) (Quit: See Ya Later!)
+[08:57:33] *** Joins: Itaru (~DaSH@ro2.flokinet.is)
+[08:58:13] *** Joins: CaCode (~CaCode@user/cacode)
+[08:58:13] *** Joins: Burgundy (~yomon@79.115.213.171)
+[08:58:13] *** Joins: emerent (~quassel@p200300cd5715b0a8ba27ebfffed28a59.dip0.t-ipconnect.de)
+[08:58:13] *** Joins: Colt (~Colt@user/colt)
+[08:58:13] *** Joins: ezzieyguywuf (~Unknown@user/ezzieyguywuf)
+[08:58:13] *** Joins: lh_mouse (~lh_mouse@mingw-w64/developer/lhmouse)
+[08:58:13] *** Joins: Terminus (~null@user/terminus)
+[08:58:13] *** Joins: CalamityBlue (~CalamityB@cpe-108-185-144-94.socal.res.rr.com)
+[08:58:13] *** Joins: joilerv_ (~joilerv@host86-191-93-41.range86-191.btcentralplus.com)
+[08:58:13] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[08:58:13] *** Joins: radu242407 (~radu242@pool-96-250-79-242.nycmny.fios.verizon.net)
+[08:58:13] *** Joins: mitch0 (~mitch@94-21-221-155.pool.digikabel.hu)
+[08:58:13] *** Joins: m_tadeu (~quassel@bl11-135-102.dsl.telepac.pt)
+[08:58:13] *** Joins: Kebianizao (~Kebianiza@188.127.172.253)
+[08:58:13] *** Joins: elemongw (~elemongw@20.107.36.50)
+[08:58:13] *** Joins: andi_ (~andi@user/andi/x-3467420)
+[08:58:13] *** Joins: letto (~letto@188.25.118.240)
+[08:58:13] *** Joins: cbreak (~cbreak@77-58-201-132.dclient.hispeed.ch)
+[08:58:13] *** Joins: TheCoffeMaker (~TheCoffeM@user/thecoffemaker)
+[08:58:13] *** Joins: causative (~halberd@user/causative)
+[08:58:13] *** Joins: milia[m] (~mlliarmma@2001:470:69fc:105::1:4631)
+[08:58:13] *** Joins: ville (~ville@82-181-178-111.bb.dnainternet.fi)
+[08:58:13] *** Joins: ac_slater (~ac_slater@c-67-168-6-19.hsd1.wa.comcast.net)
+[08:58:13] *** Joins: Guest19 (~Guest19@2601:647:5280:2a50:a4d0:e86d:318c:d3f8)
+[08:58:13] *** Joins: teepee (~teepee@openscad/teepee)
+[08:58:13] *** Joins: ghenry (~ghenry@ghenry.plus.com)
+[08:58:13] *** Joins: kbingham (~kbingham@core.do.nakedgeek.co.uk)
+[08:58:13] *** Joins: Cheaterman (~Cheaterma@user/cheaterman)
+[08:58:13] *** Joins: _flood (flooded@gateway/vpn/protonvpn/flood/x-43489060)
+[08:58:13] *** Joins: KombuchaKip (~kip@192.252.230.5)
+[08:58:13] *** Joins: peeps[zen] (~peepsalot@openscad/peepsalot)
+[08:58:13] *** Joins: Fairy (~Fairy@ti0004a400-3806.bb.online.no)
+[08:58:13] *** Joins: bdt (~bdt@155.51-174-24.customer.lyse.net)
+[08:58:13] *** Joins: simpl_e (~user@user/simpl-e/x-8589812)
+[08:58:13] *** Joins: NyB (~archon@81.6.39.62)
+[08:58:13] *** Joins: ashafq (~ashafq@pool-96-237-238-252.bstnma.fios.verizon.net)
+[08:58:13] *** Joins: mackal (~mackal@pool-96-237-249-63.bstnma.fios.verizon.net)
+[08:58:13] *** Joins: z8z (~x@ac255238.ppp.asahi-net.or.jp)
+[08:58:13] *** Joins: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao)
+[08:58:13] *** Joins: mathu (~matt@user/mathu)
+[08:58:13] *** Joins: alex88 (~alex88@ip72-207-140-105.lv.lv.cox.net)
+[08:58:13] *** Joins: Brewster (~Brewster@104.145.226.5)
+[08:58:13] *** Joins: gnomesort (~gnomesort@user/gnomesort)
+[08:58:13] *** Joins: Maximus (~sevalecan@user/sevalecan)
+[08:58:13] *** Joins: obiwahn (~heini@user/obiwahn)
+[08:58:13] *** Joins: yolo (~xxiao@159.89.184.51)
+[08:58:13] *** Joins: LordKalma (~LordKalma@server.ruilvo.com)
+[08:58:13] *** Joins: tm604 (~tom@perlsite.default.entitypark.uk0.bigv.io)
+[08:58:13] *** Joins: ethoxy (~caretaker@cx21.havox.ru)
+[08:58:13] *** Joins: Spydar007 (~spydar007@user/spydar007)
+[08:58:13] *** Joins: shtumf[m] (~shtumfmat@2001:470:69fc:105::1:1b21)
+[08:58:13] *** Joins: hnOsmium0001[m] (~hnosmium0@2001:470:69fc:105::15d4)
+[08:58:13] *** Joins: dblsaiko (~saiko@crispy.dblsaiko.net)
+[08:58:13] *** Joins: cursey (~cursey@user/cursey)
+[08:58:13] *** Joins: scjg (~scjgmatri@2001:470:69fc:105::f5d6)
+[08:58:13] *** Joins: markand (~markand@markand.fr)
+[08:58:13] *** Joins: nolyc (~nolyc@tinodidriksen.com)
+[08:58:13] *** Joins: deepy (deepy@user/deepy)
+[08:58:13] *** Joins: ZeroKnight (zeroknight@dimensionzero.net)
+[08:58:13] *** Joins: Dijky (~Dijky@user/dijky)
+[08:58:13] *** Joins: dextaa (~DV@user/dextaa)
+[08:58:13] *** Joins: urdh (~urdh@user/urdh)
+[08:58:13] *** Joins: raekye (~raekye@creatifcubed.com)
+[08:58:13] *** Joins: sonic (~sonic@user/sonic)
+[08:58:13] *** Joins: tobs (~tobs@taboege.de)
+[08:58:13] *** Joins: zinc_ (~zinc@163.ip-51-254-203.eu)
+[08:58:13] *** Joins: cncr04s (~cncr04s@afxr.net)
+[08:58:13] *** Joins: ullbeking_ (sid5364@id-5364.ilkley.irccloud.com)
+[08:58:13] *** Joins: manuels (~manuel@80.211.205.88)
+[08:58:13] *** Joins: lmat (~Lmat@c-68-58-60-231.hsd1.in.comcast.net)
+[08:58:13] *** Joins: EdFletcher (~PKD@user/edfletcher)
+[08:58:13] *** Joins: hackkitten (~hackkitte@94.31.103.136)
+[08:58:13] *** Joins: shad0w (~shad0w@user/xshadow)
+[08:58:13] *** Joins: fluter (~fluter@user/fluter)
+[08:58:13] *** Joins: useful_idiot (~useful_id@gateway/vpn/pia/usefulidiot/x-43226899)
+[08:58:13] *** Joins: Praise (~Fat@user/praise)
+[08:58:13] *** Joins: celphi_ (sid97751@user/celphi)
+[08:58:13] *** Joins: buhman (sid411355@user/buhman)
+[08:58:13] *** Joins: Argorok (sid195487@id-195487.hampstead.irccloud.com)
+[08:58:13] *** Joins: greyblue9 (sid500829@id-500829.ilkley.irccloud.com)
+[08:58:13] *** Joins: kristjansson_ (sid126207@id-126207.tinside.irccloud.com)
+[08:58:13] *** Joins: computerquip (sid423484@user/computerquip)
+[08:58:13] *** Joins: greenbagels (~gb@user/greenbagels)
+[08:58:13] *** Joins: Dragoon (~Dragoon@user/dragoon)
+[08:58:13] *** Joins: Moult (~sevenstro@sevenstrokes.net)
+[08:58:13] *** Joins: djinni (~djinni@static.38.6.217.95.clients.your-server.de)
+[08:58:13] *** Joins: tinloaf (~tinloaf@2a03:94e0:163c:57e:bc51:5c66:86e7:1)
+[08:58:13] *** Joins: HeTo (henkka@beer.modeemi.fi)
+[08:58:13] *** Joins: m42e (~m42e@pb42.de)
+[08:58:13] *** Joins: eck (~root@user/eck)
+[08:58:13] *** Joins: antto (~pewpew@imightbe.antonsavov.net)
+[08:58:13] *** Joins: jkl1337 (~jkl@user/jkl)
+[08:58:13] *** strontium.libera.chat sets mode: +v nolyc
+[08:58:13] *** Joins: Cienisty (Cienisty@user/cienisty)
+[08:58:13] *** Joins: Svitkona (~Svitkona@157.245.38.135)
+[08:58:13] *** Joins: taiyu (~taiyu@user/taiyu)
+[08:58:13] *** Joins: DrMax_ (~DrMax@132.215.96.36)
+[08:58:13] *** Joins: ahlk (~user@2600:1700:31c0:3a10::43)
+[08:58:13] *** Joins: jiffe (~jiffe@mail.nsab.us)
+[08:58:13] *** Joins: scruffyfurn (scruffyfur@turbous.xshellz.com)
+[08:58:13] *** Joins: imMute (~immute@user/immute)
+[08:58:13] *** Joins: naur___ (naur@user/naur)
+[08:58:13] *** Joins: blackbeard420 (blackbeard@2600:3c03::f03c:91ff:fe92:3f2a)
+[08:58:13] *** Joins: InPhase (~InPhase@openscad/inphase)
+[08:58:13] *** Joins: Ara (~Ara@user/ara)
+[08:58:13] *** Joins: Khoyo_ (~khoyo@ns328946.ip-37-187-115.eu)
+[08:58:13] *** Joins: TingPing (sid2800@id-2800.helmsley.irccloud.com)
+[08:58:13] *** Joins: lhtseng (sid15322@id-15322.helmsley.irccloud.com)
+[08:58:13] *** Joins: Bodger1234_ (sid503511@id-503511.uxbridge.irccloud.com)
+[08:58:13] *** Joins: renopt (~renopt@lisp.us.to)
+[08:58:13] *** Joins: tct (~tct@8.200.173.83.static.wline.lns.sme.cust.swisscom.ch)
+[08:58:13] *** Joins: headline (sid102736@tinside.irccloud.com)
+[08:58:13] *** Joins: Youmu (uid129469@user/condy)
+[08:58:13] *** Joins: derwolf (~DerWolf@2a01:4f8:c0c:554a::1)
+[08:58:13] *** Joins: bv (~bv@user/bv)
+[08:58:13] *** Joins: d12fk (~heiko@exit0.net)
+[08:58:13] *** Joins: Soliton (~Soliton@wesnoth/developer/soliton)
+[08:58:13] *** Joins: roxlu (~roxlu@2a01:7c8:aac0:286:8c3a:b01c:3830:245b)
+[08:58:13] *** Joins: mcfrdy (~mcfrdy@user/mcfrdy)
+[08:58:13] *** Joins: geordi (~geordi@tinodidriksen.com)
+[08:58:13] *** Joins: xkoncek (xkoncek@lounge.fi.muni.cz)
+[08:58:13] *** Joins: Nixx (~quassel@bulbasaur.sjorsgielen.nl)
+[08:58:13] *** Joins: kalven (~calvin@2a02:470:84:102::24)
+[08:58:13] *** Joins: epiktitos[m] (~epiktitos@2001:470:69fc:105::f76)
+[08:58:13] *** Joins: miklcct (~quassel@vps2.miklcct.com)
+[08:58:13] *** Joins: ambasta (~ambasta@2001:470:69fc:105::1:3973)
+[08:58:13] *** Joins: aleko1[m] (~aleko1@2001:470:69fc:105::1:1016)
+[08:58:13] *** Joins: m1cl[m] (~m1cl@2001:470:69fc:105::2d57)
+[08:58:13] *** Joins: arconte[m] (~arcontema@2001:470:69fc:105::1:2fe4)
+[08:58:13] *** Joins: rdrg109 (~rdrg109@user/rdrg109)
+[08:58:13] *** Joins: OnlineCop (~OnlineCop@user/onlinecop)
+[08:58:13] *** Joins: pieguy128 (~pieguy128@bas1-quebec14-67-70-102-17.dsl.bell.ca)
+[08:58:13] *** Joins: slavfox (~slavfox@ipv4-93-158-232-111.net.internetunion.pl)
+[08:58:13] *** Joins: beanzilla (beanzilla@user/beanzilla)
+[08:58:13] *** Joins: phoenix (phoenix@user/phoenix)
+[08:58:13] *** Joins: malinus (~malinus@172.245.158.16)
+[08:58:13] *** Joins: Friithian (gunqqer@friithian.dev)
+[08:58:13] *** Joins: sonOfRa (sonOfRa@user/sonofra)
+[08:58:13] *** Joins: biberu (~biberu@user/biberu)
+[08:58:13] *** strontium.libera.chat sets mode: +v geordi
+[08:58:13] *** Joins: edr (~edr@user/edr)
+[08:58:13] *** Joins: BrandonArnold (~brandon@ec2-52-27-188-210.us-west-2.compute.amazonaws.com)
+[08:58:13] *** Joins: dzz007 (~dzz007@user/dzz007)
+[08:58:13] *** Joins: talisein (~talisein@user/talisein)
+[08:58:13] *** Joins: purplex_ (~purplex@user/purplex)
+[08:58:13] *** Joins: orkim (~orkim@user/orkim)
+[08:58:13] *** Joins: andreyv (~andrey@user/andreyv)
+[08:58:13] *** Joins: dostoyevsky2 (~sck@user/dostoyevsky2)
+[08:58:13] *** Joins: wyre (~wyre@user/wyre)
+[08:58:13] *** Joins: MaddHatter (~maddhatt@user/maddhatter)
+[08:58:13] *** Joins: ivan (~ivan@user/ivan)
+[08:58:13] *** Joins: Hobbyboy (Hobbyboy@hobbyboy.co.uk)
+[08:58:13] *** Joins: kkd (~kkd@255.205.154.104.bc.googleusercontent.com)
+[08:58:13] *** Joins: shenghi (~shenghi@chrysocolla.mutablevoid.org)
+[08:58:13] *** Joins: oj (oj@user/oj)
+[08:58:13] *** Joins: DrinkyBird (~drinkybir@idlerpg/player/DrinkyBird)
+[08:58:13] *** Joins: fruitypunk (~user@2a01:7c8:aaaa:12:5054:ff:fe69:1df9)
+[08:58:13] *** Joins: Artea (~Lufia@artea.com.pt)
+[08:58:13] *** Joins: Latexi95 (late@banhammer.fi)
+[08:58:13] *** Joins: chris123123 (~bnc123@streuwerte.de)
+[08:58:13] *** Joins: klys_ (~mdasoh@show.op8.us)
+[08:58:13] *** Joins: Karyon (~Karyon@user/karyon)
+[08:58:13] *** Joins: rpav (~rpav@user/rpav)
+[08:58:15] *** Quits: shailangsa (~shailangs@host86-186-142-82.range86-186.btcentralplus.com) (Max SendQ exceeded)
+[08:59:31] *** Quits: elemongw (~elemongw@20.107.36.50) (Ping timeout: 256 seconds)
+[09:00:16] *** Quits: Colt (~Colt@user/colt) (Remote host closed the connection)
+[09:00:31] *** Joins: Juliu (~Juliu@2a02:810b:c640:3ec0:7515:120c:400a:3571)
+[09:00:41] *** Joins: Colt (~Colt@user/colt)
+[09:01:49] *** Joins: elemongw (~elemongw@20.107.36.50)
+[09:05:06] *** Quits: tesuji (~quassel@2a02:908:180:9500:712e:1c30:1e5e:7145) (Ping timeout: 268 seconds)
+[09:07:33] *** Quits: hackkitten (~hackkitte@94.31.103.136) (*.net *.split)
+[09:07:33] *** Quits: djinni (~djinni@static.38.6.217.95.clients.your-server.de) (*.net *.split)
+[09:07:33] *** Quits: HeTo (henkka@beer.modeemi.fi) (*.net *.split)
+[09:07:33] *** Quits: tct (~tct@8.200.173.83.static.wline.lns.sme.cust.swisscom.ch) (*.net *.split)
+[09:07:33] *** Quits: arconte[m] (~arcontema@2001:470:69fc:105::1:2fe4) (*.net *.split)
+[09:07:33] *** Quits: DrinkyBird (~drinkybir@idlerpg/player/DrinkyBird) (*.net *.split)
+[09:07:33] *** Quits: fruitypunk (~user@2a01:7c8:aaaa:12:5054:ff:fe69:1df9) (*.net *.split)
+[09:07:33] *** Quits: Artea (~Lufia@artea.com.pt) (*.net *.split)
+[09:07:34] *** Quits: Latexi95 (late@banhammer.fi) (*.net *.split)
+[09:07:34] *** Quits: chris123123 (~bnc123@streuwerte.de) (*.net *.split)
+[09:07:34] *** Quits: klys_ (~mdasoh@show.op8.us) (*.net *.split)
+[09:07:34] *** Quits: Karyon (~Karyon@user/karyon) (*.net *.split)
+[09:07:42] *** Joins: Latexi95 (late@banhammer.fi)
+[09:07:43] *** Joins: DrinkyBird (~drinkybir@idlerpg/player/DrinkyBird)
+[09:07:43] *** Joins: HeTo (henkka@beer.modeemi.fi)
+[09:07:47] *** Joins: Artea (~Lufia@artea.com.pt)
+[09:07:49] *** Joins: klys (~mdasoh@show.op8.us)
+[09:07:54] *** Joins: chris123123 (~bnc123@streuwerte.de)
+[09:07:57] *** Joins: hackkitten (~hackkitte@94.31.103.136)
+[09:07:58] *** Joins: fruitypunk (~user@2a01:7c8:aaaa:12:5054:ff:fe69:1df9)
+[09:08:04] *** Joins: Karyon (~Karyon@user/karyon)
+[09:08:27] *** Joins: tct (~tct@8.200.173.83.static.wline.lns.sme.cust.swisscom.ch)
+[09:09:58] *** Joins: djinni (~djinni@static.38.6.217.95.clients.your-server.de)
+[09:13:29] *** Quits: callq (~callq@157.41.190.133) (Quit: callq)
+[09:16:51] *** Joins: arconte[m] (~arcontema@2001:470:69fc:105::1:2fe4)
+[09:19:39] *** Joins: Jupp_S (~quassel@ip-88-153-154-129.hsi04.unitymediagroup.de)
+[09:20:28] *** Quits: buhman (sid411355@user/buhman) (*.net *.split)
+[09:20:28] *** Quits: Argorok (sid195487@id-195487.hampstead.irccloud.com) (*.net *.split)
+[09:20:28] *** Quits: imMute (~immute@user/immute) (*.net *.split)
+[09:20:28] *** Quits: naur___ (naur@user/naur) (*.net *.split)
+[09:20:28] *** Quits: lhtseng (sid15322@id-15322.helmsley.irccloud.com) (*.net *.split)
+[09:20:28] *** Quits: m1cl[m] (~m1cl@2001:470:69fc:105::2d57) (*.net *.split)
+[09:20:28] *** Quits: beanzilla (beanzilla@user/beanzilla) (*.net *.split)
+[09:20:28] *** Quits: phoenix (phoenix@user/phoenix) (*.net *.split)
+[09:20:29] *** Quits: malinus (~malinus@172.245.158.16) (*.net *.split)
+[09:20:29] *** Quits: rpav (~rpav@user/rpav) (*.net *.split)
+[09:20:35] *** Joins: malinus (~malinus@172.245.158.16)
+[09:20:37] *** Joins: Argorok (sid195487@id-195487.hampstead.irccloud.com)
+[09:20:42] *** Joins: imMute (~immute@user/immute)
+[09:20:42] *** Joins: naur (naur@user/naur)
+[09:20:48] *** Joins: buhman (sid411355@user/buhman)
+[09:20:56] *** Joins: lhtseng (sid15322@id-15322.helmsley.irccloud.com)
+[09:21:05] *** Joins: phoenix (phoenix@sdf.org)
+[09:21:34] *** Joins: beanzilla (beanzilla@user/beanzilla)
+[09:21:48] *** phoenix is now known as Guest4008
+[09:22:49] *** Joins: rpav (~rpav@user/rpav)
+[09:25:15] *** Joins: shailangsa (~shailangs@host86-186-142-82.range86-186.btcentralplus.com)
+[09:26:41] *** Joins: m1cl[m] (~m1cl@2001:470:69fc:105::2d57)
+[09:31:44] <AmR> How I cam sing to mail list ?
+[09:37:45] *** Joins: asen (~asen@2408:821b:618:2ef0:ab85:814b:bf8f:a143)
+[09:39:06] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[09:39:14] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[09:39:14] *** ChanServ sets mode: +v npaperbot
+[09:41:53] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[09:42:43] *** Joins: Codaraxis_ (~Codaraxis@user/codaraxis)
+[09:46:33] *** Quits: Codaraxis (~Codaraxis@user/codaraxis) (Ping timeout: 252 seconds)
+[10:04:18] *** Quits: Tokamak (~Tokamak@172.58.191.55) (Ping timeout: 268 seconds)
+[10:12:16] *** Joins: Tokamak_ (~Tokamak@172.58.191.55)
+[10:12:43] *** Joins: sord937 (~sord937@gateway/tor-sasl/sord937)
+[10:20:12] *** Joins: CaCode_ (~CaCode@user/cacode)
+[10:23:02] *** Quits: CaCode (~CaCode@user/cacode) (Ping timeout: 252 seconds)
+[10:27:44] *** Joins: CarloWood (~LdK13@212-127-230-18.cable.dynamic.v4.ziggo.nl)
+[10:32:16] *** Joins: JohnMS_WORK (~kvirc@89-64-71-70.dynamic.chello.pl)
+[10:33:40] *** Joins: tesuji (~quassel@2a02:908:180:9500:51ac:976d:f091:fa02)
+[10:39:37] *** Joins: kenanmarasli (~kenanmara@user/kenanmarasli)
+[10:40:01] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:6993:39fb:9bc8:e953)
+[10:42:09] *** Joins: night_wulfe (~wulfe@5.181.234.227)
+[10:43:23] *** Quits: sprout_ (~quassel@2a02:a467:ccd6:1:39f3:76e9:9ca1:32bd) (Ping timeout: 252 seconds)
+[10:45:35] *** Quits: night_wulfe_ (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 252 seconds)
+[10:45:51] *** Joins: vdamewood (~vdamewood@fedora/vdamewood)
+[10:53:20] *** Joins: vinleod (~vdamewood@fedora/vdamewood)
+[10:54:37] *** vdamewood is now known as Guest1016
+[10:54:37] *** Quits: Guest1016 (~vdamewood@fedora/vdamewood) (Killed (zinc.libera.chat (Nickname regained by services)))
+[10:54:37] *** vinleod is now known as vdamewood
+[10:57:45] *** Quits: ville (~ville@82-181-178-111.bb.dnainternet.fi) (Quit: Lost terminal)
+[10:59:32] *** Joins: ville (~ville@82-181-178-111.bb.dnainternet.fi)
+[11:11:17] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[11:12:08] *** Joins: nojhan (uid443807@id-443807.lymington.irccloud.com)
+[11:16:38] *** Quits: seninha (~seninha@user/seninha) (Remote host closed the connection)
+[11:19:34] *** Joins: supernova (~quassel@2405:9800:ba11:6207:73f2:14ac:a94f:d439)
+[11:21:07] *** Joins: night_wulfe_ (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[11:21:25] *** Quits: night_wulfe_ (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Client Quit)
+[11:25:05] *** Quits: night_wulfe (~wulfe@5.181.234.227) (Ping timeout: 268 seconds)
+[11:29:03] *** Joins: fdged (~fdged@178.49.152.42)
+[11:42:57] *** Joins: interop_madness (~interop_m@user/interop-madness/x-0950004)
+[11:50:44] *** Joins: john99 (~johnny@138.62.221.87.dynamic.jazztel.es)
+[11:52:00] *** Joins: Haohmaru (~Haohmaru@195.24.53.110)
+[11:54:38] *** Joins: andreasbuhr (~quassel@p548ddc5e.dip0.t-ipconnect.de)
+[11:54:53] *** Quits: andreasbuhr (~quassel@p548ddc5e.dip0.t-ipconnect.de) (Client Quit)
+[11:54:59] *** Quits: fdged (~fdged@178.49.152.42) (Quit: Client closed)
+[11:56:18] *** Joins: andreasbuhr (~quassel@p548ddc5e.dip0.t-ipconnect.de)
+[11:59:06] *** Quits: Codaraxis_ (~Codaraxis@user/codaraxis) (Read error: Connection reset by peer)
+[11:59:26] *** Joins: Codaraxis_ (~Codaraxis@user/codaraxis)
+[11:59:37] *** Quits: EdFletcher (~PKD@user/edfletcher) (Quit: Quit.)
+[12:01:18] *** Joins: EdFletcher (~PKD@user/edfletcher)
+[12:05:33] *** Joins: seninha (~seninha@user/seninha)
+[12:11:45] *** Joins: Tobbi (~Tobbi@2a02:8108:1240:48ec:f5d2:447c:d749:7070)
+[12:12:08] *** Quits: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao) (Remote host closed the connection)
+[12:12:33] *** Quits: aleios (~aleios@user/aleios) (Quit: WeeChat 3.3)
+[12:12:34] *** Joins: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao)
+[12:15:51] *** Joins: robod34 (Username@79.113.195.239)
+[12:29:59] *** Quits: Itaru (~DaSH@ro2.flokinet.is) (Remote host closed the connection)
+[12:30:24] *** Joins: Itaru (~DaSH@ro2.flokinet.is)
+[12:48:00] *** Joins: TheHermann (~TheHerman@gateway/tor-sasl/thehermann)
+[12:49:32] *** Quits: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao) (Remote host closed the connection)
+[12:49:49] *** Joins: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao)
+[12:50:43] *** Joins: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[12:55:20] *** Joins: pulse (~pulse@user/pulse)
+[12:55:51] *** Quits: Juliu (~Juliu@2a02:810b:c640:3ec0:7515:120c:400a:3571) (Quit: Leaving)
+[12:57:41] *** Joins: ent58 (~ent58@rrcs-97-76-214-244.se.biz.rr.com)
+[12:57:50] *** Quits: seninha (~seninha@user/seninha) (Remote host closed the connection)
+[12:58:43] <john99> # required by media-gfx/gimp-2.10.28-r1::gentoo # required by gimp (argument) >=app-text/poppler-21.07.0 cairo # required by media-gfx/gimp-2.10.28-r1::gentoo # required by gimp (argument) >=media-libs/gegl-0.4.32 cairo
+[12:58:56] <john99> Hi, i need reimplement the log library hand made that we was using in the work becouse we are moving to k8s and i was thinking if someone have some experience that can share or some advice about libraries or tools that can be used?
+[12:59:25] <john99> the first line is a accident...
+[13:07:54] *** Joins: cart_man (~rynot@62.60.61.36)
+[13:08:38] *** Quits: cart_man (~rynot@62.60.61.36) (Read error: Connection reset by peer)
+[13:09:22] *** Joins: cart_man (~rynot@62.60.61.36)
+[13:09:36] <Haohmaru> !libraries
+[13:09:37] <nolyc> Haohmaru: Error: "libraries" is not a valid command.
+[13:09:49] <Haohmaru> !libs
+[13:09:50] <nolyc> Libraries other than the std and the standards-track parts of boost (the rest are better asked about in #boost) are offtopic in #C++. Ask in #C++-general or consult a channel/mailing-list/forum dedicated to the library in question.
+[13:10:23] <Haohmaru> ignore that ^ >:/
+[13:10:36] <john99> XD okay
+[13:11:11] * Haohmaru points nolyc to look at the channel name...
+[13:11:58] <ent58> bad nolyc
+[13:12:16] <Haohmaru> no xmas presents for nolyc
+[13:13:04] <aegon> huh, how would one gdb a program that needs interactive input is there a gdb way to forward console input to the prog?
+[13:13:33] <Haohmaru> aegon what's the problem?
+[13:13:49] <ent58> the usual method for simple inputs (like stdin) is setting a breakpoint at a known location directly after you make a call to an input function in your code
+[13:14:08] <ent58> you hit "continue", and when you're done accepting input, control returns to you through the breakpoint
+[13:14:42] <Haohmaru> i debug my CLI apps via the IDE *shrug*
+[13:15:23] <aegon> oh shoot you know, i havent just tried it
+[13:15:26] <Haohmaru> the app runs in a new terminal window, gdb is being operated by the IDE
+[13:15:27] <ent58> if you "step over" a call like std::cin op<<
+[13:15:37] <ent58> you should be able to enter input
+[13:15:41] <ent58> and then it just comes back to you
+[13:15:56] <ent58> op<<? op>>
+[13:15:57] <aegon> lol, yeah, i've
+[13:16:04] <aegon> *i've just never
+[13:16:30] <aegon> omg, my brain is broken. I've just never had to debug an interactive program that expects terminal input in gdb :P
+[13:16:38] <ent58> I see
+[13:16:49] <aegon> it does just work :P
+[13:16:56] <ent58> yeah it's nice
+[13:17:00] <Haohmaru> you've had no bugs before
+[13:17:10] <ent58> I'm a fan of forcing terminal input into GUI programs by force
+[13:17:59] <aegon> no bugs outside of ide or something where visual studio is the go-to since college :P I obvously write perfect code the first time
+[13:18:02] <aegon> <_<, >_>
+[13:20:36] <john99> Haohmaru: usually run the program in one terminal and in other use gdb attach <PId of the process>
+[13:23:32] <aegon> i'm spoiled by visual studio and other things having built in logging / out of process debugging tools. been a while since i've been at the terminal level poking around with io
+[13:23:39] *** Quits: artok (~azo@mobile-access-5672c9-83.dhcp.inet.fi) (Ping timeout: 256 seconds)
+[13:23:56] *** Joins: plastico (~plastico@neomutt/plastico)
+[13:24:45] <aegon> i don't remember gdb having a tui last time i used it but I was probably just unaware
+[13:25:01] <john99> now have fancy tui with colors
+[13:25:03] <john99> XD
+[13:26:08] *** Joins: PJBoy (~PJBoy@host81-158-196-74.range81-158.btcentralplus.com)
+[13:26:08] *** Quits: PJBoy (~PJBoy@host81-158-196-74.range81-158.btcentralplus.com) (Changing host)
+[13:26:08] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[13:26:40] <aegon> its pretty nice, odd that it needs to run the binary once to detect the source file locations but it debugs guud
+[13:29:48] *** Quits: PJBoy (~PJBoy@user/pjboy) (Client Quit)
+[13:32:35] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[13:34:28] *** Joins: seninha (~seninha@user/seninha)
+[13:38:58] *** Joins: Ivii (~Ivyy@2001:a62:4c3:8e01:d2d2:a0ff:11ef:96ea)
+[13:39:06] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[13:39:15] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[13:39:15] *** ChanServ sets mode: +v npaperbot
+[13:41:52] *** Quits: badone (~badone@209.132.189.152) (Quit: ZNC 1.7.5 - https://znc.in)
+[13:43:57] *** Joins: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it)
+[13:54:43] *** Joins: Juliu (~Juliu@2a02:810b:c640:3ec0:7515:120c:400a:3571)
+[13:58:44] *** Joins: artok (~azo@mobile-access-5672c9-83.dhcp.inet.fi)
+[14:04:45] *** Quits: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it) (Quit: Leaving.)
+[14:13:56] <aegon> oy, don't suppose theres a good way to detect when a shared pointer is getting overridden or reset
+[14:14:14] <ent58> oh dear
+[14:15:09] <ent58> one tactic I've used is to breakpoint the shared setter (if the compiler made one) or analyze the code for xrefs to the shared pointed to object and breakpoint all of them in sequence
+[14:18:29] <aegon> oh man, i found it, this is the 3rd or so bug where i'm failing to fully initialize structs with the { .Member = blah } syntax, is there some pedantic warning i can turn on for that?
+[14:20:30] *** Joins: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it)
+[14:23:47] <PJBoy> I highly doubt it
+[14:24:01] <PJBoy> it's not normal to want to explicitly initialise every member of a struct
+[14:24:39] <aegon> i guess i should have made these constructors private when it an initialization is expected
+[14:24:46] <aegon> er, default constructors
+[14:26:27] <fiesh> aegon: with normal initializer lists (not designated), gcc warns if members that don't have a default intialization aren't initialized, and only those: https://godbolt.org/z/8Yd3v97TM
+[14:26:39] <fiesh> might be the same for designated, haven't checked
+[14:27:04] <PJBoy> that surprises me
+[14:28:35] <aegon> wierd, i must have those disabled, that would have caught this
+[14:28:57] <PJBoy> k there is initialised to zero as you might expect
+[14:29:26] <aegon> oh crud, i don't have any warnings enabled in this build, preparing for a flood of warnings :P
+[14:30:13] *** Quits: cart_man (~rynot@62.60.61.36) (Ping timeout: 240 seconds)
+[14:32:42] *** Quits: cursey (~cursey@user/cursey) (Quit: bye)
+[14:34:27] *** Joins: proller (~p@80.240.216.69)
+[14:41:28] *** Joins: xkuru (~xkuru@user/xkuru)
+[14:42:37] *** Quits: proller (~p@80.240.216.69) (Ping timeout: 240 seconds)
+[14:47:51] *** Joins: cursey (~cursey@user/cursey)
+[14:51:41] *** Joins: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net)
+[14:56:24] *** Quits: CaCode_ (~CaCode@user/cacode) (Quit: Leaving)
+[14:58:49] *** Quits: Itaru (~DaSH@ro2.flokinet.is) (Quit: See Ya Later!)
+[15:09:10] *** Quits: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it) (Quit: Leaving.)
+[15:10:51] *** Joins: cart_man (~rynot@213.205.241.185)
+[15:11:28] <cart_man> Is there a way in C++ to create a file in memory using any file path?
+[15:12:05] <cart_man> The file needs to be persistent
+[15:12:21] <cart_man> across proc ending and beginning
+[15:13:26] <john99> hi, someone here writed programs for run in containers have some good guide or practices for logging? before move to k8s i wanted use journald (shipping in the system) but now not seem very good idea
+[15:13:37] *** Quits: JohnMS_WORK (~kvirc@89-64-71-70.dynamic.chello.pl) (Ping timeout: 252 seconds)
+[15:19:39] <ent58> cart_man: if you want to fully control how that memory is "stored", you could have a small application that acts a memory broker for your heavier weight process...sending it memory via domain sockets, pipes, etc
+[15:20:03] <ent58> the heavier method would be to create something like a "ramdisk"
+[15:20:15] <ent58> but that means the user has to be on board with that
+[15:22:02] *** Quits: shailangsa (~shailangs@host86-186-142-82.range86-186.btcentralplus.com) ()
+[15:22:37] <cart_man> ent58: Well that is kind of what I am attempting actually. Is there a way to make a ramdisk on the fly ?
+[15:23:53] <ent58> hmm
+[15:25:16] <cart_man> ent58: I just checked ramfs
+[15:25:20] <ent58> that's not an easy task, as you essentially have to create a device
+[15:25:31] <ent58> yes, you'll be "asking" other tools to do this
+[15:26:06] *** Joins: Guest31 (~Guest31@2001-4dd3-5263-0-dc2e-d36-bd92-b1bb.ipv6dyn.netcologne.de)
+[15:29:44] *** Joins: JohnMS_WORK (~kvirc@185.73.229.242)
+[15:32:18] *** Joins: CalamityToo (~CalamityB@cpe-108-185-144-94.socal.res.rr.com)
+[15:34:53] *** Quits: CalamityBlue (~CalamityB@cpe-108-185-144-94.socal.res.rr.com) (Ping timeout: 252 seconds)
+[15:35:34] *** Quits: ent58 (~ent58@rrcs-97-76-214-244.se.biz.rr.com) (Quit: Client closed)
+[15:39:20] *** Joins: skapata (~Skapata@2804:14c:87b0:a6f9:89eb:9409:2790:a552)
+[15:39:20] *** Quits: skapata (~Skapata@2804:14c:87b0:a6f9:89eb:9409:2790:a552) (Changing host)
+[15:39:20] *** Joins: skapata (~Skapata@user/skapata)
+[15:39:22] <aegon> hmm, im' getting a std::bad_optional_access from a child process but i can't tell where, looking around there are lots of suggestions for finding backtraces from exceptions but they are all different and look kinda hacky
+[15:40:07] *** Joins: walkr (~walkr@177-7-165-171.user3p.brasiltelecom.net.br)
+[15:43:16] <ville> Guest31: https://gcc.gnu.org/onlinedocs/gcc-11.2.0/gcc/Instrumentation-Options.html#index-fsanitize_003daddress and below shows various g++ sanitizers. depending on your compiler and version what you've available
+[15:44:47] <ville> Guest31: you'll probably want to look into: address, leak, thread and undefined at least
+[15:45:24] *** Joins: markong (~kvirc@213.146.188.203)
+[16:02:23] *** Joins: proller (~p@2a02:6b8:0:40c:c59c:1120:aea8:c3f5)
+[16:02:47] *** Joins: Leone (~Leo@216.154.50.172)
+[16:08:03] *** baltazar is now known as baltazaar
+[16:10:57] *** Quits: Ivii (~Ivyy@2001:a62:4c3:8e01:d2d2:a0ff:11ef:96ea) (Remote host closed the connection)
+[16:11:52] *** Joins: Ivii (~Ivyy@2001:a62:4c3:8e01:e4e5:f5c3:f2e8:6b0a)
+[16:20:11] <manuels> how can I pass a json string to the compiler? i know this smells but I need the string at compiletime as const char*. tried to use defines but i get problems with separators
+[16:21:00] *** Joins: Roughy (~mdaw45ns@user/roughy)
+[16:21:14] *** Joins: szutt (~szutt@116.37.2.145)
+[16:21:22] <ville> tried raw string literal?
+[16:21:32] <mort> regardless of how you do it you need to preprocess your json somehow
+[16:22:11] <mort> you can use xxd -i to generate a char[] with integer literals representing your string
+[16:22:30] <mort> or you can use defines and use a python script to add slashes where necessary
+[16:22:46] <mort> you can use the tool I wrote about in https://mort.coffee/home/fast-cpp-embeds/ to generate string literals for you
+[16:23:06] *** Quits: unyu (~pyon@user/pyon) (Quit: brb)
+[16:23:49] *** Joins: unyu (~pyon@user/pyon)
+[16:24:29] <mort> keep in mind that string literals have a max length
+[16:24:40] <PJBoy> are we talking how to pass it as a e.g. -D build option?
+[16:24:41] <mort> or, well, compilers are only required to support string literals up to some length
+[16:25:18] <Haohmaru> wow, mort, what language is this xxd thing written in?!
+[16:25:30] <mort> xxd is written in C
+[16:25:36] <Haohmaru> what
+[16:25:37] <PJBoy> or are we good to have this as a string literal in a file that you #include?
+[16:25:45] <Haohmaru> why the ram usage then?!
+[16:25:52] <mort> it's bad C
+[16:26:13] <Haohmaru> dafuq
+[16:26:35] <PJBoy> shouldn't be too surprising
+[16:26:38] <mort> oh wait
+[16:26:43] <mort> Haohmaru: the memory usage is of the compiler, not the tool
+[16:26:50] <PJBoy> C doesn't have super cool facilities to help you use minimal memory
+[16:26:50] <Haohmaru> hm
+[16:26:52] <mort> xxd is slow, but the code it generates causes GCC to consume a ton of memory
+[16:26:59] <mort> xxd doesn't use a lot of memory itself
+[16:27:06] <Haohmaru> ah okay
+[16:27:17] *** Quits: Ivii (~Ivyy@2001:a62:4c3:8e01:e4e5:f5c3:f2e8:6b0a) (Remote host closed the connection)
+[16:27:30] *** Joins: Ivii (~Ivyy@2001:a62:4c3:8e01:b4b9:2e5b:8ffb:f8d8)
+[16:27:30] <PJBoy> the embed paper talks about this memory usage too IIRC
+[16:27:31] <mort> xxd is slow because it runs this code for every character: https://github.com/vim/vim/blob/83144546488b544a1fe4e2a4f8be954b98c696fc/src/xxd/xxd.c#L753-L759
+[16:28:05] <mort> don't call fprintf every byte
+[16:30:12] <whupdup> Hey, does anyone know why std::pmr::memory_resource has non-virtual public member functions allocate and deallocate, but the virtual functions are private?
+[16:30:26] <PJBoy> http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2021/p1967r4.html#design-efficiency-metrics for more metrics
+[16:30:43] <whupdup> is there some kind of fancy C++ pattern to not expose virtual functions directly or something
+[16:31:04] <PJBoy> even more metrics here http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2020/p1040r6.html#design-practice
+[16:31:10] <mort> yeah it's a pattern some people like whup
+[16:31:18] <mort> keep the pubilc API and the internal API separate
+[16:31:42] <mort> I kinda like it myself
+[16:31:46] <PJBoy> they do the same thing with their streambuf stuff
+[16:31:48] <whupdup> so they literally wrap T foo() { return do_foo(); }
+[16:31:58] <whupdup> what advantage does it actually serve if it's just a wrapper
+[16:32:29] <mort> it does serve as a clean separation of the two interfaces
+[16:32:50] <mort> I don't quite know if it makes sense for the pmr memory resources
+[16:33:33] <Haohmaru> dafuq is die(3) ?!
+[16:33:42] <Haohmaru> so much death in that code
+[16:33:45] <mort> someone thought C wasn't enough like perl
+[16:33:54] <LordKalma> what's up?
+[16:34:03] <Haohmaru> don't tell me it's a hidden goto
+[16:34:23] <mort> nah it's a function which prints and calls exit
+[16:34:39] <PJBoy> https://linux.die.net/man/3/die says it's not real
+[16:34:56] <mort> https://github.com/vim/vim/blob/83144546488b544a1fe4e2a4f8be954b98c696fc/src/xxd/xxd.c#L252
+[16:35:05] <PJBoy> oh
+[16:35:15] <PJBoy> I misinterpreted that (3) to be a manual section
+[16:35:31] <mort> it looks very general but apparently it only prints errno -- and with no message preceding it so it will just say "No such file or directory" or whatever
+[16:35:40] <PJBoy> rare moment of me being in a linux state of mind
+[16:35:47] *** Quits: aegon (~mike@174.127.249.180) (Remote host closed the connection)
+[16:36:37] <PJBoy> << strerror(3)
+[16:36:38] <geordi> No such process
+[16:36:56] <Haohmaru> << strerror(42)
+[16:36:57] <geordi> No message of desired type
+[16:36:57] <PJBoy> weird
+[16:36:58] <mort> << strerror(errno)
+[16:36:58] <geordi> Success
+[16:37:32] <PJBoy> I guess exit codes aren't the same as errno codes
+[16:37:35] <mort> << exit(3)
+[16:37:35] <geordi> error: no match for 'operator<<' in 'cout << exit(3)' (operand types are 'ostream' {aka 'ostream'} and 'void')
+[16:37:41] <PJBoy> but it perrors it :/
+[16:38:04] <mort> it calls perror(NULL)
+[16:38:07] <mort> not perror(ret)
+[16:38:44] <mort> die(3) means perror(NULL) and exit(3)
+[16:40:17] <PJBoy> and perror prints strerror(errno)
+[16:40:21] <mort> yes
+[16:40:26] <PJBoy> oh
+[16:40:31] <PJBoy> I just realised my folly
+[16:40:44] <mort> hmm are functions guaranteed to not set errno if it doesn't error
+[16:41:07] <PJBoy> they are not guaranteed to touch errno if they don't need to set an error
+[16:41:27] <PJBoy> in general, according to C/C++
+[16:41:34] <PJBoy> idk if posix adds any extra guarantees
+[16:41:53] <mort> interesting then that it first calls fprintf and then uses errno
+[16:42:15] <PJBoy> > The value of errno is ​0​ at program startup, and although library functions are allowed to write positive integers to errno whether or not an error occurred, library functions never store ​0​ in errno.
+[16:42:24] <PJBoy> so actually functions are not allowed to clear errno
+[16:42:32] <mort> but they're allowed to mess with it
+[16:42:39] <PJBoy> yeah
+[16:43:26] <PJBoy> and fprintf does set errno on error on posix
+[16:44:14] <PJBoy> but hey, there's lots of potential errors in this kind of code
+[16:45:01] <PJBoy> rewind for example is just a version of fseek(f, 0, SEEK_SET) that doesn't let you check for errors
+[16:45:24] <PJBoy> whupdup, http://www.gotw.ca/publications/mill18.htm might clarify some things?
+[16:45:27] <PJBoy> lemme know if it does
+[16:50:16] <whupdup> yeah that clarifies a lot
+[16:50:38] <PJBoy> alright I'll have to give it a read too then
+[16:50:55] <whupdup> you posted it before reading it lol?
+[16:51:17] <PJBoy> I looked at it just enough to know it was worth suggesting
+[16:51:32] <PJBoy> but man that's a lot of text
+[16:51:47] <whupdup> the TL;DR is that it's a good way to stabilize your API
+[16:51:50] <PJBoy> I was hoping to get a "that post is a bunch of the usual Herb daddy non-sense"
+[16:52:03] <whupdup> yeah there are more words than are necessary
+[16:52:37] *** Quits: walkr (~walkr@177-7-165-171.user3p.brasiltelecom.net.br) (Ping timeout: 240 seconds)
+[16:52:52] <PJBoy> was there any objective advantage?
+[16:52:53] <whupdup> but the big idea is that, when possible, using a nonvirtual function to wrap invocation of private virtual functions encapsulates an implementation detail
+[16:52:57] <PJBoy> or is it just a design thing
+[16:53:00] <whupdup> and virtuality is an implementation detail
+[16:53:13] <PJBoy> ok
+[16:53:31] <PJBoy> I think that's taking encapsulation to an extreme
+[16:53:45] <whupdup> and I guess how much you buy into that is directly proportional to how much you want to sanitize and encapsulate your code
+[16:54:05] <PJBoy> if the virtual function is protected, then it's still not an implementation detail
+[16:54:38] <PJBoy> like if I look up pubseekoff in cppreference, I just end up having to read seekoff anyway
+[16:55:09] <PJBoy> I guess it means a derived class can opt to not implement pubseekoff
+[16:55:32] <PJBoy> or actually
+[16:55:44] <PJBoy> maybe this is to prevent you from working with pointer to base class entirely
+[16:56:00] <whupdup> I think the idea is that if you find 20 years in the future your call to C::foo() no longer calls C::virtual_foo() because somehow virtual functions become obsolete for your use case in the year 2041, it doesn't require a recompilation of everything else... or something
+[16:56:10] <PJBoy> you can't call these virtual functions on a base class pointer to a derived object
+[16:56:32] <PJBoy> so in a way it's using virtual functions without allowing polymorphism
+[16:57:02] <whupdup> but if it's a wrapper
+[16:57:19] <whupdup> the base class's wrapper calls the virtual function polymorphically anyway?
+[16:57:27] *** Quits: sord937 (~sord937@gateway/tor-sasl/sord937) (Remote host closed the connection)
+[16:57:42] <PJBoy> oh uh
+[16:57:42] <whupdup> it's just 1 extra step where Base::foo() calls Derived::virtual_foo()
+[16:57:44] <PJBoy> right
+[16:57:52] *** Joins: sord937 (~sord937@gateway/tor-sasl/sord937)
+[16:58:05] <PJBoy> ignore that then
+[16:58:13] <whupdup> I think it's just a case of extremely paranoid futureproofing
+[16:58:19] <PJBoy> well my previous train of thought maybe then?
+[16:58:34] <PJBoy> it allows derived classes to choose to not implement foo()
+[16:58:54] <whupdup> then it's no different than a default implementation of a virtual function
+[16:58:58] <PJBoy> although users can still just cast the object to base class reference
+[16:59:15] <PJBoy> yeah ok I give up on that
+[16:59:16] <whupdup> and you'll still get an error if it tries calling the virtual impl
+[16:59:41] <whupdup> it's literally just a sort of paranoid-tier design where you're really afraid of making the subtlest of API changes to your class
+[16:59:43] <PJBoy> maybe the memory resource paper will have some rationale
+[17:00:06] <whupdup> and factor in the chance of maybe probably possibly not using virtual sometime in the distant future
+[17:00:10] *** Quits: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse) (Remote host closed the connection)
+[17:00:31] <PJBoy> [P022]
+[17:00:39] <PJBoy> uh
+[17:00:46] <whupdup> so I get why the STL would favor it, or codebases where maintaining that level of consistency-yet-flexibility is worthwhile
+[17:01:43] <PJBoy> nah these classes are locked into using these virtual functions
+[17:01:59] <PJBoy> derived classes need to be able to override them
+[17:02:04] <whupdup> yeah that's true
+[17:02:12] *** Quits: Ivii (~Ivyy@2001:a62:4c3:8e01:b4b9:2e5b:8ffb:f8d8) (Remote host closed the connection)
+[17:02:27] <whupdup> the only other reason I can think of is that non-virtual functions might have a stabler ABI
+[17:02:30] *** Joins: Ivii (~Ivyy@2001:a62:4c3:8e01:6c69:c214:cdb4:c477)
+[17:02:56] *** Quits: seninha (~seninha@user/seninha) (Remote host closed the connection)
+[17:02:57] <whupdup> so if you're trying to invoke C::foo() from a DLL or something, you don't have as much trouble as directly calling C::virtual_foo()
+[17:03:02] <whupdup> but I don't know stuff like this well enough to say for sure
+[17:03:20] <PJBoy> here's that paper btw http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2014/n3916.pdf
+[17:04:13] <PJBoy> " use the public-non-virtual-function-calls-protected-virtual-function idiom"
+[17:04:17] <PJBoy> rolls right off the tongue
+[17:04:51] <PJBoy> it doesn't justify it though
+[17:05:31] <cart_man> What is the significance of OFFSET parameter in the MMAP function? I change mine to 1 and I can still read all the bytes in the file?
+[17:06:54] <cart_man> If I start it at 10 or 1 it doesn't to be a actual "OFFSET" inside the file
+[17:10:02] <PJBoy> whupdup, https://isocpp.org/wiki/faq/strange-inheritance#protected-virtuals makes an argument about the danger of derived classes overriding overloaded virtual functions
+[17:10:12] <PJBoy> which is kinda reasonable
+[17:10:30] *** Joins: walkr (~walkr@177-7-165-171.user3p.brasiltelecom.net.br)
+[17:12:38] <PJBoy> well
+[17:12:43] <PJBoy> eh idk actually
+[17:13:00] <PJBoy> this is why I don't reference the isocpp faq very often
+[17:18:50] *** Quits: Burgundy (~yomon@79.115.213.171) (Ping timeout: 252 seconds)
+[17:22:45] <whupdup> yeah I think all the signs point to it being another sort of "highly theoretical benefit" type of design patterns
+[17:22:55] <whupdup> where it may possibly protect someone from something
+[17:23:17] *** Joins: smallville7123 (~smallvill@cpe-172-193-200-97.qld.foxtel.net.au)
+[17:24:29] *** Quits: frost (~frost@user/frost) (Ping timeout: 256 seconds)
+[17:24:40] *** Quits: asen (~asen@2408:821b:618:2ef0:ab85:814b:bf8f:a143) (Quit: Leaving)
+[17:24:50] <rpav> the first two paragraphs of that FAQ entry ought to be the intro to the FAQ or something heh
+[17:26:00] <PJBoy> true
+[17:27:38] *** Quits: skapata (~Skapata@user/skapata) (Remote host closed the connection)
+[17:28:49] <PJBoy> woah
+[17:29:05] <PJBoy> I just found out drive letters in Windows can be one of $#:!
+[17:29:20] <PJBoy> and 0-9
+[17:29:51] <rpav> really? since forever or what
+[17:29:58] <PJBoy> and if so, then it doesn't appear in the list of drives
+[17:30:10] <PJBoy> since forever I think
+[17:30:16] <rpav> ::
+[17:30:30] <rpav> drive letters, what a relic
+[17:30:58] <PJBoy> it actually works
+[17:31:01] <PJBoy> that's insane
+[17:31:34] *** Joins: callq (~callq@2409:4062:2d12:20af:3084:9666:bf9d:eb2d)
+[17:31:36] <PJBoy> https://puu.sh/IufH9/db37f8ec80.png
+[17:31:56] <rpav> nice
+[17:34:47] <rpav> apparently "winxp or later" and "not officially supported" according to wikipedia which is the first actual mention of this i could find
+[17:34:59] <PJBoy> right
+[17:35:12] <PJBoy> I got it from https://ss64.com/nt/subst.html
+[17:35:24] <PJBoy> which didn't mention XP, but I guess that's prehistoric
+[17:36:34] *** Quits: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao) (Remote host closed the connection)
+[17:36:51] *** Joins: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao)
+[17:37:40] *** Joins: jkaye (~jkaye@2601:281:8300:7530:1572:52e4:1190:1c22)
+[17:37:41] *** Joins: gehn (~gehn@user/gehn)
+[17:37:57] *** Quits: john99 (~johnny@138.62.221.87.dynamic.jazztel.es) (Remote host closed the connection)
+[17:39:07] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[17:39:15] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[17:39:15] *** ChanServ sets mode: +v npaperbot
+[17:41:30] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[17:41:55] *** Joins: xkuru (~xkuru@user/xkuru)
+[17:43:27] <rpav> XP is back a bit at least
+[17:44:43] *** Joins: dextercd (~dexter@2a02-a450-f25d-1-76d4-35ff-fefe-34c.fixed6.kpn.net)
+[17:53:00] *** Quits: callq (~callq@2409:4062:2d12:20af:3084:9666:bf9d:eb2d) (Quit: callq)
+[17:56:25] *** Quits: smallville7123 (~smallvill@cpe-172-193-200-97.qld.foxtel.net.au) (Remote host closed the connection)
+[17:57:13] *** Joins: smallville7123 (~smallvill@cpe-172-193-200-97.qld.foxtel.net.au)
+[18:01:55] *** Quits: smallville7123 (~smallvill@cpe-172-193-200-97.qld.foxtel.net.au) (Ping timeout: 252 seconds)
+[18:03:45] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Ping timeout: 252 seconds)
+[18:05:16] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[18:07:53] *** Joins: seninha (~seninha@user/seninha)
+[18:12:41] <Alipha> whupdup: often people wrap a virtual call because they want to do something before or after the virtual call is made. No idea about pubseekoff and such, since it sounds like it's a simple pass through
+[18:13:15] <Alipha> Guest31: for catching bugs, compile with -fsanitize=address,undefined,leak,thread -D_GLIBCXX_DEBUG
+[18:13:24] <PJBoy> the memory_resource stuff is simple passthrough too
+[18:15:54] <cart_man> Is there a Timer of sorts that can run a callback function in C++ / Linux ?
+[18:16:06] <cart_man> I am looking at timer_create() but I am not sure it does what I think it does
+[18:17:54] *** Quits: kenanmarasli (~kenanmara@user/kenanmarasli) (Quit: Leaving)
+[18:17:59] <PJBoy> std::thread + std::this_thread::sleep_for?
+[18:19:31] *** Quits: lh_mouse (~lh_mouse@mingw-w64/developer/lhmouse) (Read error: Connection reset by peer)
+[18:19:31] *** Quits: tesuji (~quassel@2a02:908:180:9500:51ac:976d:f091:fa02) (Ping timeout: 252 seconds)
+[18:22:38] *** Quits: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao) (Remote host closed the connection)
+[18:22:52] *** Joins: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao)
+[18:23:05] <cart_man> PJBoy: No I am looking for some CPU timing scenario that hopefully can be interrupted to run a callback function... that would be top prize
+[18:27:08] <rpav> ah, when float math imprecisions you to slightly over 1.0, and acos returns nan
+[18:27:32] <rpav> moral, "always clamp your dot product" or something i guess
+[18:27:46] <PJBoy> always enable floating point exceptions
+[18:28:27] <rpav> yeah that's definitely a plus but doesn't really _explain_ why when you dot two perfectly fine vectors and get a perfectly acceptable 1.0, acos returns NaN ;)
+[18:29:06] <PJBoy> I'm not actually sure how floating point exceptions work
+[18:29:06] <rpav> really i think acos ought to probably have an epsilon if nothing else
+[18:29:13] *** Quits: Ivii (~Ivyy@2001:a62:4c3:8e01:6c69:c214:cdb4:c477) (Remote host closed the connection)
+[18:29:25] <PJBoy> nah definitely not
+[18:29:31] <rpav> me either; i think i got them to work at some point but
+[18:31:59] <Guest31> Alipha: Thanks, but do you propbably know how to achieve this properly with cmake?
+[18:32:49] <PJBoy> according to the example here https://en.cppreference.com/w/cpp/numeric/math/acos it's basically just another kind of error code
+[18:33:12] <PJBoy> which isn't too interesting
+[18:35:04] <rpav> https://en.cppreference.com/w/cpp/header/cfenv
+[18:35:38] <Guest31> set(CMAKE_EXE_LINKER_FLAGS_INIT "-fsanitize=address,undefined,leak,thread -D_GLIBCXX_DEBUG")
+[18:35:38] <Guest31> seems that this doesn't work, at least "sanitize" is nowhere in my Makefile
+[18:35:58] <rpav> you can't sanitize thread and address at the same time
+[18:36:08] <Guest31> hm
+[18:36:17] <rpav> also leak may be part of address but i'm not sure
+[18:36:45] *** Quits: JohnMS_WORK (~kvirc@185.73.229.242) (Ping timeout: 268 seconds)
+[18:37:35] *** Quits: cart_man (~rynot@213.205.241.185) (Quit: Konversation terminated!)
+[18:40:25] <Guest31> set(CMAKE_CXX_FLAGS "-fsanitize=address,undefined,leak -D_GLIBCXX_DEBUG")
+[18:40:38] <Guest31> seems to do something in CMakeLists.txt at least :D
+[18:41:41] <rpav> note those add a fair chunk of time to building
+[18:41:48] <rpav> not that you shouldn't use them a lot
+[18:42:32] <rpav> ah, that's why no one uses std::binary_search
+[18:42:39] *** Joins: skapata (~Skapata@2804:14c:87b0:a6f9:7917:44d7:1e62:9de1)
+[18:42:39] *** Quits: skapata (~Skapata@2804:14c:87b0:a6f9:7917:44d7:1e62:9de1) (Changing host)
+[18:42:39] *** Joins: skapata (~Skapata@user/skapata)
+[18:43:06] <Guest31> yep, but I get some errors: https://0bin.net/paste/rVjmMmWu#Dy1YCAexqoedn7UgFgB6sQLEaRe1sOR3+J+eZ9gpGQS
+[18:43:12] <Guest31> some ideas?
+[18:43:15] *** Joins: Ivii (~Ivyy@2001:a62:4c3:8e01:d1fb:d15b:4215:e584)
+[18:43:21] <rpav> i literally forgot it existed, then i was like "ok fine i'm finding an actual element," then i didn't notice it was utterly useless and returned a bool
+[18:43:50] <rpav> this is mingw? i don't know that it works
+[18:44:14] <rpav> it is implemented in VS now, but
+[18:44:51] <traxex> yeah, lower_bound is more useful
+[18:44:57] <rpav> yeah
+[18:45:16] <Guest31> rpav: r u talking to me?
+[18:45:22] *** Joins: peeps (~peepsalot@openscad/peepsalot)
+[18:45:27] <Guest31> yes, it's Msys2
+[18:46:33] <PJBoy> you can do a binary search a little quicker than finding the lower bound though
+[18:46:39] <rpav> Guest31: yes
+[18:46:41] <Guest31> https://github.com/msys2/MINGW-packages/issues/3163
+[18:46:43] <Guest31> ah, damn?
+[18:47:09] *** Quits: peeps[zen] (~peepsalot@openscad/peepsalot) (Ping timeout: 256 seconds)
+[18:47:11] <rpav> PJBoy: and i would if it returned something useful like the iterator ;)
+[18:47:47] <Guest31> but it would work with the real gcc on linux?
+[18:48:01] <PJBoy> would you want an iterator to a random matching element?
+[18:48:58] <PJBoy> makes sense you'd want lower_bound or upper_bound for that
+[18:49:04] <rpav> yes, finding any matching element in the space would be useful
+[18:49:14] <rpav> especially if you know there is precisely one
+[18:49:40] <PJBoy> if there's only one, then lower_bound wouldn't be any slower than binary_search
+[18:49:53] <rpav> but it would be clearer
+[18:50:08] <PJBoy> yeah
+[18:51:24] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[18:51:49] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[18:53:55] <rpav> i would be curious if anyone had a real-world use-case for binary_search
+[18:54:13] * rpav is actually using std::rotate for probably the first time today! ;)
+[18:57:59] <PJBoy> I mean people have been wanting std::set et al to have .contains() ever ages
+[18:58:01] <Haohmaru> what?!
+[18:58:31] <mort> how about
+[18:58:34] <mort> ufcs
+[18:58:37] <rpav> well the entire purpose of set is to boolean-contain a thing or not
+[18:58:40] <Alipha> rpav: everything is a rotate! ;-)
+[18:58:47] <mort> then we could write our own .contains which checks if find() == end()
+[18:58:57] <rpav> not being able to trivially find that is kinda dumb
+[18:59:05] <rpav> Alipha: 🤔
+[18:59:51] <Alipha> rpav: http://olafurw.com/2020-12-31-everything-is-a-rotate/
+[18:59:53] <PJBoy> set has some utility outside of boolean-contain
+[19:00:26] <rpav> Alipha: ah cool i figured it might be something like that
+[19:01:26] <Guest31> Thanks folks! g2go.
+[19:01:39] <mort> 'Cppreference describes std::rotate as “Performs a left rotation on a range of elements.”, which helps a bit'
+[19:01:42] <mort> I'm not sure I agree
+[19:01:49] <Alipha> rpav: insert and erase can be written as push_back/rotate and rotate/pop_back
+[19:01:52] *** Quits: szutt (~szutt@116.37.2.145) (Quit: Client closed)
+[19:02:25] <Alipha> (on a std::vector/std::deque)
+[19:02:42] <rpav> i feel like that's cheating but yeah
+[19:03:17] <rpav> if you had a ring_vector it might even be efficient
+[19:04:16] <PJBoy> tbh I've forgotten all the cool things you can do with rotate
+[19:05:31] <rpav> i just want to (a b c d e) => (d e a b c)
+[19:05:58] <rpav> i could iterate starting at the middle and write it into doing the loop twice or something which would probably be more efficient but 🤷
+[19:08:04] *** Joins: undeclared2 (nullx@user/undeclared)
+[19:08:42] *** Quits: Guest31 (~Guest31@2001-4dd3-5263-0-dc2e-d36-bd92-b1bb.ipv6dyn.netcologne.de) (Ping timeout: 256 seconds)
+[19:08:54] *** Quits: undeclared (nullx@user/undeclared) (Read error: Connection reset by peer)
+[19:08:55] *** undeclared2 is now known as undeclared
+[19:17:05] *** Quits: johnny (~johnny@user/johnny) (Ping timeout: 252 seconds)
+[19:17:50] *** Joins: Itaru (~DaSH@ro2.flokinet.is)
+[19:21:46] *** Quits: rnsanchez (~rnsanchez@2804:14d:8a81:94a4:8ccf:d40:d4e6:2ebe) (Ping timeout: 268 seconds)
+[19:30:42] *** Joins: great_taste (~great_tas@user/great-taste/x-5798414)
+[19:31:05] *** Joins: magla (~gelignite@55d47927.access.ecotel.net)
+[19:32:43] *** Quits: interop_madness (~interop_m@user/interop-madness/x-0950004) (Quit: Leaving)
+[19:34:10] *** Joins: meator (~meator@user/meator)
+[19:41:44] <LordKalma> https://twitter.com/vzverovich/status/1467870991195987980
+[19:41:46] <LordKalma> wuuuuuuuuuuuttttttttttttttt
+[19:43:35] *** Joins: shailangsa (~shailangs@host86-186-136-27.range86-186.btcentralplus.com)
+[19:48:37] <pulse> That looks like an April 1st joke
+[19:49:08] <LordKalma> why on dec 6 tho?
+[19:49:50] <pulse> Could be someone woke up from a coma and they thought it's still April 1st
+[19:49:54] <pulse> That's the best I have
+[19:49:56] <Haohmaru> maybe when XORed with a certain prime, it wraps-around to april 1st?
+[19:51:03] <Haohmaru> or maybe not a prime but just a famous constant.. could it be euler's constant?
+[19:51:12] <Haohmaru> 2.78somethingsomething
+[19:51:23] <Haohmaru> (and multiplication in this case)
+[19:52:03] <Haohmaru> !fact
+[19:52:04] <nolyc> Haohmaru: A return statement in the body of a constructor shall not specify a return value.
+[19:52:06] *** Joins: rnsanchez (~rnsanchez@2804:14d:8a81:94a4:8ccf:d40:d4e6:2ebe)
+[19:53:31] *** Quits: pa (~pah@user/pah) (Ping timeout: 256 seconds)
+[19:55:56] <rpav> it's annoying there's no std gt/gte/lt/etc with epsilon
+[19:55:58] *** Joins: pah (~pah@user/pah)
+[19:56:36] <rpav> (_explicit_ epsilon, not the numeric_limits function)
+[19:57:59] <Haohmaru> ^ need a translation for that
+[19:58:14] <rpav> e.g. if(gt(a, b, 0.0001f)) ..
+[19:58:33] <rpav> vs trivial if(a > b) or writing out the op every time
+[19:59:55] <Haohmaru> ah
+[20:00:03] <Haohmaru> comparison for floats
+[20:00:18] * Haohmaru throws a template at rpav
+[20:00:27] *** Joins: hgkjhgkjgkj (~hjgkjhgkj@46.235.96.249)
+[20:00:31] <rpav> well it's trivial to _write_; it's stupid you _have to_
+[20:00:45] <Raziel> rpav, that'd be nice. I use ones from bx (bgfx base lib), they're nice and simple, but yeah, I don't see why there aren't any in std
+[20:00:47] <rpav> writing trivial things everyone really ought to be using is the job of std
+[20:00:58] <Haohmaru> i wrote my own ghetto_floor() ;P~
+[20:03:58] *** Joins: HvszrStykp (~X@81.171.62.85)
+[20:08:15] *** Quits: traxex (~traxex@user/traxex) (Ping timeout: 256 seconds)
+[20:08:51] *** Joins: thad_the_man (~tlophd_be@2600:1700:3051:4370:21d:9ff:fe33:51f4)
+[20:09:01] *** Quits: Itaru (~DaSH@ro2.flokinet.is) (Ping timeout: 240 seconds)
+[20:13:11] <PJBoy> LordKalma, that's just a randomer on twitter right?
+[20:13:35] <Haohmaru> a RandomWriter
+[20:14:05] <PJBoy> either that or it's a joke
+[20:14:21] <PJBoy> you write arbitrary code, and you execute it
+[20:14:27] <PJBoy> and this thing has execute in the name, so
+[20:14:34] *** Joins: AbleBacon (~AbleBacon@user/AbleBacon)
+[20:14:52] <Alipha> RandomReader: aegon is gone, but i thought you might be interested in my uuid class: https://godbolt.org/z/fvM7Ws59h
+[20:14:54] <PJBoy> idk maybe that's worth a laugh
+[20:15:00] *** Joins: Burgundy (~yomon@79.115.213.171)
+[20:15:02] <Haohmaru> auto arbitrary() { ... }
+[20:15:35] *** Joins: traxex (traxex@sdf.org)
+[20:15:35] <PJBoy> the proposal for this is a presentation for some reason
+[20:16:14] * Haohmaru produces a long long fart
+[20:16:18] <PJBoy> ah here we go, third paper in the results
+[20:16:19] <Haohmaru> now that's worth a laugh
+[20:16:26] <PJBoy> [p2300]
+[20:16:26] <npaperbot> P2300R2: [SG1, Library Evolution] std::execution <https://wg21.link/p2300r2> (by Michał Dominiak, Lewis Baker, Lee Howes, Kirk Shoop, Michael Garland, Eric Niebler, Bryce Adelstein Lelbach) (2021-10-04) (Related: https://wg21.link/p2300r2/github)
+[20:16:43] <PJBoy> holy shit that's a long thread
+[20:17:25] <PJBoy> scheduled for library evolution, whatever that means
+[20:18:43] <Haohmaru> evolution involves slight mutations, scrambling around, and generations
+[20:19:14] <PJBoy> doesn't look like it's made it into C++23
+[20:19:58] *** Quits: traxex (traxex@sdf.org) (Changing host)
+[20:19:58] *** Joins: traxex (traxex@user/traxex)
+[20:19:59] <PJBoy> yeah bad joke is all I've got
+[20:20:15] <Haohmaru> should LordKalma be punished?
+[20:21:09] <Haohmaru> to "make clean" all his QT projects
+[20:29:11] <ashafq> Haohmaru: long long... was it an __int128 fart?
+[20:29:51] <Haohmaru> approximately yes
+[20:30:18] <Haohmaru> !fact
+[20:30:19] <nolyc> Haohmaru: Friend declarations shall not declare partial specializations.
+[20:32:45] <ashafq> Haohmaru: I just learned about l64a() and I think part of me died a little
+[20:33:18] <Haohmaru> el-sixty-four-what?!
+[20:33:19] <PJBoy> based on the name and nothing else
+[20:33:39] <PJBoy> I'm guessing...
+[20:33:55] <PJBoy> load 64-bit address
+[20:34:09] <PJBoy> as one of those ASM compiler intrinsics
+[20:34:28] <PJBoy> > The l64a() function converts a long integer into its corresponding base 64 character representation
+[20:34:45] <ashafq> PJBoy: yes, but the return type... ugh
+[20:34:56] <PJBoy> man, I seriously don't understand how you come up with such a terrible god damn name for a function
+[20:34:56] <ashafq> PJBoy: Same goes for this family of functions https://en.cppreference.com/w/c/chrono/localtime
+[20:35:40] <ashafq> I gues I am happy I didn't have to deal with date-time in C
+[20:35:44] <rpav> PJBoy: this is C++!
+[20:35:48] <PJBoy> yeah those functions suck too
+[20:36:03] <rpav> just be thankful it isn't called "inline"
+[20:36:25] <PJBoy> hey man
+[20:36:30] <PJBoy> inline does only mean one thing
+[20:36:50] <ashafq> rpav: wow... I don't want to get into inlining static return values
+[20:37:10] <rpav> inline goto
+[20:37:21] <Haohmaru> inline outline
+[20:44:23] *** Joins: Itaru (~DaSH@ro2.flokinet.is)
+[20:48:33] *** Joins: kenanmarasli (~kenanmara@user/kenanmarasli)
+[20:51:58] *** Quits: Haohmaru (~Haohmaru@195.24.53.110) ()
+[20:52:14] <rpav> upline downline
+[21:02:44] *** Quits: Itaru (~DaSH@ro2.flokinet.is) (Quit: See Ya Later!)
+[21:04:17] *** Joins: voltron (~voltrin_@ip4d16bdc6.dynamic.kabel-deutschland.de)
+[21:05:54] <LordKalma> PJBoy, that randomer is the author of ftmlib and std::format
+[21:05:55] <LordKalma> but yeah
+[21:06:01] <LordKalma> can't mean he's not a shitposter
+[21:06:11] <LordKalma> or doesn't, rather
+[21:06:16] <PJBoy> ah right
+[21:08:49] *** Joins: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it)
+[21:14:48] *** Joins: sprout_ (~quassel@2a02:a467:ccd6:1:bc10:5f40:71cb:b3b6)
+[21:16:59] *** Quits: supernova (~quassel@2405:9800:ba11:6207:73f2:14ac:a94f:d439) (Ping timeout: 252 seconds)
+[21:17:18] *** Quits: voltron (~voltrin_@ip4d16bdc6.dynamic.kabel-deutschland.de) (Remote host closed the connection)
+[21:17:25] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:6993:39fb:9bc8:e953) (Ping timeout: 240 seconds)
+[21:30:42] *** Parts: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it) ()
+[21:39:07] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[21:39:17] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[21:39:17] *** ChanServ sets mode: +v npaperbot
+[21:41:51] *** Joins: gehn1 (~gehn@user/gehn)
+[21:41:54] *** Quits: PJBoy (~PJBoy@user/pjboy) (Quit: Ping timeout: 252 seconds)
+[21:44:37] *** Quits: gehn (~gehn@user/gehn) (Ping timeout: 240 seconds)
+[21:50:05] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[21:50:53] *** Quits: markong (~kvirc@213.146.188.203) (Quit: KVIrc 5.0.0 Aria http://www.kvirc.net/)
+[21:51:12] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Client Quit)
+[21:52:37] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[21:52:55] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Client Quit)
+[21:54:20] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[22:08:21] *** Joins: paul424 (~tom@ip-37-248-159-150.multi.internet.cyfrowypolsat.pl)
+[22:12:09] *** Joins: Itaru (~DaSH@ro2.flokinet.is)
+[22:22:56] *** Joins: Tobbi_ (~Tobbi@2a02:8108:1240:48ec:9def:63cb:61cc:904f)
+[22:24:01] *** Quits: Tobbi (~Tobbi@2a02:8108:1240:48ec:f5d2:447c:d749:7070) (Killed (NickServ (GHOST command used by Tobbi_!~Tobbi@2a02:8108:1240:48ec:9def:63cb:61cc:904f)))
+[22:24:25] *** Tobbi_ is now known as Tobbi
+[22:25:43] *** Joins: Codaraxis__ (~Codaraxis@user/codaraxis)
+[22:29:55] *** Quits: Codaraxis_ (~Codaraxis@user/codaraxis) (Ping timeout: 256 seconds)
+[22:39:49] *** Quits: Juliu (~Juliu@2a02:810b:c640:3ec0:7515:120c:400a:3571) (Ping timeout: 240 seconds)
+[22:45:23] *** Joins: john99 (~johnny@138.62.221.87.dynamic.jazztel.es)
+[22:45:27] *** Joins: supernova (~quassel@2405:9800:ba11:6207:7919:832b:4efe:ab20)
+[22:46:23] <supernova> hi folks! Could you please advice how to ammend this program
+[22:46:24] <supernova> https://wandbox.org/permlink/wZK38gokicfO8kHA
+[22:46:49] <supernova> https://wandbox.org/permlink/wZK38gokicfO8kHA
+[22:47:13] <rpav> poorly-formatted homework; it must be that time of year
+[22:47:14] <supernova> 7.25.cpp:82:18: error: ‘items’ was not declared in this scope; did you mean ‘item’?
+[22:47:14] <supernova>    82 | for ( int item : items )
+[22:47:59] <kalven> wandbox should have built-in clang format :D
+[22:48:21] <ashafq> supernova: for (int item: array)
+[22:48:33] <ashafq> supernova: or for (auto item: array)
+[22:48:56] <ashafq> supernova: and yea, pls format.
+[22:49:16] <supernova> Thank you, mr. Ashafq
+[22:49:39] <supernova> How to format?
+[22:51:51] <ashafq> supernova: use a good text editor or use clang-format
+[22:52:46] <Alipha> or just manually do it yourself when you write it
+[22:52:59] <supernova> i use ubuntu text editor
+[22:53:18] <supernova> you mean identation and other cosmetics?
+[22:53:25] <ashafq> Oh I love Ubuntu, the text editor program!
+[22:54:14] <ashafq> supernova: s/cosmetics/necessities/
+[22:54:32] <Alipha> supernova: identation and appropriate blank lines. and while the compiler doesn't care about them, it's far from "cosmetic": https://wandbox.org/permlink/q0t89EIjye43LGuT
+[22:54:49] <supernova> how can i make it proper automatically? P
+[22:55:05] <Alipha> supernova: also note i get rid of all your `// end of catch` and related comments because they're now unnecessary
+[22:55:46] <Alipha> a decent editor will ident for you. but appropriate use of blank lines to logically separate portions of the code you will have to do yourself
+[22:56:23] <rpav> it's funny how people disregard indentation etc when they're very new, like, too cool-big-brain for that shit
+[22:56:46] <rpav> "now why do i have this simple error that would be entirely evident if my code was readable" ;)
+[22:57:07] <Alipha> supernova: howaboutijuststarttypinglikethis.thisiswhatyourcodelookslike.
+[22:57:19] <rpav> ^
+[22:57:53] <supernova> i copied this from book, sorry, but i just lacked identation. I do it manually, in moderate amount
+[22:57:56] <rpav> except it's more like, if Alipha had used poor grammar and spelling, but it was too hard to tell because there was no space or punctuation
+[22:58:11] <rpav> in any case clang-format and a good editor and/or IDE are your friends
+[22:58:34] <supernova> What Ubuntu editor is nice for auto-identation?
+[22:58:45] <rpav> vscode, intellij, vim/emacs with some setup, etc .. anything that will have language comprehension, let you clang-format at a button press, and inline linting
+[22:58:56] <supernova> Sublime?
+[22:59:18] <rpav> sublime probably has clangd+clang-format support or i will be surprised (but i may be surprised)
+[22:59:59] <ashafq> supernova: VSCode is also a good candidate
+[23:00:04] *** Quits: paul424 (~tom@ip-37-248-159-150.multi.internet.cyfrowypolsat.pl) (Quit: Leaving)
+[23:00:13] <ashafq> newbie friendly too
+[23:00:15] <rpav> clangd will help show errors right as you're typing so you don't have a lot of code before you realize issues .. though, the thing they don't really teach you is to start with a small working bit of code, and add bits while keeping it working
+[23:00:36] <rpav> yeah vscode is fairly simple out of the box; not the best editor but it's accessible
+[23:01:18] <supernova> i would for something easy
+[23:01:20] <supernova> and smart
+[23:01:30] <supernova> Text editor with magic button to autoident and check
+[23:01:45] <supernova> VSCode seems more "industrial strength" sort of thing
+[23:03:07] <ashafq> supernova: VSCode has that magic button to autoformat
+[23:03:25] <supernova> last time i could even install it :D
+[23:03:29] <supernova> i could not*
+[23:04:01] <ashafq> supernova: `snap install vscode` that's all you need to type in your terminal (do google it if you don't trust me)
+[23:04:30] <supernova> i will
+[23:04:35] <supernova> is it looks better now?
+[23:04:36] <supernova> https://wandbox.org/permlink/QEamPclNcltgwS98
+[23:04:38] <mort> TIL about template template parameters
+[23:07:31] <supernova> snap install vscode does not work
+[23:07:32] <supernova> https://wandbox.org/permlink/pDYnEluj2IDe8OtE
+[23:08:05] *** Quits: Terminus (~null@user/terminus) (Ping timeout: 252 seconds)
+[23:08:17] <ashafq> supernova: https://code.visualstudio.com/docs/setup/linux then follow the direction there
+[23:09:10] <ashafq> `sudo snap install --classic code` looks like you need to add the `--classic` flag
+[23:09:15] <RandomReader> Alipha - neat
+[23:09:32] <RandomReader> although I think you need to set the variant somewhere too, when creating
+[23:09:39] <supernova> sudo snap install --classic code works
+[23:09:47] <Alipha> RandomReader: uint8_t[16] makes more sense to me than `uint64_t ab; uint64_t cd;`
+[23:09:53] <rpav> supernova: yeah now get rid of all the comments and reduce that to like 10loc and it'll be fine ;)
+[23:10:49] <supernova> Thank you! You help with my education so much!
+[23:10:53] <rpav> though iostreams are (is?) always going to be ugly
+[23:10:55] <RandomReader> IIRC the Microsoft struct form uses each component like the RFC, except node which is a uint8_t[6]
+[23:11:10] <RandomReader> but yeah, I've seen a few patterns, it's not a particularly easy one to represent
+[23:11:12] <Alipha> supernova: there's still no blank lines. it looks like a book with no paragraphs. see mine: https://wandbox.org/permlink/q0t89EIjye43LGuT
+[23:11:57] <rpav> any time you see similar lines, you should probably have a function
+[23:12:23] <Alipha> RandomReader: imo, just go with uint8_t[16] because the different parts of a UUID shouldn't matter because you should just use v4 anyway ;-)
+[23:12:31] <rpav> supernova: e.g. cout << "blah:" << endl; outputVector(...); could easily be `outputVector("integers1", integers1);` and put the message in the function
+[23:12:35] <rpav> you have bigger ones like that too
+[23:12:59] <rpav> if they're just splatty print dump functions it's fine to do that
+[23:13:03] *** Joins: Hokedli (~lasliedv@gateway/tor-sasl/hokedli)
+[23:13:53] <supernova> this is fine, to understand syntax
+[23:14:13] <supernova> these my first cuts with vectors and arrays in C++
+[23:14:17] <rpav> sure
+[23:14:20] <supernova> it differs a bit from C
+[23:14:48] <rpav> you will help yourself by not having lots of repetitive code .. it's fine to copy once or twice, but once you establish a pattern, if you make a function you'll save a lot of time and headache
+[23:15:34] <rpav> ultimately having something like `print("v = ", v) // => v = [0, 1, 2, ...]` is nice and fairly easy to implement
+[23:15:35] <RandomReader> I haven't tried making my own UUID abstraction yet .. maybe if I get sufficiently bored I'll see what "excessively typed" looks like
+[23:16:42] <RandomReader> I've mostly used V4, but sometimes V1 when uniqueness needed to be guaranteed (and not just extremely likely)
+[23:17:04] <supernova> Sure, it just a sample from book. Sample still fair to understand how all things work together
+[23:17:08] <RandomReader> I remember a use case for the hashed form, but I don't recall if I ended up using UUID for it
+[23:17:56] <Alipha> RandomReader: "guaranteed" until the clock on the device gets changed ;-)
+[23:18:07] *** Joins: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it)
+[23:18:20] <RandomReader> I had sufficient control of both the address and clock handling for that one, including guards against backward ticks
+[23:19:53] <Alipha> RandomReader: i used the sha1 UUIDs at work once upon a time because we wanted consistent IDs when we loaded/reloaded this specific set of data on various databases
+[23:20:10] <supernova> I got VS, installed C++ extension. How to auto-indent ? :)
+[23:21:37] <ville> which "vs" do you mean? visual studio and visual studio code are different things
+[23:22:19] <supernova> Visual Studio Code
+[23:22:25] <Alipha> RandomReader: oh hey, i found the code. i guess we never bothered to convert the sha1 hash into UUID format and just used the sha1 hash itself as the key: https://ideone.com/25qpt9
+[23:22:51] <LordKalma> supernova, crtl+shift+p search "open settings (JSON)" and add
+[23:22:52] <LordKalma> "editor.formatOnSave": true,
+[23:22:56] <RandomReader> hah
+[23:23:12] *** Joins: Simplar (~Simplar@188.163.93.76)
+[23:23:36] <RandomReader> yeah, I've had a few of those too .. the advantage of UUID is interoperability in the face of generator changes, so things that escape a single system
+[23:23:50] <RandomReader> a lot of the time that isn't needed though, in which case it's just a system-specific ID
+[23:24:29] <LordKalma> if anybody's curious, here's a dump of my vscode settings
+[23:24:30] <LordKalma> https://gist.github.com/ruilvo/6b1979e153576b58c29d3cab8926f917
+[23:26:17] <LordKalma> supernova, I do recommend reading some docs and tips on vscode. really cool editor, but you have to know how to navigate it :)
+[23:27:34] *** Quits: kenanmarasli (~kenanmara@user/kenanmarasli) (Quit: Leaving)
+[23:27:48] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[23:27:56] <supernova> LordKalma, i def-ly going to try VSCode. Afraid it will consume a lot of hardware, my mac 13 might going retired faster with vs code :D
+[23:28:28] <rpav> is that from 2013, or something else
+[23:29:07] <supernova> yes, issued in 2013
+[23:29:27] <supernova> so, i pushed ctrl shit + p
+[23:30:04] <supernova> open settings JSON and it just opened new window settings.json
+[23:30:05] <rpav> tmi
+[23:30:43] <rpav> yeah it combines the usability of configuration files with the flexibility of .ini ;P
+[23:31:19] <RandomReader> whupdup / PJBoy - as a practical matter re: interface stability for pmr::memory_resource, allocate() has a default parameter and got tagged [[no_discard]] in C++20 .. both of those are unenforceable in general hiearchy, which would make the interface fragile
+[23:31:42] <RandomReader> er, nodiscard, no underscope
+[23:31:58] <RandomReader> also no underscope, it's actually underscore
+[23:32:17] <PJBoy> how ironic
+[23:32:24] <RandomReader> I will underscore my commentary with irrelevance!
+[23:32:26] <PJBoy> that nodiscard would discard the underscore
+[23:32:57] <PJBoy> even though stdlib has a long history of separating words with underscores
+[23:33:07] <RandomReader> yeah that is an interesting one
+[23:33:53] <PJBoy> you make a good point about the default parameter and nodiscard
+[23:34:21] <PJBoy> can't both those things be on the base class though?
+[23:34:38] <supernova> ctrl + shift + i to auto intent with VSC on Linux
+[23:34:41] <supernova> Result https://wandbox.org/permlink/GaK3xh9picmQGJyP
+[23:34:41] <RandomReader> yes, but they don't carry through the inheritance, so you get different behavior depending on the static type of the object
+[23:35:10] <RandomReader> (since the derived would always be implementing it)
+[23:35:30] <RandomReader> the underlying theme of that pattern is exactly to separate interface and implementation, so that nobody's repeating the interface and it's a single source of truth
+[23:36:05] <RandomReader> doesn't make a practical difference for all interfaces, but this was a minor one in practice, so I think they made the right call
+[23:36:16] <PJBoy> I'm still not convinced
+[23:36:44] <PJBoy> do_allocate could be public and nodiscard and take a default argument
+[23:37:20] <RandomReader> but it doesn't carry: https://godbolt.org/z/f18hcs96o
+[23:37:23] <PJBoy> derived classes would get to choose whether they want to make their override nodiscard or take a default argument all the same
+[23:37:38] <RandomReader> it's a documented API, there's no valid choice
+[23:37:47] <RandomReader> they have to conform or they're violating the interface contract
+[23:37:56] <RandomReader> the issue here is that it's trivial to make that mistake
+[23:37:59] <PJBoy> I mean it doesn't carry when you're doing the non-virtual interface either
+[23:38:10] <PJBoy> so the two situations are the same
+[23:38:27] <RandomReader> but the derived never need to implement (hide) the interface
+[23:38:33] <RandomReader> so it never happens
+[23:38:51] <PJBoy> derived does need to implement the do_allocate
+[23:38:54] <RandomReader> so it does carry, by normal inheritance scoping
+[23:39:03] *** Quits: supernova (~quassel@2405:9800:ba11:6207:7919:832b:4efe:ab20) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[23:39:09] <RandomReader> yes, but that's not the public interface, so default and [[nodiscard]] are irrelevant
+[23:39:18] <PJBoy> they're irrelevant anyway
+[23:39:30] <RandomReader> how are they irrelevant? it's the public interface!
+[23:39:40] <PJBoy> they're irrelevent as far as the derived class is concerned
+[23:39:50] <PJBoy> as they're not enforced or observable or anything
+[23:40:06] <RandomReader> I can't tell if you think that's a problem or you're missing that that's exactly the point
+[23:40:31] <RandomReader> if I, as a user, have an object that has a static type of either the base or derived, I should get exactly the same public interface
+[23:40:46] <RandomReader> having a non-virtual fixed interface in the base accomplishes that
+[23:41:04] *** Joins: badone (~badone@209.132.189.136)
+[23:41:13] <RandomReader> if I *don't* get the same public interface, the derived screwed up, since it's not obeying Liskov
+[23:41:21] <PJBoy> why doesn't the usual virtual interface accomplish that?
+[23:41:58] <PJBoy> the language actually enforces the derived classes to have the same interface in that case
+[23:42:10] <RandomReader> because it's repeating code on the derived side (which is silly) and it's prone to mistakes (as the godbolt link demonstrates)
+[23:42:15] <RandomReader> it does not, look at the link
+[23:43:09] <PJBoy> the problem from the link doesn't change by making a wrapper that calls f
+[23:43:15] *** Quits: blackout69 (~blackout6@net-31-156-121-187.cust.vodafonedsl.it) (Quit: Leaving.)
+[23:44:45] *** Quits: pulse (~pulse@user/pulse) (Quit: Join a gamedev community https://indiedevs.net/)
+[23:44:47] <PJBoy> I mean yeah the virtual override stuff doesn't enforce that you make a default argument for the function
+[23:44:59] <PJBoy> but it enforces more than the non-virtual wrapper approach
+[23:45:43] <Alipha> PJBoy: sure it does: https://godbolt.org/z/13zWMa5j9
+[23:45:44] <RandomReader> the wrapper exactly fixes it: https://godbolt.org/z/57WrdWb3d
+[23:46:23] <RandomReader> again, the concept here is to separate the interface from the implementation
+[23:46:37] <RandomReader> if the virtual chain is public, then it's both
+[23:46:45] <PJBoy> I disagree with that last paste
+[23:47:11] <PJBoy> unless...
+[23:47:50] <PJBoy> the point is that derived classes don't need to bother implementing the public interface?
+[23:47:59] <RandomReader> yes
+[23:48:04] <PJBoy> although they do in all the stdlib derived classes
+[23:48:08] <RandomReader> because it's redundant and they can make mistakes
+[23:48:22] <RandomReader> what? no they don't
+[23:48:38] * PJBoy double checks
+[23:48:41] <RandomReader> the original pmr::memory_resource doesn't, iostream doesn't, ...
+[23:49:05] <PJBoy> oh they don't
+[23:49:08] <PJBoy> huh
+[23:49:15] <RandomReader> (wouldn't surprise me if there are some missed cases, but in general this is a pattern stdlib uses)
+[23:49:17] <PJBoy> well that was a crucial detail
+[23:49:29] *** pah is now known as pa
+[23:49:49] *** Quits: Itaru (~DaSH@ro2.flokinet.is) (Ping timeout: 240 seconds)
+[23:49:53] *** Quits: proller (~p@2a02:6b8:0:40c:c59c:1120:aea8:c3f5) (Ping timeout: 265 seconds)
+[23:49:56] <PJBoy> very good
+[23:50:10] <PJBoy> thanks for that textual journey
+[23:50:25] <PJBoy> I'm totally with you now
+[23:50:42] <RandomReader> it's not something I ever came across in the OOP intro stuff, took C++ for me to see this .. dunno if I just wasn't exposed to the template pattern in general, or if it's less of an issue with other languages
+[23:50:49] <RandomReader> or some mix of both
+[23:51:09] <PJBoy> I've not seen it in any projects outside of stdlib
+[23:51:18] <RandomReader> C++'s class being a multitool certainly compounds all of this
+[23:51:23] <PJBoy> certainly not anything enterprisey
+[23:51:49] <PJBoy> this idiom of NVI calling derived VI doesn't even have a decent name
+[23:52:20] <PJBoy> and anything that doesn't have a decent name is likely to be C++ specific
+[23:52:49] <RandomReader> true
+[23:53:55] <Alipha> it's https://en.wikipedia.org/wiki/Template_method_pattern but with only one virtual method
+[23:54:17] <PJBoy> oh right
+[23:54:26] <PJBoy> I saw Rando say that, but assumed it was a bug
+[23:54:44] <ville> that's when you want to go full enterprise
+[23:55:05] <LordKalma> and make java-meme-level classes?
+[23:55:21] <PJBoy> one would wonder if this does get in the way of devirtualisation optimisations
+[23:55:56] <PJBoy> but it only takes one more level of inlining, so probably not
+[23:56:09] <ville> you make a template method and every "line" of code is a separate virtual derived types implement, then you've achieved maximum future-proof-ness
+[23:56:10] * Alipha is still annoyed that all the "trivial structs" he writes in his java code has private member variables and getters/setters. in fact, we use annotations to auto generate the getters/setters so we don't have to type them ourselves... instead of just making the member variables public
+[23:56:32] <LordKalma> the C# syntax for properties is kinda nice
+[23:56:45] <PJBoy> I found the C# thing really unintuitive at first
+[23:56:55] <LordKalma> or whatever the name is, because when you give a member getters and setters the name changes
+[23:57:01] <LordKalma> so i don't even fucking know
+[23:57:03] <RandomReader> yeah I haven't messed with recent C#, but I remember liking that about the properties in the early versions
+[23:57:12] <Alipha> still introducing unnecessary virtual calls
+[23:57:22] <RandomReader> made it trivial to have a member variable that was effectively read-only or read-write for different access levels
+[23:57:33] <LordKalma> and I've had bugs because I didn't understand that Foo MyFoo was different from Foo MyFoo{get; set;}
+[23:57:35] *** Quits: hackinghorn (~hackingho@user/hackinghorn) (Ping timeout: 252 seconds)
+[23:57:41] <RandomReader> without having to actually write the property accessor boilerplate
+[23:58:01] <LordKalma> Alipha, the JIT probably trims it away
+[23:58:02] <PJBoy> python has some kind of annotation for this too
+[23:58:03] <LordKalma> probably?
+[23:58:14] <LordKalma> python has the reverse syntax
+[23:58:22] <PJBoy> worth assuming that JIT is burning enough cycles being an interpreter that it doesn't matter
+[23:58:30] <imMute> LordKalma: field vs property, right?
+[23:58:35] <RandomReader> yeah the CLR's optimization options are pretty broad here, since it can just rebuild all the calling code every time a new type is introduced
+[23:58:36] <LordKalma> ^ that
+[23:58:48] *** Joins: proller (~p@2a02:6b8:b081:8012::1:16)
+[23:58:58] <PJBoy> oh python's is invertedish yeah
+[23:59:09] <LordKalma> @property def foo() return _foo; @foo.setter def set_foo(new_foo) _foo = new_foo; # PJBoy
+[23:59:23] <PJBoy> you still end up setting with assignment operator and getting with... whatever python calls lvalue-to-rvalue

@@ -1,0 +1,269 @@
+[00:03:10] <enebo[m]> I meant if we knew the Java method on a normal subclass it wanted to invoke couldn't we just make a Reflect call
+[00:03:12] <enebo[m]> I am not saying for a final fix but just as a quick fix
+[00:03:21] <headius> I have a fix
+[00:03:45] <headius> I just detect that there's no reified JavaProxyClass and go back to the other logic
+[00:03:47] <enebo[m]> I was confused about your statement about making it happen before we release
+[00:03:58] <headius> I meant the byteit101 review
+[00:04:33] <enebo[m]> ah well since we crash right now I am not sure how much the review matters for release
+[00:04:55] <enebo[m]> I am not saying he shouldn't review it but that atm this is completely broken for this scenario
+[00:05:38] <headius> https://github.com/jruby/jruby/pull/7007
+[00:05:59] <headius> yeah it passes JI specs but I am wondering if it should actually fall into this logic at all
+[00:06:34] <headius> but this should fix it assuming it doesn't break something else
+[00:09:37] <enebo[m]> headius: you just widened what goes to failure case and when you do that it passes
+[00:10:01] <headius> yeah
+[00:10:16] <headius> it is a bit of a form-fit fix
+[00:10:28] <headius> it's null? ok don't do that branch then
+[00:10:28] <enebo[m]> I mean if he comes back and says some subset of that will not work then we still have a problem but you definitely got rid of one case of problem
+[00:10:44] <headius> yeah in any case it is working with the patch and clearly busted without it
+[00:11:27] <enebo[m]> I am largely just typing to tease out a discussion on risk and to me there isn't any other than getting a better review may uncover a different issue
+[00:11:42] <enebo[m]> So if he is not around we roll with it
+[00:12:06] <enebo[m]> If he is then perhaps we have that discussion if we have anything to discuss
+[00:12:34] <enebo[m]> I think we are good for tomorrow for a release then
+[00:12:38] <headius> yeah I think there is a better way to detect this before we try to get a proxy class, but not sure what that is
+[00:12:42] <enebo[m]> once these are merged
+[00:12:44] <headius> like one of the marker interfaces
+[00:12:54] <headius> that's mostly what I want to talk through with byteit101 
+[00:13:12] <headius> it would still fall back to the logic it falls back to with my patch but wouldn'
+[00:13:18] <headius> wouldn't blindly try to get the JPC
+[00:13:29] <enebo[m]> yeah so it would just be a cheaper check 
+[00:13:49] <headius> cheaper and more explicit than "oops it's null"
+[00:14:08] <enebo[m]> can we perhaps even emit the helper to directly call the else in this case
+[00:14:24] <enebo[m]> at the time code is emitted maybe we will no there is no jpc for it at all
+[00:14:25] <headius> while this runs I'm going to try to turn M1 spec:ruby:fast back on for 9.3 on a branch
+[00:14:33] <headius> it would be great if we could release with M1 support and say specs are green
+[00:15:03] <enebo[m]> headius: I think we can afford to delay a little if we need to since M1 is the main driver for this release
+[00:15:15] <headius> modulo those two unix socket specs I did not investigate yet (which may be a Darwin issue rather than M1)
+[00:16:08] <enebo[m]> I am very happy we have our marked issues pared down like this.  It is satisfying to just get down to zero (I am ignoring the 2.6 issue checklist)
+[00:17:15] <headius> https://github.com/jruby/jruby/pull/7008
+[00:17:28] <headius> yeah I did punt one or two but we are not dragging a big ball and chain anymore
+[00:17:46] <byteit101[m]> headius enebo: I'm around
+[00:18:05] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[00:18:14] <headius> byteit101: https://github.com/jruby/jruby/pull/7007
+[00:18:15] <enebo[m]> yay
+[00:18:23] <headius> this is code I wrote but basically it is trying to use subclass super logic for a normal Java class that is reopened with a super call
+[00:18:43] <headius> the bail-out in my patch is if JPC is null just use normal Java dispatch logic
+[00:19:06] <headius> just wondering what is the best way to detect that JPC is not relevant before we try to get it
+[00:19:13] <headius> (and any other comments you have)
+[00:21:03] <byteit101[m]> Ok, need to page that stuff back in . I'll look at it in little bit
+[00:22:09] <byteit101[m]> but that reminds me: should I file a bug on the aliasing a java interface method not working with they keyword that I mentioned in december?
+[00:22:25] <byteit101[m]> module Address; def +(r);add(r);end;end # works
+[00:22:25] <byteit101[m]> module Address; alias :+ :add;end # error
+[00:23:42] <headius> not sure if you saw my response but it is expected that would not work
+[00:23:47] <headius> our interface modules don'
+[00:23:59] <headius> don't actually define any of the methods from the interface because they interfere with dispatch
+[00:24:08] <headius> so alias should fail to find it
+[00:24:36] <headius> we attempted to make interface modules have stub methods that just super but it causes a lot of problems... interface methods really just do not exist as far as dispatch code
+[00:25:33] <byteit101[m]> I saw that, but I guess my expectation was that those two forms are identical on interfaces, and so should be interchangable. So from a users perspective I was surprised they were not
+[00:26:00] <headius> yeah alias is different in that it needs to find the existing method to wrap it with a new name
+[00:26:13] <headius> since we don't define those methods for interfaces, it errors
+[00:26:38] <headius> where the actual def method just redispatches to the proper name, and that method will exist when the module lives within a concrete Java class hierarchy
+[00:27:36] <byteit101[m]> would it be useful to have a java_alias or interface_alias, or something like that?
+[00:27:54] <headius> it would be a bit like trying to alias `each` to `my_each` in Enumerable... `each` exists in every hierarchy where Enumerable is included, but it does not exist in Enumerable itself
+[00:28:10] <headius> yes I was going to suggest that as a possiblity
+[00:28:18] <headius> that would be the path forward should we want to make this easier
+[00:28:53] <headius> unknown whether adding aliases at the interface module would cause other problems, but at the very least I know this simple alias form can't be made to work
+[00:30:08] <byteit101[m]> got it, ok
+[00:32:55] <headius> ok spec run on M1 looking a lot better in CI now, but there are still some socket hangs
+[00:32:56] <headius> https://github.com/jruby/jruby/runs/4845883341?check_suite_focus=true
+[00:33:11] <headius> this one is just UDP so it doesn't use any native stuff
+[00:35:40] <headius> I went ahead and merged 7007... if there's a better tweak we can still get it in
+[00:36:20] *** Quits: joast (~rick@cpe-98-146-112-4.natnow.res.rr.com) (Quit: Leaving.)
+[00:36:38] <headius> no open issues left for 9.3.3
+[00:42:10] <byteit101[m]> > just wondering what is the best way to detect that JPC is not relevant *before* we try to get it
+[00:42:10] <byteit101[m]> Looking at the patch, that may be fine as is, but I'm not a dispatch expert. All the work I did was for dispatching java to ruby, not the other way.
+[00:42:49] <puritylake[m]> enebo: just checking, does the parser support "%<key>s"?
+[00:43:28] <enebo[m]> puritylake: I thought so
+[00:43:31] <headius> byteit101: you see in the code here it tries to get the JPC from any JavaProxy that enters this logic, but I think there's a better marked for when JPC will actually be present
+[00:43:44] <headius> Maybe ReifiedJavaProxy?
+[00:44:13] <puritylake[m]> enebo: ok, just checking cause that seems to be what is missing for %s
+[00:44:16] <enebo[m]> puritylake: lol.  I just pushed four commits from last time I worked on it
+[00:44:47] <puritylake[m]> Should I do a pull so?
+[00:45:10] <enebo[m]> yeah it will not contain what you were asking about but there are changes to be picked up
+[00:45:45] <puritylake[m]> Cool thanks, that'll save me a headache when I go to do a PR lol
+[00:47:01] <enebo[m]> puritylake: it looks like the parser is seeing %<name>s and putting name into the name field 
+[00:47:21] <puritylake[m]> Duly noted, thanks
+[00:47:39] <enebo[m]> puritylake: and getArg should retrieve the value using that name
+[00:48:01] <puritylake[m]> Awesome
+[00:48:45] <puritylake[m]> Just started using emacs so my progress will be slow for now til I get the hang of it lol
+[00:49:33] <byteit101[m]> headius: RubyClass#getReifiedJavaClass will return or throw if it's reified java
+[00:49:41] <byteit101[m]> I don't think there is an exposed non-throwing one
+[00:51:13] <byteit101[m]> Oh oops! that actually is never set
+[00:51:35] <byteit101[m]> that should probably be set
+[00:53:43] *** Joins: joast (~rick@cpe-98-146-112-4.natnow.res.rr.com)
+[00:57:27] <byteit101[m]> headius: Yes, JavaProxy#getObject() instanceof ReifiedJavaProxy would also do
+[01:01:32] <headius> Excellent, I will have a go at improving this code then
+[01:03:08] <byteit101[m]> What would be the place to look for making @ivar be a field access for reified classes?
+[01:04:08] <headius> Do you mean manually adding a Java field and using that or leaning on reification stuff to convert it into a field
+[01:05:00] <byteit101[m]> reification, so that java (JavaFX really) can set a field and JRubyFX can read it as an @ivar
+[01:05:42] <headius> There's nothing explicit right now for defining fields on a Ruby Java class
+[01:05:43] <byteit101[m]> IE make the backing store for an @ivar be a java field
+[01:05:51] <byteit101[m]> Yes, obviously I'd need to add that
+[01:06:11] <headius> The logic for normal Ruby classes just inspects all accessed instance variables and generates fields for them
+[01:06:38] <headius> Or really it just picks the right shape class to use, the field names are generic
+[01:06:58] <headius> Does JavaFX need to be able to access a field directly?
+[01:07:19] <byteit101[m]> the FXMLLoader sets fields with an @FXML annotation
+[01:07:31] <byteit101[m]> so wait, hold on, let me dump a class for you
+[01:08:55] <headius> Ok
+[01:09:04] <byteit101[m]> public class FormattedTableCellFactory extends RubyObject implements Reified, Callback {
+[01:09:04] <byteit101[m]>    @FXML public TextAlignment alignment;
+[01:09:04] <byteit101[m]>    @FXML public Format format;
+[01:09:23] <byteit101[m]> ^ right now jrubyfx generates that, and JavaFX fills the values in, but I must use self.format to access the field
+[01:09:28] <headius> enebo: All marked issues are resolved, is there anything else you want me to look at? Otherwise I will pivot back to these M1 socket hangs and see if I can find anything out
+[01:09:34] <byteit101[m]> I was hoping to implement something so that @format could read that field
+[01:09:54] <enebo[m]> headius: I think we are good to go
+[01:10:05] <byteit101[m]> to make it more rubylike
+[01:10:08] <enebo[m]> if you do happen to figure those out I think we should consider it
+[01:10:19] <headius> Should we aim for Wednesday perhaps?
+[01:10:31] <headius> I will spend a little time on these today
+[01:10:54] <enebo[m]> headius: sure we can or tomorrow even but that depends on whatever progress you make
+[01:11:11] <enebo[m]> headius: but perhaps it takes some pressure off for us to just target wednesday
+[01:11:11] <headius> byteit101: The logic that handles using fields for instance variables mostly centers around VariableTableManager
+[01:11:40] <headius> For ruby classes with reified fields it uses a special form of variable accessor that knows how to go after the field rather than the instance variable table
+[01:12:07] <headius> So the general pattern would be a new sort of field accessor that can access a specific name and then we wire that into the table manager for reified Java classes
+[01:12:23] <headius> And then the rest of the magic is in the jit so it knows how to go straight to the field rather than through the accessor
+[01:13:05] <headius> The variable table stuff could be made more generic because right now it really just supports these two types of accessors
+[01:13:29] <headius> And we want to make it more generic going forward so that we can use a different layout for objects as they evolve, like if you add another instance variable later we will choose a different shape from then on
+[01:13:53] <headius> Right now it only chooses the shape when you first instantiate the object so it is a guess as to which instance variables will be in use
+[01:14:56] <headius> I don't have the code in front of me at this exact moment but I believe the accessor is FieldVariableAccessor
+[01:15:50] <headius> enebo: whenever we get around to this it would align our object shaping with certain other "out of our league" implementations that can evolve the shape over time
+[01:18:17] <byteit101[m]>     // This alternate ivar logic is disabled because it can cause self-referencing
+[01:18:17] <byteit101[m]>     // chains to keep the original object alive. See JRUBY-4832.
+[01:18:17] <byteit101[m]> Where can I go to look up the old issue descriptions?
+[01:18:31] <byteit101[m]> from before the move to Github
+[01:21:24] <headius> You can't
+[01:21:36] <byteit101[m]> :-(
+[01:21:42] <headius> In retrospect I wish we would have pulled a dump of all of those issues but that train has sailed
+[01:22:12] <headius> And it would have been in some horrible format or raw database anyway
+[01:38:10] <byteit101[m]> Archive.org to the rescue! https://web.archive.org/web/20150515180344/http://jira.codehaus.org/browse/JRUBY-4832
+[01:38:34] <byteit101[m]> Wow that took 15 minutes to find
+[01:41:39] <headius> Oh wow, I wonder if we could pull down the entire set of JRuby issues using archive
+[01:41:47] <headius> That would be a great project so we have those searchable somewhere
+[01:41:57] <puritylake[m]> enebo: I'm only now noticing the problem, it's supposed to raise when there is a numbered arg in the same specifier
+[01:42:46] <enebo[m]> puritylake: ah the parser should be raising before it makes it to the execution bit
+[01:43:03] <enebo[m]> puritylake: if you give me the format string I can also take a look
+[01:45:08] <puritylake[m]> https://gist.github.com/PurityLake/7c2fcd3f13430ca07c7419f4dabc7031
+[01:45:38] <puritylake[m]> enebo: these are the ones that would probably fail along with the error message
+[01:45:50] <enebo[m]> yeah
+[01:46:00] <enebo[m]> I think I even knew these were broken now that I see them
+[01:46:24] <enebo[m]> most of them do work but there were a few which were broken
+[01:46:46] <enebo[m]> I have some errors being raised in the parser so I know many of them do work
+[01:47:12] <enebo[m]> I think one of these just makes the wrong error message too
+[01:47:13] <puritylake[m]> Should I take a crack at fixing it? Or would you prefer to fix it yourself?
+[01:47:26] <enebo[m]> puritylake: you can if you want
+[01:47:46] <enebo[m]> puritylake: it is the parser which may be more enjoyable to look at than those format methods
+[01:48:47] <puritylake[m]> Indeed, I've been meaning to read into it but I was monkey braining away thinking it was my format_ps method that was the problem lol
+[01:50:53] <enebo[m]> I think I have a pretty good idea how to fix this but I will let you look into it.  If you want any hints or to talk you can just ask
+[01:51:03] <enebo[m]> 'printf("%1$<key2>s", key: "value")'
+[01:51:13] <enebo[m]> That one specifically I guess
+[02:42:59] <headius> nightly builds still aren't publishing
+[02:43:06] <headius> works fine if manually triggered
+[02:43:15] <byteit101[m]> Augh, every time I come back to work on jruby I have build errors. eclipse not picking up built changes...
+[02:43:37] <headius> byteit101: I wish eclipse wasn
+[02:43:53] <headius> wasn't so sensitive to changes like that
+[02:44:03] <headius> idea can import the repo without any extra files and largely it figures out where everything is
+[02:44:08] <headius> what broke for you?
+[02:44:36] <byteit101[m]> it's using some old class files somewhere, RubyClass has no method (method I added)
+[02:45:49] <headius> I must be doing something wrong here: https://github.com/jruby/jruby/actions/runs/1709649345/workflow#L503
+[02:48:53] <byteit101[m]> Ah, of course, I have to add a dependency on the project twice: once in maven and once in eclipse :--(
+[02:52:28] <headius> we'll see if a simpler ref match works here: https://github.com/jruby/jruby/actions/runs/1710262603
+[02:59:43] <byteit101[m]> hmm... ivars are assumed to be an IRO, what can I use to wrap that
+[03:05:28] <headius> hmm
+[03:05:29] <headius> shouldn't be
+[03:05:55] <headius> ahh well the class-level methods for getting ivars do assume IRubyObject
+[03:06:04] <headius> internal vars API works with Object though
+[03:07:45] <headius> in order to allow accessing fields as normal ivars I think we would have to EITHER force the stored values to be the wrapped proxy object OR override logic for accessing ivars from these classes to wrap the value lazily 
+[03:08:06] <headius> having non-IRubyObject in Ruby ivars is not really supported
+[03:19:31] <headius> enebo: https://github.com/jruby/jruby/pull/7010
+[03:49:44] <byteit101[m]> @var is returning something different than getInstanceVariable()
+[03:50:53] <byteit101[m]> right now I put a FieldVariableAccessor in the variable table of the class, and getInstanceVariable is using that, but @var isn't
+[04:00:19] <puritylake[m]> enebo: think I fixed the problem
+[04:06:11] *** Quits: puritylake[m] (~puritylak@2001:470:69fc:105::1:1904) (Ping timeout: 268 seconds)
+[04:06:11] *** Quits: edipofederle[m] (~edipofede@2001:470:69fc:105::30f1) (Ping timeout: 268 seconds)
+[04:06:46] *** Quits: andrea[m] (~andreanit@2001:470:69fc:105::1:28a8) (Ping timeout: 268 seconds)
+[04:08:29] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Ping timeout: 256 seconds)
+[04:09:06] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[04:13:12] *** Joins: puritylake[m] (~puritylak@2001:470:69fc:105::1:1904)
+[04:14:16] *** Joins: edipofederle[m] (~edipofede@2001:470:69fc:105::30f1)
+[04:21:56] <puritylake[m]> enebo: https://github.com/jruby/jruby/pull/7011
+[04:22:18] <puritylake[m]> It's marked as WIP so I can use that PR for the rest of the commits
+[04:22:26] <byteit101[m]> Ah, I needed to call it "@name", not just "name"! Ok I have a prototype: 
+[04:22:26] <byteit101[m]> @var = 12, then java reads: 12
+[04:25:39] *** Joins: andrea[m] (~andreanit@2001:470:69fc:105::1:28a8)
+[04:26:15] <byteit101[m]> Hmm, should I make this be a part of FieldVariableAccessor, a subclass, or a MethodHandle/Binder thing?
+[04:30:30] <puritylake[m]> -_- it was working fine now the error is back lol
+[04:36:42] <puritylake[m]> Scratch that, I downloaded the main repo not my fork lol
+[06:11:00] <byteit101[m]> Hah! java.lang.ClassCastException: Cannot cast org.jruby.RubyNil to java.lang.String
+[06:41:27] <byteit101[m]> what should the property to configure ivar backing store in reified classes be called? `ivar_field_storage` sounds correct but too wierd
+[06:42:36] <headius> Something weird and conspicuous so we will remember to change it before release 😀
+[06:43:28] <byteit101[m]> headius_definitely_approved_this_ivar_configuration_method_name :@myivar1, :@myivar2
+[06:43:39] <headius> Perfect
+[06:44:06] <byteit101[m]> surprised how easy methodhandler made this implementation, mostly
+[07:30:55] <byteit101[m]> Still needs proper testing and some cleanup, but I opened a PR with a working implementation of storing ivars in raw reified fields: https://github.com/jruby/jruby/pull/7012
+[14:42:05] <kares[m]> interesting, concept to treat `@ivar` with a java field backend - wonder about the Java<->Ruby conversion
+[14:42:05] <kares[m]> seems like this is lowe leve stuff and I would pbly not want to do the auto conversion while reading a field - like in your example a Java string?
+[17:45:42] <enebo[m]> kares: This also feels like it would be nice to choose somehow
+[17:45:55] <enebo[m]> kares: optimize for how the data will be accessed most
+[18:28:55] <headius> Good morning
+[19:16:23] <basshelal[m]> headius:  Any chance you can take a look at this and the PRs I reference in it.
+[19:16:23] <basshelal[m]> https://github.com/jnr/jnr-ffi/issues/294
+[19:16:23] <basshelal[m]> I don't need you to pull anything, just need to know if its the right approach and if it's worth pursuing, I have so much more planned and will be working on it all for the forseeable future (months maybe) so I want to know now if I can do things better
+[19:16:23] <basshelal[m]> Just need the assurance is all since it's a lot of time and work
+[19:17:00] <headius> yeah definitely... just been heads down on 9.3.3 but I think the work for that is done
+[19:17:57] <basshelal[m]> Awesome! I would really appreciate it, I know you're bogged down with JRuby stuff
+[19:52:51] <headius> basshelal: wow great list
+[19:53:07] <headius> if we turn that into a checklist can you still update it?
+[19:53:29] <headius> some of these cases may exist in the various examples sprinkled around so we could adapt those as tests
+[19:53:38] <headius> this is a good initiative though, and good tests will serve as good examples
+[19:54:39] <basshelal[m]> I am updating it as I add PRs for each item, and as I go through I might add or remove items, I haven't planned it well super far ahead so it'll morph with time
+[19:55:19] <basshelal[m]> Im more interested in the tests being a good spec
+[19:56:17] <basshelal[m]> At the very end after everything is merged, I'll end up doing a cleanup for code reuse because I suspect I'll end up repeating some code because of splitting each item into a PR
+[19:56:34] <basshelal[m]> But I have the OK then?
+[19:57:04] <headius> yeah go for it and I will help where i can
+[19:58:10] <basshelal[m]> Awesome! Thanks, really appreciate it, and I'll definitely nag when I need you 😁
+[20:00:25] <headius> yeah and thank you, this needed to happen both for docs and for sanity-checking changes going forward
+[20:02:06] <basshelal[m]> Absolutely! Glad to help
+[20:06:06] <headius> enebo: so how are we looking
+[20:45:21] <enebo[m]> headius: fine
+[20:45:45] <enebo[m]> I haven't actually done any testing but I am unsure what we changed which will break anything.  I will do that this afternoon
+[21:27:49] <puritylake[m]> enebo: is the width part of a float specifier supposed to do anything>? I've tried it on regular ruby and it doesn't pad left or right
+[21:28:20] <puritylake[m]> Even with a java example it didn't but it seems to say in C it should
+[21:30:09] <puritylake[m]> sprintf("%3.4f", 3.1453) => "3.1453"
+[21:31:21] <puritylake[m]> Oh wait forgot width means the full string, sorry
+[21:53:00] <enebo[m]> puritylake: also remember beyond just width of the value it also affects padding
+[21:55:21] <enebo[m]> I was looking at sprintf this morning and I realized it is impossible for the Locale to ever be anything other than US
+[21:55:46] <enebo[m]> It is in our codebase and the couple of things I looked in MRI appear to also just be US
+[22:05:03] <puritylake[m]> Possible to fix that?
+[22:07:15] <enebo[m]> puritylake: yeah.  I just remove passing it around and storing a field for it
+[22:08:09] <enebo[m]> puritylake: our code is just more generic I guess.  When this was written I am asuming they figured Ruby provided some way to use your locale to display the '.' and whatever another locale wants the precision delimeter
+[22:08:23] <enebo[m]> which I guess I have only seen ','
+[22:08:41] <enebo[m]> Probably not from Ruby though :)
+[22:08:43] <puritylake[m]> Getting close to finishing %f specifier also
+[22:10:18] <enebo[m]> oh great!
+[22:10:31] <enebo[m]> but %f is like in two parts right?
+[22:11:04] <enebo[m]> if it can get num/den it will work but then it falls down in the bigger section for e,f,g,a
+[22:15:06] <puritylake[m]> There is a g and a?
+[22:15:19] <puritylake[m]> %e is for exponential representation
+[22:15:21] <enebo[m]> a is not implemented in JRuby (yet)
+[22:15:50] <puritylake[m]> %f has to handle Bignum too
+[22:16:50] <enebo[m]> right below 'f' section is cases for 'eEgG' and commented out 'aA' but you will see if den/num in 'f' is not a value it falls through to that section (there is no break)
+[22:17:45] <enebo[m]> So I am thinkign you almost finished this for Integer and Rational but not for Floats
+[22:19:41] <puritylake[m]> Just for floats, my brain had "float" in my head so forgot those but an easy enough add
+[22:20:35] <puritylake[m]> Testing would have messed up anyway
+[22:21:05] <enebo[m]> I am excited for the various floating point formatting since we have not implemented a/A in years this will be a big reduction in failures in the main test suites
+[22:21:41] <puritylake[m]> Ya, I'll get to them as soon as I cna
+[22:21:54] <puritylake[m]> s/cna/can/
+[22:22:14] <enebo[m]> yeah cool
+[22:25:18] <puritylake[m]> I'm kinda excited to see my code being run by everyone who uses JRuby7
+[22:25:28] <puritylake[m]> s/JRuby7/JRuby/
+[23:32:53] <headius> oh nice, Ruby release NEWS is in markdown now: https://github.com/ruby/ruby/blob/v3_1_0/NEWS.md
+[23:36:58] <puritylake[m]> enebo: slight problem getting a FloatDomainError somewhere but it only links to RubyKernel
+[23:37:30] <enebo[m]> puritylake: you can set JRUBY_OPTS="-d -Xbacktrace.style=raw"
+[23:37:46] <enebo[m]> puritylake: or just pass those to the command-line
+[23:38:08] <enebo[m]> you may see other things raised too but the last thing will be an expanded dump
+[23:39:00] <puritylake[m]> It isn't a crash funnily enough it is thrown by a test
+[23:39:29] <puritylake[m]> When sprintf is called with a var that is 1.0 / 0.0
+[23:40:09] <puritylake[m]> In regular JRuby 1.0 / 0.0 doesn't throw and I've tried wrapping format_fF in a try/catch with no luck
+[23:41:38] <enebo[m]> you can look for the FloatDomainError in code with a search too. 
+[23:44:05] <enebo[m]> puritylake: if you do the raw command line you should see where it is deciding to raise that error from
+[23:44:44] <enebo[m]> It will go deeper than the printf itself ... once you figure that out then you will probably see what code lead to it being raised
+[23:47:52] <puritylake[m]> Ok fixed it, thanks

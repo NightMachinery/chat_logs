@@ -1,0 +1,372 @@
+[00:01:15] <clever> luaD_precall(0xc4131b2c, func, 0), caller=0xc400dbdc
+[00:01:33] <RhodiumToad> which is what function?
+[00:01:37] <clever> it was called by ccall()
+[00:02:32] <RhodiumToad> which is the guts of luaD_call or luaD_callnoyield
+[00:02:40] <RhodiumToad> but again, neither of those should be reached
+[00:03:40] <RhodiumToad> hm. sec.
+[00:06:17] <clever> ccall(0xc4131b2c, func, 0, 65537), caller=0xc400dc2a
+[00:06:37] <clever> luaD_callnoyield()
+[00:08:15] <RhodiumToad> called from where?
+[00:10:39] <clever> luaD_callnoyield(0xc4131b2c, func, 0), caller=0xc40129d0
+[00:10:56] <clever> luaF_close() i think
+[00:11:12] <clever> inlining is making it a bit fuzzy
+[00:11:37] <clever> ah, its a function that used luaF_close, and it got inlined there
+[00:11:56] <clever> nope, it is luaF_close itself, just some goto's confusing me
+[00:12:53] <RhodiumToad> your compiler inlined prepcallclosemth and callclosemethod into luaF_close ?
+[00:13:43] <RhodiumToad> ok. so I think I see the execution path now
+[00:14:14] <clever> yeah, the asm of luaF_close never references prepcallclosemth or poptbclist
+[00:14:17] <RhodiumToad> the parser is called using luaD_pcall, which in the event of an error will call luaD_closeprotected, which can reach luaF_close
+[00:14:36] <RhodiumToad> and you're raising an error, so that tracks
+[00:14:56] <clever> it is possible that my setjmp implementation is broken
+[00:14:57] <RhodiumToad> but, there shouldn't be anything on the stack that needs closing
+[00:15:01] <clever> it was missing from my libc
+[00:15:17] <RhodiumToad> yeah. setjmp/longjmp is VERY hard to get right
+[00:16:03] <RhodiumToad> and you have to make sure that your compiler knows about their specialness
+[00:16:37] <clever> https://gist.github.com/cleverca22/d7fdc7dbfd98a22e20e33d2931535d26#file-setjmp-s
+[00:17:05] <clever> setjmp expects a pointer to something 8 bytes long as argument 0
+[00:17:25] <clever> to that addr, it will then save 2 32bit pointers, containing the return addr, and the stack pointer
+[00:17:28] <RhodiumToad> does your setjmp.h correctly declare setjmp as returning twice?
+[00:18:12] <RhodiumToad> also does it preserve all register values which are required to be preserved across a call?
+[00:18:13] <clever> it should be using the setjmp.h from newlibc
+[00:18:27] <clever> ah, that last one, no
+[00:18:32] <RhodiumToad> oh well then
+[00:18:40] <RhodiumToad> that'll bugger things up royally
+[00:18:44] <clever> i can definitely see that wreaking havoc
+[00:18:59] <clever> but i'll need to make more room first
+[00:19:15] <clever> luaF_close(0xc4131b2c, -2010760784, 3, 0), caller=0xc400cd1a
+[00:19:30] <clever> closepaux()
+[00:19:40] <RhodiumToad> yeah, from luaD_closeprotected
+[00:20:22] <RhodiumToad> the thing is that by this point, longjmp has been called, messing the registers up
+[00:21:12] <clever> ok, so lets backtrack, how is the size of the setjmp state set....
+[00:21:13] <RhodiumToad> my guess is that old_ci was in a register and got clobbered,
+[00:21:36] <RhodiumToad> and there's an assignment L->ci = old_ci;  just before the luaD_closeprotected
+[00:22:11] <clever> upstream/src/ldo.c:#define LUAI_TRY(L,c,a)              if (_setjmp((c)->b) == 0) { a }
+[00:22:14] <clever> ah, in this area
+[00:22:37] <clever> yeah, there it is, the jmp_buf type
+[00:22:51] <RhodiumToad> the buffer is a jmp_buf, which should be declared in setjmp.h or some header included by that
+[00:23:37] <clever> my libc came with a setjmp.h but no setjmp implementation
+[00:24:02] <RhodiumToad> did you add a jmp_buf declaration yourself or did one already exist?
+[00:24:03] <clever> let me track things down....
+[00:24:13] <RhodiumToad> it's usually something like:
+[00:24:48] <RhodiumToad> typedef struct _jmp_buf { long _jb[n]; } jmp_buf[1];   where n is the number of machine words needed
+[00:24:54] <clever> sys-include/setjmp.h:int        _EXFUN(setjmp,(jmp_buf __jmpb));
+[00:25:04] <clever> sys-include/machine/setjmp-dj.h:} jmp_buf[1];
+[00:25:17] <clever> sys-include/machine/setjmp.h:typedef    _JBTYPE jmp_buf[_JBLEN];
+[00:25:48] <RhodiumToad> that works too, if _JBLEN is adequately large
+[00:26:13] <clever> /* Probably mildly too high.  */ #define _JBLEN 32
+[00:26:20] <clever> i think its been defined as 32 x 32bits in size
+[00:26:37] <clever> which is the absolute max, i only have 32 registers!
+[00:26:43] <clever> some i dont need to save
+[00:26:55] <RhodiumToad> what arch is this?
+[00:27:02] <clever> VPU, sometimes called vc4
+[00:27:52] <clever> its a variant of a synopsys arc DSP
+[00:28:23] <clever> https://github.com/hermanhermitage/videocoreiv/wiki/VideoCore-IV-Programmers-Manual#scalar-register-configuration
+[00:28:29] <clever> this has the most information on the cpu core
+[00:28:59] <clever> r0-r5 are expected to be trashed during function calls
+[00:29:26] <clever> r6-r24 are expected to be preserved
+[00:29:43] <clever> r25 and up are special purpuse things, like stack, link, status, thread, global
+[00:30:12] <clever> so i need to also save r6-r24
+[00:31:23] <RhodiumToad> is there any floating-point or vector state which must also be preserved?
+[00:31:40] <clever> floating point stuff goes into the main r0-r24 set
+[00:31:42] <RhodiumToad> basically, you need to preserve anything that a normal function call would preserve
+[00:31:48] <clever> so they are trivial, and already covered
+[00:32:09] <clever> vector stuff isnt supported by gcc currently, and is basically being ignored
+[00:32:17] <clever> the vector register bank is 4kb in size
+[00:34:38] <RhodiumToad> looking at an amd64 implementation, it's preserving the fpu cw and some bits of the mxcsr
+[00:37:26] <clever> https://gist.github.com/cleverca22/d7fdc7dbfd98a22e20e33d2931535d26#file-setjmp-s-L3-L29
+[00:37:45] <clever> RhodiumToad: the new setjmp, just a temporary one, i have other ways of saving registers in bulk, but its a bit more complex
+[00:38:03] <clever> now i just need the reverse for longjmp
+[00:42:50] <clever> ld r24, (r0+80)
+[00:42:53] <clever> and a minor problem
+[00:43:00] <clever> the immediate for offsets, cant go up to 80!
+[00:44:15] <clever> ah no, thats a different error
+[00:44:29] <clever> the assembler doesnt know what r24 is, because its always refered to as gp
+[00:44:39] <clever> but gcc never modifies gp, so i dont need to save/restore it
+[00:45:57] *** Joins: khoa (~khoa@user/khoa)
+[00:48:37] <clever> RhodiumToad: yep, i can confirm jmp_buf is 128 bytes (32 x 32bit), but now it just locks up when failing!
+[00:48:48] <RhodiumToad> oops :-)
+[00:49:01] <RhodiumToad> bug in your longjmp?
+[00:49:12] <clever> possibly
+[00:49:18] <clever> adding some debug code around things
+[00:51:30] *** Quits: mahmutov (~mahmutov@37.155.45.157) (Ping timeout: 265 seconds)
+[00:52:41] <clever> RhodiumToad: first step, i added some code that is called by setjmp, after the safe is done, which reports some saved regs
+[00:55:44] <clever> lr:0xc400ceee sp:0xc41b93d8 r6:0xc4131d28 r7:0xc4131d2c r8:0x19 r9:0xd
+[00:55:44] <clever> Fatal VPU Exception: Breakpoint
+[00:55:53] <clever>      r0: 0x00000000  r1: 0x0000000a  r2: 0x7e201000  r3: 0x00000280
+[00:55:57] <clever>      r4: 0x0000000c  r5: 0x00000000  r6: 0xc400ceee  r7: 0xc4131d2c
+[00:56:01] <clever>      pc: 0xc41b93da  lr: 0xc40193ce  sr: 0x60000008
+[00:56:53] <clever> the PC is ~1.7mb into a 1.5mb binary
+[00:56:56] <clever> RhodiumToad: oops? :D
+[00:58:23] <RhodiumToad> what do your setjmp and longjmp look like?
+[00:59:42] <clever> gist updated
+[01:00:30] <RhodiumToad> obvious bug is obvious
+[01:00:40] <RhodiumToad> mov r2, sr  ...  mov sr, r1
+[01:00:40] *** Joins: mahmutov (~mahmutov@5.176.51.18)
+[01:03:02] <clever> *doh*
+[01:03:06] <clever> copy/pasta
+[01:08:37] <clever> still fails
+[01:08:51] <RhodiumToad> hm
+[01:09:17] <clever> it was in the middle of luaD_rawrunprotected when it called setjmp
+[01:09:37] <clever> which fits, i see a TRY there
+[01:10:02] <clever> but is it failing on set or jmp, more prints needed!
+[01:10:24] <RhodiumToad> did you check your jmp_buf is actually the right size?
+[01:10:39] <clever> yep
+[01:10:41] <clever> 128 bytes long
+[01:10:43] <RhodiumToad> i.e. what is _JBTYPE defined as
+[01:10:50] <clever> and i'm only writing up to +80 bytes
+[01:11:27] <clever> _JBTYPE isnt defined, so it went for a fallback of `typedef int jmp_buf[_JBLEN];`
+[01:11:47] <RhodiumToad> looks good enough
+[01:15:37] <clever> hmmm, longjmp is going to trash the "preserved" registers (by restoring them), so i can trash them a bit earlier...
+[01:15:56] <RhodiumToad> does your setjmp.h declare setjmp as returns_twice and longjmp as noreturn ?
+[01:17:28] *** Quits: mahmutov (~mahmutov@5.176.51.18) (Ping timeout: 252 seconds)
+[01:17:49] <RhodiumToad> i.e.  __attribute__((__returns_twice__))
+[01:18:12] <clever> int     _EXFUN(setjmp,(jmp_buf __jmpb));
+[01:18:21] <RhodiumToad> hm
+[01:18:27] <clever> and if __GNUC__ is defined, void    _EXFUN(longjmp,(jmp_buf __jmpb, int __retval)) __attribute__ ((__noreturn__));
+[01:18:37] <clever> vc4-elf-stage-final-gcc-debug-6.5.0/vc4-elf/sys-include/setjmp.h
+[01:18:42] <clever> thats directly from the gcc supplied headers
+[01:18:53] <RhodiumToad> you should probably add the returns_twice attribute
+[01:29:53] *** Joins: mahmutov (~mahmutov@5.176.51.18)
+[01:31:22] <clever> added a longjmp_pre, that prints before it longjmp's
+[01:33:25] <clever> and also points the blame on who did the deed
+[01:34:42] <clever> setjmp(0xc41b93dc) save done
+[01:34:43] <clever> lr:0xc400ceee sp:0xc41b93d8 r6:0xc4131d28 r7:0xc4131d2c r8:0x19 r9:0xd
+[01:34:43] <clever> Fatal VPU Exception: Vector core exception
+[01:34:52] <clever> RhodiumToad: longjmp was never ran, and ive never seen this exception before
+[01:35:00] <clever>      pc: 0x00000000  lr: 0xc4131d2c  sr: 0x00000000
+[01:35:01] <RhodiumToad> huh. weird
+[01:35:04] <clever> and the PC is somehow 0!
+[01:35:18] <clever> so my setjmp may be corrupting things
+[01:35:46] <clever> oh, yep, i see why
+[01:36:00] <clever> you must protect lr, when you call a function
+[01:36:07] <clever> i forgot to
+[01:36:12] <RhodiumToad> ah yes
+[01:36:26] <clever> so when i call setjmp_post, and it returns, i then return, to return, to return
+[01:36:51] <RhodiumToad> yeah. setjmp really needs to be a leaf.
+[01:37:16] <clever> it became a non-leaf, because i call a debug print routine in the return path
+[01:38:16] <clever> i also just noticed, setjmp can only ever return 0
+[01:38:21] <clever> which i believe is invalid
+[01:38:37] <clever> ah no
+[01:38:47] <clever> longjmp doesnt use setjmp's outro
+[01:38:50] <RhodiumToad> right
+[01:39:02] <clever> longjmp uses the lr that setjmp had saved, and returns directly to the caller
+[01:39:07] <RhodiumToad> right
+[01:39:20] <clever> so its less that setjmp returned twice, and more that longjmp returned to setjmp's caller
+[01:39:35] <RhodiumToad> some longjmp implementations are written such that longjmp(buf, 0) actually returns 1, but Lua doesn't need that
+[01:39:47] <clever> yeah, i saw that in the man page
+[01:40:39] <RhodiumToad> I believe the spec requires it
+[01:40:56] <RhodiumToad> but lua only ever does longjmp(buf, 1)
+[01:41:31] <clever> for more context, i'm working on the open rpi firmware
+[01:41:56] <clever> i have things up to a point where i can boot linux on a pi2, and have 2d graphics fully working (no accel though)
+[01:42:05] <clever> and i need a config file
+[01:42:20] <clever> but .ini is just plain boring :P
+[01:42:51] <clever> woooo!
+[01:43:21] <clever> RhodiumToad: this looks like progress! https://gist.github.com/cleverca22/d7fdc7dbfd98a22e20e33d2931535d26#file-gistfile2-txt
+[01:43:58] <clever> > 5*5
+[01:43:58] <clever> stdin:1: unexpected symbol near '5'
+[01:44:10] <clever> err1.1: [string "name"]:1: unexpected symbol near '5'
+[01:44:20] <clever> RhodiumToad: i now get the identical error in baremetal!
+[01:56:00] <clever> RhodiumToad: i'm also noticing, luaG_callerror never gets called now
+[01:57:11] <RhodiumToad> right, it's not supposed to be called as far as I can see
+[01:57:56] <RhodiumToad> I think you were only getting there before because of the corrupted registers
+[01:58:01] <clever> yeah
+[01:58:54] <clever> setjmp was also missing when i was porting micropython a few months back
+[01:59:18] <clever> so now i have one confirmed scripting language, and one potential addition ontop of that
+[02:02:58] <clever> that just leaves one final issue in the lua code
+[02:03:03] <clever> src/lstate.c
+[02:03:16] <clever> RhodiumToad: this file uses time(), and my headers lack a definition if time_t and clock_t!
+[02:03:40] <RhodiumToad> it just needs some kind of entropy source
+[02:03:59] <clever> currently, i just give it the number of microseconds since boot
+[02:04:04] <RhodiumToad> if you can define your own luai_makeseed it won't need time()
+[02:04:11] <clever> but i had to patch that file, to get it to even compile
+[02:04:43] <clever> how would i get luai_makeseed defined, in that context
+[02:04:54] <clever> i do see that it has a `#if !defined(luai_makeseed)` around it
+[02:05:10] <RhodiumToad> the approved way to do such things is to put a #define luai_makeseed ...   into luaconf.h
+[02:05:13] <clever> but which header can i use to inject custom code into it?
+[02:05:18] <clever> ahhh, luaconf.h!
+[02:08:05] <RhodiumToad> what the seed does is control the hash function used for strings, so as to defeat attacks based on using strings with known hash values
+[02:08:31] <clever> a recent article was made about the same exploit in a haskell library, aeson
+[02:09:09] <clever> https://cs-syd.eu/posts/2021-09-11-json-vulnerability
+[02:09:44] <clever> internally, aeson will first parse the json into a structured format, where all objects become HashMap's
+[02:09:54] <clever> and the keys are hashed to make the map run faster
+[02:10:22] <clever> then as a second phase, that HashMap is sent to a supplied parser function, to convert it into something closer to a struct
+[02:10:37] <clever> but if the keys have a hash collision, then performance goes to crap
+[02:12:03] <clever> external/lua/upstream/src/luaconf.h:785:32: error: unknown type name ‘lua_State’ unsigned int lk_luai_makeseed (lua_State *L);
+[02:12:24] <clever> RhodiumToad: hmmm, and i cant just #define luai_makeseed  to point to an external function that easily...
+[02:13:08] <RhodiumToad> hm?  #define luai_makeseed(L) myfunc(L)
+[02:13:20] <clever> external/lua/upstream/src/luaconf.h:785:23: error: implicit declaration of function ‘lk_luai_makeseed’ [-Werror=implicit-function-declaration]
+[02:13:28] <clever> i have to define that function as well, in luaconf.h
+[02:13:33] <RhodiumToad> yes
+[02:13:39] <clever> and that function takes L, whose type is not known
+[02:13:43] <clever> external/lua/upstream/src/luaconf.h:785:32: error: unknown type name ‘lua_State’
+[02:14:09] <RhodiumToad> oh right, but it shouldn't care about L, so you can make it take a void*
+[02:14:26] <clever> yeah, its only using L as another source of entropy, the heap addr
+[02:14:26] <RhodiumToad> the default makeseed only uses L as being an arbitrary heap address
+[02:14:38] <clever> i copied the default one, and was just replacing the time() call
+[02:14:45] <clever> but i dont need as much entropy
+[02:14:55] <clever> and there is a hw rng block, somewhere in this chip, lol
+[02:28:02] <clever> it now works perfectly, with only a 2 line change within luaconf.h
+[02:33:54] <clever> RhodiumToad: https://github.com/librerpi/lk-overlay/tree/master/external/lua and its done!
+[02:35:14] <RhodiumToad> I think you missed a () there
+[02:35:27] <RhodiumToad> #define luai_makeseed(L) lk_luai_makeseed()
+[02:36:58] <clever> compiles either way, but i can see how that wouldnt run the function
+[02:47:58] <clever> -rw-r--r-- 1 clever users 1.3M Sep 18 19:06 build-vc4-stage2/external/lua.mod.o
+[02:48:05] <clever> yikes, 1.3mb just for the lua code! :D
+[02:48:16] <clever>    text    data     bss     dec     hex filename
+[02:48:21] <clever>   91550       0       0   91550   1659e ./build-vc4-stage2/external/lua.mod.o
+[02:48:38] <clever> nice to see it has zero global vars though, thats how code should be written!
+[02:49:55] <clever> looks like 91kb of executable, and the rest must be debug info
+[03:03:27] <RhodiumToad> yeah, nothing is global; everything is per-state
+[03:04:22] <clever> thats almost a requirement when writing haskell code
+[03:05:12] <clever> next major step then, is writing the ffi code around things
+[03:08:02] <clever> lets see, i should implement loading a .lua from disk next
+[03:08:09] <clever> since i already have ext4 drivers
+[03:12:01] <RhodiumToad> can you implement fopen() etc.?  because that would make it easy
+[03:12:07] *** Quits: mahmutov (~mahmutov@5.176.51.18) (Ping timeout: 245 seconds)
+[03:13:48] <clever> https://github.com/littlekernel/lk/blob/master/lib/fs/include/lib/fs.h#L53-L67
+[03:13:52] <clever> RhodiumToad: this is the api i currently have
+[03:14:45] <RhodiumToad> those are unbuffered reads and writes?
+[03:15:05] <RhodiumToad> shouldn't be hard to find or write a simple stdio implementation on top of them
+[03:16:26] <RhodiumToad> if you can do that, you'd automatically get not just luaL_loadfile but also the entire io.* library
+[03:19:24] <clever> RhodiumToad: stdio ignores this api, and just uses printf and some other things
+[03:20:40] <clever> https://github.com/librerpi/lk/blob/vc4/lib/fs/ext2/file.c#L46-L60
+[03:21:08] <clever> https://github.com/librerpi/lk/blob/vc4/lib/fs/ext2/io.c#L195-L198
+[03:21:37] <clever> RhodiumToad: and reads get serviced down this path, there is a block io cache, but each call will re-parse the ext metadata, and request blocks from the io cache
+[03:33:20] <clever> ssize_t ext2_read_inode(ext2_t *ext2, struct ext2_inode *inode, void *_buf, off_t offset, size_t len) {
+[03:33:43] <clever> this is the core function, you just give it an inode structure, a dest, byte offset of the source file/dir, and length to copy
+[03:34:09] *** Joins: pizdets_ (~pizdets@183.182.111.25)
+[03:34:23] *** Quits: pizdets (~pizdets@183.182.114.179) (Ping timeout: 265 seconds)
+[03:35:00] <clever> ext2_read_block (lines 192, 214, and 233) deals with fetching whole sectors from the block IO cache
+[03:35:29] <clever> 184-205 and 225-241 deals with copying a partial sector to the buffer, for chunks that are not sector-aligned on disk
+[03:35:51] <clever> 208-222 deals with the whole sectors in the middle of a file
+[04:29:29] *** Quits: netlynx (~jan@94-226-69-15.access.telenet.be) (Quit: Leaving)
+[05:01:17] *** Quits: Lynne (~lynne@ffmpeg/developer/lynne) (Quit: Lynne)
+[05:55:31] *** Quits: gr33n7007h (~gr33n7007@user/gr33n7007h) (Ping timeout: 265 seconds)
+[05:59:33] *** Joins: gr33n7007h (~gr33n7007@user/gr33n7007h)
+[06:37:48] *** Joins: orthoplex64 (~crm@70.120.0.94)
+[06:52:42] *** Joins: Elw3 (~Elw3@x59cc99be.dyn.telefonica.de)
+[07:40:17] *** Joins: Carp (~rue@1-162-44-126.dynamic-ip.hinet.net)
+[07:42:59] *** Quits: Carp (~rue@1-162-44-126.dynamic-ip.hinet.net) (Client Quit)
+[07:43:17] *** Joins: Carp (~rue@1-162-44-126.dynamic-ip.hinet.net)
+[08:25:18] *** Joins: ChipsterOne (~Chipster@99.234.26.93.rev.sfr.net)
+[08:25:55] *** Quits: Chipster (~Chipster@99.234.26.93.rev.sfr.net) (Ping timeout: 252 seconds)
+[08:30:10] *** Quits: ChipsterOne (~Chipster@99.234.26.93.rev.sfr.net) (Ping timeout: 268 seconds)
+[08:32:41] *** Joins: Chipster (~Chipster@99.234.26.93.rev.sfr.net)
+[08:37:07] *** Quits: Vornicus (~Vornicus@2603-8000-5d07-7ef0-75b6-b217-124b-0862.res6.spectrum.com) (Read error: Connection reset by peer)
+[08:40:00] *** Quits: ratchet_freak (~ratchetfr@d8d8779d9.access.telenet.be) (Ping timeout: 260 seconds)
+[09:01:36] *** Quits: ratchetfreak (~ratchetfr@d8d8779d9.access.telenet.be) (Read error: Connection reset by peer)
+[09:08:19] *** Joins: YuGiOhJCJ (~YuGiOhJCJ@gateway/tor-sasl/yugiohjcj)
+[09:23:21] *** Quits: Chipster (~Chipster@99.234.26.93.rev.sfr.net) (Ping timeout: 265 seconds)
+[09:26:00] *** Joins: Chipster (~Chipster@99.234.26.93.rev.sfr.net)
+[09:40:40] *** Quits: fcr (~fran@r167-60-13-23.dialup.adsl.anteldata.net.uy) (Read error: Connection reset by peer)
+[09:45:52] *** Joins: pounce (~pounce@facebook/engineering/pounce)
+[09:47:11] <pounce> hello! why is it that if `v` is a string I can do `v:match` but if `v` is a table I can't do `v:remove`
+[09:50:10] *** Joins: fcr (~fran@r186-48-14-137.dialup.adsl.anteldata.net.uy)
+[09:54:37] <hifi> string functions are implemented as a metatable for the string type but table functions are not for tables 
+[09:55:30] <hifi> I suppose it's to avoid causing conflicts when people implement custom things around tables 
+[09:57:19] <pounce> hmm makes sense
+[09:57:38] <pounce> but I assume in that case you would just overwrite the existing metatable, right?
+[09:57:54] <pounce> in any case, how hard would it be to write a "bless" function that would endow a table with such methods
+[09:58:18] <hifi> yeah, but if there's code that depends on the original implementation that would break 
+[09:58:46] <pounce> yeah sure, breaking changes are illegal
+[09:58:56] <pounce> :p
+[10:02:18] <pounce> can you overwride what `type` returns?
+[10:03:34] <Elw3> you can overwrite most stuffs.
+[10:04:01] <pounce> i see 🤔
+[10:21:07] *** Joins: sginsberg (~sginsberg@81-233-9-19-no42.tbcn.telia.com)
+[10:48:18] *** Quits: aquanight (~aquanight@174-126-159-166.cpe.sparklight.net) (Ping timeout: 268 seconds)
+[11:00:08] *** Quits: Elw3 (~Elw3@x59cc99be.dyn.telefonica.de) (Quit: Leaving)
+[11:04:15] *** Joins: b0o (~maddy@2600:2100:0:8010:7285:c2ff:feb7:f02b)
+[11:07:22] <b0o> Is it intended that requiring a module with dot notation (require 'foo.bar.qux') and slash notation (require 'foo/bar/qux') causes qux.lua to be evaluated and cached two separate times? Is this documented somewhere?
+[11:16:09] <sginsberg> do you mean requiring it with both notations at the same time?
+[11:17:14] <sginsberg> if so I don't think it is evaluating whether it is the same file/module no
+[11:19:41] <sginsberg> you could perhaps use 'preload' to avoid this
+[11:22:07] <b0o> sginsberg: For context, I was using a Neovim plugin that had a submodule with some module-level local state. The plugin internally required that submodule with slash notation, and I later required it with dot notation unaware of this fact. I spent an hour debugging why certain functions kept returning nil until I finally discovered this behavior.
+[11:22:52] <sginsberg> (it is somewhat documented if you read deep into the manual)
+[11:23:34] <b0o> I searched for it and couldn't really find a mention of it, any suggestions? I want to add a warning about this to https://github.com/nanotee/nvim-lua-guide but I want to link to the docs if possible
+[11:23:39] <sginsberg> require (modname) - Loads the given module. The function starts by looking into the package.loaded table to determine whether modname is already loaded. If it is, then require returns the value stored at package.loaded[modname].
+[11:24:09] <sginsberg> it somewhat says it is dependent on the string "modname" but is perhaps a bit vague about your particular thing
+[11:26:08] <sginsberg> I happen to be looking into this code right now though and I can say it is entirely dependent on the exact string "modname"
+[11:26:27] <b0o> makes sense
+[11:26:29] <sginsberg> i.e. it does not try to determine if diffrent strings are identical modules
+[11:27:41] <b0o> do you think it's worth documenting in the Lua docs? I can submit a PR
+[11:28:47] <sginsberg> perhaps as a mention?
+[11:57:42] *** Joins: bomb (~bomb@user/bomb)
+[12:02:04] *** Joins: mahmutov (~mahmutov@5.176.51.18)
+[12:04:31] *** Joins: mahmutov_ (~mahmutov@5.176.56.11)
+[12:07:41] *** Quits: mahmutov (~mahmutov@5.176.51.18) (Ping timeout: 265 seconds)
+[12:12:34] *** Joins: Yorlik (~Yorlik___@ip6-2a03-7500-061e-0200-a11a-e75c-0034-45b3.dyn.netcomnetz.de)
+[12:24:07] *** Quits: gr33n7007h (~gr33n7007@user/gr33n7007h) (Ping timeout: 265 seconds)
+[12:35:59] *** Joins: hendursa1 (~weechat@user/hendursaga)
+[12:39:27] *** Quits: hendursaga (~weechat@user/hendursaga) (Ping timeout: 276 seconds)
+[12:43:38] *** Quits: cp- (~cp-@b157153.ppp.asahi-net.or.jp) (Read error: Connection reset by peer)
+[12:52:19] *** Quits: R2robot (~R2robot@user/r2robot) (Quit: Pull the lever, Kronk.  Wrong leverrrrrrr!)
+[13:11:22] *** Joins: R2robot (~R2robot@user/r2robot)
+[13:43:11] *** Quits: skapata (~Skapata@user/skapata) (Remote host closed the connection)
+[13:47:58] *** Joins: dmalteseknight (~dmaltesek@user/dmalteseknight)
+[13:56:26] *** Quits: mahmutov_ (~mahmutov@5.176.56.11) (Ping timeout: 265 seconds)
+[13:58:02] *** Joins: mahmutov_ (~mahmutov@5.176.56.11)
+[14:16:07] *** Quits: Yorlik (~Yorlik___@ip6-2a03-7500-061e-0200-a11a-e75c-0034-45b3.dyn.netcomnetz.de) (Ping timeout: 268 seconds)
+[14:57:59] *** Joins: gr33n7007h (~gr33n7007@user/gr33n7007h)
+[15:19:31] *** Quits: mahmutov_ (~mahmutov@5.176.56.11) (Ping timeout: 252 seconds)
+[15:45:25] *** Quits: sm2n_ (~sm2n@user/sm2n) (Ping timeout: 252 seconds)
+[15:45:48] *** Joins: sm2n (~sm2n@user/sm2n)
+[16:00:06] *** Quits: Wally (~Wally@dragonbox/forum-staff/wally) (Quit: ZNC 1.8.2+deb2build1 - https://znc.in)
+[16:18:31] *** Quits: YuGiOhJCJ (~YuGiOhJCJ@gateway/tor-sasl/yugiohjcj) (Quit: YuGiOhJCJ)
+[16:28:58] *** Joins: Yorlik (~Yorlik___@ip6-2a03-7500-061e-0200-0043-052d-51d3-bb88.dyn.netcomnetz.de)
+[16:33:50] *** Quits: pizdets_ (~pizdets@183.182.111.25) (Ping timeout: 250 seconds)
+[16:43:07] *** Quits: gr33n7007h (~gr33n7007@user/gr33n7007h) (Ping timeout: 252 seconds)
+[16:45:19] *** Joins: gr33n7007h (~gr33n7007@user/gr33n7007h)
+[16:50:18] *** Joins: pizdets (~pizdets@183.182.111.71)
+[17:17:27] *** Joins: ratchetfreak (~ratchetfr@d8D8779D9.access.telenet.be)
+[17:48:05] *** Joins: ratchet_freak (~ratchetfr@d8D8779D9.access.telenet.be)
+[17:52:34] *** Joins: netlynx (~jan@94-226-69-15.access.telenet.be)
+[18:00:36] *** Parts: keir (~keir@user/keir) ()
+[18:13:52] *** Joins: aquanight (~aquanight@174-126-159-166.cpe.sparklight.net)
+[18:17:01] *** Quits: hendursa1 (~weechat@user/hendursaga) (Quit: hendursa1)
+[18:17:27] *** Joins: hendursaga (~weechat@user/hendursaga)
+[18:19:42] *** Quits: ratchetfreak (~ratchetfr@d8D8779D9.access.telenet.be) (Ping timeout: 268 seconds)
+[18:31:30] *** Joins: Vornicus (~Vornicus@2603-8000-5d07-7ef0-80d8-d4ba-58c2-1b2b.res6.spectrum.com)
+[18:49:40] *** Quits: sginsberg (~sginsberg@81-233-9-19-no42.tbcn.telia.com) (Ping timeout: 252 seconds)
+[19:05:16] *** Joins: Elw3 (~Elw3@x59cc9b33.dyn.telefonica.de)
+[19:36:17] *** Joins: slidercrank (~slidercra@user/slidercrank)
+[19:50:54] *** Joins: mahmutov_ (~mahmutov@5.176.56.11)
+[19:53:36] *** Quits: ano (~ano@user/ano) (Remote host closed the connection)
+[19:56:16] *** Joins: ano (~ano@user/ano)
+[20:00:50] *** Quits: Yorlik (~Yorlik___@ip6-2a03-7500-061e-0200-0043-052d-51d3-bb88.dyn.netcomnetz.de) (Ping timeout: 268 seconds)
+[20:14:46] *** Joins: password2 (~password@user/password2)
+[20:26:25] *** Quits: dmalteseknight (~dmaltesek@user/dmalteseknight) (Ping timeout: 252 seconds)
+[21:09:41] *** Quits: Elw3 (~Elw3@x59cc9b33.dyn.telefonica.de) (Quit: Leaving)
+[21:20:34] *** Joins: ratchetfreak (~ratchetfr@d8d8779d9.access.telenet.be)
+[21:21:10] *** Joins: Yorlik (~Yorlik___@ip6-2a03-7500-061e-0200-f01d-5362-6ba0-98c4.dyn.netcomnetz.de)
+[21:23:39] *** Joins: stkrdknmibalz (~test@rrcs-75-87-43-226.sw.biz.rr.com)
+[21:43:25] *** Quits: fcr (~fran@r186-48-14-137.dialup.adsl.anteldata.net.uy) (Read error: Connection reset by peer)
+[21:48:05] *** Joins: mahmutov (~mahmutov@176.30.103.168)
+[21:48:05] *** Quits: mahmutov_ (~mahmutov@5.176.56.11) (Ping timeout: 260 seconds)
+[21:51:55] *** Joins: fcr (~fran@r186-48-11-245.dialup.adsl.anteldata.net.uy)
+[21:57:46] *** Joins: penguino (~mrpenguin@user/mrpenguin)
+[21:59:01] *** Quits: ratchetfreak (~ratchetfr@d8d8779d9.access.telenet.be) (Ping timeout: 268 seconds)
+[22:02:36] *** Quits: slidercrank (~slidercra@user/slidercrank) (Read error: Connection reset by peer)
+[22:09:35] *** password2 is now known as password4
+[22:15:38] *** Joins: slidercrank (~slidercra@user/slidercrank)
+[22:24:18] *** Quits: gr33n7007h (~gr33n7007@user/gr33n7007h) (Ping timeout: 268 seconds)
+[22:35:30] *** Quits: penguino (~mrpenguin@user/mrpenguin) (Ping timeout: 276 seconds)
+[22:45:01] *** Quits: netlynx (~jan@94-226-69-15.access.telenet.be) (Quit: Leaving)
+[22:54:54] *** Quits: Carp (~rue@1-162-44-126.dynamic-ip.hinet.net) (Quit: WeeChat 3.2.1)
+[22:55:19] *** Quits: vnogueira (~vnogueira@user/vnogueira) (Remote host closed the connection)
+[22:55:36] *** Joins: vnogueira (~vnogueira@user/vnogueira)
+[23:06:56] <bomb> this channel is depressing
+[23:07:02] <bomb> check out this love2d game: https://github.com/a327ex/SNKRX
+[23:12:40] *** Quits: password4 (~password@user/password2) (Ping timeout: 240 seconds)
+[23:13:21] *** Joins: penguino (~mrpenguin@user/mrpenguin)
+[23:21:09] *** Quits: slidercrank (~slidercra@user/slidercrank) (Read error: Connection reset by peer)
+[23:28:06] *** Joins: skapata (~Skapata@2804:14c:87b0:a6f9:84f:559c:bcf2:dce0)
+[23:28:06] *** Quits: skapata (~Skapata@2804:14c:87b0:a6f9:84f:559c:bcf2:dce0) (Changing host)
+[23:28:06] *** Joins: skapata (~Skapata@user/skapata)
+[23:32:55] *** Quits: Bombo (atom@user/bombo) (Ping timeout: 252 seconds)
+[23:34:37] *** Joins: Bombo (atom@p2e58ef40.dip0.t-ipconnect.de)
+[23:34:37] *** Quits: Bombo (atom@p2e58ef40.dip0.t-ipconnect.de) (Changing host)
+[23:34:37] *** Joins: Bombo (atom@user/bombo)
+[23:37:39] *** Joins: magla (~gelignite@55d408e5.access.ecotel.net)
+[23:41:49] *** Joins: password4 (~password@user/password2)
+[23:58:14] *** Quits: password4 (~password@user/password2) (Read error: No route to host)

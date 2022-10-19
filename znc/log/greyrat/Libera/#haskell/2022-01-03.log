@@ -1,0 +1,1779 @@
+[00:00:04] *** Joins: wz1000 (~zubin@static.11.113.47.78.clients.your-server.de)
+[00:00:05] *** Quits: ksqsf (~user@134.209.106.31) (Ping timeout: 256 seconds)
+[00:07:08] *** Joins: Neuromancer (~Neuromanc@user/neuromancer)
+[00:07:33] *** Joins: timCF (~timCF@m91-129-100-224.cust.tele2.ee)
+[00:07:41] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[00:07:41] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[00:07:41] *** Joins: wroathe (~wroathe@user/wroathe)
+[00:07:45] *** Joins: xsperry (~xs@user/xsperry)
+[00:08:31] *** Joins: n3rdy1 (~n3rdy1@2600:1700:4570:3480::41)
+[00:10:24] *** Joins: shapr (~user@205.153.95.177)
+[00:11:34] *** allbery_b is now known as geekosaur
+[00:11:49] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 240 seconds)
+[00:12:28] *** Joins: L29Ah (~L29Ah@wikipedia/L29Ah)
+[00:12:35] *** Joins: pavonia (~user@user/siracusa)
+[00:13:58] *** Quits: leah2 (~leah@vuxu.org) (Quit: trotz alledem!)
+[00:14:06] *** Joins: leah2 (~leah@vuxu.org)
+[00:15:16] *** Joins: alx741 (~alx741@157.100.93.160)
+[00:15:29] <timCF> Hello! I have a strange thing I need in Haskell - seems like I do need mutex or something. I'm using service web api, and they do require strictly increasing nonce (unixtime) globally for all api calls. My program is parallel and doing a lot of things simultaniously, so seems like the easiest solution will be some stateful mutex shared with ReaderT to do api calls sequentially. Something like `bracket lock 
+[00:15:35] <timCF> unlock (genNonce >>= callApi)`. What will be the best idea for mutex? Just take/put `MVar ()` or something else?
+[00:15:55] <EvanR> or put the generator in the MVar ?
+[00:16:31] <EvanR> safer, put an IO action that returns a nonce in the MVar
+[00:16:37] <geekosaur> o.O slap whoever came up with that, if it's actually specified as unixtime
+[00:17:00] <monochrom> No. Take "microservice" seriously. Have a thread that serves requests for nounces.
+[00:17:35] <EvanR> a TChan of nonces
+[00:18:18] <EvanR> strictly increasing values for all api calls from all clients sounds... impossible
+[00:18:22] <timCF> EvanR: well, it's just `getCurrentTime`, but maybe it's safer to keep latest nonce inside MVar to avoid possible duplication if requests are performed too fast
+[00:18:35] *** Quits: lisq (~quassel@lis.moe) (Quit: lisq)
+[00:18:49] *** Joins: lisq (~quassel@lis.moe)
+[00:18:50] <EvanR> dunno that doesn't sound right
+[00:19:00] <Rembane> Is it only unix time? You can't add a counter to it?
+[00:19:21] <EvanR> what if the servers unix time doesn't match yours
+[00:19:49] <monochrom> Hey, what if no one is checking anyway? >:)
+[00:20:03] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[00:20:17] <EvanR> also this is not what nonce means, aiui
+[00:20:29] <geekosaur> I want to bonk whoever came up with that with a copy of "falsehoods programmers believe about time"
+[00:20:41] <monochrom> nounce is more nuanced    <duck>
+[00:20:42] <timCF> EvanR: TChan is kinda the same in this case, because values are disposable, there is no broadcast of data
+[00:22:27] <timCF> geekosaur: they say the only requirement is "strictly increasing" and provide in all examples implementation with unixtime
+[00:22:40] <timCF> but examples are in JS
+[00:22:43] <Rembane> timCF: How long will it take before anyone notices if you just randomize a positive integer instead? 
+[00:22:45] <monochrom> "falsehoods programmers believe, period" would be even thicker and better for bonking, but I guess first we need someone to write it :)
+[00:22:50] <timCF> so they don't have an issue with concurrency
+[00:22:53] <Rembane> More bonk! 
+[00:23:24] <EvanR> you should use 0, -1, -2, -3, ... as your nonces just to mess with them
+[00:23:47] *** Quits: otherwise (~otherwise@2601:602:880:90f0:bd12:9809:2b1e:ca22) (Remote host closed the connection)
+[00:24:45] <timCF> It's actually funny looking API. It's unrelated, but for example they use JSON but don't use concept of JSON object - everything is an array, or array or arrays
+[00:24:58] <int-e> or 0,1,1,2,3,5,7,12 ... and check whether they notice the duplicate
+[00:25:07] <int-e> uh
+[00:25:10] <int-e> ...,8,13
+[00:26:04] <monochrom> No no, 0,1,1,2,3,5,7,12 is great, check whether they notice the similarity and yet dissonance with fibonacci >:)
+[00:26:23] <EvanR> anyway if you have multiple threads, it's pretty easy to arrange a monotonic counters so they can each take a new number and get one, in any order
+[00:26:37] <EvanR> TVar Int
+[00:27:01] <EvanR> just don't ever restart the program
+[00:28:19] <geekosaur> ^ is what I'd probably do, tbh. seed it with unixtime so you mostly survive restarts, or save and restore it for certainty
+[00:28:26] <timCF> I don't know will STM here actually help or not. Because I will need to perform IO while nonce "is locked" and unlock only after I will get response
+[00:28:40] <timCF> Or some sort of web error
+[00:28:45] <EvanR> you wouldn't lock this
+[00:28:53] <geekosaur> you wouldn't need to lock it
+[00:29:09] <geekosaur> once some thread gets the nonce, it has that nonce until it gets another one
+[00:29:18] <geekosaur> and the next requestor gets a different one
+[00:29:36] *** phma_ is now known as phma
+[00:30:01] <timCF> But I can't allow request threads to perform requests independently, even if they do have different nonces
+[00:30:07] <geekosaur> now, if there's also a requirement that requests not overlap, that's a different problem
+[00:30:29] <timCF> Because order of how network and other server will handle requests is not defined
+[00:30:43] <timCF> Until requestor gets response or error
+[00:30:47] *** Joins: nomeata (~nomeatama@2001:470:69fc:105::1:5ed4)
+[00:30:54] <monochrom> Is this specification written to invite DoS attacks?
+[00:31:07] <EvanR> the server can only handle 1 request at a time or?
+[00:31:12] <monochrom> "Don't serve any other client until the present client replies."
+[00:31:42] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Remote host closed the connection)
+[00:31:57] *** Joins: fsckskye[m] (~kmatrixth@2001:470:69fc:105::1:3b2f)
+[00:32:07] <monochrom> Frankly this is what my C&Unix students want to do. The server is so much simpler.
+[00:32:10] *** Joins: Topik[m] (~topikmatr@2001:470:69fc:105::a082)
+[00:32:12] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[00:32:19] *** Joins: jchia[m] (~jchiamatr@2001:470:69fc:105::c50b)
+[00:32:20] *** Joins: vaibhavsagar[m] (~vaibhavsa@2001:470:69fc:105::ffe)
+[00:32:33] *** Joins: sofviic[m] (~sofviicma@2001:470:69fc:105::1:51fd)
+[00:32:33] *** Joins: octeep[m] (~octeepoct@2001:470:69fc:105::1:3dbf)
+[00:32:34] *** Joins: JoelMcCracken[m] (~joelmccra@2001:470:69fc:105::8405)
+[00:32:34] *** Joins: wysteriary[m] (~wysteriar@2001:470:69fc:105::a42e)
+[00:32:37] *** Joins: soft (~soft@2001:470:69fc:105::c75)
+[00:32:37] *** Joins: ManofLetters[m] (~manoflett@2001:470:69fc:105::3be)
+[00:32:51] *** Joins: surgeon[m] (~surge9nma@2001:470:69fc:105::f585)
+[00:32:52] *** Joins: xddq[m] (~xddqmatri@2001:470:69fc:105::bfd8)
+[00:33:07] *** Joins: hughjfchen[m] (~hughjfche@2001:470:69fc:105::c29d)
+[00:34:35] <monochrom> People complain about stop-the-world GC and yet embrace stop-the-world clients.
+[00:34:56] <timCF> I it's some sort of replay attack protection, because having signed request data in headers by itself does not prevent it, but unique nonce which only increases kinda does
+[00:35:10] *** Quits: _ht (~quassel@82-169-194-8.biz.kpn.net) (Remote host closed the connection)
+[00:35:21] <monochrom> That still doesn't imply stop-the-world.
+[00:35:22] <timCF> In case where nonce is part of signed data of course
+[00:35:24] <int-e> monochrom: you're number 93 in the queue, please hold the line!
+[00:35:36] <geekosaur> mm, not unless they insist that every client globally is monotonically increasing
+[00:35:45] *** Joins: alex[m]11 (~alexchete@2001:470:69fc:105::1:1001)
+[00:35:57] <geekosaur> that is, every new client is guaranteed to use a nonce higher than any other client the server has ever seen
+[00:36:08] <EvanR> preposterous
+[00:36:10] <geekosaur> this still seems very broken
+[00:37:14] *** Joins: schuelermine[m] (~schuelerm@user/schuelermine)
+[00:37:47] *** Joins: alx741 (~alx741@157.100.93.160)
+[00:38:01] *** Joins: finalti[m] (~finaltima@2001:470:69fc:105::d909)
+[00:38:51] *** Quits: zer0bitz__ (~zer0bitz@196.244.192.57) (Read error: Connection reset by peer)
+[00:40:37] *** Quits: shapr (~user@205.153.95.177) (Ping timeout: 240 seconds)
+[00:46:04] *** Joins: Pickchea (~private@user/pickchea)
+[00:46:22] <timCF> they literally say in docs to generate separate API keys in admin panel for the case where requests should be done simultaneously if it's needed, so I guess I'll just use MVar with combination of Snoyman's bracket from unliftio
+[00:46:50] <[exa]> O_o
+[00:46:59] <[exa]> what kind of server is that? (just curious)
+[00:47:34] *** Joins: shapr (~user@205.153.95.177)
+[00:47:53] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[00:48:01] <timCF> I don't know exact technology used, but it's open docs for a famous bitcoin exchange bitfinex
+[00:48:15] <timCF> https://docs.bitfinex.com/docs/requirements-and-limitations
+[00:48:35] *** Joins: Everything (~Everythin@37.115.210.35)
+[00:48:52] <[exa]> anyway with this you're probably better off to make yourself a proxy that you can load with say 10 API keys that takes "normal" sane requests on one side, and produce "serialized" and virtualtimestamped requests on the other side
+[00:49:25] <[exa]> oh my
+[00:49:31] *** Joins: ksqsf (~user@134.209.106.31)
+[00:50:29] <monochrom> I think I speak for some of us when I say: There is following the spec, and then there is following only the externally refutable part of the spec so that you regain the freedom to do the right thing.
+[00:50:47] <[exa]> ah the nonce there is an actual nonce, designed to prevent people from replaying requests
+[00:50:50] *** Joins: jlamothe (~jlamothe@198.251.61.229)
+[00:51:17] <monochrom> Or at least regain simplicity.
+[00:51:34] <[exa]> kinda makes me wonder where's TLS gone
+[00:52:14] <geekosaur> probably think root certs are The Man
+[00:52:41] <timCF> [exa]: yeah, without nonce as part of the signed message it's completely possible to ruin someone's day selling his bitcoins
+[00:52:48] *** Quits: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net) ()
+[00:53:30] <EvanR> they should think about authentication xD
+[00:54:34] <[exa]> oh my, they confuse HMACs with signatures
+[00:54:37] *** Quits: ksqsf (~user@134.209.106.31) (Ping timeout: 256 seconds)
+[00:54:38] *** Joins: duuude (~user@user/duuude)
+[00:54:55] <timCF> what's wrong with HMAC?
+[00:55:16] * geekosaur gets popcorn
+[00:55:17] <[exa]> no wait it's not a "signature"
+[00:56:14] * [exa] closes that dirty page
+[00:56:52] <timCF> hahah
+[00:57:06] <[exa]> timCF: are you sending the request via http (ie NOT https?)
+[00:58:05] <ProfSimm> Here's a problem. How do you represent an iterable unordered set, without actually risking the user becomes dependent on the iteration order?
+[00:59:06] <geekosaur> I don't, because users gonna user no matter what
+[00:59:10] <timCF> [exa]: no, https. But it does not change much. I'm not an expert on cryptography, but for my understanding or CA - idea is kinda broken anyway
+[00:59:20] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[00:59:46] <[exa]> ProfSimm: make the implementation break the iteration order on slightest possibility
+[00:59:49] <ProfSimm> geekosaur: if Haskell could allow non-deterministic output, it'd be possible every time you iterate the set, it has random order?
+[00:59:50] *** Joins: the_last_immorta (~thelastim@2001:470:69fc:105::1:4d57)
+[00:59:51] *** Joins: moats (~oats@user/oats)
+[01:00:03] <ProfSimm> [exa]: possibility of what?
+[01:00:12] *** Joins: sm (~sm@plaintextaccounting/sm)
+[01:00:19] <geekosaur> there are (interpreted, mostly) languages which use hashmaps but every such map gets a permuted hash function such that it doesn't match any other hashmap
+[01:00:27] <geekosaur> including across runs, when possible
+[01:00:35] *** Joins: simmsb (~simmsb@2001:470:69fc:105::1:55c3)
+[01:01:07] <geekosaur> in theory you could also change it randomly on iteration. in Haskell this might be difficult
+[01:01:13] <EvanR> ProfSimm, you can use advanced type fu to require any interpretation of the data be order independent. It's possible. And then a simple way out for a user is to always work on a sorted version of the set.
+[01:01:15] <[exa]> ProfSimm: of breaking it. E.g. if you have a structure with a few pointers, just insert at any pointer that's at hand
+[01:01:23] <EvanR> And then it's basically an ordered set
+[01:01:49] *** Joins: ouestbillie (~gallup@192-222-138-215.qc.cable.ebox.net)
+[01:02:10] <EvanR> though arguably it's not pointless because the user must pick an ordering
+[01:02:22] *** Joins: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net)
+[01:02:53] <[exa]> timCF: the CA idea is completely unbroken in this case, clients may authenticate the server (even manually without these damn cert authorities), they get a completely non-replayable connection from TLS for free, and that's it
+[01:03:08] <EvanR> assuming TLS is not broken
+[01:03:09] <ProfSimm> I actually wrote that down. It's not a bad idea to force it to be projected to ordered set without it having an inherent order
+[01:04:21] <EvanR> having no inherent order but working on it in an ordered way just means you eliminate 1 fast branch (already in the order you want)
+[01:04:35] <[exa]> timCF: the extra hmac layer there protects you against an adversary who can access your packet after TLS ends (say a frontend server/proxy) and before the processing begins (a https proxy), which is either dumb (if the boxes are identical) or fishy (if they don't even trust their own staff)
+[01:04:48] <EvanR> like if Data.Text used a random encoding and forced anyone who used any encoding to reencode
+[01:05:39] <[exa]> timCF: that said, the admins there need your secret key for verification, so technically they can as well create as many requests with increased nonces as they like
+[01:06:15] *** Joins: alx741 (~alx741@157.100.93.160)
+[01:06:19] *** Quits: Bartol (~Bartol@user/Bartol) (Read error: Connection reset by peer)
+[01:07:43] *** Quits: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net) ()
+[01:08:03] <[exa]> (correction: s/(a https proxy)/(a backend server)/ )
+[01:08:13] *** Joins: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net)
+[01:08:37] *** Quits: n3rdy1 (~n3rdy1@2600:1700:4570:3480::41) (Ping timeout: 240 seconds)
+[01:08:49] *** Quits: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net) (Client Quit)
+[01:09:00] *** Joins: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net)
+[01:09:28] *** Joins: Midjak (~Midjak@may53-1-78-226-116-92.fbx.proxad.net)
+[01:09:40] *** Quits: tenniscp25 (~tenniscp2@cm-171-101-110-205.revip11.asianet.co.th) ()
+[01:09:44] <timCF> [exa]: if one encrypted connection is kept alive for a several requests - technically they don't need nonce 
+[01:10:23] <timCF> but docs don't imply this in general case, for simplicity I guess
+[01:10:40] <[exa]> added magicks, great. :D :D
+[01:10:44] <EvanR> I didn't think you were supposed to be able to replay a request encrypted with TLS regardless
+[01:10:52] *** Quits: ouestbillie (~gallup@192-222-138-215.qc.cable.ebox.net) (Quit: Lost terminal)
+[01:10:56] <EvanR> (assuming it wasn't broken)
+[01:11:09] <timCF> EvanR: why not? Just man in the middle
+[01:11:15] *** Joins: ouestbillie (~gallup@192-222-138-215.qc.cable.ebox.net)
+[01:11:34] <EvanR> that's one of the entire points of a cryptosystem like TLS
+[01:11:55] <[exa]> you don't just mitm into TLS. :]
+[01:12:03] *** Quits: tolt (~weechat-h@li219-154.members.linode.com) (Quit: WeeChat 2.9)
+[01:12:38] <EvanR> (apparently it was broken for several years and people worried about replaying old eavesdropped traffic)
+[01:13:21] *** Quits: fizbin (~fizbin@c-73-33-197-160.hsd1.nj.comcast.net) (Client Quit)
+[01:14:11] *** Joins: GiacomoC (~GiacomoC@host-87-17-240-110.retail.telecomitalia.it)
+[01:16:12] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[01:17:28] <timCF> Yes encryption itself kinda should work. It's a bit another topic, but if you enter in a browser https://facebook.com - how you really sure it's real facebook, not fishing website? CA says your browser about that (as far as I know). If CA lies - mitm can intercept and see your data, but in case of signed and nonced - can not forge your data
+[01:18:00] *** Quits: econo_ (uid147250@id-147250.tinside.irccloud.com) ()
+[01:18:21] *** Joins: econo_ (uid147250@id-147250.tinside.irccloud.com)
+[01:18:54] *** Quits: simmsb (~simmsb@2001:470:69fc:105::1:55c3) (Read error: Connection reset by peer)
+[01:18:54] *** Quits: vaibhavsagar[m] (~vaibhavsa@2001:470:69fc:105::ffe) (Read error: Connection reset by peer)
+[01:18:55] *** Quits: RosarioPulella[m (~rosariopu@2001:470:69fc:105::a57) (Write error: Connection reset by peer)
+[01:18:55] *** Quits: wysteriary[m] (~wysteriar@2001:470:69fc:105::a42e) (Write error: Connection reset by peer)
+[01:18:55] *** Quits: finalti[m] (~finaltima@2001:470:69fc:105::d909) (Read error: Connection reset by peer)
+[01:18:55] *** Quits: moats (~oats@user/oats) (Write error: Connection reset by peer)
+[01:18:55] *** Quits: sm (~sm@plaintextaccounting/sm) (Write error: Connection reset by peer)
+[01:18:55] *** Quits: xddq[m] (~xddqmatri@2001:470:69fc:105::bfd8) (Write error: Connection reset by peer)
+[01:18:55] *** Quits: Topik[m] (~topikmatr@2001:470:69fc:105::a082) (Read error: Connection reset by peer)
+[01:18:56] *** Quits: sofviic[m] (~sofviicma@2001:470:69fc:105::1:51fd) (Read error: Connection reset by peer)
+[01:18:56] *** Quits: JoelMcCracken[m] (~joelmccra@2001:470:69fc:105::8405) (Read error: Connection reset by peer)
+[01:18:56] *** Quits: Heffalump[m] (~hsenagmat@2001:470:69fc:105::e11) (Write error: Connection reset by peer)
+[01:18:56] *** Quits: jchia[m] (~jchiamatr@2001:470:69fc:105::c50b) (Write error: Connection reset by peer)
+[01:18:57] *** Quits: schuelermine[m] (~schuelerm@user/schuelermine) (Write error: Connection reset by peer)
+[01:18:57] *** Quits: soft (~soft@2001:470:69fc:105::c75) (Read error: Connection reset by peer)
+[01:18:57] *** Quits: thomasjm[m] (~thomasjmm@2001:470:69fc:105::c6d9) (Read error: Connection reset by peer)
+[01:18:57] *** Quits: jkachmar (~jkachmar@2001:470:69fc:105::c72d) (Read error: Connection reset by peer)
+[01:18:57] *** Quits: shiraeeshi[m] (~shiraeesh@2001:470:69fc:105::1:77) (Read error: Connection reset by peer)
+[01:18:58] *** Quits: nomeata (~nomeatama@2001:470:69fc:105::1:5ed4) (Write error: Connection reset by peer)
+[01:18:58] *** Quits: jophish (~jophish@2001:470:69fc:105::670) (Write error: Connection reset by peer)
+[01:18:58] *** Quits: hughjfchen[m] (~hughjfche@2001:470:69fc:105::c29d) (Read error: Connection reset by peer)
+[01:18:58] *** Quits: fsckskye[m] (~kmatrixth@2001:470:69fc:105::1:3b2f) (Read error: Connection reset by peer)
+[01:18:58] *** Quits: ManofLetters[m] (~manoflett@2001:470:69fc:105::3be) (Write error: Connection reset by peer)
+[01:18:58] *** Quits: cdsmith (~cdsmithma@2001:470:69fc:105::284) (Write error: Connection reset by peer)
+[01:18:58] *** Quits: alex[m]11 (~alexchete@2001:470:69fc:105::1:1001) (Write error: Connection reset by peer)
+[01:18:58] *** Quits: octeep[m] (~octeepoct@2001:470:69fc:105::1:3dbf) (Read error: Connection reset by peer)
+[01:18:58] *** Quits: bb010g (~bb010g@2001:470:69fc:105::9a5) (Read error: Connection reset by peer)
+[01:18:58] *** Quits: Orbstheorem (~orbstheor@2001:470:69fc:105::a56) (Read error: Connection reset by peer)
+[01:18:58] *** Quits: the_last_immorta (~thelastim@2001:470:69fc:105::1:4d57) (Read error: Connection reset by peer)
+[01:18:59] *** Quits: Michal[m]1 (~oomiguelm@2001:470:69fc:105::1:5ab0) (Write error: Connection reset by peer)
+[01:18:59] *** Quits: Nate[m]12 (~m52957mat@2001:470:69fc:105::1:591a) (Write error: Connection reset by peer)
+[01:18:59] *** Quits: unrooted (~unrooted@2001:470:69fc:105::a4a) (Write error: Connection reset by peer)
+[01:18:59] *** Quits: MatrixTravelerbo (~voyagert2@2001:470:69fc:105::22) (Read error: Connection reset by peer)
+[01:18:59] *** Quits: surgeon[m] (~surge9nma@2001:470:69fc:105::f585) (Read error: Connection reset by peer)
+[01:18:59] *** Quits: justosophy[m] (~justosoph@2001:470:69fc:105::572f) (Read error: Connection reset by peer)
+[01:19:14] <EvanR> that's a whole nother topic from message integrity
+[01:19:57] <int-e> ...bye matrix..
+[01:19:58] <[exa]> timCF: CAs are a shortcut that do the key signing for you. You can go to facebooks and check the signature yourself (and tell your https client about that), which is in this financial case very adviseable. Your risk gets reduced from "there's a pretender on a network" to "I was talking to a pretender in person".
+[01:20:17] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4)
+[01:20:19] *** Joins: tolt (~weechat-h@li219-154.members.linode.com)
+[01:20:22] *** Quits: econo_ (uid147250@id-147250.tinside.irccloud.com) (Client Quit)
+[01:20:25] *** Joins: acidjnk (~acidjnk@p200300d0c7271e70c580124c5fb62625.dip0.t-ipconnect.de)
+[01:20:25] *** Joins: acidjnk_new (~acidjnk@p200300d0c7271e70c580124c5fb62625.dip0.t-ipconnect.de)
+[01:20:28] *** Quits: tolt (~weechat-h@li219-154.members.linode.com) (Client Quit)
+[01:20:51] *** Joins: econo (uid147250@user/econo)
+[01:21:26] *** Joins: juhp[m] (~juhpmatri@2001:470:69fc:105::6e9)
+[01:21:45] *** Joins: n3rdy1 (~n3rdy1@2600:1700:4570:3480:1b88:50f:dae0:9293)
+[01:21:47] *** Quits: sprout (~quassel@2a02:a467:ccd6:1:48c8:920f:83dd:ae34) (Ping timeout: 252 seconds)
+[01:21:54] *** Joins: tolt (~weechat-h@li219-154.members.linode.com)
+[01:22:15] *** Quits: yahb (xsbot@user/mniip/bot/yahb) (Ping timeout: 256 seconds)
+[01:23:35] *** Joins: drewr (~drew@user/drewr)
+[01:23:35] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[01:24:09] *** Joins: mestre (~mestre@191.177.175.57)
+[01:24:49] <timCF> [exa]: Yes, totally make sense. The same story with end to end encryption in messengers like telegram. User can start "secret" chat in one click, but his recepient will receive new secret chat with "some" secret key, which is never verified in person. So easily can be somebody else 
+[01:25:07] *** Joins: jchia[m] (~jchiamatr@2001:470:69fc:105::c50b)
+[01:25:20] *** Joins: MatrixTravelerbo (~voyagert2@2001:470:69fc:105::22)
+[01:25:21] *** Joins: fgaz (~fgaz@2001:470:69fc:105::842)
+[01:25:27] *** Joins: peddie (~peddie@2001:470:69fc:105::25d)
+[01:25:32] *** Joins: cdsmith (~cdsmithma@2001:470:69fc:105::284)
+[01:25:48] *** Joins: thomasjm[m] (~thomasjmm@2001:470:69fc:105::c6d9)
+[01:26:07] *** Joins: bb010g (~bb010g@2001:470:69fc:105::9a5)
+[01:26:07] *** Joins: amesgen[m] (~amesgenm]@2001:470:69fc:105::82b)
+[01:26:08] *** Joins: moats (~oats@user/oats)
+[01:26:08] *** Joins: zfnmxt (~zfnmxtzfn@2001:470:69fc:105::2b32)
+[01:26:11] <timCF> I wish there was a messenger where people can add contacts only by scaning public keys of each other in person (through smartphone camera or something)
+[01:26:22] *** Joins: soft (~soft@2001:470:69fc:105::c75)
+[01:26:32] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[01:26:33] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[01:26:33] *** Joins: wroathe (~wroathe@user/wroathe)
+[01:26:37] <geekosaur> there was at one point one which used NFC, iirc
+[01:26:39] *** Joins: oak- (~oakuniver@2001:470:69fc:105::fcd)
+[01:26:39] *** Joins: kadoban (~kadoban@user/kadoban)
+[01:26:39] *** Joins: bitonic (~bitonic@2001:470:69fc:105::1812)
+[01:26:39] *** Joins: Arathorn (~arathorn@2001:470:69fc:105::1f)
+[01:26:39] *** Joins: ericson2314 (~ericson23@2001:470:69fc:105::70c)
+[01:26:40] *** Joins: jophish (~jophish@2001:470:69fc:105::670)
+[01:26:40] *** Joins: Ollie[m] (~ollieocha@2001:470:69fc:105::41a5)
+[01:26:40] *** Joins: Topik[m] (~topikmatr@2001:470:69fc:105::a082)
+[01:26:40] *** Joins: unclechu (~unclechu@2001:470:69fc:105::354)
+[01:26:40] *** Joins: rednaZ[m] (~r3dnazmat@2001:470:69fc:105::ba70)
+[01:26:47] <geekosaur> tapped phones to transfer keys
+[01:26:52] *** Joins: xddq[m] (~xddqmatri@2001:470:69fc:105::bfd8)
+[01:26:52] *** Joins: maralorn (~maralorn@2001:470:69fc:105::251)
+[01:26:53] *** Joins: denbrahe[m] (~denbrahem@2001:470:69fc:105::19c0)
+[01:26:59] <EvanR> what could go wrong lol
+[01:27:01] *** Quits: shapr (~user@205.153.95.177) (Ping timeout: 240 seconds)
+[01:27:06] *** Joins: reza[m] (~rezaphone@2001:470:69fc:105::3eda)
+[01:27:06] *** Joins: quantum (~quantum@user/quantum/x-8556232)
+[01:27:17] <[exa]> apple had something like that for device pairing right?
+[01:27:19] *** Joins: Michal[m] (~oomiguelm@2001:470:69fc:105::1:5ab0)
+[01:27:19] *** Joins: marinelli[m] (~marinelli@2001:470:69fc:105::2d8)
+[01:27:19] *** Joins: hsiktas[m] (~hsiktasma@2001:470:69fc:105::30d4)
+[01:27:19] *** Joins: finalti[m] (~finaltima@2001:470:69fc:105::d909)
+[01:27:19] *** Joins: Las[m] (~lasmatrix@2001:470:69fc:105::74e)
+[01:27:31] *** Joins: craige[m] (~craigemcw@2001:470:69fc:105::35f1)
+[01:27:31] *** Joins: schuelermine[m] (~schuelerm@user/schuelermine)
+[01:27:32] *** Joins: sm (~sm@plaintextaccounting/sm)
+[01:27:36] <geekosaur> many bluetooth devices still use it for quick pairing
+[01:27:38] *** Joins: yahb (xsbot@user/mniip/bot/yahb)
+[01:27:40] *** Quits: ProfSimm (~ProfSimm@87.227.196.109) (Remote host closed the connection)
+[01:27:43] *** Joins: justosophy[m] (~justosoph@2001:470:69fc:105::572f)
+[01:27:43] *** Joins: Deide (~deide@user/deide)
+[01:27:43] *** Joins: hughjfchen[m] (~hughjfche@2001:470:69fc:105::c29d)
+[01:27:43] *** Joins: Artem[m] (~artemtype@2001:470:69fc:105::75b)
+[01:27:48] <[exa]> EvanR: random security camera with no password on a public IP: *zooms in*
+[01:27:55] *** Joins: psydroid (~psydroid@user/psydroid)
+[01:27:55] *** Joins: wysteriary[m] (~wysteriar@2001:470:69fc:105::a42e)
+[01:27:55] *** Joins: Christoph[m] (~hpotsirhc@2001:470:69fc:105::2ff8)
+[01:27:56] *** Joins: zwro[m] (~zwromatri@2001:470:69fc:105::1d4)
+[01:27:56] *** Joins: fsckskye[m] (~kmatrixth@2001:470:69fc:105::1:3b2f)
+[01:27:56] *** Joins: alexfmpe[m] (~alexfmpem@2001:470:69fc:105::38ba)
+[01:27:56] *** Joins: ongy[m] (~ongymatri@2001:470:69fc:105::5018)
+[01:27:56] *** Joins: jneira[m] (~jneiramat@2001:470:69fc:105::d729)
+[01:27:56] *** Joins: Magnus[m] (~magthetch@2001:470:69fc:105::d1a7)
+[01:27:56] *** Joins: siraben (~siraben@user/siraben)
+[01:27:56] *** Joins: SawyerBergeron[m (~sawyerber@2001:470:69fc:105::3036)
+[01:27:56] *** Joins: smichel17[m] (~smichel17@2001:470:69fc:105::2d32)
+[01:27:56] *** Joins: alex[m] (~alexchete@2001:470:69fc:105::1:1001)
+[01:27:56] *** Joins: Tisoxin (~ikosit@user/ikosit)
+[01:27:56] *** Joins: ManofLetters[m] (~manoflett@2001:470:69fc:105::3be)
+[01:27:56] *** Joins: carmysilna (~brightly-@2001:470:69fc:105::2190)
+[01:27:56] *** Joins: fendor[m] (~fendormat@2001:470:69fc:105::fcbd)
+[01:27:56] *** Joins: aidy (~aidy@2001:470:69fc:105::c7b4)
+[01:27:57] *** Joins: DemiMarieObenour (~alwayscur@2001:470:69fc:105::4886)
+[01:28:09] *** Joins: TomasJakl[m] (~jaklttchn@2001:470:69fc:105::a42)
+[01:28:21] *** Joins: grabb0id[m] (~alangmatr@2001:470:69fc:105::b489)
+[01:28:21] *** Joins: vaibhavsagar[m] (~vaibhavsa@2001:470:69fc:105::ffe)
+[01:28:21] *** Joins: maerwald[m] (~maerwaldm@2001:470:69fc:105::1ee)
+[01:28:21] *** Joins: jmcantrell (~jmcantrel@user/jmcantrell)
+[01:28:35] *** Joins: jkachmar (~jkachmar@2001:470:69fc:105::c72d)
+[01:28:47] *** Joins: JoelMcCracken[m] (~joelmccra@2001:470:69fc:105::8405)
+[01:28:51] <geekosaur> and not just apple, my android also supports it
+[01:28:59] *** Joins: RosarioPulella[m (~rosariopu@2001:470:69fc:105::a57)
+[01:29:00] *** Joins: puffnfresh[m] (~puffnfres@2001:470:69fc:105::1:22da)
+[01:29:00] *** Joins: nomeata (~nomeatama@2001:470:69fc:105::1:5ed4)
+[01:29:00] *** Joins: wildsebastian (~wildsebas@2001:470:69fc:105::1:14b1)
+[01:29:00] *** Joins: jinsun_ (~jinsun@user/jinsun)
+[01:29:07] <EvanR> those random security cameras are now in people's homes
+[01:29:15] *** Joins: benjamin[m]1234 (~benjaminm@2001:470:69fc:105::1:3f2f)
+[01:29:15] *** Joins: Heffalump[m] (~hsenagmat@2001:470:69fc:105::e11)
+[01:29:15] *** Joins: surgeon[m] (~surge9nma@2001:470:69fc:105::f585)
+[01:29:15] *** Joins: octeep[m] (~octeepoct@2001:470:69fc:105::1:3dbf)
+[01:29:16] *** Joins: prrxddq[m] (~prrxddqma@2001:470:69fc:105::1:4f72)
+[01:29:16] *** Joins: inkbottle[m] (~inkbottle@2001:470:69fc:105::2ff5)
+[01:29:16] *** Joins: yehoshuapw (~yehoshuap@2001:470:69fc:105::a5f)
+[01:29:16] *** Joins: tripa[m] (~tripamatr@2001:470:69fc:105::1:4f7e)
+[01:29:16] *** Joins: fcortesi (~fcortesi@2001:470:69fc:105::f3a9)
+[01:29:31] *** Joins: xbreu (~xbreu@2001:470:69fc:105::1:5061)
+[01:29:32] *** Joins: InternetManaging (~imjmatrix@2001:470:69fc:105::1:2ea5)
+[01:29:33] <EvanR> it's ok because your security provider is the only one who can access them
+[01:29:46] *** Joins: shiraeeshi[m] (~shiraeesh@2001:470:69fc:105::1:77)
+[01:29:58] *** Joins: IgnatInsarov[m] (~kindaroma@2001:470:69fc:105::f5d9)
+[01:30:02] *** Quits: vysn (~vysn@user/vysn) (Ping timeout: 260 seconds)
+[01:30:12] *** Joins: the_last_immorta (~thelastim@2001:470:69fc:105::1:4d57)
+[01:30:12] <timCF> EvanR: is he the only one? :)
+[01:30:21] <[exa]> timCF: anyway, the hmac scheme with nonces makes sense as a protection against ssl failures (like, if someone MITMs you, they still don't have the secret key) which is kinda reasonable because people really love curl --no-check-certificate :D
+[01:30:26] *** Joins: james[m]123 (~jamesnina@2001:470:69fc:105::1:4203)
+[01:30:26] *** Joins: boxscape (~boxscape@user/boxscape)
+[01:30:26] *** Joins: SridharRatnakuma (~sridmatri@2001:470:69fc:105::1c2)
+[01:30:36] *** Quits: mestre (~mestre@191.177.175.57) (Quit: Lost terminal)
+[01:30:38] *** Joins: AlainJourez[m] (~sherekahn@2001:470:69fc:105::1:4a71)
+[01:30:50] *** Joins: afotgkmnzj7asv3r (~afotgkmnz@2001:470:69fc:105::c24b)
+[01:31:02] *** Joins: aveltras[m] (~aveltrasm@2001:470:69fc:105::3ef9)
+[01:31:16] *** Joins: Orbstheorem (~orbstheor@2001:470:69fc:105::a56)
+[01:31:18] *** Joins: pfurla-matrix (~pedrofurl@2001:470:69fc:105::1:51d7)
+[01:31:30] *** Joins: sofviic[m] (~sofviicma@2001:470:69fc:105::1:51fd)
+[01:31:44] *** Joins: simmsb (~simmsb@2001:470:69fc:105::1:55c3)
+[01:31:52] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:48c8:920f:83dd:ae34)
+[01:31:57] *** Joins: cherryblossom[m] (~cherryblo@2001:470:69fc:105::b789)
+[01:32:12] *** Joins: Nate[m]1 (~m52957mat@2001:470:69fc:105::1:591a)
+[01:32:24] *** Joins: unrooted (~unrooted@2001:470:69fc:105::a4a)
+[01:32:24] *** Joins: jesser[m] (~jessermat@2001:470:69fc:105::d5ae)
+[01:32:24] *** Joins: kalxd[m] (~kalxdmatr@2001:470:69fc:105::1:576e)
+[01:33:17] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 240 seconds)
+[01:33:19] *** Joins: alx741 (~alx741@157.100.93.160)
+[01:34:34] <[exa]> timCF: still it would be SO MUCH better to just ask the server for session/request nonces, and send asymmetrically signed requests (no danger of losing keys on server data breach)
+[01:36:41] *** Joins: doyougnu (~doyougnu@c-73-25-202-122.hsd1.or.comcast.net)
+[01:36:57] <timCF> [exa]: yeah, once I've learned a bit of assymetric cryptogrtaphy - I was amazed how powerful it is, and at the same time disappointed because almost everybody is still using plain text passwords sent to servers..
+[01:38:27] *** Joins: shapr (~user@205.153.95.177)
+[01:43:30] *** Quits: MatrixTravelerbo (~voyagert2@2001:470:69fc:105::22) (Quit: Client limit exceeded: 20000)
+[01:43:31] *** Quits: Topik[m] (~topikmatr@2001:470:69fc:105::a082) (Quit: Client limit exceeded: 20000)
+[01:43:31] *** Quits: siraben (~siraben@user/siraben) (Quit: Client limit exceeded: 20000)
+[01:43:38] *** Joins: ksqsf (~user@134.209.106.31)
+[01:43:38] *** Quits: denbrahe[m] (~denbrahem@2001:470:69fc:105::19c0) (Quit: Client limit exceeded: 20000)
+[01:43:40] *** Quits: juhp[m] (~juhpmatri@2001:470:69fc:105::6e9) (Quit: Client limit exceeded: 20000)
+[01:43:40] *** Quits: puffnfresh[m] (~puffnfres@2001:470:69fc:105::1:22da) (Quit: Client limit exceeded: 20000)
+[01:43:45] *** Quits: kadoban (~kadoban@user/kadoban) (Quit: Client limit exceeded: 20000)
+[01:43:57] *** Quits: peddie (~peddie@2001:470:69fc:105::25d) (Quit: Client limit exceeded: 20000)
+[01:44:03] *** Quits: fgaz (~fgaz@2001:470:69fc:105::842) (Quit: Client limit exceeded: 20000)
+[01:44:11] *** Quits: sm (~sm@plaintextaccounting/sm) (Quit: Client limit exceeded: 20000)
+[01:44:12] *** Quits: Arathorn (~arathorn@2001:470:69fc:105::1f) (Quit: Client limit exceeded: 20000)
+[01:44:15] *** Quits: wildsebastian (~wildsebas@2001:470:69fc:105::1:14b1) (Quit: Client limit exceeded: 20000)
+[01:44:21] *** Quits: Las[m] (~lasmatrix@2001:470:69fc:105::74e) (Quit: Client limit exceeded: 20000)
+[01:44:26] *** Quits: cdsmith (~cdsmithma@2001:470:69fc:105::284) (Quit: Client limit exceeded: 20000)
+[01:44:27] *** Quits: bitonic (~bitonic@2001:470:69fc:105::1812) (Quit: Client limit exceeded: 20000)
+[01:44:50] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[01:44:53] *** Quits: Tisoxin (~ikosit@user/ikosit) (Quit: Client limit exceeded: 20000)
+[01:44:57] *** Quits: amesgen[m] (~amesgenm]@2001:470:69fc:105::82b) (Quit: Client limit exceeded: 20000)
+[01:44:58] *** Quits: InternetManaging (~imjmatrix@2001:470:69fc:105::1:2ea5) (Quit: Client limit exceeded: 20000)
+[01:44:58] *** Quits: ongy[m] (~ongymatri@2001:470:69fc:105::5018) (Quit: Client limit exceeded: 20000)
+[01:44:59] *** Quits: rednaZ[m] (~r3dnazmat@2001:470:69fc:105::ba70) (Quit: Client limit exceeded: 20000)
+[01:45:03] *** Quits: ericson2314 (~ericson23@2001:470:69fc:105::70c) (Quit: Client limit exceeded: 20000)
+[01:45:15] *** Quits: jophish (~jophish@2001:470:69fc:105::670) (Quit: Client limit exceeded: 20000)
+[01:45:17] *** Quits: unclechu (~unclechu@2001:470:69fc:105::354) (Quit: Client limit exceeded: 20000)
+[01:45:20] *** Quits: hsiktas[m] (~hsiktasma@2001:470:69fc:105::30d4) (Quit: Client limit exceeded: 20000)
+[01:45:26] *** Quits: unrooted (~unrooted@2001:470:69fc:105::a4a) (Quit: Client limit exceeded: 20000)
+[01:45:33] *** Quits: boxscape (~boxscape@user/boxscape) (Quit: Client limit exceeded: 20000)
+[01:45:45] *** Quits: vaibhavsagar[m] (~vaibhavsa@2001:470:69fc:105::ffe) (Quit: Client limit exceeded: 20000)
+[01:45:46] *** Quits: maralorn (~maralorn@2001:470:69fc:105::251) (Quit: Client limit exceeded: 20000)
+[01:45:54] *** Quits: carmysilna (~brightly-@2001:470:69fc:105::2190) (Quit: Client limit exceeded: 20000)
+[01:45:55] *** Quits: zfnmxt (~zfnmxtzfn@2001:470:69fc:105::2b32) (Quit: Client limit exceeded: 20000)
+[01:45:55] *** Joins: MatrixTravelerbo (~voyagert2@2001:470:69fc:105::22)
+[01:45:55] *** Joins: fgaz (~fgaz@2001:470:69fc:105::842)
+[01:45:55] *** Joins: bitonic (~bitonic@2001:470:69fc:105::1812)
+[01:45:55] *** Joins: kadoban (~kadoban@user/kadoban)
+[01:45:55] *** Joins: Arathorn (~arathorn@2001:470:69fc:105::1f)
+[01:45:56] *** Joins: Topik[m] (~topikmatr@2001:470:69fc:105::a082)
+[01:45:56] *** Joins: hsiktas[m] (~hsiktasma@2001:470:69fc:105::30d4)
+[01:45:56] *** Joins: Tisoxin (~ikosit@user/ikosit)
+[01:45:56] *** Joins: siraben (~siraben@user/siraben)
+[01:45:56] *** Joins: InternetManaging (~imjmatrix@2001:470:69fc:105::1:2ea5)
+[01:45:59] *** Joins: unclechu (~unclechu@2001:470:69fc:105::354)
+[01:46:02] *** Quits: quantum (~quantum@user/quantum/x-8556232) (Quit: Client limit exceeded: 20000)
+[01:46:07] *** Joins: denbrahe[m] (~denbrahem@2001:470:69fc:105::19c0)
+[01:46:08] *** Joins: rednaZ[m] (~r3dnazmat@2001:470:69fc:105::ba70)
+[01:46:08] *** Joins: unrooted (~unrooted@2001:470:69fc:105::a4a)
+[01:46:08] *** Joins: ongy[m] (~ongymatri@2001:470:69fc:105::5018)
+[01:46:08] *** Joins: puffnfresh[m] (~puffnfres@2001:470:69fc:105::1:22da)
+[01:46:09] *** Joins: zfnmxt (~zfnmxtzfn@2001:470:69fc:105::2b32)
+[01:46:09] *** Joins: amesgen[m] (~amesgenm]@2001:470:69fc:105::82b)
+[01:46:09] *** Joins: cdsmith (~cdsmithma@2001:470:69fc:105::284)
+[01:46:09] *** Joins: maralorn (~maralorn@2001:470:69fc:105::251)
+[01:46:09] *** Joins: ericson2314 (~ericson23@2001:470:69fc:105::70c)
+[01:46:09] *** Joins: jophish (~jophish@2001:470:69fc:105::670)
+[01:46:09] *** Joins: peddie (~peddie@2001:470:69fc:105::25d)
+[01:46:10] *** Joins: carmysilna (~brightly-@2001:470:69fc:105::2190)
+[01:46:10] *** Joins: boxscape (~boxscape@user/boxscape)
+[01:46:10] *** Joins: Las[m] (~lasmatrix@2001:470:69fc:105::74e)
+[01:46:10] *** Joins: wildsebastian (~wildsebas@2001:470:69fc:105::1:14b1)
+[01:46:10] *** Joins: vaibhavsagar[m] (~vaibhavsa@2001:470:69fc:105::ffe)
+[01:46:11] *** Joins: sm (~sm@plaintextaccounting/sm)
+[01:46:21] *** Quits: Deide (~deide@user/deide) (Quit: Client limit exceeded: 20000)
+[01:46:36] *** Quits: Artem[m] (~artemtype@2001:470:69fc:105::75b) (Quit: Client limit exceeded: 20000)
+[01:46:41] *** Quits: jmcantrell (~jmcantrel@user/jmcantrell) (Quit: Client limit exceeded: 20000)
+[01:46:43] *** Quits: jinsun_ (~jinsun@user/jinsun) (Quit: Client limit exceeded: 20000)
+[01:46:45] *** Quits: zwro[m] (~zwromatri@2001:470:69fc:105::1d4) (Quit: Client limit exceeded: 20000)
+[01:46:45] *** Quits: jneira[m] (~jneiramat@2001:470:69fc:105::d729) (Quit: Client limit exceeded: 20000)
+[01:46:58] *** Quits: smichel17[m] (~smichel17@2001:470:69fc:105::2d32) (Quit: Client limit exceeded: 20000)
+[01:47:25] *** Quits: Christoph[m] (~hpotsirhc@2001:470:69fc:105::2ff8) (Quit: Client limit exceeded: 20000)
+[01:47:36] *** Quits: DemiMarieObenour (~alwayscur@2001:470:69fc:105::4886) (Quit: Client limit exceeded: 20000)
+[01:47:49] *** Quits: shapr (~user@205.153.95.177) (Ping timeout: 240 seconds)
+[01:48:01] *** Quits: alex[m] (~alexchete@2001:470:69fc:105::1:1001) (Quit: Client limit exceeded: 20000)
+[01:48:04] *** Quits: SawyerBergeron[m (~sawyerber@2001:470:69fc:105::3036) (Quit: Client limit exceeded: 20000)
+[01:48:04] *** Quits: alexfmpe[m] (~alexfmpem@2001:470:69fc:105::38ba) (Quit: Client limit exceeded: 20000)
+[01:48:05] *** Quits: maerwald[m] (~maerwaldm@2001:470:69fc:105::1ee) (Quit: Client limit exceeded: 20000)
+[01:48:05] *** Quits: fendor[m] (~fendormat@2001:470:69fc:105::fcbd) (Quit: Client limit exceeded: 20000)
+[01:48:06] *** Quits: Ollie[m] (~ollieocha@2001:470:69fc:105::41a5) (Quit: Client limit exceeded: 20000)
+[01:48:06] *** Quits: ManofLetters[m] (~manoflett@2001:470:69fc:105::3be) (Quit: Client limit exceeded: 20000)
+[01:48:06] *** Quits: nomeata (~nomeatama@2001:470:69fc:105::1:5ed4) (Quit: Client limit exceeded: 20000)
+[01:48:18] *** Quits: fcortesi (~fcortesi@2001:470:69fc:105::f3a9) (Quit: Client limit exceeded: 20000)
+[01:48:19] *** Quits: marinelli[m] (~marinelli@2001:470:69fc:105::2d8) (Quit: Client limit exceeded: 20000)
+[01:48:20] *** Quits: schuelermine[m] (~schuelerm@user/schuelermine) (Quit: Client limit exceeded: 20000)
+[01:48:21] *** Quits: moats (~oats@user/oats) (Quit: Client limit exceeded: 20000)
+[01:48:27] *** Quits: ksqsf (~user@134.209.106.31) (Ping timeout: 256 seconds)
+[01:48:33] *** Quits: Magnus[m] (~magthetch@2001:470:69fc:105::d1a7) (Quit: Client limit exceeded: 20000)
+[01:48:56] *** Quits: pfurla-matrix (~pedrofurl@2001:470:69fc:105::1:51d7) (Quit: Client limit exceeded: 20000)
+[01:49:35] *** Quits: finalti[m] (~finaltima@2001:470:69fc:105::d909) (Quit: Client limit exceeded: 20000)
+[01:51:17] *** Quits: GiacomoC (~GiacomoC@host-87-17-240-110.retail.telecomitalia.it) (Ping timeout: 256 seconds)
+[01:58:22] *** Joins: mmalter (~mmalter@88.126.10.237)
+[01:58:39] *** Quits: duuude (~user@user/duuude) (Ping timeout: 256 seconds)
+[02:01:43] *** Joins: ksqsf (~user@134.209.106.31)
+[02:02:54] *** Joins: alx741 (~alx741@157.100.93.160)
+[02:05:09] *** AlexNoo_ is now known as AlexNoo
+[02:06:17] *** Quits: ksqsf (~user@134.209.106.31) (Ping timeout: 240 seconds)
+[02:07:08] *** Joins: duuude (~user@user/duuude)
+[02:07:47] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[02:18:16] *** Quits: mmalter (~mmalter@88.126.10.237) (Quit: Lost terminal)
+[02:19:03] *** Joins: mmalter (~mmalter@88.126.10.237)
+[02:19:45] *** Quits: coolnickname (uid531864@user/coolnickname) (Quit: Connection closed for inactivity)
+[02:25:26] *** Joins: alx741 (~alx741@157.100.93.160)
+[02:28:44] *** Quits: eggplant_ (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net) (Remote host closed the connection)
+[02:28:45] *** Quits: inkbottle[m] (~inkbottle@2001:470:69fc:105::2ff5) (Quit: Client limit exceeded: 20000)
+[02:28:48] *** Joins: sabbas (~sabbas@user/sabbas)
+[02:29:04] *** Joins: qrpnxz (~qrpnxz@user/qrpnxz)
+[02:29:47] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[02:31:30] <Hecate> __monty__, geekosaur, could I ask you to take a look at this writeup that introduces Flora? https://github.com/flora-pm/flora-server/wiki/What-is-Flora
+[02:31:31] *** Joins: juhp[m] (~juhpmatri@2001:470:69fc:105::6e9)
+[02:31:31] *** Joins: moats (~oats@user/oats)
+[02:31:39] <Hecate> I'm trying to clarify my thoughts :P
+[02:31:43] *** Joins: Ollie[m] (~ollieocha@2001:470:69fc:105::41a5)
+[02:31:43] *** Joins: quantum (~quantum@user/quantum/x-8556232)
+[02:31:57] *** Joins: marinelli[m] (~marinelli@2001:470:69fc:105::2d8)
+[02:31:57] *** Joins: finalti[m] (~finaltima@2001:470:69fc:105::d909)
+[02:31:57] *** Joins: schuelermine[m] (~schuelerm@user/schuelermine)
+[02:31:58] *** Joins: Deide (~deide@user/deide)
+[02:31:58] *** Joins: Artem[m] (~artemtype@2001:470:69fc:105::75b)
+[02:31:58] *** Joins: Christoph[m] (~hpotsirhc@2001:470:69fc:105::2ff8)
+[02:31:58] *** Joins: zwro[m] (~zwromatri@2001:470:69fc:105::1d4)
+[02:31:58] *** Joins: alexfmpe[m] (~alexfmpem@2001:470:69fc:105::38ba)
+[02:31:58] *** Joins: jneira[m] (~jneiramat@2001:470:69fc:105::d729)
+[02:32:10] *** Joins: Magnus[m] (~magthetch@2001:470:69fc:105::d1a7)
+[02:32:10] *** Joins: smichel17[m] (~smichel17@2001:470:69fc:105::2d32)
+[02:32:22] *** Joins: SawyerBergeron[m (~sawyerber@2001:470:69fc:105::3036)
+[02:32:22] *** Joins: alex[m] (~alexchete@2001:470:69fc:105::1:1001)
+[02:32:23] *** Joins: ManofLetters[m] (~manoflett@2001:470:69fc:105::3be)
+[02:32:23] *** Joins: fendor[m] (~fendormat@2001:470:69fc:105::fcbd)
+[02:32:23] *** Joins: DemiMarieObenour (~alwayscur@2001:470:69fc:105::4886)
+[02:32:23] *** Joins: jmcantrell (~jmcantrel@user/jmcantrell)
+[02:32:35] *** Joins: maerwald[m] (~maerwaldm@2001:470:69fc:105::1ee)
+[02:32:49] *** Joins: nomeata (~nomeatama@2001:470:69fc:105::1:5ed4)
+[02:32:49] *** Joins: jinsun_ (~jinsun@user/jinsun)
+[02:32:49] *** Joins: inkbottle[m] (~inkbottle@2001:470:69fc:105::2ff5)
+[02:33:03] *** Joins: fcortesi (~fcortesi@2001:470:69fc:105::f3a9)
+[02:33:16] *** Joins: pfurla-matrix (~pedrofurl@2001:470:69fc:105::1:51d7)
+[02:34:06] <geekosaur> seems ok to me. might be better to ask angerman since he was the one confused about it
+[02:34:37] <geekosaur> hm, except we lost him during the late unpleasantness
+[02:37:19] *** Quits: nhs (~nhs@136.49.226.20) (Quit: leaving)
+[02:37:34] *** Joins: nhs (~nhs@136.49.226.20)
+[02:37:42] *** Quits: nhs (~nhs@136.49.226.20) (Client Quit)
+[02:38:26] *** Joins: nhs (~nhs@136.49.226.20)
+[02:39:22] *** Joins: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net)
+[02:43:51] *** Quits: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net) (Ping timeout: 256 seconds)
+[02:44:12] *** Joins: johnw (~johnw@76-234-69-149.lightspeed.frokca.sbcglobal.net)
+[02:45:04] *** Joins: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net)
+[02:46:36] *** Joins: alx741 (~alx741@157.100.93.160)
+[02:46:50] *** Joins: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net)
+[02:47:57] *** Quits: machinedgod (~machinedg@24.105.81.50) (Ping timeout: 240 seconds)
+[02:49:36] *** Joins: deadmarshal (~deadmarsh@95.38.118.93)
+[02:52:00] *** Joins: whatsupdoc (uid509081@id-509081.hampstead.irccloud.com)
+[02:52:00] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[02:54:03] *** Quits: deadmarshal (~deadmarsh@95.38.118.93) (Ping timeout: 256 seconds)
+[02:55:52] *** Joins: ksqsf (~user@134.209.106.31)
+[02:56:15] *** Quits: x_kuru_ (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[03:00:17] *** Quits: ksqsf (~user@134.209.106.31) (Ping timeout: 240 seconds)
+[03:01:53] *** Quits: gehmehgeh (~user@user/gehmehgeh) (Quit: Leaving)
+[03:05:09] *** Joins: ksqsf (~user@134.209.106.31)
+[03:06:37] *** Quits: duuude (~user@user/duuude) (Ping timeout: 240 seconds)
+[03:08:40] *** Joins: alx741 (~alx741@157.100.93.160)
+[03:12:02] *** Quits: sagax (~sagax_nb@user/sagax) (Excess Flood)
+[03:12:13] *** Quits: doyougnu (~doyougnu@c-73-25-202-122.hsd1.or.comcast.net) (Ping timeout: 240 seconds)
+[03:12:29] *** Quits: xff0x_ (~xff0x@2001:1a81:5335:ab00:175a:eec8:110f:8c7e) (Ping timeout: 250 seconds)
+[03:13:34] *** Joins: xff0x_ (~xff0x@2001:1a81:5335:ab00:6ff0:ac84:9d3f:2b35)
+[03:14:57] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[03:15:32] *** xff0x_ is now known as xff0x
+[03:21:53] *** Quits: max22- (~maxime@2a01cb08833598000dfdedebd194573b.ipv6.abo.wanadoo.fr) (Remote host closed the connection)
+[03:22:11] *** Joins: vysn (~vysn@user/vysn)
+[03:22:55] *** Quits: Midjak (~Midjak@may53-1-78-226-116-92.fbx.proxad.net) (Quit: This computer has gone to sleep)
+[03:30:03] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[03:33:01] <lagash_> timCF: that sounds like Briar to me..
+[03:33:15] *** Joins: alx741 (~alx741@157.100.93.160)
+[03:35:11] *** Quits: sabbas (~sabbas@user/sabbas) (Quit: leaving)
+[03:37:07] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[03:40:05] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[03:44:00] *** Quits: bitmapper (uid464869@id-464869.lymington.irccloud.com) (Quit: Connection closed for inactivity)
+[03:46:18] *** Quits: burnside_ (~burnsides@dhcp168-013.wadham.ox.ac.uk) (Remote host closed the connection)
+[03:47:03] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[03:47:34] *** Quits: TonyStone (~TonyStone@2603-7080-8607-c36a-9cdb-69bc-753b-1e50.res6.spectrum.com) (Remote host closed the connection)
+[03:47:50] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[03:47:50] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[03:47:50] *** Joins: wroathe (~wroathe@user/wroathe)
+[03:49:01] <__monty__> I'll take a look tomorrow, Hecate.
+[03:49:16] *** Joins: TonyStone (~TonyStone@cpe-74-76-51-197.nycap.res.rr.com)
+[03:49:23] <__monty__> I'm sure angerman just logged out and will be back tomorrow/soon : )
+[03:52:33] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[03:55:17] *** Quits: foul_owl (~kerry@97-126-11-68.tukw.qwest.net) (Ping timeout: 240 seconds)
+[03:58:37] *** ouestbillie is now known as desproges
+[04:02:16] *** Quits: desproges (~gallup@192-222-138-215.qc.cable.ebox.net) (Quit: leaving)
+[04:02:36] *** Joins: ouestbillie (~gallup@192-222-138-215.qc.cable.ebox.net)
+[04:03:17] *** Joins: alx741 (~alx741@157.100.93.160)
+[04:06:44] *** Quits: __monty__ (~toonn@user/toonn) (Quit: leaving)
+[04:08:59] *** Quits: ksqsf (~user@134.209.106.31) (Ping timeout: 256 seconds)
+[04:10:09] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[04:10:47] *** Joins: foul_owl (~kerry@94.140.8.107)
+[04:11:28] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[04:11:49] *** Quits: Pickchea (~private@user/pickchea) (Ping timeout: 256 seconds)
+[04:12:16] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4)
+[04:13:20] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[04:14:41] *** Quits: n3rdy1 (~n3rdy1@2600:1700:4570:3480:1b88:50f:dae0:9293) (Ping timeout: 250 seconds)
+[04:16:17] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 240 seconds)
+[04:16:19] *** Joins: mvk (~mvk@2607:fea8:5cdd:f000::917a)
+[04:17:09] *** Quits: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net) (Remote host closed the connection)
+[04:18:58] *** Joins: burnsidesLlama (~burnsides@dhcp168-013.wadham.ox.ac.uk)
+[04:23:35] *** Quits: burnsidesLlama (~burnsides@dhcp168-013.wadham.ox.ac.uk) (Ping timeout: 256 seconds)
+[04:26:29] *** Joins: Bartol (~Bartol@user/Bartol)
+[04:27:51] *** Joins: alx741 (~alx741@157.100.93.160)
+[04:28:28] *** Quits: Bartol (~Bartol@user/Bartol) (Remote host closed the connection)
+[04:30:12] *** Joins: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net)
+[04:31:42] *** Quits: califax (~califax@user/califx) (Remote host closed the connection)
+[04:35:25] *** Joins: califax (~califax@user/califx)
+[04:40:02] *** Joins: jijimofo (~cmo@S010610561191f5d6.lb.shawcable.net)
+[04:42:37] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[04:43:33] <jijimofo> does anyone know where i can get an explanation of the types opencv uses? eg 'Proxy :: Proxy 3'. So 3 is a type level nat?
+[04:44:14] <geekosaur> yes
+[04:44:30] <jijimofo> ok so what i should be looking at is type families?
+[04:44:43] <geekosaur> depends on what's using that
+[04:45:48] *** Joins: ksqsf (~user@134.209.106.31)
+[04:48:17] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[04:48:54] *** Joins: kaph_ (~kaph@net-2-38-107-19.cust.vodafonedsl.it)
+[04:48:55] *** Quits: kaph_ (~kaph@net-2-38-107-19.cust.vodafonedsl.it) (Remote host closed the connection)
+[04:50:47] *** Quits: ksqsf (~user@134.209.106.31) (Ping timeout: 256 seconds)
+[04:51:55] *** Quits: kaph (~kaph@net-2-38-107-19.cust.vodafonedsl.it) (Ping timeout: 256 seconds)
+[04:52:26] *** Quits: Gurkenglas (~Gurkengla@dslb-002-203-144-204.002.203.pools.vodafone-ip.de) (Ping timeout: 245 seconds)
+[04:54:17] *** Joins: ensyde (~ensyde@2600:1702:2e30:1a40:c809:1c51:d4e7:3d0a)
+[04:54:45] *** Joins: n3rdy1 (~n3rdy1@2600:1700:4570:3480::41)
+[04:55:13] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[04:55:13] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[04:55:13] *** Joins: wroathe (~wroathe@user/wroathe)
+[04:58:48] *** Joins: alx741 (~alx741@157.100.93.160)
+[04:59:01] *** Quits: geranim0 (~geranim0@modemcable242.171-178-173.mc.videotron.ca) (Remote host closed the connection)
+[05:02:13] *** Quits: acidjnk (~acidjnk@p200300d0c7271e70c580124c5fb62625.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[05:02:13] *** Quits: acidjnk_new (~acidjnk@p200300d0c7271e70c580124c5fb62625.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[05:08:18] *** Quits: drewr (~drew@user/drewr) (Quit: ERC (IRC client for Emacs 27.2))
+[05:10:22] *** Quits: Tuplanolla (~Tuplanoll@91-159-69-90.elisa-laajakaista.fi) (Quit: Leaving.)
+[05:21:07] *** Quits: jijimofo (~cmo@S010610561191f5d6.lb.shawcable.net) (Quit: Leaving)
+[05:21:23] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[05:22:54] *** Joins: ksqsf (~user@134.209.106.31)
+[05:23:19] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[05:27:17] *** Quits: ksqsf (~user@134.209.106.31) (Ping timeout: 240 seconds)
+[05:31:41] *** Joins: fef (~thedawn@user/thedawn)
+[05:39:46] *** Joins: alx741 (~alx741@157.100.93.160)
+[05:42:01] *** Joins: lavaman (~lavaman@98.38.249.169)
+[05:50:28] *** Joins: califax- (~califax@user/califx)
+[05:51:11] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[05:54:27] *** Quits: califax (~califax@user/califx) (Ping timeout: 276 seconds)
+[05:54:28] *** califax- is now known as califax
+[05:57:03] *** Quits: nunggu (~q@gateway/tor-sasl/nunggu) (Ping timeout: 276 seconds)
+[05:58:57] *** Quits: n3rdy1 (~n3rdy1@2600:1700:4570:3480::41) (Ping timeout: 240 seconds)
+[05:59:11] *** Joins: nunggu (~q@gateway/tor-sasl/nunggu)
+[06:04:32] *** Joins: neurocyte6 (~neurocyte@IP-212232081017.dynamic.medianet-world.de)
+[06:04:32] *** Quits: neurocyte6 (~neurocyte@IP-212232081017.dynamic.medianet-world.de) (Changing host)
+[06:04:32] *** Joins: neurocyte6 (~neurocyte@user/neurocyte)
+[06:06:43] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:06:46] *** Quits: neurocyte (~neurocyte@user/neurocyte) (Ping timeout: 260 seconds)
+[06:06:46] *** neurocyte6 is now known as neurocyte
+[06:06:57] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:07:05] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:07:20] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:07:26] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:07:41] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:07:48] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:08:01] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:08:09] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:08:23] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:08:31] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:08:44] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:08:52] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:09:07] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:09:15] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:09:21] *** Joins: alx741 (~alx741@157.100.93.160)
+[06:09:29] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:09:36] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:09:49] *** Quits: xff0x (~xff0x@2001:1a81:5335:ab00:6ff0:ac84:9d3f:2b35) (Ping timeout: 240 seconds)
+[06:09:50] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:09:58] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:10:13] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:10:21] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:10:35] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:10:43] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:10:56] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:11:04] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:11:19] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:11:27] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:11:43] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:11:44] *** Joins: xff0x (~xff0x@2001:1a81:5370:9b00:cd1d:3c45:12cd:b91e)
+[06:11:50] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:11:53] *** Joins: n3rdy1 (~n3rdy1@2600:1700:4570:3480:1b88:50f:dae0:9293)
+[06:12:04] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:12:11] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:12:28] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:12:36] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:12:50] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:12:58] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:13:12] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:13:20] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:13:37] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:13:44] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:13:58] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:14:06] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:16:05] *** Joins: gaff (~gaff@49.207.198.138)
+[06:17:04] *** Joins: ksqsf (~user@134.209.106.31)
+[06:18:17] *** Quits: gaff (~gaff@49.207.198.138) (Read error: Connection reset by peer)
+[06:18:21] *** Joins: gaff_ (~gaff@49.207.198.138)
+[06:21:50] *** Quits: whatsupdoc (uid509081@id-509081.hampstead.irccloud.com) (Quit: Connection closed for inactivity)
+[06:22:09] *** Quits: ksqsf (~user@134.209.106.31) (Ping timeout: 256 seconds)
+[06:23:06] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4)
+[06:25:48] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[06:33:21] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Ping timeout: 256 seconds)
+[06:34:45] *** Quits: lemonsnicks (~lemonsnic@cpc159519-perr18-2-0-cust114.19-1.cable.virginm.net) (Quit: ZNC 1.8.2 - https://znc.in)
+[06:38:54] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[06:42:49] *** Joins: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net)
+[06:44:34] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:46:40] *** Joins: lemonsnicks (~lemonsnic@cpc159519-perr18-2-0-cust114.19-1.cable.virginm.net)
+[06:46:59] *** Quits: euandreh (~euandreh@2804:14c:33:9fe5:d903:d876:1354:7b4c) (Ping timeout: 250 seconds)
+[06:47:31] *** Quits: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net) (Ping timeout: 256 seconds)
+[06:48:04] *** Joins: euandreh (~euandreh@2804:14c:33:9fe5:df45:34e6:a5aa:758)
+[06:49:21] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 256 seconds)
+[06:51:46] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[06:57:45] *** Joins: ksqsf (~user@134.209.106.31)
+[07:02:57] *** Quits: ksqsf (~user@134.209.106.31) (Ping timeout: 256 seconds)
+[07:07:44] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Ping timeout: 252 seconds)
+[07:09:53] *** Joins: alx741 (~alx741@157.100.93.160)
+[07:13:10] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Quit: WeeChat 3.4)
+[07:14:43] *** Quits: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net) (Ping timeout: 256 seconds)
+[07:16:19] *** Joins: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net)
+[07:17:14] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Killed (NickServ (Forcing logout FinnElija -> finn_elija)))
+[07:17:14] *** Joins: finn_elija (~finn_elij@user/finn-elija/x-0085643)
+[07:17:14] *** finn_elija is now known as FinnElija
+[07:18:25] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[07:20:57] *** Quits: td__ (~td@muedsl-82-207-238-078.citykom.de) (Ping timeout: 256 seconds)
+[07:21:26] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Remote host closed the connection)
+[07:22:33] *** Joins: perrierjouet (~perrier-j@185.128.26.174)
+[07:22:55] *** Joins: td_ (~td@94.134.91.188)
+[07:23:41] *** Quits: neverwas (jpneverwas@swissbox.unperson.link) (Ping timeout: 252 seconds)
+[07:24:27] *** Joins: neverwas (jpneverwas@swissbox.unperson.link)
+[07:27:39] *** Joins: Feuermagier (~Feuermagi@user/feuermagier)
+[07:29:29] *** Joins: antanananananas (~antanas@78-63-84-180.static.zebra.lt)
+[07:30:09] *** Quits: perrierjouet (~perrier-j@185.128.26.174) (Ping timeout: 256 seconds)
+[07:31:02] *** Parts: antanananananas (~antanas@78-63-84-180.static.zebra.lt) ()
+[07:31:02] *** Joins: antanananananas (~antanas@78-63-84-180.static.zebra.lt)
+[07:32:32] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[07:34:10] *** Quits: antanananananas (~antanas@78-63-84-180.static.zebra.lt) (Quit: Lost terminal)
+[07:42:34] *** Quits: surgeon[m] (~surge9nma@2001:470:69fc:105::f585) (Quit: Client limit exceeded: 20000)
+[07:42:34] *** Joins: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net)
+[07:45:19] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[07:50:23] *** Joins: alx741 (~alx741@157.100.93.160)
+[07:51:53] *** Joins: ksqsf (~user@134.209.106.31)
+[07:52:49] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[07:53:39] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[07:53:39] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[07:53:40] *** Joins: wroathe (~wroathe@user/wroathe)
+[07:53:53] *** Quits: johnw (~johnw@76-234-69-149.lightspeed.frokca.sbcglobal.net) (Quit: ZNC - http://znc.in)
+[07:55:22] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[07:56:17] *** Quits: ksqsf (~user@134.209.106.31) (Ping timeout: 240 seconds)
+[07:57:57] *** Joins: johnw (~johnw@76-234-69-149.lightspeed.frokca.sbcglobal.net)
+[07:58:29] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[08:05:43] *** Quits: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net) (Ping timeout: 256 seconds)
+[08:07:58] *** Joins: ksqsf (~user@134.209.106.31)
+[08:11:07] *** Quits: Everything (~Everythin@37.115.210.35) (Quit: leaving)
+[08:12:34] *** Joins: dsamperi (~dsamperi@2603-7000-3b42-5400-f0e5-670e-3c83-ae24.res6.spectrum.com)
+[08:12:45] *** Quits: dsamperi (~dsamperi@2603-7000-3b42-5400-f0e5-670e-3c83-ae24.res6.spectrum.com) (Client Quit)
+[08:13:05] *** Quits: ksqsf (~user@134.209.106.31) (Ping timeout: 256 seconds)
+[08:13:10] *** Joins: ormaaj (~ormaaj@user/ormaaj)
+[08:14:03] *** Joins: alx741 (~alx741@157.100.93.160)
+[08:14:55] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Remote host closed the connection)
+[08:15:01] *** Joins: sabx (~sabbas@user/sabbas)
+[08:15:26] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[08:15:57] *** Joins: deadmarshal (~deadmarsh@95.38.118.93)
+[08:24:37] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Remote host closed the connection)
+[08:25:07] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[08:26:46] *** Joins: vglfr (~vglfr@46.96.180.119)
+[08:26:46] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[08:28:55] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[08:32:24] *** Quits: fef (~thedawn@user/thedawn) (Ping timeout: 276 seconds)
+[08:32:32] *** Quits: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470) (Ping timeout: 240 seconds)
+[08:35:57] *** Joins: ksqsf (~user@134.209.106.31)
+[08:36:08] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[08:36:09] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[08:36:09] *** Joins: wroathe (~wroathe@user/wroathe)
+[08:36:46] *** Joins: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470)
+[08:40:59] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[08:43:10] *** Joins: alx741 (~alx741@157.100.93.160)
+[08:46:05] *** Quits: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net) (Ping timeout: 256 seconds)
+[08:46:12] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:51:03] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 256 seconds)
+[08:57:14] *** Quits: maerwald[m] (~maerwaldm@2001:470:69fc:105::1ee) (Changing host)
+[08:57:14] *** Joins: maerwald[m] (~maerwaldm@user/maerwald)
+[08:59:30] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[09:17:46] *** Joins: alx741 (~alx741@157.100.93.160)
+[09:18:57] *** Quits: deadmarshal (~deadmarsh@95.38.118.93) (Ping timeout: 256 seconds)
+[09:28:50] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[09:29:12] *** Joins: deadmarshal (~deadmarsh@95.38.118.93)
+[09:37:10] *** Joins: falafel (~falafel@2603-8000-d800-688c-c064-54e6-9a05-e359.res6.spectrum.com)
+[09:37:23] *** Quits: johnw (~johnw@76-234-69-149.lightspeed.frokca.sbcglobal.net) (Quit: ZNC - http://znc.in)
+[09:39:47] *** Quits: slowButPresent (~slowButPr@user/slowbutpresent) (Quit: leaving)
+[09:40:24] *** Joins: falafel_ (~falafel@2603-8000-d800-688c-c064-54e6-9a05-e359.res6.spectrum.com)
+[09:41:09] *** Quits: shriekingnoise_ (~shrieking@186.137.144.80) (Quit: Quit)
+[09:42:57] *** Quits: falafel (~falafel@2603-8000-d800-688c-c064-54e6-9a05-e359.res6.spectrum.com) (Ping timeout: 240 seconds)
+[09:45:46] *** Joins: alx741 (~alx741@157.100.93.160)
+[09:49:20] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[09:50:02] *** Quits: sirlensalot (~sirlensal@ool-44c5f8c9.dyn.optonline.net) (Quit: sirlensalot)
+[09:50:28] *** Joins: off^ (~off@207.5.21.20)
+[09:57:12] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[09:57:45] *** Quits: rembo10 (~rembo10@remulis.com) (Quit: ZNC 1.8.2 - https://znc.in)
+[09:58:58] *** Joins: rembo10 (~rembo10@remulis.com)
+[10:02:21] *** Joins: kaph (~kaph@net-2-38-107-19.cust.vodafonedsl.it)
+[10:10:17] *** Quits: n3rdy1 (~n3rdy1@2600:1700:4570:3480:1b88:50f:dae0:9293) (Ping timeout: 240 seconds)
+[10:13:36] *** Quits: off^ (~off@207.5.21.20) (Remote host closed the connection)
+[10:15:20] *** Joins: alx741 (~alx741@157.100.93.160)
+[10:20:05] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[10:23:25] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[10:34:37] *** Quits: falafel_ (~falafel@2603-8000-d800-688c-c064-54e6-9a05-e359.res6.spectrum.com) (Ping timeout: 240 seconds)
+[10:36:28] *** Joins: falafel_ (~falafel@2603-8000-d800-688c-c064-54e6-9a05-e359.res6.spectrum.com)
+[10:37:52] *** Joins: alx741 (~alx741@157.100.93.160)
+[10:37:57] *** Joins: coolnickname (uid531864@user/coolnickname)
+[10:41:07] *** Quits: gaff_ (~gaff@49.207.198.138) (Ping timeout: 256 seconds)
+[10:42:43] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[10:43:05] <mjrosenb> is this a good place to ask about hie-bios?
+[10:43:06] *** Joins: surgeon[m] (~surge9nma@2001:470:69fc:105::f585)
+[10:46:35] <mjrosenb> I'm trying to follow the directions that they gave for ignoring directories in hie.yaml
+[10:46:46] <mjrosenb> but tha isn't working; I'm getting yaml errors.
+[10:47:14] <mjrosenb>   InvalidYaml (Just (YamlException "Duplicate keys are not allowed, found: [[Key \"cradle\",Key
+[10:47:17] <mjrosenb>   \"multi\",Index 1,Key \"config\"]]"))
+[10:47:20] <mjrosenb>   InvalidYaml (Just (YamlException "Duplicate keys are not allowed, found: [[Key \"cradle\",Key
+[10:47:23] <mjrosenb>   \"multi\",Index 1,Key \"config\"]]"))
+[10:47:38] <mjrosenb> whoops, didn't mean to paste it twice.
+[10:49:38] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[10:50:20] *** Joins: spaceseller (~spacesell@31.147.205.13)
+[10:55:47] *** Joins: meinside (uid24933@id-24933.helmsley.irccloud.com)
+[10:56:17] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[10:57:27] *** Quits: Akiva (~Akiva@user/Akiva) (Ping timeout: 250 seconds)
+[10:58:48] *** Joins: alx741 (~alx741@157.100.93.160)
+[10:59:37] *** Quits: timCF (~timCF@m91-129-100-224.cust.tele2.ee) (Ping timeout: 240 seconds)
+[11:00:21] *** Joins: whatif (~user@47.245.54.240)
+[11:00:57] <whatif> why State a a can't be print?
+[11:01:19] <[exa]> mjrosenb: always better be sure with pastebin :D anyway can you pastebin the relevant snippets of the config?
+[11:01:25] <whatif> Maybe is an instance of Show, and why State isn't?
+[11:01:27] <[exa]> whatif: because it's internally a function
+[11:01:39] <[exa]> and it's very hard to print functions
+[11:02:31] <whatif> [exa]: State a b is a function?
+[11:02:32] <[exa]> technically, you'd need to construct something like `instance Show (a -> (a,a))`
+[11:02:42] <[exa]> yes
+[11:02:49] <[exa]> though wrapped
+[11:03:10] <whatif> :t State
+[11:03:10] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[11:03:11] <lambdabot> error:
+[11:03:11] <lambdabot>     • Data constructor not in scope: State
+[11:03:11] <lambdabot>     • Perhaps you meant one of these:
+[11:03:13] <[exa]> see e.g. here, a non-transformer version of State: https://hackage.haskell.org/package/containers-0.6.5.1/docs/Data-Sequence-Internal.html#t:State
+[11:03:40] *** Joins: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net)
+[11:03:57] <[exa]> `State s a` is a datatype with a single field of type `s -> (a,s)`
+[11:04:06] <[exa]> (or (s,a), depending on author's preferences)
+[11:04:38] <[exa]> the stateful computation is internally modelled as a function that takes old state and produces new state + the "result"
+[11:04:54] <xsperry> in other words, Show instance of state couldn't print anything useful the argument you'd provide to runState/evalState
+[11:05:02] <xsperry> without the argument*
+[11:05:13] <whatif> [exa]: why people always the transformer to define the type? use StateT to define State
+[11:05:28] <whatif> but not use MaybeT to define Maybe
+[11:06:14] <EvanR> don't worry about MaybeT, there's ExceptT
+[11:06:17] <jackdk> probably because MaybeT predates Maybe
+[11:06:33] <[exa]> whatif: with State, it saves a lot of almost duplicate code in libraries. Maybe is in `base` and needs to have the constructors directly accessible to programmers, unlike State
+[11:07:13] *** Joins: Jing (~hedgehog@2604:a840:3::1013)
+[11:07:31] <EvanR> also Maybe = MaybeT Identity would be annoying
+[11:08:02] <whatif> EvanR I think the others are annoying too
+[11:08:20] <[exa]> yeah, and everyone loves patternmatching Just x, not Just (Identity x)
+[11:08:24] <EvanR> the error messages from State = StateT Identity are pretty bad yeah
+[11:08:33] <whatif> there's no Reader, Writer, State
+[11:08:33] <EvanR> or Writer
+[11:08:51] <whatif> and also the famous Cont
+[11:09:14] *** Joins: gaff (~gaff@49.207.209.253)
+[11:09:26] <EvanR> Maybe (no T) is pretty fundamental and not a wrapper
+[11:09:42] <whatif> so is there IdentityT ? IdentityT Identity
+[11:09:45] <EvanR> Maybe A is like A + 1
+[11:11:15] <tomsmeding> @let data IdentityT m a = IdentityT (m a) deriving (Show)
+[11:11:16] <lambdabot>  Defined.
+[11:11:24] <tomsmeding> @let instance MonadTrans IdentityT where lift = IdentityT
+[11:11:25] <lambdabot>  /sandbox/tmp/.L.hs:166:21: error:
+[11:11:25] <lambdabot>      Ambiguous occurrence ‘IdentityT’
+[11:11:25] <lambdabot>      It could refer to
+[11:11:32] <tomsmeding> lol I was not the first one
+[11:11:54] <tomsmeding> whatif: Identity does nothing, and IdentityT just does more nothing
+[11:12:21] *** Joins: Akiva (~Akiva@user/Akiva)
+[11:12:35] <whatif> tomsmeding: is there a library, define the simple unwrapped type like Reader, State, Cont etc
+[11:14:06] <EvanR> really, Reader and Cont are probably easier to use without the wrapper
+[11:14:27] <whatif> how you people accept that use transformer way to define type when you're beginner?
+[11:15:06] <EvanR> as a beginner, go without mtl transformers for a minute
+[11:15:35] <EvanR> you don't need StateT to work with state
+[11:15:48] *** Joins: kvakil (~keyhan@2601:645:8500:4fc0:2df5:f7d6:e89:c64b)
+[11:16:53] <[exa]> for a beginner it's best to invest 3 minutes of life into reimplementing State, then the problems disappear
+[11:16:53] *** Quits: ksqsf (~user@134.209.106.31) (Remote host closed the connection)
+[11:17:31] <EvanR> is good but won't help decipher the errors from mtl
+[11:18:32] *** Quits: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net) (Remote host closed the connection)
+[11:18:55] <EvanR> so 3 minutes later invest 30 minutes implementing StateT the way mtl does
+[11:19:21] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 250 seconds)
+[11:19:25] *** Joins: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net)
+[11:21:20] *** Joins: alx741 (~alx741@157.100.93.160)
+[11:24:50] <jackdk> mtl is an industrial tool, not a learning tool. therefore, build the learning tool to learn and use the industrial tool later
+[11:27:38] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[11:31:25] <whatif> f = \x -> do { o <- get; let n = o+1; put n; return (o+n) } parse "put n;" error, what do I miss?
+[11:32:41] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[11:32:41] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[11:34:50] *** Quits: tzh (~tzh@c-24-21-73-154.hsd1.or.comcast.net) (Quit: zzz)
+[11:35:32] <tomsmeding> @let f = \x -> do { o <- get; let n = o+1; put n; return (o+n) }
+[11:35:32] <lambdabot>  Parse failed: Parse error: ;
+[11:35:41] <tomsmeding> @let f = \x -> do { o <- get; let { n = o+1 }; put n; return (o+n) }
+[11:35:42] <lambdabot>  Defined.
+[11:36:03] <tomsmeding> whatif: 'let' also takes multiple bindings using ; so the ; before 'put' got parsed as belonging to the 'let'
+[11:36:33] <tomsmeding> if you use the multi-line version with indentation, you have no such issues :)
+[11:37:35] <whatif> tomsmeding: why let doesn't use ',' as split?
+[11:37:53] <whatif> let a=1, b=2
+[11:38:04] <tomsmeding> I guess it could
+[11:38:11] *** Joins: lavaman (~lavaman@98.38.249.169)
+[11:38:18] <tomsmeding> but please put it on multiple lines :p
+[11:38:19] <EvanR> braces and semicolons is the raw form of that syntax, no need to make that fancy too
+[11:38:37] *** Quits: falafel_ (~falafel@2603-8000-d800-688c-c064-54e6-9a05-e359.res6.spectrum.com) (Ping timeout: 240 seconds)
+[11:39:03] <tomsmeding> whatif: https://paste.tomsmeding.com/FOIejovG
+[11:42:01] <whatif> f :: Int -> State Int Int
+[11:42:09] *** Joins: _ht (~quassel@82-169-194-8.biz.kpn.net)
+[11:42:10] <whatif> f = \x -> do { o <- get; let {n = o+1}; put n; return (o+n) }
+[11:42:17] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 240 seconds)
+[11:42:30] <whatif> what traverse f [1,1] would do?
+[11:42:51] *** Quits: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net) (Remote host closed the connection)
+[11:43:21] <whatif> traverse print [1,1] would print 1 and 1
+[11:45:36] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[11:46:19] <tomsmeding> 'traverse f l = sequence (map f l)' on lists
+[11:46:48] <EvanR> :t sequenceA
+[11:46:49] <lambdabot> (Traversable t, Applicative f) => t (f a) -> f (t a)
+[11:46:55] <tomsmeding> so it would be 'do { a <- f 1 ; b <- f 2 ; return [a, b] }'
+[11:47:37] <whatif> tomsmeding: how [1,1] turn to f 2?
+[11:48:11] <whatif> traverse f [1,1] == sequence (map f [1,1])
+[11:48:31] <whatif> map f [1,1] == [f 1, f 1]
+[11:48:48] <whatif> where f 2 comes from?
+[11:49:14] <tomsmeding> whatif: oh lol sorry, should be 'f 1' twice
+[11:49:22] <tomsmeding> what I wrote would be the result of 'traverse f [1, 2]'
+[11:49:32] *** Joins: alx741 (~alx741@157.100.93.160)
+[11:50:25] *** Joins: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net)
+[11:50:45] *** Joins: lortabac (~lortabac@2a01:e0a:541:b8f0:3c92:b563:832f:4576)
+[11:51:28] <whatif> traverse f [1,1] == do { a <- f 1; b <- f 1; return [a, b] }
+[11:55:09] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[11:55:10] <EvanR> @check \n m -> f [n,m] == do { a <- f n; b <- f m; return [a,b] }
+[11:55:12] <lambdabot>  error:
+[11:55:12] <lambdabot>  Ambiguous occurrence ‘f’ It could refer to either ‘Debug.SimpleReflect.f’, i...
+[11:55:13] *** Quits: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net) (Ping timeout: 256 seconds)
+[11:55:28] <EvanR> @check \n m -> L.f [n,m] == do { a <- L.f n; b <- L.f m; return [a,b] }
+[11:55:30] <lambdabot>  error:
+[11:55:30] <lambdabot>  • No instance for (Num [Integer]) arising from a use of ‘L.f’ • In the first...
+[11:55:50] <EvanR> i didn't put traverse
+[11:56:13] <tomsmeding> whatif: https://hackage.haskell.org/package/base-4.14.0.0/docs/src/Data.Traversable.html#line-230
+[11:56:51] <whatif> does State construct a binary function? State $ \s -> \a -> (a,s)?
+[11:57:17] <tomsmeding> foldr cons_f (pure []) = foldr (\x ys -> do { x' <- f x ; ys' <- ys ; return (x' : ys) }) (return [])
+[11:57:41] *** Joins: chele (~chele@user/chele)
+[11:58:04] <tomsmeding> whatif: https://hackage.haskell.org/package/transformers-0.6.0.2/docs/src/Control.Monad.Trans.State.Strict.html#StateT
+[11:58:16] <tomsmeding> ignore the 'm' for the non-transformer variant
+[11:58:52] <whatif> newtype StateT s m a = StateT { runStateT :: s -> m (a,s) }, where the a come from?
+[11:59:14] *** Joins: gehmehgeh (~user@user/gehmehgeh)
+[11:59:39] <EvanR> newtypes are cool because they don't exist at runtime
+[12:00:01] <EvanR> their representation equals whatever is being wrapped
+[12:00:28] <EvanR> a zero-cost abstraction
+[12:01:13] <whatif> State or StateT wrapped a function, what's the function? 
+[12:01:31] <whatif> \s -> (a,s)?
+[12:01:32] <EvanR> your stateful program
+[12:01:52] <whatif> :t State $ \s -> (a,s)
+[12:01:53] <lambdabot> error:
+[12:01:54] <lambdabot>     • Data constructor not in scope: State :: (b0 -> (Expr, b0)) -> t
+[12:01:54] <lambdabot>     • Perhaps you meant one of these:
+[12:02:33] <EvanR> :t State (\s -> ('?', s))
+[12:02:34] <lambdabot> error:
+[12:02:34] <lambdabot>     • Data constructor not in scope: State :: (b0 -> (Char, b0)) -> t
+[12:02:34] <lambdabot>     • Perhaps you meant one of these:
+[12:02:37] <whatif> how to use value constructor State to construct a State a b
+[12:02:40] <EvanR> :t StateT (\s -> ('?', s))
+[12:02:41] <lambdabot> error:
+[12:02:41] <lambdabot>     • Occurs check: cannot construct the infinite type: s ~ (a, s)
+[12:02:41] <lambdabot>     • In the expression: s
+[12:02:52] <EvanR> :t StateT (\s -> Identity ('?', s))
+[12:02:53] <lambdabot> StateT b Identity Char
+[12:02:58] <EvanR> finally
+[12:03:34] *** Quits: fsckskye[m] (~kmatrixth@2001:470:69fc:105::1:3b2f) (Quit: Client limit exceeded: 20000)
+[12:03:56] <EvanR> you wouldn't use StateT directly, you would use return or (>>=)
+[12:04:07] *** Quits: spaceseller (~spacesell@31.147.205.13) (Quit: Leaving)
+[12:04:08] *** Joins: fsckskye[m] (~kmatrixth@2001:470:69fc:105::1:3b2f)
+[12:04:33] *** Joins: max22- (~maxime@lfbn-ren-1-1026-62.w92-139.abo.wanadoo.fr)
+[12:04:33] <EvanR> that thing I constructed is pure '?'
+[12:04:38] <EvanR> return '?'
+[12:05:48] *** Joins: spaceseller (~spacesell@31.147.205.13)
+[12:07:38] *** Joins: fef (~thedawn@user/thedawn)
+[12:10:10] <whatif> a is free, State $ \s -> (a, s) :: State S A
+[12:13:00] *** Joins: alx741 (~alx741@157.100.93.160)
+[12:15:15] <whatif> more confused, f 1:: State Int Int, in that o <- get; what 'get' get?
+[12:15:20] <whatif> 1?
+[12:15:46] <whatif> f = \x -> do { o <- get; let {n = o+1}; put n; return (o+n) }
+[12:17:28] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[12:17:37] <whatif> f 1 = State $ \s -> (s+1, s)
+[12:17:43] <tomsmeding> it gets the current state
+[12:17:53] *** Quits: max22- (~maxime@lfbn-ren-1-1026-62.w92-139.abo.wanadoo.fr) (Ping timeout: 256 seconds)
+[12:18:23] <whatif> tomsmeding: but 1 isn't pass to State
+[12:18:27] <tomsmeding> that 'f' is similar to '\s -> \x -> let o = s ; n = o+1 ; s' = n in (o+n,s')'
+[12:18:49] <tomsmeding> except there are some State and Identity wrappers around it
+[12:19:17] <tomsmeding> 's' is the input state, 'x' is your argument x; o+n is the return value, and s' is the output state
+[12:19:29] <whatif> tomsmeding: you mean that 'get' will get 1?
+[12:19:36] <tomsmeding> no, it will get the input state
+[12:19:45] <tomsmeding> the only way to _run_ a State computation is using runState
+[12:19:47] <tomsmeding> :t runState
+[12:19:48] <lambdabot> State s a -> s -> (a, s)
+[12:19:54] <tomsmeding> here, you have to supply the initial state
+[12:20:04] <tomsmeding> > runState (f 10) 42
+[12:20:06] <lambdabot>  error:
+[12:20:06] <lambdabot>      Ambiguous occurrence ‘f’
+[12:20:06] <lambdabot>      It could refer to
+[12:20:09] <tomsmeding> > runState (L.f 10) 42
+[12:20:11] <lambdabot>  (85,43)
+[12:20:42] <tomsmeding> o = 42; n = 43; s' = 43; return value is then o+n=42+43=85
+[12:20:53] <tomsmeding> note that x wasn't used, because, well, your f doesn't use x :)
+[12:20:54] *** Joins: machinedgod (~machinedg@24.105.81.50)
+[12:25:53] *** Joins: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net)
+[12:26:05] <whatif> traverse f [1,1] == sequence (map f [1,1]) == sequence [f 1, f 1] == sequence [State $ \s -> (s+1, s), State $ \s -> (s+1, s)], right?
+[12:27:46] <whatif> is there wrong?
+[12:29:42] *** w1gz_ is now known as w1gz
+[12:29:57] *** Quits: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net) (Ping timeout: 240 seconds)
+[12:30:00] <[exa]> looks valid to me
+[12:30:29] <[exa]> (except perhaps the order of stuff in the tuples)
+[12:30:53] <whatif> [exa]: what do you mean the order of stuff?
+[12:31:02] <whatif> (s, s+1)?
+[12:31:51] *** Joins: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net)
+[12:31:55] <mjrosenb> [exa]: sorry, I was dumb.  I removed a path, without removing all of its children.  Fixed that issue, and the problem went away.
+[12:32:14] <mjrosenb> (the error message was super not useful)
+[12:33:55] *** Joins: alx741 (~alx741@157.100.93.160)
+[12:33:56] *** Joins: burnsidesLlama (~burnsides@dhcp168-013.wadham.ox.ac.uk)
+[12:34:43] <whatif> sequence :: [State s a] -> State [a], right?
+[12:35:27] *** Joins: jayant (~quassel@223.236.0.223)
+[12:35:47] <whatif> so sequence [State $ \s -> (s+1, s), State $ \s -> (s+1, s) == State $ \s -> [s+1, s+1], right?
+[12:35:51] *** Joins: max22- (~maxime@2a01cb0883359800f1ba63e8a5bb6c8b.ipv6.abo.wanadoo.fr)
+[12:36:05] <whatif> is there wrong?
+[12:36:16] *** Joins: epolanski (uid312403@id-312403.helmsley.irccloud.com)
+[12:36:43] *** Quits: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net) (Ping timeout: 256 seconds)
+[12:36:54] *** Quits: vysn (~vysn@user/vysn) (Remote host closed the connection)
+[12:37:09] *** Quits: spaceseller (~spacesell@31.147.205.13) (Quit: Leaving)
+[12:37:53] <[exa]> whatif: the last thing you wrote doesn't really typecheck
+[12:38:23] <[exa]> in particular, `sequence :: [State s a] -> State s [a]`   (you missed the last `s`)
+[12:39:02] <[exa]> in turn, the thing should result into something like `State $ \s -> (s+2, [s, s+1])`
+[12:39:18] *** Joins: mmhat (~mmh@55d48037.access.ecotel.net)
+[12:39:20] <[exa]> (note the function must return the tuple again)
+[12:39:43] <mjrosenb> because running a state returns the result of the computation, as well as the new result.
+[12:40:03] <[exa]> ...new state. ^ :]
+[12:40:10] <whatif> yeah, State s is the m
+[12:41:26] <whatif> [exa]: but I don't understand how s+1 becoome s+2
+[12:41:45] <whatif> sequence :: [State s a] -> State s [a]
+[12:42:46] <whatif> sequence [State $ \s -> (s+1, s), State $ \s -> (s+1, s) == State $ \s -> (s+2, [s, s+1]) /=  State $ \s -> [s+1, s+1]
+[12:44:39] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[12:46:49] <whatif> how it become s+2?
+[12:47:27] *** Quits: geekosaur (~geekosaur@xmonad/geekosaur) (Remote host closed the connection)
+[12:47:51] *** Joins: geekosaur (~geekosaur@xmonad/geekosaur)
+[12:48:57] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 240 seconds)
+[12:49:43] *** Quits: econo (uid147250@user/econo) (Quit: Connection closed for inactivity)
+[12:49:51] <tomsmeding> sequence [State (\s -> (s+1, s)), State (\s -> (s+1, s))]  is similar to  \s -> let (s1, x) = (\s -> (s+1, s)) s ; (s2, y) = (\s -> (s+1, s)) s1 in (s2, [x,y])
+[12:50:29] <tomsmeding> it's called state-passing for a reason; the state is threaded through and updated along the way by the computations
+[12:51:16] <tomsmeding> my "similar to" is basically after removing StateT newtype wrappers and simplifying a little (e.g. simplifying '(\x -> x) 10' to '10')
+[12:55:56] <whatif> tomsmeding: sequence will pass that s+1 from the first State $ \s -> (s+1, s) as s for the second State $ \s -> (s+1, s)?
+[12:56:08] <tomsmeding> yes
+[12:56:32] <tomsmeding> because that way, you're simulating "updating" the state from s to s+1, before running the second thing
+[12:56:40] <whatif> tomsmeding: and that's what sequence's definition? right?
+[12:56:57] <tomsmeding> @src sequence
+[12:56:57] <lambdabot> sequence []     = return []
+[12:56:57] <lambdabot> sequence (x:xs) = do v <- x; vs <- sequence xs; return (v:vs)
+[12:56:57] <lambdabot> --OR
+[12:56:57] <lambdabot> sequence xs = foldr (liftM2 (:)) (return []) xs
+[12:57:06] <tomsmeding> see the first version
+[12:57:26] <tomsmeding> and for State, what you way is what it ends up doing
+[12:57:37] <tomsmeding> *what you say
+[12:58:31] *** Joins: mrmr1 (~mrmr@user/mrmr)
+[12:59:41] *** Joins: szkl (uid110435@id-110435.uxbridge.irccloud.com)
+[13:00:11] *** Quits: mrmr (~mrmr@user/mrmr) (Ping timeout: 268 seconds)
+[13:00:11] *** mrmr1 is now known as mrmr
+[13:00:59] *** Joins: acidjnk (~acidjnk@p200300d0c7271e70c580124c5fb62625.dip0.t-ipconnect.de)
+[13:01:00] *** Joins: acidjnk_new (~acidjnk@p200300d0c7271e70c580124c5fb62625.dip0.t-ipconnect.de)
+[13:02:22] *** Joins: alx741 (~alx741@157.100.93.160)
+[13:02:27] *** Joins: lavaman (~lavaman@98.38.249.169)
+[13:04:22] <gentauro> hmmm, I thought the issue with `haskell-lsp` and `haskell-language-server` was `macOS` and the `M1` chip. But it seems that is not possible to install neither on my Linux (NixOS) …
+[13:04:27] <whatif> I don't understand, sequence (x:xs) = do v <- x; vs <- sequence xs; return (v:vs), so sequence [State $\s -> (s+1, s), State $\s -> (s+1, s)] would be v is s+1,  return (v:vs) would be State $\s -> ([s+1, s+1], s)
+[13:04:59] <gentauro> what are peeps using nowadays to get a "decent" development environment on `emacs`? (any blog post link would be appreciated)
+[13:06:22] <whatif> tomsmeding: sequence (x:xs) = ... return (v:vs) what's the m here? []?
+[13:06:50] <tomsmeding> whatif: State, right?
+[13:06:54] <tomsmeding> well, m ~ State Int
+[13:07:18] <tomsmeding> gentauro: 0 clue about emacs, but for hls, ghcup
+[13:07:42] <tomsmeding> though ghcup's HLS crashes for me, so I build it myself using 'git clone HLS; cd HLS; cabal install' :p
+[13:08:17] <gentauro> tomsmeding: thx, I look into that
+[13:08:57] *** Quits: Jing (~hedgehog@2604:a840:3::1013) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[13:09:47] <whatif> sequence [State \s -> (s+1,s)] would be State $\s -> ([(s+1)],s)?
+[13:10:14] *** Joins: szwe (~szwester@2a02:a31a:e13c:1100:f579:7a43:b118:346b)
+[13:10:38] <tomsmeding> whatif: we had 'newtype State s a = State (s -> (s, a))' right?
+[13:10:46] <tomsmeding> so the value is in the second component, the state in the first
+[13:10:56] <tomsmeding> so the result would be State (\s -> (s+1, [s]))
+[13:11:43] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[13:12:18] <whatif> what's the oldtype...
+[13:12:33] <whatif> data State s a =...
+[13:15:10] <tomsmeding> old type?
+[13:15:40] <tomsmeding> 'newtype' and 'data' are equivalent for everything except a bit of runtime performance and less distinct 'undefined' values
+[13:18:42] *** Quits: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net) (Remote host closed the connection)
+[13:20:31] <tomsmeding> gentauro: just remembered, if you want to build HLS for a new ghc, rename the correct cabal-*.project file to cabal.project before building
+[13:23:45] *** Quits: pavonia (~user@user/siracusa) (Quit: Bye!)
+[13:25:51] *** Joins: Jing (~hedgehog@2604:a840:3::1013)
+[13:28:14] *** Joins: notzmv (~zmv@user/notzmv)
+[13:28:18] *** Joins: alx741 (~alx741@157.100.93.160)
+[13:29:51] *** Quits: nomeata (~nomeatama@2001:470:69fc:105::1:5ed4) (Quit: Reconnecting)
+[13:30:05] *** Joins: nomeata (~nomeata@2001:470:69fc:105::1:5ed4)
+[13:31:43] *** Quits: nomeata (~nomeata@2001:470:69fc:105::1:5ed4) (Client Quit)
+[13:31:56] *** Joins: nomeata (~nomeata@2001:470:69fc:105::1:5ed4)
+[13:32:52] *** Joins: coot (~coot@89-64-85-93.dynamic.chello.pl)
+[13:34:13] *** Quits: burnsidesLlama (~burnsides@dhcp168-013.wadham.ox.ac.uk) (Remote host closed the connection)
+[13:34:44] *** Quits: szwe (~szwester@2a02:a31a:e13c:1100:f579:7a43:b118:346b) (Quit: Leaving)
+[13:36:13] *** Quits: gaff (~gaff@49.207.209.253) (Remote host closed the connection)
+[13:37:04] *** Joins: mc47 (~mc47@xmonad/TheMC47)
+[13:40:11] *** Quits: Sgeo__ (~Sgeo@ool-18b9875e.dyn.optonline.net) (Read error: Connection reset by peer)
+[13:40:31] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[13:40:38] <whatif> tomsmeding: this sequence [State...] is like reduce to me
+[13:41:00] <whatif> foldl
+[13:46:17] *** Quits: jayant (~quassel@223.236.0.223) (Ping timeout: 256 seconds)
+[13:48:07] *** Quits: mrmr (~mrmr@user/mrmr) (Ping timeout: 256 seconds)
+[13:48:17] *** Quits: Akiva (~Akiva@user/Akiva) (Ping timeout: 240 seconds)
+[13:48:46] <[exa]> `sequence_` can be easily defined as `foldr (>>) (pure ())`
+[13:48:51] *** Quits: xff0x (~xff0x@2001:1a81:5370:9b00:cd1d:3c45:12cd:b91e) (Ping timeout: 250 seconds)
+[13:49:36] *** Joins: mrmr (~mrmr@user/mrmr)
+[13:49:38] <[exa]> that said, isn't there a name for `pure ()` ? like void, but without the parameter
+[13:49:55] *** Joins: xff0x (~xff0x@2001:1a81:5370:9b00:ba06:1021:b5e3:5719)
+[13:51:21] <tomsmeding> instance Monad m => Monoid (m ()) where mappend = (>>) ; mempty = pure () -- pre-semigroup split because meh
+[13:51:23] *** Quits: Erutuon_ (~Erutuon@user/erutuon) (Ping timeout: 256 seconds)
+[13:52:00] *** Joins: jayant (~quassel@223.236.0.223)
+[13:53:05] *** Quits: vglfr (~vglfr@46.96.180.119) (Ping timeout: 256 seconds)
+[13:53:37] *** Quits: ensyde (~ensyde@2600:1702:2e30:1a40:c809:1c51:d4e7:3d0a) (Ping timeout: 240 seconds)
+[13:55:47] *** Joins: __monty__ (~toonn@user/toonn)
+[13:56:04] <whatif> [exa]: `sequence_` can be easily defined as `foldr (>>) (pure ())` this is point-free style?
+[13:56:25] <[exa]> well there's no point so yeah, it is
+[13:56:40] <[exa]> tomsmeding: ah nice thanks. :D
+[13:56:47] <whatif> what pure () doing here?
+[13:57:12] *** Joins: alx741 (~alx741@157.100.93.160)
+[13:57:17] <[exa]> ensuring that the whole thing returns `m ()`. You could omit it and go with `foldr1` but that's not as nice
+[13:57:22] <tomsmeding> [exa]: though I'm not sure quite how useful that instance is :p
+[13:57:42] <whatif> [exa]: could it be with foldl1?
+[13:57:49] <tomsmeding> whatif: you need to return something in case the list is empty
+[13:58:21] <geekosaur> foldl is generally not as useful as one might think
+[13:58:21] <[exa]> whatif: yeah but the "actions" would happen in a mildly surprising order, starting from the last one
+[13:58:24] <whatif> I very like foldl1, it's called reduce in other languages
+[13:58:53] <tomsmeding> [exa]: not with foldl1 (>>), right?
+[13:59:08] <tomsmeding> Ignoring foldl efficiency concerns
+[13:59:09] <[exa]> ah yeah nope, sorry for confusion
+[13:59:20] <[exa]> still, efficiency concerns
+[13:59:21] <geekosaur> actually what most languages call reduce is foldr1. (the "l"/"r" is about associativity, not order; lists can only ever be traversed from the left)
+[13:59:50] <whatif> geekosaur: what?
+[14:00:13] *** Joins: Lord_of_Life_ (~Lord@user/lord-of-life/x-2819915)
+[14:00:18] <[exa]> whatif: left-folding a right-folded structure sometimes hurts
+[14:00:32] <whatif> [1,2,3], [1+2,3] what this? foldl?
+[14:00:42] <geekosaur> > foldl f z [a,b,c]
+[14:00:43] <lambdabot>  error:
+[14:00:43] <lambdabot>      Ambiguous occurrence ‘f’
+[14:00:43] <lambdabot>      It could refer to
+[14:00:49] <tomsmeding> geekosaur: not in js, at least; [1,2,3].reduce((a,b) => 10*a+b) returns 123 in js
+[14:00:49] <geekosaur> bah
+[14:01:00] <tomsmeding> @undef
+[14:01:00] <lambdabot> Undefined.
+[14:01:07] <geekosaur> > foldl f z [a,b,c]
+[14:01:08] <lambdabot>  f (f (f z a) b) c
+[14:01:13] <geekosaur> > foldr f z [a,b,c]
+[14:01:14] <lambdabot>  f a (f b (f c z))
+[14:01:14] *** Quits: Lord_of_Life (~Lord@user/lord-of-life/x-2819915) (Ping timeout: 268 seconds)
+[14:01:18] <geekosaur> compare these
+[14:01:30] *** Lord_of_Life_ is now known as Lord_of_Life
+[14:01:54] *** Quits: mc47 (~mc47@xmonad/TheMC47) (Remote host closed the connection)
+[14:02:05] <tomsmeding> > foldl1 (\a b -> 10*a+b) [1,2,3]
+[14:02:05] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[14:02:06] <whatif> I still like foldl, from left to right to do something
+[14:02:06] <lambdabot>  123
+[14:02:17] <geekosaur> foldr is much more natural because it matches the associativity of a list
+[14:02:22] <tomsmeding> > foldr1 (\a b -> 10*a+b) [1,2,3]
+[14:02:23] <lambdabot>  33
+[14:02:51] <[exa]> whatif: the main problem with foldl is that in a lazy language it first rebuilds the right-folded list to a left-folded thunk of (+)'s, THEN starts reducing it. You almost always want something stricter, such as foldl'
+[14:02:56] <geekosaur> and in fact `foldr (:) []` is the identity on a list
+[14:03:00] <whatif> in natural, do you read something from left to right?
+[14:03:16] <tomsmeding> whatif: foldl has the more common order, when comparing with other programming languages. However, because of haskell's list structure, in combination with the laziness, foldr ends up working better in a lot of cases
+[14:03:37] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 240 seconds)
+[14:03:41] <tomsmeding> Exception: sum = foldl' (+) 0 -- and note the foldl' instead of foldl (look up the documentation)
+[14:04:21] <__monty__> I also believe you can express foldl in terms of foldr but not the other way around?
+[14:05:12] * tomsmeding is skeptical
+[14:05:48] *** Quits: Techcable (~Techcable@168.235.93.147) (Remote host closed the connection)
+[14:05:56] *** Joins: Techcable (~Techcable@168.235.93.147)
+[14:06:07] *** Joins: xkuru (~xkuru@user/xkuru)
+[14:07:17] *** Joins: Gurkenglas (~Gurkengla@dslb-002-203-144-204.002.203.pools.vodafone-ip.de)
+[14:07:26] *** Joins: nhatanh02 (~satori@123.24.172.30)
+[14:08:23] *** Joins: burnsidesLlama (~burnsides@dhcp168-013.wadham.ox.ac.uk)
+[14:08:46] <whatif> [exa]: sequence_ = \x -> foldr1 (>>) x?
+[14:11:00] <[exa]> yeah except it doesn't match the definition of sequence_ anymore, it's something like sequenceLast or so
+[14:11:26] *** Joins: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net)
+[14:13:14] *** Quits: Techcable (~Techcable@168.235.93.147) (Remote host closed the connection)
+[14:13:22] *** Joins: Techcable (~Techcable@168.235.93.147)
+[14:13:39] *** Quits: fef (~thedawn@user/thedawn) (Ping timeout: 276 seconds)
+[14:15:20] *** Quits: Techcable (~Techcable@168.235.93.147) (Remote host closed the connection)
+[14:15:27] *** Joins: Techcable (~Techcable@168.235.93.147)
+[14:15:30] <__monty__> > let foldrl f z xs = foldr (\x next y -> next $ f y x) id xs z in (foldl f z [a,b,c], foldrl f z [a, b, c])
+[14:15:31] <lambdabot>  (f (f (f z a) b) c,f (f (f z a) b) c)
+[14:15:35] <__monty__> tomsmeding: ^
+[14:15:41] <__monty__> I think this is correct.
+[14:17:45] *** Quits: coolnickname (uid531864@user/coolnickname) (Quit: Connection closed for inactivity)
+[14:18:00] <geekosaur> proves the one but not the other
+[14:18:09] *** Quits: burnsidesLlama (~burnsides@dhcp168-013.wadham.ox.ac.uk) (Ping timeout: 256 seconds)
+[14:18:12] *** Quits: Techcable (~Techcable@168.235.93.147) (Remote host closed the connection)
+[14:18:19] <tomsmeding> > let foldlr f z xs = foldl (\x next y -> next $ f y x) id xs z in (foldr f z [a,b,c], foldlr f z [a,b,c])
+[14:18:20] *** Joins: Techcable (~Techcable@168.235.93.147)
+[14:18:20] <lambdabot>  error:
+[14:18:20] <lambdabot>      • Couldn't match expected type ‘t0 -> Expr’ with actual type ‘Expr’
+[14:18:20] <lambdabot>      • In the expression: a
+[14:18:24] <tomsmeding> Meh
+[14:18:30] *** Quits: lechner (~lechner@debian/lechner) (Ping timeout: 268 seconds)
+[14:18:40] *** Quits: Techcable (~Techcable@168.235.93.147) (Remote host closed the connection)
+[14:18:49] *** Joins: Techcable (~Techcable@168.235.93.147)
+[14:18:55] <__monty__> Well, foldl doesn't work on infinite lists, right? So it can't ever implement foldr.
+[14:19:11] <__monty__> QED : )
+[14:19:18] *** Joins: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net)
+[14:19:30] <tomsmeding> Hm right
+[14:19:45] *** Joins: alx741 (~alx741@157.100.93.160)
+[14:21:32] <__monty__> This is a brilliant blogpost about folds for anyone who wants to understand them better, https://ertes.eu/tutorial/foldr.html (<3 Ertugrul†)
+[14:22:35] *** Joins: vglfr (~vglfr@46.96.180.119)
+[14:22:50] *** Quits: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net) (Remote host closed the connection)
+[14:23:06] <__monty__> geekosaur: I know my proof isn't very rigorous. Would love to hear if I'm wrong though.
+[14:23:49] *** Quits: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net) (Ping timeout: 256 seconds)
+[14:23:57] <geekosaur> doesn't seem like it needs to be any more rigorous to me, although I guess a proper mathematician would want proof that foldr can handle infinite lists :)
+[14:24:27] <geekosaur> (should follow from its definition, though, so shouldn't be difficult)
+[14:26:21] <__monty__> > foldr (const) z [0..]
+[14:26:22] <lambdabot>  0
+[14:26:32] <__monty__> Proof by counterexample : )
+[14:27:03] <__monty__> Or example rather.
+[14:29:03] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Remote host closed the connection)
+[14:30:25] *** Joins: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net)
+[14:32:06] *** Joins: burnsidesLlama (~burnsides@dhcp168-013.wadham.ox.ac.uk)
+[14:35:09] *** Quits: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net) (Ping timeout: 256 seconds)
+[14:35:26] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[14:42:27] *** Quits: Jing (~hedgehog@2604:a840:3::1013) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[14:45:23] <__monty__>  /wg 16
+[14:45:38] <__monty__> Whoops.
+[14:45:51] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[14:48:58] *** Joins: ubert (~Thunderbi@p200300ecdf0994ce1454eef4b6fa1895.dip0.t-ipconnect.de)
+[14:49:40] *** Quits: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470) (Remote host closed the connection)
+[14:51:11] <gentauro> 10:50 < tomsmeding> gentauro: just remembered, if you want to build HLS for a new ghc, rename the correct cabal-*.project file to cabal.project before building
+[14:51:15] *** Joins: Jing (~hedgehog@2604:a840:3::1013)
+[14:51:35] <gentauro> tomsmeding: I just cloned the GitHub repo and built it with the latest `stack` (after `nix-shell`)
+[14:51:39] <gentauro> and it seemed to work
+[14:52:43] <geekosaur> mm, might build for the wrong ghc though. (although I guess at this point most folks are on 8.10.7)
+[14:53:12] *** Joins: alx741 (~alx741@157.100.93.160)
+[14:55:41] <gentauro> hls, nice tip btw `Convert 2000 into 0o3720` :|
+[14:55:43] <gentauro> WTF
+[14:55:56] <gentauro> did somebody give `hls` to much booze over the holidays? xD
+[14:57:14] <geekosaur> o.O
+[14:57:37] *** Joins: KvL (~KvL@user/KvL)
+[14:57:38] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[14:57:58] <__monty__> Hecate: I'd maybe add "Flora is an unofficial alternative index and UI for the Haskell package ecosystem," just because the term "index" is a bit jargon-y and doesn't necessarily imply a UI.
+[14:58:57] *** Quits: mrmr (~mrmr@user/mrmr) (Ping timeout: 240 seconds)
+[14:59:12] *** Joins: kjak (~kjak@pool-108-45-56-21.washdc.fios.verizon.net)
+[15:00:21] <geekosaur> actually I'd say "index" is potentially misleading since it could also refer to the package index used by tooling
+[15:01:00] <geekosaur> I was tripping over that in #ghc last night
+[15:01:28] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[15:02:10] <__monty__> I think that's on purpose though. Flora is meant to be both a new frontend for hackage as well as its own package index that goes past hackage.
+[15:02:18] <__monty__> AFAIUI
+[15:02:51] <geekosaur> but I understand that to be a future direction, not the current intent
+[15:02:59] <geekosaur> frontend first, backend later
+[15:03:12] <geekosaur> for now hackage is the backend
+[15:03:48] <__monty__> Yes, indeed. Though I'm not sure the README needs to refrain from stating the intent rather than the facts as of today.
+[15:08:32] *** Joins: Everything (~Everythin@37.115.210.35)
+[15:09:03] *** Joins: mrmr (~mrmr@user/mrmr)
+[15:11:22] *** Joins: cosimone` (~user@93-47-228-11.ip115.fastwebnet.it)
+[15:11:59] *** Joins: stevan (~stevan@user/stevan)
+[15:12:32] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Ping timeout: 240 seconds)
+[15:13:25] *** Parts: jakalx (~jakalx@base.jakalx.net) ()
+[15:14:09] *** Joins: alx741 (~alx741@157.100.93.160)
+[15:15:26] *** Joins: jonathanx (~jonathan@h-178-174-176-109.A357.priv.bahnhof.se)
+[15:18:27] *** Joins: jakalx (~jakalx@base.jakalx.net)
+[15:19:38] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[15:20:21] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 256 seconds)
+[15:21:13] <stevan> hi, i'm trying to `mmap` a pinned and aligned `MutableByteArray#` but keep running into segfaults no matter what i try, which makes me unsure if the bug is in my code or GHC. the code is available over here: https://github.com/stevana/hs-mmap-mutablebytearray together with the steps needed to reproduce what i'm seeing. i'd appreciate any help, especially around if it's worth reporting this as a ghc bug. 
+[15:21:19] <stevan> in case you're curious about why one would want to do such a thing in the first place: i'd like to write a metrics library where the metrics are computed in-memory in the mutablebytearray using atomic `fetchAddIntArray`s, while persisted to disk and available to other processes via the `mmap`. cheers.
+[15:23:24] *** Joins: ub (~Thunderbi@p200300ecdf0994ceb42bd33431e7317f.dip0.t-ipconnect.de)
+[15:25:46] *** Quits: max22- (~maxime@2a01cb0883359800f1ba63e8a5bb6c8b.ipv6.abo.wanadoo.fr) (Ping timeout: 245 seconds)
+[15:25:49] *** Joins: ProfSimm (~ProfSimm@87.227.196.109)
+[15:26:51] <[exa]> stevan: can you check out which precise operation fails? reading from a mmapped pointer? Did you truncate() the file?
+[15:26:55] <ProfSimm> Wouldn't it be right to say a functional language is like a closed system where you're in full control of time. Time takes on space-like properties. Facts are absolute, not relative moment to moment. But to do anything you need to interact with another system, relative to which, you DO experience time
+[15:28:11] <[exa]> ProfSimm: the "absolute facts" are about purity, not about being functional.
+[15:28:48] <ProfSimm> [exa]: well purity refers to functional purity doesn't it
+[15:29:02] <[exa]> Also, there's nothing about "time" in talking to environs, for example IO provides just causality, which looks a bit like time
+[15:29:09] <geekosaur> even C compilers care about purity
+[15:29:13] <[exa]> there are non-functional pure languages
+[15:29:22] <[exa]> (although scarce)
+[15:29:31] <ProfSimm> [exa]: To me time is causality plus change.
+[15:29:44] <ProfSimm> [exa]: causality implies change anyway
+[15:29:59] <stevan> [exa]: i've documented which operations fail in the readme (i get two different errors depending on the size of the bytearray) its:  https://gitlab.haskell.org/ghc/ghc/-/blob/master/rts/sm/BlockAlloc.c#L833 or https://gitlab.haskell.org/ghc/ghc/-/blob/master/rts/PrimOps.cmm#L113 . i use `System.Posix.Fcntl.fileAllocate` to allocate the file.
+[15:30:05] <geekosaur> but both exist even in pure functional languages, else they'd be pointless
+[15:30:26] <Hecate> __monty__: thanks for the feedback :)
+[15:30:38] <ProfSimm> geekosaur: in a way time doesn't exist in FP because nothing changes once it's defined
+[15:30:54] <ProfSimm> geekosaur: and the moment of definition is usually also not relevant.
+[15:30:56] <geekosaur> stevan, I'd take that to either #ghc or the ghc issue tracker, segfaults in the RTS are almost always ghc bugs
+[15:31:11] <[exa]> stevan: btw why do you allocate memory for mmap?
+[15:32:21] <stevan> geekosaur: thanks, will do.
+[15:32:46] <stevan> [exa]: not sure i follow what you mean?
+[15:33:02] <ProfSimm> here's a question... we know math is abstract, therefore it's very useful. We can apply it to anything. But nothing is literally math as far as we know. So which is more foundational - procedural/imperative programming, or functional?
+[15:33:37] <ProfSimm> It's weird because every implementation is imperative. But specific. Abstraction is universally applicable. But actually doesn't really exist.
+[15:34:14] <geekosaur> not sure either is foundational. (also there are functional implementations, see the reduceron)
+[15:34:46] <[exa]> stevan: it seems you're trying to force mmap() to map the file over something that you allocated with malloc, right?
+[15:35:18] <ProfSimm> geekosaur: the reduceron is interesting but it seems to be based on FPGA, which is implementationally imperative/procedural isn't it
+[15:35:55] <ProfSimm> geekosaur: maybe like particle-wave duality, neither is fundamental instead we oscillate between one or the other infinitely as we dig deeper
+[15:35:59] *** Quits: Jing (~hedgehog@2604:a840:3::1013) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[15:36:12] *** Joins: alx741 (~alx741@157.100.93.160)
+[15:36:17] <ProfSimm> geekosaur: like the saying "it's all turtles" but "it's all dualities"
+[15:36:21] <geekosaur> I'd actually argue the universe is functional underneath
+[15:36:46] <geekosaur> wave/particle duality doesn't flip, at some point "particles" become waves and stay there
+[15:36:52] <ProfSimm> geekosaur: what hints you in that direction
+[15:37:15] <[exa]> stevan: see `man 2 mmap` -- using the first `addr` argument in mmap calls is basically a hint, and you're not giving it a very good hint because your pages there are already used
+[15:37:16] <ProfSimm> geekosaur: oh they do become waves though. The moment you separate them from a macrosystem they become waves
+[15:37:41] <ProfSimm> geekosaur: and in fact the manyworlds hypothesis suggests it's always a wave, that looks particle-like from a specific observer's perspective
+[15:38:19] <geekosaur> also an FPGA is implementationally electrons following a functional paradigm, they don't follow instructions, that an interpretation we put on top of it that breaks down as we look closer
+[15:38:56] <geekosaur> *that's an
+[15:39:00] <ProfSimm> geekosaur: all computers are essentially a structure through which impulses of energy flow. Some path segments connect, some disconnect.
+[15:39:19] <ProfSimm> geekosaur: is this functional or imperative I don't know. We reuse the same path. And the impulses move in space and time
+[15:39:44] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[15:40:11] <ProfSimm> geekosaur: maybe this is the fundamental reality. Impulses of energy travelling the path of least resistance (least/most action principle) through pathways shaped by energy itself. 
+[15:40:20] <[exa]> ProfSimm: you're trying to make an ontology where there's none. Functional, imperative, declarative, esoteric, whateverivish, ..., are all simplifying interpretations of the same thing that allow you to reason efficiently about stuff
+[15:40:22] <geekosaur> you seem to be assuming the truth of your proposition. I'm arguing against it, that time is a thing even in a functional context, and waves are functions
+[15:40:54] <ProfSimm> I'm desperate for ontology
+[15:41:02] <[exa]> life hack: don't
+[15:41:07] <stevan> [exa]: i've just pushed a C version of the test, which i believe uses `mmap` in the same way (and that works)?
+[15:41:46] <geekosaur> time is an emergent property of a system, ultimately. it may appear differently depending on the nature of the system, but it's still there
+[15:42:22] <geekosaur> (physicists don't like this viewpoint, but unless they can point me to an actual "ruler" for time measurement it's the only one we have)
+[15:42:26] <stevan> [exa]: also there's a haskell version that uses `mmap` in the same way and works in the `Mmap` module that you can run with `make works`.
+[15:42:54] <ProfSimm> geekosaur: the measure of time is not what I care about. Just causality and change
+[15:43:01] <[exa]> stevan: why do you do the posix_memaling? also I see no malloc, and running `valgrind` will probably tell you that `buf` is used with an uninitialized (aka random) value
+[15:43:17] *** Quits: mvk (~mvk@2607:fea8:5cdd:f000::917a) (Ping timeout: 240 seconds)
+[15:43:20] <geekosaur> change is an observational attribute, not an attribute of a system
+[15:43:32] <ProfSimm> geekosaur: although there are some theories that causality is an illusion, and it's just two events (effect-antieffect) that occur at once, but we observe them one after another and assume one caused the other.
+[15:43:35] *** Quits: nhatanh02 (~satori@123.24.172.30) (Ping timeout: 256 seconds)
+[15:44:08] <ProfSimm> geekosaur: in that sense, time is indeed absolutely nothing like what we think it is
+[15:44:10] <stevan> [exa]: `mmap` needs page aligned memory, that's what `posix_memalign` does and malloc doesn't.
+[15:44:11] *** Joins: vysn (~vysn@user/vysn)
+[15:44:26] <[exa]> stevan: it can nicely page-align itself, you don't need to care about that
+[15:44:38] <[exa]> read the manual :]
+[15:45:00] *** Joins: mvk (~mvk@2607:fea8:5cdd:f000::917a)
+[15:45:00] <ProfSimm> geekosaur: wouldn't you say most systems seem specified in terms of "this attribute can change" and "this may not change"
+[15:45:26] <ProfSimm> geekosaur: maybe all systems, all machines. A car's wheels can rotate but not rotate off away from the car
+[15:45:27] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[15:45:43] <[exa]> I'm usually just putting NULL as the first argument, there are no reasons for forcing the maps to an exact place in memory IF you do not control the whole address space anyway
+[15:46:04] *** Joins: coolnickname (uid531864@user/coolnickname)
+[15:46:11] <[exa]> stevan: (and I assume you're not writing a linker loader :D )
+[15:46:18] <geekosaur> ProfSimm, we're talking past each other
+[15:46:37] *** Quits: Gurkenglas (~Gurkengla@dslb-002-203-144-204.002.203.pools.vodafone-ip.de) (Ping timeout: 240 seconds)
+[15:47:42] <geekosaur> you're focused on the Newtonian level and effectively asserting it's "reality". I'm focused on the quantum level that enables the Newtonian level, because it does leak through and much of what you assert is enabled only by the quantum wave functions underneath
+[15:47:45] <ProfSimm> geekosaur: I'm sorry, I just wanted to finish a train of thought
+[15:48:02] <stevan> [exa]: i'm not sure i follow, i want the mmap to make the memory allocated by the bytearray to be shared with the file, so that if i poke the bytearray the file is updated. if the first argument to mmap is NULL, then mmap gives me a new pointer that has no connection to the bytearray?
+[15:48:55] <geekosaur> but you don't even need the uantum level, general relativity asserts that causality is questionable. and we already see this with GPS (in fact, that's how GPS works)
+[15:49:20] <ProfSimm> geekosaur: the effect-antieffect being perceived as cause effect is in a way projecting entanglement into Newtonian physics
+[15:49:28] <geekosaur> the causality you see from your frame of reference is not guaranteed to be the causality I see from my frame of reference. this screws with procedural systems badly
+[15:49:47] <stevan> [exa]: i don't just give mmap a hint, i use MAP_FIXED so that mmap uses exactly that address.
+[15:50:07] <[exa]> stevan: you need to make the bytearray at the place where mmap tells you the data is mapped. Just use mmap() instead of malloc() here
+[15:50:17] <geekosaur> also I think we need to take this to -offtopic
+[15:50:19] <ProfSimm> geekosaur: in relativity at least causality is maintained
+[15:50:23] <geekosaur> nope
+[15:50:55] <geekosaur> there are frames of reference where the effect precedes the cause
+[15:51:06] <ProfSimm> geekosaur: wouldn't those exceed C
+[15:51:08] <geekosaur> --> -offtopic
+[15:51:21] <ProfSimm> geekosaur: I'm there but... do I type with a dash
+[15:52:13] <[exa]> stevan: the problem there is that if you make a bytearray with malloc, you occupy the memory pages, and these can't be used for paging in the file data. You need to choose either of the page "backends" there, but not both
+[15:52:32] <geekosaur> ProfSimm: #haskell-offtopic
+[15:53:25] <stevan> [exa]: hmm, wouldn't i need to make a `MutableByteArray#` from a `Ptr` then? is that possible?
+[15:53:36] <[exa]> yes there should be a function for that
+[15:54:43] <stevan> [exa]: do you know where? :-)
+[15:54:55] *** Quits: mrmr (~mrmr@user/mrmr) (Ping timeout: 256 seconds)
+[15:55:47] <[exa]> stevan: I recall there's something that just gives you a MutableVector over the mmap, or even ByteString
+[15:58:36] *** Joins: d0ku (~d0ku@178.43.48.143.ipv4.supernova.orange.pl)
+[15:58:49] <[exa]> ha, you might like Data.Vector.Storable.MMap (package vector-mmap)
+[15:59:10] <[exa]> do you need precisely the MutableByteArray# type? (guess: no)
+[15:59:51] *** Joins: CiaoSen (~Jura@p200300c957347b002a3a4dfffe84dbd5.dip0.t-ipconnect.de)
+[15:59:54] <stevan> i think i do, because i want atomic operations like `fetchAddIntArray#`
+[16:01:09] <[exa]> oh wow, no idea there then
+[16:01:23] <[exa]> but there really should be something similar
+[16:01:47] *** Quits: whatif (~user@47.245.54.240) (Quit: ERC (IRC client for Emacs 26.3))
+[16:02:06] <[exa]> at worst you can do your operations normally over the MVector using ST, and then just put the barrier there manually. Do you need _fast_ interprocess/thread synchronization there?
+[16:02:09] *** Joins: alx741 (~alx741@157.100.93.160)
+[16:03:11] *** Quits: xff0x (~xff0x@2001:1a81:5370:9b00:ba06:1021:b5e3:5719) (Ping timeout: 250 seconds)
+[16:03:24] <stevan> yes, i want lock-free atomic counters as a building block for other metrics such as histograms
+[16:03:52] *** Joins: gaff (~gaff@49.207.213.199)
+[16:04:06] *** Joins: xff0x (~xff0x@2001:1a81:5370:9b00:6eaf:9722:88af:e2d)
+[16:05:07] <c_wraith> do atomic operations work properly on mmapped memory that's shared between processes anyway?
+[16:05:46] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4)
+[16:05:49] <geekosaur> only if you use atomic CPU operations. if you're trying to do STM across processes, stop now; it will not work
+[16:06:08] <[exa]> yeah, only with proper barriers executed in hardware
+[16:06:44] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[16:06:50] <stevan> which fetchAddIntArray# provides, right?
+[16:08:18] <[exa]> yeah it does `lock xadd`
+[16:13:55] <stevan> ok so, [exa] are you sure that the way i use mmap is wrong and not a ghc bug? because otherwise given the current ghc prim ops it doesn't seem possible to do what you suggested (mmap first then create a bytearray from the ptr that mmap returns)?
+[16:14:18] *** Joins: nhatanh02 (~satori@123.24.172.30)
+[16:15:11] <[exa]> I'm not sure why exactly it's failing but certainly mmapping _over_ already mapped pages doesn't seem like a working solution
+[16:16:30] <stevan> already mmaped? does `mallocForeignPtrAlignedBytes` mmap pages?
+[16:17:07] *** Joins: max22- (~maxime@2a01cb088335980025788ae3ce756a00.ipv6.abo.wanadoo.fr)
+[16:17:16] <stevan> s/mallocForeignPtrAlignedBytes/newAlignedPinnedByteArray/
+[16:17:22] *** Quits: mmhat (~mmh@55d48037.access.ecotel.net) (Quit: WeeChat 3.4)
+[16:18:16] <[exa]> the newBytePinnedArray needs to create it in some mapped memory right? (mapped = the pages are available to the process, e.g. as a result of calling brk() or mmap())
+[16:21:09] <stevan> hmm, i don't see this when i run strace though?
+[16:21:35] *** Joins: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net)
+[16:22:11] *** Quits: jespada (~jespada@87.74.33.157) (Quit: Textual IRC Client: www.textualapp.com)
+[16:22:16] *** Quits: coot (~coot@89-64-85-93.dynamic.chello.pl) (Quit: coot)
+[16:22:41] *** Quits: nhatanh02 (~satori@123.24.172.30) (Ping timeout: 256 seconds)
+[16:22:50] <[exa]> stevan: it's probably allocated internally from memory that's already owned by RTS
+[16:23:27] <[exa]> (likewise, malloc() usually doesn't cause a syscall on each call as well)
+[16:23:36] <stevan> ah ok
+[16:24:00] *** Joins: coot (~coot@89-64-85-93.dynamic.chello.pl)
+[16:24:40] *** Joins: alx741 (~alx741@157.100.93.160)
+[16:25:02] <[exa]> anyway that doesn't solve your problem there
+[16:25:19] <stevan> (ok so that explains why the posixMemAlign version works: it allocates outside of the rts)
+[16:25:20] *** Quits: coot (~coot@89-64-85-93.dynamic.chello.pl) (Client Quit)
+[16:25:37] *** Quits: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net) (Ping timeout: 240 seconds)
+[16:26:53] <[exa]> ha!
+[16:27:11] <[exa]> stevan: massiv package does the wrapping internally as such: https://hackage.haskell.org/package/massiv-1.0.1.1/docs/src/Data.Massiv.Array.Manifest.Primitive.html#unsafeAtomicAddIntArray
+[16:28:55] *** Quits: jayant (~quassel@223.236.0.223) (Ping timeout: 256 seconds)
+[16:28:59] <[exa]> so they are somehow creating a temporary MutableByteArray# wrap there and using it for running the primitive operation
+[16:29:32] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[16:30:04] *** Joins: jayant (~quassel@223.236.0.223)
+[16:31:25] *** Quits: acidjnk_new (~acidjnk@p200300d0c7271e70c580124c5fb62625.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[16:31:25] *** Quits: acidjnk (~acidjnk@p200300d0c7271e70c580124c5fb62625.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[16:31:43] *** Quits: burnsidesLlama (~burnsides@dhcp168-013.wadham.ox.ac.uk) (Remote host closed the connection)
+[16:38:15] *** Joins: jespada (~jespada@87.74.33.157)
+[16:45:36] *** Joins: alx741 (~alx741@157.100.93.160)
+[16:47:10] *** Quits: ProfSimm (~ProfSimm@87.227.196.109) (Remote host closed the connection)
+[16:47:25] <stevan> [exa]: thanks, will have a look. meanwhile i tried to mmap already mmapped memory in C and it seems to work. (just pushed changes to the repo.)
+[16:51:17] *** Quits: euandreh (~euandreh@2804:14c:33:9fe5:df45:34e6:a5aa:758) (Ping timeout: 240 seconds)
+[16:51:41] <[exa]> yeah, re-mmapping discards a part of the original mmap, in this case leaving it empty
+[16:51:55] <[exa]> I'd really avoid trying that.
+[16:52:30] *** Joins: euandreh (~euandreh@2804:14c:33:9fe5:fd9c:24e7:5ea:6f47)
+[16:55:46] <stevan> i don't see the point with the massiv example you linked to, they carry around a mutablebytearray in their `MPArray` type, so its no surprise they can do fetchAddIntArray# on it?
+[16:57:57] <stevan> (i dunno this library so maybe i'm missing something obvious, can they build `MPArray` from a `Ptr`?)
+[16:59:07] *** Joins: SummerSonw (~The_viole@203.77.49.232)
+[17:03:49] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[17:08:45] *** Joins: burnsidesLlama (~burnsides@dhcp168-013.wadham.ox.ac.uk)
+[17:08:56] *** Joins: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net)
+[17:09:31] <[exa]> stevan: it looked like that to me
+[17:10:29] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[17:10:29] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[17:12:09] *** Joins: canta (~canta@user/canta)
+[17:13:43] *** Quits: ChaiTRex (~ChaiTRex@user/chaitrex) (Quit: ChaiTRex)
+[17:14:23] *** Quits: burnsidesLlama (~burnsides@dhcp168-013.wadham.ox.ac.uk) (Ping timeout: 256 seconds)
+[17:14:32] *** Joins: ChaiTRex (~ChaiTRex@user/chaitrex)
+[17:15:18] <stevan> the docs for `mallocForeignPtr` which uses ` newAlignedPinnedByteArray# ` say: "although it may be implemented differently internally: you may not assume that the memory returned by 'mallocForeignPtr' has been allocated with 'Foreign.Marshal.Alloc.malloc'" and `Foreign.Mashal.Alloc.malloc` uses C's malloc, if that's true then mmap shouldn't happen twice?
+[17:16:11] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[17:19:13] <[exa]> stevan: maybe it would be reasonable at this point to ask at #ghc if there's some GHC.Exts way to just run the atomic add instruction on a Ptr
+[17:19:39] <[exa]> or on MVector or something
+[17:20:39] *** Joins: alx741 (~alx741@157.100.93.160)
+[17:21:44] *** Joins: yates (~user@fv-nc-f7af8b91e1-234237-1.tingfiber.com)
+[17:23:36] <yates> i don't understand how "lazy evaluation" can work. how can a running program know in advance how many instances of aspecific function call with the same inputs are to be made?
+[17:24:39] <stevan> [exa]: thanks for your help, will do
+[17:25:24] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[17:25:48] <kritzefitz> yates: why do you think that has to be known in advance?
+[17:27:42] <yates> otherwise how does it know when evaluation is necessary?
+[17:27:47] <yates> kritzefitz: ^^
+[17:27:53] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[17:28:47] <yates> maybe i am confused. i'm just taking my first look at haskell
+[17:29:17] <yates> i come from c/c++/assembly
+[17:31:10] <kritzefitz> You don't have to know _in advance_ if something will have to be evaluated. You just start evaluating something if you notice that it is needed right now (i.e. at runtime).
+[17:32:47] <yates> why would a programmer make a function call if the result is not needed immediately?
+[17:33:11] <stevan> yates: consider the following example `take 10 [1..1000]`, because of laziness the whole list [1,2,...,1000] won't be constructed (only [1,2,...,10] is needed because of `take 10`) think of it as you evaluate as much as you need.
+[17:33:20] *** Joins: sagax (~sagax_nb@user/sagax)
+[17:33:25] *** Joins: nhatanh02 (~satori@123.24.172.30)
+[17:34:06] *** Quits: max22- (~maxime@2a01cb088335980025788ae3ce756a00.ipv6.abo.wanadoo.fr) (Ping timeout: 245 seconds)
+[17:34:17] <tdammers> lazy evaluation makes more sense once you have a better intuition for equational reasoning (as opposed to the operational reasoning that is the norm in imperative languages)
+[17:34:32] <lortabac> yates: imagine the expression f (g (h x)), in a strict language the runtime would evaluate (h x) first, then evaluate the application of g to the result and so on
+[17:34:34] *** Quits: jchia[m] (~jchiamatr@2001:470:69fc:105::c50b) (Quit: Client limit exceeded: 20000)
+[17:34:44] <lortabac> in other words it proceeds inside-out
+[17:34:57] *** Joins: jchia[m] (~jchiamatr@2001:470:69fc:105::c50b)
+[17:35:02] <lortabac> in a non-strict language it is the opposite, you start from the "outside"
+[17:35:16] <lortabac> that's the main difference
+[17:36:50] *** Quits: Feuermagier (~Feuermagi@user/feuermagier) (Remote host closed the connection)
+[17:37:09] *** Joins: Feuermagier (~Feuermagi@user/feuermagier)
+[17:39:20] *** Quits: KvL (~KvL@user/KvL) (Quit: KvL)
+[17:40:03] <yates> lortabac: sounds like composition "from the left" or "from the right" that is discussed in abstract algebra
+[17:41:41] <yates> i've bitten off enough for now - thank you for your kind and helpful input
+[17:41:54] <yates> (baby steps, Ellie...)
+[17:41:54] <lortabac> yates: I'm not familiar with abstract algebra, in practice the difference is that the arguments of a function are not evaluated immediately (and sometimes not evaluated at all)
+[17:42:26] <lortabac> for example if you have (f x = 1), x does not need to be evaluated at all
+[17:43:11] *** Joins: alx741 (~alx741@157.100.93.160)
+[17:43:12] <lortabac> whereas in a strict context it would be evaluated
+[17:44:12] <yates> i'll have to start learning the semantics
+[17:44:44] <yates> is there a recommended book on learning haskell?
+[17:44:54] *** Quits: Everything (~Everythin@37.115.210.35) (Quit: leaving)
+[17:46:58] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[17:47:04] *** Quits: infinity0 (~infinity0@occupy.ecodis.net) (Remote host closed the connection)
+[17:47:54] *** Quits: xsperry (~xs@user/xsperry) (Remote host closed the connection)
+[17:48:15] *** Joins: infinity0 (~infinity0@occupy.ecodis.net)
+[17:48:21] <lortabac> @where learn
+[17:48:21] <lambdabot> https://wiki.haskell.org/Learning_Haskell
+[17:48:55] <lortabac> yates: I don't know how up-to-date this page is, but hopefully it's a starting point
+[17:49:57] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 240 seconds)
+[17:50:41] *** Joins: dsrt^ (~dsrt@207.5.21.20)
+[17:52:54] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[17:58:43] *** Joins: max22- (~maxime@2a01cb08833598005001445283c93f22.ipv6.abo.wanadoo.fr)
+[18:00:59] *** Joins: slowButPresent (~slowButPr@user/slowbutpresent)
+[18:01:44] *** Joins: lavaman (~lavaman@98.38.249.169)
+[18:03:05] *** Joins: burnsidesLlama (~burnsides@dhcp168-013.wadham.ox.ac.uk)
+[18:04:07] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[18:04:08] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[18:04:08] *** Joins: wroathe (~wroathe@user/wroathe)
+[18:04:48] *** Joins: alx741 (~alx741@157.100.93.160)
+[18:06:31] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 256 seconds)
+[18:07:15] *** Joins: xb0o2 (~xb0o2@user/xb0o2)
+[18:07:40] *** Joins: Jing (~hedgehog@2604:a840:3::1013)
+[18:07:49] *** Quits: CiaoSen (~Jura@p200300c957347b002a3a4dfffe84dbd5.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[18:11:56] *** Joins: stevenxl (~stevenxl@174.128.182.180)
+[18:12:40] <yates> lortabac: thank you
+[18:13:05] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[18:16:22] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[18:24:28] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[18:25:12] *** Quits: stiell (~stiell@gateway/tor-sasl/stiell) (Ping timeout: 276 seconds)
+[18:25:49] *** Joins: stiell (~stiell@gateway/tor-sasl/stiell)
+[18:26:30] <tomsmeding> yates: for laziness, also consider watching this: https://youtu.be/I4lnCG18TaY
+[18:26:55] *** Quits: deadmarshal (~deadmarsh@95.38.118.93) (Ping timeout: 256 seconds)
+[18:27:47] <tomsmeding> Depending on how far you are it might use a bit more haskell stuff than you know yet, but since I've watched that (as a haskeller with 4 years of xp or something) I feel like every beginner who has at least one question about laziness, should see this kind of visualisation
+[18:28:38] <tomsmeding> This video is just the best that I know of, but that's partly because there just isn't much content in that form
+[18:28:59] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Remote host closed the connection)
+[18:30:41] *** Joins: shriekingnoise (~shrieking@186.137.144.80)
+[18:31:26] *** Joins: alx741 (~alx741@157.100.93.160)
+[18:33:35] *** Joins: CiaoSen (~Jura@p200300c957347b002a3a4dfffe84dbd5.dip0.t-ipconnect.de)
+[18:34:17] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[18:35:59] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[18:39:37] *** Quits: neurocyte (~neurocyte@user/neurocyte) (Ping timeout: 240 seconds)
+[18:41:32] *** Joins: neurocyte (~neurocyte@IP-212232081017.dynamic.medianet-world.de)
+[18:41:32] *** Quits: neurocyte (~neurocyte@IP-212232081017.dynamic.medianet-world.de) (Changing host)
+[18:41:32] *** Joins: neurocyte (~neurocyte@user/neurocyte)
+[18:41:51] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[18:41:51] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[18:41:51] *** Joins: wroathe (~wroathe@user/wroathe)
+[18:45:50] *** Joins: kritzefitz_ (~kritzefit@fw-front.credativ.com)
+[18:45:54] *** Parts: kritzefitz_ (~kritzefit@fw-front.credativ.com) ()
+[18:45:54] *** Joins: FinnElija (~finn_elij@user/finn-elija/x-0085643)
+[18:46:37] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[18:52:35] *** Joins: alx741 (~alx741@157.100.93.160)
+[18:53:31] *** Joins: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4)
+[18:53:44] *** Quits: bollu (~bollu@159.65.151.13) (Quit: The Lounge - https://thelounge.chat)
+[18:54:15] *** Joins: bollu (~bollu@159.65.151.13)
+[18:54:41] *** Quits: SummerSonw (~The_viole@203.77.49.232) (Ping timeout: 256 seconds)
+[18:54:50] *** Joins: Gurkenglas (~Gurkengla@dslb-002-203-144-204.002.203.pools.vodafone-ip.de)
+[18:55:42] *** Quits: kritzefitz (~kritzefit@debian/kritzefitz) (Remote host closed the connection)
+[18:56:24] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[18:58:30] *** Joins: kritzefitz (~kritzefit@debian/kritzefitz)
+[19:01:11] *** Joins: xsperry (~xs@cpe-188-129-71-242.dynamic.amis.hr)
+[19:01:15] *** Quits: xsperry (~xs@cpe-188-129-71-242.dynamic.amis.hr) (Changing host)
+[19:01:15] *** Joins: xsperry (~xs@user/xsperry)
+[19:02:57] *** Joins: sub0 (~bc8147f2@cerf.good1.com)
+[19:05:47] *** Joins: `2jt (~jtomas@153.red-83-53-252.dynamicip.rima-tde.net)
+[19:12:50] *** Joins: sirlensalot (~sirlensal@ool-44c5f8c9.dyn.optonline.net)
+[19:14:12] *** Joins: alx741 (~alx741@157.100.93.160)
+[19:21:28] *** Quits: burnsidesLlama (~burnsides@dhcp168-013.wadham.ox.ac.uk) (Remote host closed the connection)
+[19:21:57] *** Joins: burnsidesLlama (~burnsides@dhcp168-013.wadham.ox.ac.uk)
+[19:23:33] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[19:23:35] *** Quits: jinsun (~quassel@user/jinsun) (Read error: Connection reset by peer)
+[19:25:40] *** Joins: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net)
+[19:26:13] *** Quits: burnsidesLlama (~burnsides@dhcp168-013.wadham.ox.ac.uk) (Ping timeout: 240 seconds)
+[19:27:07] *** Joins: polyphem (~rod@2a02:810d:640:776c:e450:3ca3:b389:687a)
+[19:27:18] *** Quits: lagash_ (lagash@lagash.shelltalk.net) (Quit: ZNC - https://znc.in)
+[19:27:40] *** stevan is now known as stevan_
+[19:28:01] *** Quits: neurocyte (~neurocyte@user/neurocyte) (Quit: The Lounge - https://thelounge.chat)
+[19:28:17] *** Joins: spaceseller (~spacesell@31.147.205.13)
+[19:28:22] *** Joins: deadmarshal (~deadmarsh@95.38.118.93)
+[19:30:23] *** Quits: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net) (Ping timeout: 256 seconds)
+[19:30:35] *** Joins: lagash (lagash@lagash.shelltalk.net)
+[19:32:37] *** Quits: deadmarshal (~deadmarsh@95.38.118.93) (Ping timeout: 240 seconds)
+[19:32:47] *** Joins: fef (~thedawn@user/thedawn)
+[19:34:21] *** Quits: d0ku (~d0ku@178.43.48.143.ipv4.supernova.orange.pl) (Ping timeout: 256 seconds)
+[19:34:22] *** Joins: lechner (~lechner@debian/lechner)
+[19:35:28] *** Quits: stevan_ (~stevan@user/stevan) (Quit: leaving)
+[19:38:11] *** Joins: neurocyte (~neurocyte@IP-212232081017.dynamic.medianet-world.de)
+[19:38:11] *** Quits: neurocyte (~neurocyte@IP-212232081017.dynamic.medianet-world.de) (Changing host)
+[19:38:11] *** Joins: neurocyte (~neurocyte@user/neurocyte)
+[19:40:21] *** Joins: alx741 (~alx741@157.100.93.160)
+[19:40:39] <tomjaguarpaw> Is it usual that pandoc takes 2GB and over 7 minutes to compile?  It was always bad, but I don't remember it being that bad.
+[19:41:36] <tomjaguarpaw> Hmm, over 4GB peak usage.  Perhaps something has gone wrong here ...
+[19:42:08] <[exa]> tomjaguarpaw: some people here would probably argue that 4GB and 7 minutes is not yet in the "bad" range :D
+[19:43:29] *** Quits: lortabac (~lortabac@2a01:e0a:541:b8f0:3c92:b563:832f:4576) (Quit: WeeChat 2.8)
+[19:43:35] <tomjaguarpaw> Do we know why this happens?  Everyone knows that GHC uses loads of memory, but I've never heard an explanation why.
+[19:44:32] <polyphem> ghc, the GreedyHaskellCompiler :)
+[19:48:04] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[19:49:10] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[19:50:06] <janus> tomjaguarpaw: i think there is some folklore around how to minimize resource usage of ghc? e.g. i have heard that manually written instances compile faster than derived ones
+[19:52:27] <tomjaguarpaw> It finally compiled!  (On the second try after closing other programs to free up memory)
+[19:54:55] <geekosaur> janus, only Generic instances
+[19:55:02] *** Quits: motherfsck (~motherfsc@user/motherfsck) (Ping timeout: 240 seconds)
+[19:56:08] *** Quits: vgtw (~vgtw@c-2359205c.07-348-756d651.bbcust.telenor.se) (Quit: ZNC - https://znc.in)
+[20:00:13] *** Quits: vysn (~vysn@user/vysn) (Ping timeout: 240 seconds)
+[20:00:19] <sub0> is there some extension that lets you import two modules with class instance for the same type (and allowing you to pick one of them)?
+[20:01:17] *** Quits: cosimone` (~user@93-47-228-11.ip115.fastwebnet.it) (Ping timeout: 240 seconds)
+[20:02:42] *** Quits: chele (~chele@user/chele) (Remote host closed the connection)
+[20:07:00] *** Joins: alx741 (~alx741@157.100.93.160)
+[20:07:54] *** Quits: gehmehgeh (~user@user/gehmehgeh) (Ping timeout: 276 seconds)
+[20:08:06] *** Joins: jinsun (~quassel@user/jinsun)
+[20:08:41] *** Joins: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net)
+[20:08:55] *** Joins: gehmehgeh (~user@user/gehmehgeh)
+[20:10:37] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[20:11:01] *** Quits: geekosaur (~geekosaur@xmonad/geekosaur) (Remote host closed the connection)
+[20:11:52] <lechner> Hi, a few months ago I read about a tiny Haskell-like language with an cool, interactive REPL. It was from two guys in Israel. They have a tutorial online. Does anyone remember what I am taking about? Thanks!
+[20:16:00] *** Joins: geekosaur (~geekosaur@xmonad/geekosaur)
+[20:18:02] <geekosaur> sub0, no, all instances are always global
+[20:18:53] <sub0> seems like it could be a useful extension though? right now I can't use two modules that do that, even if I don't use any of the class methods
+[20:19:35] <geekosaur> would require both a complete redesign of classes, and whole-program compilation
+[20:19:59] *** Joins: zer0bitz (~zer0bitz@196.244.192.60)
+[20:20:15] <sub0> why both? we can import modules that use same function or type names, and pick which one we use, without whole-program compilation
+[20:20:57] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 240 seconds)
+[20:21:21] <geekosaur> because with separate compilation the only way a module knows a class or an instance is a global variable
+[20:21:49] <geekosaur> so the whole class system is designed around that
+[20:22:52] *** Quits: Jing (~hedgehog@2604:a840:3::1013) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[20:23:00] <sub0> I don't get why that would be the case. why can't we have per module class instances, and decide which instances we want to import and use, if any
+[20:23:05] *** Quits: fef (~thedawn@user/thedawn) (Quit: Leaving)
+[20:23:59] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[20:25:57] *** Quits: vglfr (~vglfr@46.96.180.119) (Ping timeout: 240 seconds)
+[20:26:22] <geekosaur> because the type system becomes unsound
+[20:26:57] <geekosaur> if I build a Map with one Ord instance and pass it to a module with a different Ord instance, the module is broken. same with Data.HashMap and Hashable instances
+[20:27:59] <geekosaur> what you want are SML openable modules, which are quite different from Haskell classes
+[20:28:23] <geekosaur> we have a limited ability to do that via Backpack but it's pretty much undocumented
+[20:28:23] *** Joins: alx741 (~alx741@157.100.93.160)
+[20:28:25] <sub0> hmm. so for that to work, instances would need to be attached to objects, not types
+[20:28:37] *** Quits: CiaoSen (~Jura@p200300c957347b002a3a4dfffe84dbd5.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[20:28:48] *** Joins: motherfsck (~motherfsc@user/motherfsck)
+[20:30:07] <sub0> is that how SML modules work?
+[20:32:27] <geekosaur> no
+[20:33:26] *** Joins: gioyik (~gioyik@gateway/tor-sasl/gioyik)
+[20:34:38] <geekosaur> I'm a bit weak on it but I think you can open a functor (parameterized module) locally and provide it with e.g. an Ord "instance" via a signature, but any value you work with has a type which includes the "instance" and will mismatch when passed to a functor parameterized differently
+[20:35:42] *** Quits: jayant (~quassel@223.236.0.223) (Read error: Connection reset by peer)
+[20:36:16] *** Joins: fresheyeball (~fresheyeb@c-76-25-93-164.hsd1.co.comcast.net)
+[20:37:37] *** Joins: econo (uid147250@user/econo)
+[20:37:37] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[20:38:21] *** Quits: jinsun (~quassel@user/jinsun) (Read error: Connection reset by peer)
+[20:39:31] *** Quits: motherfsck (~motherfsc@user/motherfsck) (Ping timeout: 256 seconds)
+[20:41:10] *** Joins: jinsun (~quassel@user/jinsun)
+[20:42:13] *** Joins: burnsidesLlama (~burnsides@dhcp168-013.wadham.ox.ac.uk)
+[20:42:23] *** Joins: Akiva (~Akiva@user/Akiva)
+[20:42:33] *** Joins: tzh (~tzh@c-24-21-73-154.hsd1.or.comcast.net)
+[20:43:03] <geekosaur> anyway if it were permitted, separate compilation would be impossible unless you *always* specified the "instance" you wanted (as SML functors do), since it wouldn't be able to resolve the instance at all otherwise
+[20:45:57] *** Quits: mvk (~mvk@2607:fea8:5cdd:f000::917a) (Ping timeout: 240 seconds)
+[20:47:37] *** Quits: burnsidesLlama (~burnsides@dhcp168-013.wadham.ox.ac.uk) (Ping timeout: 240 seconds)
+[20:47:43] *** Joins: timCF (~timCF@m91-129-100-224.cust.tele2.ee)
+[20:47:59] *** Quits: spaceseller (~spacesell@31.147.205.13) (Quit: Leaving)
+[20:50:35] *** Joins: vglfr (~vglfr@46.96.180.119)
+[20:50:37] *** Joins: MoC (~moc@user/moc)
+[20:51:50] *** Quits: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net) (Remote host closed the connection)
+[20:52:10] *** Joins: vgtw (~vgtw@c-2359205c.07-348-756d651.bbcust.telenor.se)
+[20:53:29] *** Joins: motherfsck (~motherfsc@user/motherfsck)
+[20:55:55] *** Joins: alx741 (~alx741@157.100.93.160)
+[20:57:35] *** Quits: obfusk_ (~quassel@a82-161-150-56.adsl.xs4all.nl) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[20:57:58] *** Joins: obfusk (~quassel@a82-161-150-56.adsl.xs4all.nl)
+[20:58:59] *** Joins: slack1256 (~slack1256@191.126.227.213)
+[20:59:01] <EvanR> sub0, there's a video about why type classes should be... on types https://www.youtube.com/watch?v=hIZxTQP1ifo
+[20:59:27] *** Joins: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470)
+[20:59:47] <slack1256> Is there a function with the signature `idCallStack :: HasCallStack => a -> a`?
+[20:59:55] *** Quits: motherfsck (~motherfsc@user/motherfsck) (Ping timeout: 256 seconds)
+[21:00:16] *** Quits: timCF (~timCF@m91-129-100-224.cust.tele2.ee) (Quit: leaving)
+[21:00:27] *** Joins: fef (~thedawn@user/thedawn)
+[21:00:27] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[21:00:50] <geekosaur> EvanR, their real question is why are they global instead of module local
+[21:01:51] <polyphem> this talk https://www.youtube.com/watch?v=2EdQFCP5mZ8 loks at typeclasses in comparison to with scalas implicits , funny talk
+[21:02:02] <polyphem> *looks*
+[21:07:59] *** Joins: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net)
+[21:12:24] *** Joins: ProfSimm (~ProfSimm@87.227.196.109)
+[21:13:44] *** Joins: motherfsck (~motherfsc@user/motherfsck)
+[21:16:51] *** Joins: alx741 (~alx741@157.100.93.160)
+[21:17:42] *** Joins: johnw (~johnw@76-234-69-149.lightspeed.frokca.sbcglobal.net)
+[21:19:01] *** Joins: CiaoSen (~Jura@p200300c957347b002a3a4dfffe84dbd5.dip0.t-ipconnect.de)
+[21:19:24] *** Joins: lbseale (~ep1ctetus@user/ep1ctetus)
+[21:23:18] *** Quits: gioyik (~gioyik@gateway/tor-sasl/gioyik) (Ping timeout: 276 seconds)
+[21:23:34] *** Joins: deadmarshal (~deadmarsh@95.38.118.93)
+[21:25:25] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[21:27:30] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[21:27:30] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[21:27:31] *** Joins: wroathe (~wroathe@user/wroathe)
+[21:28:37] *** Joins: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net)
+[21:28:57] *** Quits: motherfsck (~motherfsc@user/motherfsck) (Ping timeout: 240 seconds)
+[21:29:30] *** Joins: Kaiepi (~Kaiepi@156.34.47.253)
+[21:29:36] *** Joins: Midjak (~Midjak@may53-1-78-226-116-92.fbx.proxad.net)
+[21:31:57] *** Quits: kjak (~kjak@pool-108-45-56-21.washdc.fios.verizon.net) (Ping timeout: 240 seconds)
+[21:33:21] *** Quits: yauhsien (~yauhsien@61-231-19-17.dynamic-ip.hinet.net) (Ping timeout: 256 seconds)
+[21:33:21] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[21:37:44] *** Quits: lbseale (~ep1ctetus@user/ep1ctetus) (Read error: Connection reset by peer)
+[21:40:28] *** Joins: kjak (~kjak@pool-108-45-56-21.washdc.fios.verizon.net)
+[21:41:32] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[21:41:32] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[21:41:32] *** Joins: wroathe (~wroathe@user/wroathe)
+[21:43:15] *** Joins: alx741 (~alx741@157.100.93.160)
+[21:44:51] *** Joins: jgeerds (~jgeerds@55d4ac73.access.ecotel.net)
+[21:45:57] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 240 seconds)
+[21:46:40] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[21:47:34] *** Quits: mrmonday (~robert@what.i.hope.is.not.a.tabernaevagant.es) (Quit: .)
+[21:49:23] *** Joins: mrmonday (~robert@what.i.hope.is.not.a.tabernaevagant.es)
+[21:49:48] *** Joins: coot (~coot@89-64-85-93.dynamic.chello.pl)
+[21:51:50] *** Quits: gaff (~gaff@49.207.213.199) (Quit: Bye ...)
+[21:52:08] *** Joins: gaff (~gaff@49.207.213.199)
+[21:52:20] *** Quits: gaff (~gaff@49.207.213.199) (Client Quit)
+[21:53:53] *** Quits: fresheyeball (~fresheyeb@c-76-25-93-164.hsd1.co.comcast.net) (Quit: WeeChat 2.9)
+[21:54:17] *** Quits: tromp (~textual@dhcp-077-249-230-040.chello.nl) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[21:55:37] *** Joins: motherfsck (~motherfsc@user/motherfsck)
+[21:58:56] *** Joins: otherwise (~otherwise@2601:602:880:90f0:b9b8:da9b:a3ca:da99)
+[21:59:15] *** Joins: gioyik (~gioyik@gateway/tor-sasl/gioyik)
+[22:04:52] *** Joins: alx741 (~alx741@157.100.93.160)
+[22:06:16] *** Joins: takuan (~takuan@178-116-218-225.access.telenet.be)
+[22:09:28] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[22:09:31] *** Quits: takuan (~takuan@178-116-218-225.access.telenet.be) (Remote host closed the connection)
+[22:12:45] *** Joins: vysn (~vysn@user/vysn)
+[22:17:41] *** Joins: merijn (~merijn@83-160-49-249.ip.xs4all.nl)
+[22:18:23] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[22:18:23] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[22:18:23] *** Joins: wroathe (~wroathe@user/wroathe)
+[22:18:28] *** Joins: Sgeo (~Sgeo@user/sgeo)
+[22:21:01] *** Joins: ec_ (~ec@gateway/tor-sasl/ec)
+[22:21:17] *** ec_ is now known as ec
+[22:21:53] *** Joins: shapr (~user@2601:7c0:c202:5190:269b:9097:c1eb:4c93)
+[22:24:57] *** Quits: motherfsck (~motherfsc@user/motherfsck) (Ping timeout: 240 seconds)
+[22:25:49] *** Joins: alx741 (~alx741@157.100.93.160)
+[22:26:17] *** Quits: `2jt (~jtomas@153.red-83-53-252.dynamicip.rima-tde.net) (Ping timeout: 240 seconds)
+[22:26:53] *** Quits: stevenxl (~stevenxl@174.128.182.180) (Quit: leaving)
+[22:27:37] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[22:27:55] *** Quits: MoC (~moc@user/moc) (Quit: Konversation terminated!)
+[22:28:22] *** Quits: shapr (~user@2601:7c0:c202:5190:269b:9097:c1eb:4c93) (Remote host closed the connection)
+[22:29:45] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[22:30:43] *** Joins: shapr (~user@2601:7c0:c202:5190:daf3:e6d8:8056:7417)
+[22:30:58] *** Joins: jco (~jco@90-228-194-139-no542.tbcn.telia.com)
+[22:31:20] <sub0> should I use process or typed-process for running a CLI program and interacting with its stdin/stdout? 
+[22:33:19] <jco> Hi, is there a key I can press in `ghcid` to make it "rerun"? I'm using it for running Cabal tests, but it seems it doesn't "detect" changes in my system-under-test code, so I have to make a dummy change in the test file, to make it pick up that something needs to happen...
+[22:35:39] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[22:35:39] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[22:35:39] *** Joins: wroathe (~wroathe@user/wroathe)
+[22:35:46] *** Joins: justsomeguy (~justsomeg@user/justsomeguy)
+[22:36:51] *** Joins: `2jt (~jtomas@153.red-83-53-252.dynamicip.rima-tde.net)
+[22:36:56] <EvanR> I've used System.Process without much problem
+[22:38:09] *** Joins: burnsidesLlama (~burnsides@dhcp168-013.wadham.ox.ac.uk)
+[22:38:24] *** Joins: aku (~aku@163.172.137.34)
+[22:39:37] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 240 seconds)
+[22:41:42] *** Quits: hyiltiz (~quassel@31.220.5.250) (Ping timeout: 260 seconds)
+[22:42:03] *** Parts: jakalx (~jakalx@base.jakalx.net) ()
+[22:44:47] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Ping timeout: 268 seconds)
+[22:45:43] *** Joins: hyiltiz (~quassel@31.220.5.250)
+[22:46:38] *** Joins: jakalx (~jakalx@base.jakalx.net)
+[22:48:20] *** Joins: alx741 (~alx741@157.100.93.160)
+[22:49:13] *** Quits: otherwise (~otherwise@2601:602:880:90f0:b9b8:da9b:a3ca:da99) ()
+[22:51:37] *** Quits: merijn (~merijn@83-160-49-249.ip.xs4all.nl) (Ping timeout: 240 seconds)
+[22:56:01] *** Joins: cosimone (~user@93-47-228-11.ip115.fastwebnet.it)
+[22:56:17] *** Quits: deadmarshal (~deadmarsh@95.38.118.93) (Ping timeout: 240 seconds)
+[22:58:19] *** Quits: TheCoffeMaker (~TheCoffeM@user/thecoffemaker) (Quit: So long and thanks for all the fish)
+[22:58:34] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[22:58:52] *** Joins: motherfsck (~motherfsc@user/motherfsck)
+[22:59:02] *** Joins: Tuplanolla (~Tuplanoll@91-159-69-90.elisa-laajakaista.fi)
+[22:59:54] *** Joins: TheCoffeMaker (~TheCoffeM@user/thecoffemaker)
+[23:01:01] *** Quits: slack1256 (~slack1256@191.126.227.213) (Remote host closed the connection)
+[23:01:37] *** Joins: tromp (~textual@dhcp-077-249-230-040.chello.nl)
+[23:08:41] *** Quits: thomasjm[m] (~thomasjmm@2001:470:69fc:105::c6d9) (Quit: Client limit exceeded: 20000)
+[23:10:15] *** Quits: justsomeguy (~justsomeg@user/justsomeguy) (Ping timeout: 256 seconds)
+[23:10:15] *** Quits: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net) (Ping timeout: 256 seconds)
+[23:12:15] *** Joins: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net)
+[23:15:19] *** Quits: sub0 (~bc8147f2@cerf.good1.com) (Quit: CGI:IRC (Error))
+[23:15:40] *** Joins: sub0 (~bc8147f2@cerf.good1.com)
+[23:16:47] *** Joins: alx741 (~alx741@157.100.93.160)
+[23:20:59] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[23:25:04] *** Joins: Erutuon (~Erutuon@user/erutuon)
+[23:32:24] *** Joins: justsomeguy (~justsomeg@user/justsomeguy)
+[23:34:20] *** Quits: werneta_ (~werneta@70-142-214-115.lightspeed.irvnca.sbcglobal.net) (Quit: Lost terminal)
+[23:35:03] *** Quits: juhp (~juhp@128.106.188.82) (Ping timeout: 256 seconds)
+[23:36:44] *** Joins: juhp (~juhp@128.106.188.82)
+[23:38:08] *** Joins: mvk (~mvk@2607:fea8:5cdd:f000::917a)
+[23:39:18] *** Joins: alx741 (~alx741@157.100.93.160)
+[23:39:59] *** Joins: zincy_ (~zincy@2a00:23c8:970c:4801:8d43:554e:d62c:915d)
+[23:40:35] *** Quits: zincy_ (~zincy@2a00:23c8:970c:4801:8d43:554e:d62c:915d) (Remote host closed the connection)
+[23:40:51] *** Joins: zincy_ (~zincy@2a00:23c8:970c:4801:8d43:554e:d62c:915d)
+[23:41:24] *** Quits: zincy_ (~zincy@2a00:23c8:970c:4801:8d43:554e:d62c:915d) (Remote host closed the connection)
+[23:42:56] *** Quits: alx741 (~alx741@157.100.93.160) (Read error: Connection reset by peer)
+[23:44:17] *** Quits: mvk (~mvk@2607:fea8:5cdd:f000::917a) (Ping timeout: 240 seconds)
+[23:44:46] *** Joins: mvk (~mvk@2607:fea8:5cdd:f000::45db)
+[23:45:49] *** Quits: SridharRatnakuma (~sridmatri@2001:470:69fc:105::1c2) (Quit: Client limit exceeded: 20000)
+[23:46:29] *** Quits: octeep[m] (~octeepoct@2001:470:69fc:105::1:3dbf) (Quit: Client limit exceeded: 20000)
+[23:47:31] *** Quits: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net) (Ping timeout: 256 seconds)
+[23:47:34] *** Quits: xb0o2 (~xb0o2@user/xb0o2) (Quit: Client closed)
+[23:49:28] *** Quits: mvk (~mvk@2607:fea8:5cdd:f000::45db) (Remote host closed the connection)
+[23:49:50] *** Quits: Heffalump[m] (~hsenagmat@2001:470:69fc:105::e11) (Quit: Client limit exceeded: 20000)
+[23:50:18] *** Joins: mvk (~mvk@2607:fea8:5cdd:f000::45db)
+[23:50:27] *** Joins: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net)
+[23:53:32] <[itchyjunk]> I know this might be a horrible solution to the problem but the exercise said to define a function f :: String -> Sting that take string and returns the upper case of it.
+[23:53:34] <[itchyjunk]> https://bpa.st/ZEGQ
+[23:53:41] <[itchyjunk]> this is my first solution to it
+[23:53:45] *** Joins: thomasjm[m] (~thomasjmm@2001:470:69fc:105::c6d9)
+[23:53:57] *** Joins: Heffalump[m] (~hsenagmat@2001:470:69fc:105::e11)
+[23:53:57] *** Quits: aidy (~aidy@2001:470:69fc:105::c7b4) (Quit: Client limit exceeded: 20000)
+[23:54:09] *** Quits: bb010g (~bb010g@2001:470:69fc:105::9a5) (Quit: Client limit exceeded: 20000)
+[23:54:11] *** Joins: octeep[m] (~octeepoct@2001:470:69fc:105::1:3dbf)
+[23:54:19] <dsal> @hoogle toUpper
+[23:54:19] <lambdabot> Data.Char toUpper :: Char -> Char
+[23:54:19] <lambdabot> GHC.Unicode toUpper :: Char -> Char
+[23:54:19] <lambdabot> Data.Text toUpper :: Text -> Text
+[23:54:24] *** Joins: SridharRatnakuma (~sridmatri@2001:470:69fc:105::1c2)
+[23:54:33] *** Joins: bb010g (~bb010g@2001:470:69fc:105::9a5)
+[23:54:40] *** Joins: polyphem_ (~rod@2a02:810d:640:776c:e450:3ca3:b389:687a)
+[23:54:46] *** Joins: aidy (~aidy@2001:470:69fc:105::c7b4)
+[23:54:53] <monochrom> You currently have Char->Char but you're on the right track.
+[23:55:33] <dsal> Char -> Char is definitely the right start.
+[23:55:34] *** Quits: kalxd[m] (~kalxdmatr@2001:470:69fc:105::1:576e) (Quit: Client limit exceeded: 20000)
+[23:56:01] <[itchyjunk]> wait, my solution doesn't satisfy the requirement of problem 1 here ?
+[23:56:01] *** Joins: kalxd[m] (~kalxdmatr@2001:470:69fc:105::1:576e)
+[23:56:02] <[itchyjunk]> https://www.cantab.net/users/antoni.diller/haskell/questions/quest05.pdf
+[23:56:11] <geekosaur> Char is not String
+[23:56:13] *** Quits: polyphem (~rod@2a02:810d:640:776c:e450:3ca3:b389:687a) (Ping timeout: 240 seconds)
+[23:56:22] <[itchyjunk]> ah right String is [Char] dur
+[23:56:43] <geekosaur> you're missing only one part
+[23:57:12] <geekosaur> the same part you'd be missing if you had used Data.Char.toUpper instead of defining it yourself
+[23:58:16] <monochrom> You are just one step away, and the title of the PDF says what it is. :)
+[23:58:32] <[itchyjunk]> ah i use map `map toUpper "string"`
+[23:58:40] *** Joins: simendsjo (~user@84.211.91.241)
+[23:58:41] <[itchyjunk]> i just need to incorporate that into a function
+[23:58:45] <monochrom> Well, apart from handling non-English letters such as û...
+[23:58:48] <[itchyjunk]> so it's `String -> String`
+[23:58:59] <geekosaur> Data.Char doesn't either, iiirc
+[23:59:57] *** Quits: vysn (~vysn@user/vysn) (Ping timeout: 240 seconds)
+[23:59:59] <dsal> BTW, if you want to avoid a guard, you can write the above like `toUpper x = if x `elem` ['a'..'z'] then chr (ord x - 32)`

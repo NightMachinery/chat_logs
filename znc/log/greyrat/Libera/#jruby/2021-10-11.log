@@ -1,0 +1,67 @@
+[06:57:13] <byteit101[m]> There are already two workarounds, which I put in https://github.com/jruby/jruby/issues/6888
+[18:39:39] *** Joins: deividrodriguez[ (~deividrod@2001:470:69fc:105::1:16b9)
+[18:42:23] <deividrodriguez[> Hello friends! Rubytogether kindly sent me an OS X machine to be able to help out with MacOS specific issues. I'm setting it up now, but I'm unable to install jruby. This is what I get... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/f69fd5aec94cafa4f0ab57cc47b7b5fb2f8fb991)
+[18:42:37] <deividrodriguez[> Any ideas?
+[18:50:57] <deividrodriguez[> I guess it's some issue with this new M1 architecture?
+[20:00:25] <headius> deivid.rodriguez: yeah there are two issues I know of with M1 right now: varargs and signing the jffi binary
+[20:00:34] <headius> the latter might be an issue with all macos 11+
+[20:03:21] <headius> I believe the ffi gem got updates at some point to use libffi functions for setting up varargs, while the jffi library does not and jnr-ffi (the Java-facing API) sets them up manually
+[20:03:32] <headius> so there's a bit of work to get varargs using the proper libffi logic
+[20:06:00] <headius> enebo: shall I merge that errno fix then?
+[20:09:30] <deividrodriguez[> aha, thanks. So as of now, it's not yet possible to run jruby on M1, correct?
+[20:15:08] <headius> you can run it with an x86 JDK, or do limited things with an M1 JDK
+[20:15:22] <headius> I hope to get it fixed before RubyConf though, in 9.3.2
+[20:26:58] <deividrodriguez[> Great, I'll look into installing an x86 JDK for now, thank you!
+[20:28:46] <headius> enebo: another windows thing you might be able to test quickly: https://github.com/jruby/jruby/issues/5662
+[20:29:00] <headius> I have a PR to remove some canonicalization of filenames in https://github.com/jruby/jruby/pull/6735
+[20:29:13] <headius> my vbox suddenly stopped working so I'd have to reboot into Windows to test this
+[20:32:04] <headius> ahah upgrading seems to have fixed it
+[20:34:30] <deividrodriguez[> Yay! I reinstalled an x86 JDK and now jruby installed fine, thanks for the tip!
+[20:34:37] <headius> Yay!
+[20:39:55] <enebo[m]> headius: yeah errno I think so.
+[20:40:16] <enebo[m]> headius: part of me wonders if natuve properly raises on a broken symlink
+[20:41:35] <headius> I wonder that as well but I don
+[20:41:35] <enebo[m]> I will try FILE on windows
+[20:41:43] <headius> don't see any pre-checks on CRuby for unlink
+[20:42:35] <enebo[m]>   yeah I feel like this somehow was a hack around unlink not doing it right but if both are literally calling the same unlink then I would guess we should just work
+[20:42:55] <enebo[m]> It logically follows but I still wonder why we ended up needing special logic in the first place
+[20:43:27] <headius> this is the bulk of the work CRuby does around unlink (just path munging mostly): https://github.com/ruby/ruby/blob/master/file.c#L410
+[20:43:49] <headius> I suspect that we had those pre-checks from code before we started to use a native unlink
+[20:44:10] <headius> we used to only use JDK delete which isn't quite the same, so the errors it raised were unhelpful
+[20:48:06] <enebo[m]> yeah that makes sense we just evolved and did not fix it
+[20:48:22] <enebo[m]> popping over to windows for a little bit
+[20:48:24] <headius> ok
+[20:48:29] <headius> I will merge errno thing
+[20:48:47] <headius> oh and merge it to master
+[20:50:12] <headius> enebo: I just noticed this might also be fixed by the canonicalization change: https://github.com/jruby/jruby/issues/5240
+[20:53:47] <headius> enebo: I'm merging master into that PR and pushing so it has other load fixes
+[20:54:12] <headius> I can test this other issue on macos
+[20:57:51] <headius> does not appear to fix the over-canonicalization with loaded features
+[21:00:29] <headius> enebo: if it doesn't fix the windows issue then I'm fine punting this to 9.3.2 and taking another look
+[21:02:21] <enebo[m]>    ok having typical windows issues but almost testing it
+[21:05:45] <enebo[m]> headius: still broken: https://gist.github.com/enebo/1d5b56644eeb7e02e5c77a4b5c34628f
+[21:08:22] <headius> ok we'll punt then
+[21:08:33] <headius> gonna take a deeper look at how we handle the path throughout loading
+[21:09:09] <headius> I have other reasons to look into that anyway: I want to start setting the JIT source path as relative paths from LOAD_PATH so we can hook up a JVM debugger and have it find sources
+[21:21:28] <headius> huh I guess we haven't punted anything to 9.3.2 yet because the milestone isn't there
+[21:22:25] <headius> enebo: should I punt these coverage and tracing items to 9.3.2 or 9.4
+[21:22:49] <headius> I don't think they'll be any harder than previous trace/event fixes but it just needs doing
+[21:22:57] <enebo[m]> 9.4 or untarget
+[21:23:16] <headius> at least one of them was reported by a user with a coverage library
+[21:23:29] <headius> https://github.com/jruby/jruby/issues/5147
+[21:23:43] <headius> ahh yeah, simplecov added branch coverage a while back and it doesn't work on jruby
+[21:23:59] <headius> just a comment from pragtob
+[21:24:27] <enebo[m]> yep.  I mean I think this is mostly about likelihood and priority
+[21:24:46] <enebo[m]> I don't see either one of us doing this by end of year so we will just keep punting it
+[21:25:07] <headius> so my nudging you has not increased your likelihood of taking this on
+[21:25:14] <enebo[m]> HAH
+[21:25:36] <headius> not a high priority I admit...I will untarget but that means it goes into the black abyss
+[21:26:14] <enebo[m]> well it is not much different than the light abyss
+[21:35:22] <headius> down to 46 open issues/PRs marked for 9.3.1
+[21:35:37] <headius> enebo: https://github.com/jruby/jruby/pull/5729
+[21:44:38] <headius> enebo: on second thought I want to punt the socket constant updates to 9.3.2 so we can see how it affects things
+[21:44:58] <headius> just don't want to ship with constants defined that we don't actually support, and have code with `defined?` start trying to use them
+[21:50:17] <headius> kares: what's the status of this? https://github.com/jruby/jruby/pull/6439
+[21:50:33] <headius> my only concern was making it all native with no Java fallback... I believe we need to at least keep the Java impl around in JRuby or in jnr-posix
+[22:02:44] <headius> down to one page of open issues and PRs
+[22:18:46] *** Joins: nelsnnelson[m] (~nelsnnels@2001:470:69fc:105::1:16eb)

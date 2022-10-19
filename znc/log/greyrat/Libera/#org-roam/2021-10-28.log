@@ -1,0 +1,79 @@
+[00:43:31] *** Quits: slow (~pi@ip4d162867.dynamic.kabel-deutschland.de) (Ping timeout: 260 seconds)
+[01:08:03] *** Joins: slow (~pi@ip4d162867.dynamic.kabel-deutschland.de)
+[01:22:46] *** Quits: srhm (~srhm@user/srhm) (Read error: Connection reset by peer)
+[01:23:54] *** Joins: srhm (~srhm@user/srhm)
+[01:36:25] *** Quits: slow (~pi@ip4d162867.dynamic.kabel-deutschland.de) (Ping timeout: 258 seconds)
+[01:36:48] *** Joins: slow (~pi@ip4d162867.dynamic.kabel-deutschland.de)
+[01:58:39] *** Quits: srhm (~srhm@user/srhm) (Read error: Connection reset by peer)
+[01:59:11] *** Joins: srhm (~srhm@user/srhm)
+[02:01:22] *** Quits: srhm (~srhm@user/srhm) (Read error: Connection reset by peer)
+[02:01:51] *** Joins: srhm (~srhm@user/srhm)
+[03:10:31] *** Quits: ur5us (~ur5us@2406:e002:6c33:6d01:f05d:361c:3a9a:58cb) (Ping timeout: 245 seconds)
+[03:51:20] *** Joins: ur5us (~ur5us@2406:e002:6c33:6d01:f05d:361c:3a9a:58cb)
+[04:05:14] *** Quits: srhm (~srhm@user/srhm) (Read error: Connection reset by peer)
+[04:05:44] *** Joins: srhm (~srhm@user/srhm)
+[05:30:03] *** Quits: slow (~pi@ip4d162867.dynamic.kabel-deutschland.de) (Ping timeout: 260 seconds)
+[05:43:16] *** Joins: slow (~pi@ip4d162867.dynamic.kabel-deutschland.de)
+[06:32:42] <rdrg109> => (benchmark-run 1 (org-roam-node-list))
+[06:32:46] <rdrg109> (0.364691831 1 0.21228439200001503)
+[07:38:14] <rdrg109> konubinix: See this. If we cache the node list in memory, we speed up the function by 300k times.
+[07:39:21] <rdrg109> => (/ (car (benchmark-run 1 (let ((org-roam-node-display-template "")) (org-roam-node-read--completions))))
+[07:39:24] <rdrg109>       (car (let ((nodes (org-roam-node-read--completions))) (benchmark-run 1 nodes))))
+[07:39:38] <rdrg109> 417022.4198717949
+[08:03:51] *** Quits: ur5us (~ur5us@2406:e002:6c33:6d01:f05d:361c:3a9a:58cb) (Ping timeout: 245 seconds)
+[10:51:46] *** Joins: trillp (~trillp@69.233.98.238)
+[11:09:50] <konubinix> rdrg109: I guess we could try caching the result of org-roam-node-list
+[11:10:08] <konubinix> rdrg109: The question is what are the functions that need to invalidate the cache ?
+[11:28:24] <konubinix> Caching org-roam-node-list saved a bit, but not much
+[11:29:04] <konubinix> 0.80s without cache and 0.50 with cache
+[11:29:13] <konubinix> Using (benchmark-run 10 (org-roam-node-read--completions))
+[11:29:43] <konubinix> The code of org-roam-node-read--completions is this one
+[11:29:50] <konubinix> http://ix.io/3D8y
+[11:30:02] <konubinix> therefore I suppose org-roam-node-read--to-candidate takes most of the time
+[11:30:13] <konubinix> Caching directly org-roam-node-read--to-candidate gives me the following time
+[11:30:41] <konubinix> 1.3e-6 s
+[11:30:58] <konubinix> But still, the display in ivy is a bit long
+[11:31:12] <konubinix> About 0.2 seconds I would say
+[11:31:31] <konubinix> So, caching is easily done with 
+[11:31:43] <konubinix> http://ix.io/3D8D
+[11:32:05] <konubinix> But it is still not enough, as I have to find all the locations where to invalidate the cache
+[11:32:12] <konubinix> And there appear to be quite a few
+[11:32:53] <konubinix> So far, I guess a good compromise is to have a method `konix/org-roam-node-read--completions/cache/invalidate` and call it when I feel like I need it
+[11:33:33] <konubinix> As simple as this
+[11:33:39] <konubinix> http://ix.io/3D8F
+[11:45:29] <konubinix> It's just been a few minutes and I can already feel the difference :-p
+[11:47:17] <konubinix> In particular when writing a note and using org-roam-node-insert
+[11:49:21] <konubinix> To be noted that org-roam-completion-everywhere does not suffer from the slowness, likely because it simply run a sql select statement without much transformation
+[11:55:13] <konubinix> Actually, another good compromise is to recompute the cache when the database is modified. There are some false positives and it might recompute more than necessary but at least it won't be able to show an obsolete cache
+[11:55:20] <konubinix> The whole code now looks like this
+[11:55:28] <konubinix> http://ix.io/3D8J
+[11:55:36] <konubinix> What do you think about that rdrg109 ?
+[12:19:47] *** Joins: ur5us (~ur5us@2406:e002:6c33:6d01:f05d:361c:3a9a:58cb)
+[12:24:22] *** Quits: srhm (~srhm@user/srhm) (Read error: Connection reset by peer)
+[12:25:23] *** Joins: srhm (~srhm@user/srhm)
+[12:27:00] <konubinix> By the way, rdrg109 this caching only works if you don't implement the NUMBER_OF_VISITS property idea, because every visit to a node will update the database.
+[12:27:29] <konubinix> I eventually saved the NUMBER_OF_VISITS in a map in redis, so I can take advantage of the caching now :-P
+[12:28:27] <konubinix> I assume you'd like to have such features available in roam, but IIUC, the intent is to have a solid code base and let the community grow arround it
+[12:29:09] <konubinix> Therefore, those ideas of yours are nice, but I think they would eventually go into a org-roam-contrib kinda repository.
+[12:29:29] <konubinix> Do I understand correctly zaeph?
+[12:30:32] <zaeph> Hi.  Let me catch up first.
+[12:32:42] <konubinix> AFAIAC, I implement those ideas in my personal lisp files https://github.com/Konubinix/Devel/blob/master/elfiles/config/after-loads/KONIX_AL-org-roam.el#L696
+[12:33:00] <konubinix> Without the hope of seeing them anywhere else
+[12:33:18] <zaeph> I don't think they'd need to go into -contrib necessarily; if the caching is transparent and saves up time in the average case, then it'd be a net positive.  However, with v2, our doctrine has been to keep the codebase as lean as possible, as a result, the ratio lines-added/boon needs to be significant.
+[12:34:38] <zaeph> I'm still working on my interviews and can't put much thought into anything but design ideas for org-roam; that being said, I think caching would be a good idea, provided we can come up with a good implementation for it.  Try opening a feature-request on our tracker if it's not already there, and we'll track it that way.
+[12:34:47] <zaeph> I have to get back to work now, but you can keep me posted.
+[12:38:08] *** Quits: srhm (~srhm@user/srhm) (Read error: Connection reset by peer)
+[12:40:40] *** Quits: konubinix (~konubinix@131-199-28-81.ftth.cust.kwaoo.net) (Quit: Coyote finally caught me)
+[12:45:17] *** Joins: konubinix (~konubinix@131-199-28-81.ftth.cust.kwaoo.net)
+[13:24:59] *** Quits: slow (~pi@ip4d162867.dynamic.kabel-deutschland.de) (Ping timeout: 264 seconds)
+[13:59:11] *** Quits: ur5us (~ur5us@2406:e002:6c33:6d01:f05d:361c:3a9a:58cb) (Ping timeout: 264 seconds)
+[14:09:19] *** Joins: slow (~pi@ip4d162867.dynamic.kabel-deutschland.de)
+[15:25:31] *** Quits: slow (~pi@ip4d162867.dynamic.kabel-deutschland.de) (Ping timeout: 245 seconds)
+[18:43:34] *** Joins: slow (~pi@ip1f11122c.dynamic.kabel-deutschland.de)
+[19:19:25] *** Joins: srhm (~srhm@user/srhm)
+[21:26:15] *** Quits: trillp (~trillp@69.233.98.238) (Ping timeout: 260 seconds)
+[21:55:30] *** Joins: trillp (~trillp@69.233.98.238)
+[22:20:31] *** Quits: trillp (~trillp@69.233.98.238) (Ping timeout: 245 seconds)
+[22:48:58] *** Quits: rdrg109 (~rdrg109@51.195.232.80) (Changing host)
+[22:48:58] *** Joins: rdrg109 (~rdrg109@user/rdrg109)
+[23:52:23] *** Joins: ur5us (~ur5us@2406:e002:6c33:6d01:f05d:361c:3a9a:58cb)

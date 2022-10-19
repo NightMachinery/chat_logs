@@ -1,0 +1,696 @@
+[00:00:14] <FromDiscord> <Phil> (edit) "seq" => "connections"
+[00:00:57] <FromDiscord> <leorize> it sounds like your pool would go better with a set limit and a burst queue
+[00:01:17] <FromDiscord> <leorize> so you have a number of idle connections you maintain to be picked up at any point
+[00:01:42] <FromDiscord> <leorize> and a burst queue that allow you to exceed that amount for a set time, then drop that entire queue later
+[00:01:56] <PMunch> @leorize, because Nim creates invalid C code
+[00:02:05] <PMunch> And that code doesn't even need to be there
+[00:02:12] <FromDiscord> <leorize> there's your bug \:p
+[00:02:12] <PMunch> It just trips over itself on some generics
+[00:02:18] <FromDiscord> <leorize> wrong C code
+[00:02:42] <FromDiscord> <leorize> it doesn't matter if there are unused types in C, wrong code is the bigger problem
+[00:02:57] <PMunch> This is the actual error message: http://ix.io/3N3F
+[00:03:27] <PMunch> As you can see it tries to create some alias, but it is never used, and it is obviously incorrect..
+[00:03:39] <FromDiscord> <leorize> yea it's just broken codegen
+[00:03:53] <FromDiscord> <leorize> those bugs are usually prioritized so you should be fine
+[00:04:17] <FromDiscord> <Phil> In reply to @leorize "and a burst queue": That sounds complicated to implement. So I have a pool with my iddle connections on the one hand and if that goes empty I initialize a separate queue (basically a second pool, so just a seq[DbConn] with a lock attached) that has a life-time timer on it?
+[00:04:35] <FromDiscord> <leorize> a keep-alive timer
+[00:04:49] <FromDiscord> <leorize> as long as there are users you extend the time
+[00:05:18] <FromDiscord> <leorize> then throw it all away once you're done
+[00:06:56] <PMunch> @leorize, I should've gotten this done by tonight.. So I'm not so sure I'll be fine :P
+[00:07:12] <PMunch> And I still have a similar codegen bug which is almost a year old by now
+[00:07:31] <FromDiscord> <leorize> time to bug the devs then \:p
+[00:07:48] <PMunch> I can't figure out what actually triggers it either..
+[00:07:49] <FromDiscord> <Phil> Why the two-pool approach as opposed to one that can grow and shrink?↵Is the main goal to keep the number of connection instantiations down?
+[00:08:47] <FromDiscord> <leorize> isn't that what you want? you only use a small amount, but you want to accommodate bursts when that is required
+[00:09:23] <FromDiscord> <Phil> Fair, hmm
+[00:10:14] <FromDiscord> <leorize> as long as it's reproducible it's good
+[00:10:45] <FromDiscord> <leorize> if you can't minimize it then let the codegen experts figure it out
+[00:11:53] <FromDiscord> <Phil> In reply to @leorize "isn't that what you": I'll definitely make that an answer on the SO question, thanks for the feedback and the alternative approach!
+[00:12:04] <FromDiscord> <Phil> (edit) "SO" => "codereview"
+[00:13:06] <arkanoid> I am writing a package with the idiomatic import/export dance on main module. One module in this package defines "template toOpenArray*[T](arr: CustomArray): openArray[T] =". Inside test I import the main module (the one with import/export everything) but if I try to use that function it tries to call the one defined in system.nim instead. If I copypaste that template in test code it works
+[00:13:16] <FromDiscord> <leorize> you're welcome, just remember that the best pool is one that is tuned to your exact requirements
+[00:14:29] *** Quits: krux02 (~krux02@p200300e81723dd00b48b627b8314596f.dip0.t-ipconnect.de) (Remote host closed the connection)
+[00:15:08] <arkanoid> obviously if I rename to toOpenArrayX it works, but how can I get precedence of my function over system.nim?
+[00:16:13] <FromDiscord> <leorize> your function probably lost in precedence because system.nim version is more defined for your type
+[00:18:41] <arkanoid> well, no. Object is "CustomArray = object", and proc is "template toOpenArray*[T](arr: CustomArray): openArray[T] =", system.nim doesn't even know my CustomArray type
+[00:19:24] <FromDiscord> <leorize> what's the error when you call toOpenArray then?
+[00:20:02] <FromDiscord> <leorize> and for safety reasons, change your return type to untyped
+[00:20:03] <arkanoid> Error: expression 'toOpenArray[int32](mycustomarray)' cannot be called
+[00:20:09] <FromDiscord> <Phil> sent a long message, see https://paste.rs/hIK
+[00:20:25] <FromDiscord> <Phil> (edit) "http://ix.io/3N3J" => "http://ix.io/3N3I"
+[00:20:48] <FromDiscord> <Phil> (edit) "http://ix.io/3N3I" => "http://ix.io/3N3K"
+[00:21:04] <FromDiscord> <leorize> @Phil\: I think DbConn are pointer themselves already
+[00:21:04] <arkanoid> this is how I am calling it in test1.nim "for i, v in aarray.toOpenArray[: int32]:"
+[00:21:33] <arkanoid> why is untyped safer than openArray[T]?
+[00:21:37] <FromDiscord> <leorize> try swapping the return type to untyped then
+[00:21:45] <FromDiscord> <leorize> these things can be weird at time
+[00:22:04] <FromDiscord> <Phil> In reply to @leorize "<@180601887916163073>\: I think DbConn": Huh, they are indeed. DbConn is an alias for PSqlite3, which is `ptr Sqlite3`
+[00:22:10] <arkanoid> same error with "template toOpenArray*[T](arr: ArrowArray): untyped ="
+[00:22:30] <FromDiscord> <Phil> So if I skip the entire PoolConnection type that avoids me copying memory of dates around
+[00:22:49] <FromDiscord> <Phil> and also avoids creating a lot of dates
+[00:23:17] <FromDiscord> <Phil> Ohhhh that is also why it's more efficient, 1 date on the second pool as opposed to 20+ dates on the individual connections
+[00:23:27] <FromDiscord> <leorize> @Phil\: also use unix epoch for your timer
+[00:23:42] <FromDiscord> <leorize> so one int64 instead of a large time object
+[00:25:46] *** Joins: krux02 (~krux02@p200300e81723dd00b48b627b8314596f.dip0.t-ipconnect.de)
+[00:26:24] <PMunch> The thick plottens.. I can't recreate this in a minimal test..
+[00:27:21] <FromDiscord> <leorize> monotime is probably better for keep-alive stuff since it's not influenced by changes in system time
+[00:27:32] <FromDiscord> <Phil> the plock thittens
+[00:30:11] <arkanoid> is prefixing everything the way to namespace things in nim?
+[00:30:43] <PMunch> arkanoid, not really
+[00:30:55] <FromDiscord> <Phil> You mean for cases where you have multiple procs with identical signatures from different modules?
+[00:31:14] <FromDiscord> <Phil> Can always do <MODULE>.<PROC> if your module names aren't too large
+[00:31:26] <FromDiscord> <leorize> modules are namespaces on their own
+[00:32:39] <arkanoid> for example, I'm binding a lib that declares Type, Int, FloatingPoint, List, and so on. I have to use them and also expose them to the user. I see no other choices than replace then with ArrowInt, ArrowFloatingPoint, ArrowList and so on
+[00:34:06] <PMunch> Why not define them without the Arrow prefix?
+[00:34:31] <arkanoid> because I would end up with those types into global scope
+[00:35:24] <arkanoid> would you be happy to do "import mylib" and have Int and List and Utf8 in scope?
+[00:36:25] <FromDiscord> <leorize> what's the issue with that?
+[00:37:24] <FromDiscord> <leorize> the compiler solves conflicts automatically and people can selectively exclude stuff if needed
+[00:39:28] <arkanoid> ok, so let's go for it
+[00:40:08] <arkanoid> now I'm back to the toOpenArray problem :D where the conflict is non automatically solved
+[00:41:22] <arkanoid> gonna use asOpenArray to make it happy :/
+[00:45:25] <PMunch> Holy shit! I actually managed to fix it!
+[00:46:00] <PMunch> It was caused by my Progmem type being declared within a {.push: nodecl.} block by accident
+[00:46:22] *** Quits: krux02 (~krux02@p200300e81723dd00b48b627b8314596f.dip0.t-ipconnect.de) (Quit: Leaving)
+[00:46:59] <PMunch> I've been fighting this stupid bug for hours now..
+[00:57:50] <FromDiscord> <leorize> so it's user error in the end \:p
+[01:10:15] <PMunch> Yup..
+[01:11:29] <PMunch> Hmm, this is weird, I played around with casting to a pointer vs to a cstring. And it made a 16 byte difference in the output, but the diffs looks deceptively similar: http://ix.io/3N3X
+[01:11:47] <PMunch> The only real difference I can see is that the cstring version does &str instead of just data
+[01:13:01] <PMunch> Oh, silly me, user mistake again :P
+[01:13:31] <PMunch> I swear I used to be smarter..
+[01:18:34] <arkanoid> do you know how to generate a python list witn nulls in one line with nimpy? I'm using a loop with "l.append X" now. but I'd like to "import nimpy; py = pyBuiltinModule(); l = py.List([1,2,3,py.None])"
+[01:27:11] <PMunch> Hmm, I have defined a template that allows you to do `p"Hello world"` to put "Hello world" in PROGMEM. The problem is that calling `p` that way gives me a raw string literal. Currently I'm just putting that raw string literal directly into C code, and rely on C to parse escape sequences and such. Problem is that I need to get the size of the string on compile-time in Nim. Thoughts?
+[01:27:41] <PMunch> I guess I could call unescape on the string during compile-time, would that work?
+[01:31:10] <PMunch> Well, now I'm in the same boat as @Patitotective..
+[01:35:23] <FromDiscord> <Phil> In reply to @leorize "<@180601887916163073>\: also use unix": I managed to throw some code together, surprisingly it doubled the lines of code I threw together:↵https://codereview.stackexchange.com/a/273237/132951
+[01:35:25] <FromDiscord> <Elegantbeef> I mean pmunch just do `p("hello world")` 😛
+[01:35:34] <FromDiscord> <Phil> (edit) "threw together:↵https://codereview.stackexchange.com/a/273237/132951" => "needed:↵https://codereview.stackexchange.com/a/273237/132951"
+[01:35:50] <PMunch> @Elegantbeef, where's the fun in that?
+[01:36:15] <PMunch> I won't have my users suffer by typing two extra parenthesis
+[01:36:19] <FromDiscord> <Elegantbeef> The real solution is to turn `p` into a macro then grab the str value and do what you need to with it
+[01:37:49] <PMunch> And implement my own string escaping?
+[01:38:19] <FromDiscord> <Phil> True efficiency can only be reached by making your own language for the specific tiny usecase you have!
+[01:38:24] <PMunch> I guess I could have `p` be a template which called `h()` and then just implement `h`
+[01:38:53] <PMunch> @Phil, you say that like I don't already have my own language for a tiny specific use case I had :P
+[01:39:03] <PMunch> Well, not quite so tiny
+[01:39:09] <PMunch> I actually use it almost every day
+[01:40:54] <FromDiscord> <Elegantbeef> Wait does stacklang touch the heap?
+[01:41:01] <FromDiscord> <Elegantbeef> Do we have a language which lies?!
+[01:41:30] <PMunch> Haha, stacklang doesn't have a concept of heaps
+[01:41:36] <FromDiscord> <Phil> I mean, if you speak english your have a language that lies
+[01:41:37] <PMunch> It's stacks all the way down!
+[01:42:03] <PMunch> I have a v2 that I haven't pushed, and it's way better than v1
+[01:42:27] <PMunch> All variables are just stacks, so you can't assign to a variable, you can just push to a named stack
+[02:05:49] <FromDiscord> <Michal Maršálek> What is going on here?↵https://play.nim-lang.org/#ix=3N32↵gives `Error: type mismatch: got 'array[0..2, int]' for '[0, 1, 2]' but expected 'seq[int]'`
+[02:07:07] <FromDiscord> <auxym> @PMunch did you see this RFC? https://github.com/nim-lang/RFCs/issues/257 Is that what you're trying to do?
+[02:07:43] <FromDiscord> <mratsim> In reply to @Michal58 "What is going on": static seqs are arrays.
+[02:09:05] <FromDiscord> <mratsim> static auto in a type section is likely to land you in a lot of frustration btw
+[02:09:31] <FromDiscord> <mratsim> actually line 10 shouldn't break
+[02:09:42] <FromDiscord> <Michal Maršálek> In reply to @mratsim "static auto in a": It is to be replace by Beef's addition to generics
+[02:09:47] <FromDiscord> <mratsim> ah it's the ++++
+[02:09:57] <FromDiscord> <Michal Maršálek> it just doesnt work in playground yet
+[02:10:04] <FromDiscord> <Elegantbeef> Yea the `+++` is no beuno
+[02:10:39] <FromDiscord> <qb> Could I use a special char in a object field? I'm trying to serialize a json response and a some key has a `'`  in it
+[02:10:44] <FromDiscord> <mratsim> well seqs at compiletime are described as nnkBracket(0, 1, 2) so they really become arrays
+[02:10:50] <FromDiscord> <Michal Maršálek> (edit) "replace" => "replaced"
+[02:11:35] <FromDiscord> <mratsim> In reply to @qb "Could I use a": `myfield'`
+[02:11:40] <arkanoid> if I have MyInt = int16, how can I get the string "int16" when passing around MyInt as typedesc parameter?
+[02:11:41] <FromDiscord> <mratsim> use backquote
+[02:12:02] <FromDiscord> <Elegantbeef> You'd need to convert it back to the base type
+[02:12:10] <FromDiscord> <Elegantbeef> So you'd need a macro to do `dropAlias(MyInt)`
+[02:12:26] <PMunch> @mratsim, not quite, but it's related
+[02:12:38] <arkanoid> mm ok, thanks
+[02:12:43] <FromDiscord> <Elegantbeef> I'd think the issue is a bug michal 😀
+[02:13:18] <FromDiscord> <qb> Thats what I was trying https://play.nim-lang.org/#ix=3N4c
+[02:13:43] <PMunch> Basically I'm trying to wrap a custom attribute in C (PROGMEM, to put things into the program memory section of a microcontroller) to a Nim type. In C you need to use pgmReadByte and similar to read this data back out, but with a custom type in Nim I'm able to have it "just work".
+[02:15:11] <PMunch> In C they are just treated as pointers to data, and it's up to the programmer to remember which pointers are normal and which needs pgmReadByte. And switching between the two is a massive pain because you have to go through your code and change everything. With custom types in Nim I'm able to create a distinct type and use pgmReadByte automatically. But I keep running into issues where I and the Nim C code generator disagree on what should actually be generated.
+[02:15:13] <FromDiscord> <Michal Maršálek> In reply to @Elegantbeef "I'd think the issue": I don't understand... what part is expected and what part is not?
+[02:15:21] <FromDiscord> <Michal Maršálek> And is there a workaround?
+[02:15:28] <FromDiscord> <Elegantbeef> Yea use an array 😛
+[02:15:39] <FromDiscord> <Elegantbeef> Well the part that isnt expected is the complaint that it has an array
+[02:15:51] <FromDiscord> <Elegantbeef> Yes seq is converted to an array at compile time, but that shouldnt change the type
+[02:16:33] <FromDiscord> <Michal Maršálek> Yeah, that's what I thought
+[02:17:09] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3N4d
+[02:17:50] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3N4e
+[02:18:06] <FromDiscord> <Elegantbeef> The issue seems to be the `static auto`
+[02:18:11] <FromDiscord> <mratsim> In reply to @PMunch "<@570268431522201601>, not quite, but": what did I say?
+[02:18:17] <FromDiscord> <Michal Maršálek> yeah weird
+[02:19:27] <FromDiscord> <mratsim> In reply to @qb "Thats what I was": well  you need a serialization library that can handle field renames
+[02:19:35] <PMunch> Oh woops, @auxym linked to an RFC by you and I thought it was you who linked it
+[02:19:43] <FromDiscord> <auxym> @mratsim I should probably get a non-default avatar, apparently people are confusing you and me haha
+[02:19:44] <FromDiscord> <mratsim> In reply to @Michal58 "yeah weird": `auto` is for proc only
+[02:20:14] <FromDiscord> <mratsim> In reply to @auxym "<@570268431522201601> I should probably": I can go back and disappear for a few months
+[02:20:32] <FromDiscord> <Michal Maršálek> In reply to @mratsim "`auto` is for proc": auto is not causing the issue here
+[02:20:56] <FromDiscord> <Michal Maršálek> well
+[02:21:09] <FromDiscord> <mratsim> you use TypeWithConst with an auto declaration
+[02:21:53] <FromDiscord> <Michal Maršálek> gimme a sec
+[02:22:00] <NimEventer> New thread by Keks84: Matrix/vector operations in Nim, see https://forum.nim-lang.org/t/8835
+[02:22:03] <FromDiscord> <Elegantbeef> sent a code paste, see https://paste.rs/5U4
+[02:22:06] <FromDiscord> <Elegantbeef> On devel of course
+[02:22:42] <FromDiscord> <Elegantbeef> It loses type information causing that compile time error
+[02:23:20] <FromDiscord> <Elegantbeef> The issue is on the dispatch of the `+++` operator afaict
+[02:23:34] <FromDiscord> <Elegantbeef> Making `+++` discard causes the same isssue
+[02:23:39] <FromDiscord> <Michal Maršálek> this is the same: https://play.nim-lang.org/#ix=3N4f
+[02:23:41] <FromDiscord> <Elegantbeef> issue even 😛
+[02:23:50] <FromDiscord> <Michal Maršálek> you were faster
+[02:25:15] <FromDiscord> <mratsim> `[T; U: seq[T]]` doesn't work
+[02:25:26] <FromDiscord> <mratsim> you need explicit higher-kinded-type support
+[02:25:40] <FromDiscord> <Elegantbeef> `[T; U: static T]` does work
+[02:25:41] <FromDiscord> <Elegantbeef> in devel
+[02:26:02] <FromDiscord> <mratsim> I remember mentioning that a couple years ago when I started to do graphs in Arraymancer
+[02:26:14] <FromDiscord> <mratsim> Variable[T; T: Tensor[T]]
+[02:26:18] <FromDiscord> <Michal Maršálek> Beef recently implemented that 😉
+[02:26:21] <FromDiscord> <mratsim> oh
+[02:28:31] <FromDiscord> <mratsim> but your C isn't used @ElegantBeef
+[02:28:44] <FromDiscord> <Elegantbeef> Exactly
+[02:28:52] *** Joins: Guest8 (~Guest8@2806:1000:8104:32cf:92f6:52ff:fe11:578c)
+[02:28:59] <FromDiscord> <Elegantbeef> It's with procedure dispatch causing a type mismatch
+[02:29:28] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3N4j
+[02:29:35] <FromDiscord> <Elegantbeef> Whoops
+[02:29:36] <FromDiscord> <Elegantbeef> bad copy
+[02:29:50] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3N4k
+[02:31:11] *** Joins: krux02 (~krux02@p200300e81723dd00b48b627b8314596f.dip0.t-ipconnect.de)
+[02:31:39] <FromDiscord> <mratsim> and here I thought I was the one doing the most crazy things with statics 😉
+[02:31:54] <FromDiscord> <Elegantbeef> Yea seems procedures instantiating `TypeWithConst` errors, so i guess an edge case to my solution
+[02:32:17] <FromDiscord> <Elegantbeef> The first thing i did once my PR went through was make generic modulo types 😛
+[02:32:41] <FromDiscord> <Elegantbeef> https://play.nim-lang.org/#ix=3MYX magic stuff!
+[02:33:03] *** Joins: adigitoleo (~adigitole@2001:8003:1d19:4500:7669:2410:6555:555c)
+[02:33:23] <FromDiscord> <Elegantbeef> Michal I guess as long as you dont specialize this is the only real way to do it presently https://play.nim-lang.org/#ix=3N4l
+[02:33:23] <FromDiscord> <Elegantbeef> Not very useful that you need to do `untyped` and `auto`
+[02:33:35] <FromDiscord> <Elegantbeef> Something with procedures isnt playing nicely 😀
+[02:34:35] <FromDiscord> <mratsim> untyped?
+[02:34:57] <FromDiscord> <Elegantbeef> `C: static TT` didnt work in the template either
+[02:35:06] <FromDiscord> <Elegantbeef> Caused the  same error so i wager that's the isssue
+[02:35:33] <FromDiscord> <Elegantbeef> Can i spell issue properly ever find out next time on dragon ball Nim
+[02:35:39] <FromDiscord> <mratsim> ah for a while I thought it was in the type declaration
+[02:35:51] <FromDiscord> <Elegantbeef> Ah lol
+[02:36:04] <FromDiscord> <mratsim> mmm, that reminds me of a bug in Arraymancer that I had to work around with untyped
+[02:38:30] <FromDiscord> <mratsim> ah misremembered, it was this: https://github.com/nim-lang/Nim/issues/7432 / https://github.com/nim-lang/Nim/issues/6529
+[02:39:06] <FromDiscord> <Elegantbeef> Ah yea need to do `openArray[T](val)`
+[02:39:16] <FromDiscord> <Elegantbeef> The worst part about `iterator` and `openArray` they dont compose well
+[02:40:11] <FromDiscord> <Elegantbeef> i mean `iterable`
+[02:40:39] <FromDiscord> <Elegantbeef> Cant do `openArray[T] or iterable[T]` just can cry in the corner
+[02:41:50] <FromDiscord> <Elegantbeef> ponders if one can move data into a closure
+[02:42:53] <FromDiscord> <Elegantbeef> Mratsim you can close issues right?
+[02:43:03] <FromDiscord> <Elegantbeef> Actually nevermind it's your issue
+[02:43:06] <FromDiscord> <mratsim> it's $10
+[02:43:22] <FromDiscord> <Elegantbeef> https://github.com/nim-lang/Nim/issues/7553 this issue can be closed
+[02:44:06] <FromDiscord> <mratsim> let me grab my Mac real quick
+[02:44:41] <FromDiscord> <mratsim> I probably need to buy a new one. Would be a nice machine to test ARM as well
+[02:44:43] <FromDiscord> <Elegantbeef> It's tested for now in the CI with my PR at the very bottom
+[02:44:57] <FromDiscord> <mratsim> I'm sad I can't access Travis 32 cores ARM instance in CI anymore :/
+[02:46:48] <FromDiscord> <Elegantbeef> I think the last major borrow issue is with generics and someone was working on it, but dont know what happened to that
+[02:47:44] <FromDiscord> <mratsim> I assume generics just eat contributors whole
+[02:47:53] <FromDiscord> <Elegantbeef> Lol indeed
+[02:48:56] <FromDiscord> <Elegantbeef> Well in the case of the borrow it's like `proc mgetOrPut[K, V](a: DistinctTable[K, V], key: K, val: V): var V {.borrow.}`
+[02:49:14] <FromDiscord> <Elegantbeef> Which means you need to find an uninstantiated procedure and grab it's symbol
+[02:49:48] <FromDiscord> <Elegantbeef> They had some issue with type comparisons the last i heard, but they havent been here for a while now
+[02:50:38] <FromDiscord> <Elegantbeef> Generics have caused me personally a ton of thinking starring at a few lines of code
+[02:50:52] <FromDiscord> <Elegantbeef> Changing a few things and getting one example to compile but another to fail, or a cgen error
+[02:51:02] <FromDiscord> <Elegantbeef> Just so much fun you can have changing a single line of code
+[02:52:08] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3N4r
+[02:52:27] <FromDiscord> <Michal Maršálek> sent a code paste, see https://play.nim-lang.org/#ix=3N4s
+[02:52:51] <FromDiscord> <Elegantbeef> Yea there is some issue with the generating the type description inside a generic
+[02:53:15] <FromDiscord> <Michal Maršálek> and when I tried to debug this, and got rid of the wrapping of `t` discovered the issue we were talking about
+[02:53:21] *** Joins: sagax (~sagax_nb@user/sagax)
+[02:53:23] <FromDiscord> <Michal Maršálek> (edit) "and when I tried to debug this, and got rid of the wrapping of `t` ... discovered" 03added "and"
+[02:53:35] <FromDiscord> <Elegantbeef> I dont get why we can instantiate the type, but having it as a parameter causes an issue
+[02:53:53] <FromDiscord> <Elegantbeef> I may look at it if i fix a nimscripter bug
+[02:54:19] <FromDiscord> <Elegantbeef> My changes to the type system are meant to cause a better life but generally just reveal something that was not handled
+[02:55:27] <FromDiscord> <Michal Maršálek> Replacing `auto` with `TypeWithConst[TT,M.g]` yields `Error: undeclared field: 'g' for type +++.M:type`
+[02:55:28] <FromDiscord> <mratsim> I once try to fix a generic type mismatch. I looked into sigmatch, turned on the yaml output, bombed my CLI and noped out as soon as I made the bug report.
+[02:56:01] <FromDiscord> <Elegantbeef> After talking about it with saem i really think Nim's `PType` needs to be rewritten to be less tedious using a more structured type using a table instead of the tree we have
+[02:56:31] <FromDiscord> <Elegantbeef> My debug process is just put echo into the tree i want to investigate and send myself noise
+[02:58:58] <FromDiscord> <Elegantbeef> Yea mratsim i took like 10 different attempts at allowing implicit + explicit generics, finally got to the point of just doing it super lazy and it worked
+[02:59:32] <arkanoid> in there a nim type that contains "ptr + length" or do I have to create my own?
+[02:59:50] <FromDiscord> <Elegantbeef> `openArray` is that
+[02:59:51] <arkanoid> I am writing a proc that returns a view on a variable length binary
+[03:00:04] <FromDiscord> <Elegantbeef> Other than that you'd need to make your own
+[03:00:14] <FromDiscord> <Elegantbeef> Consider using mratsim's strided view 😛
+[03:00:25] <FromDiscord> <Elegantbeef> He likes whoring that link out 😛
+[03:00:26] <arkanoid> ok but I have a buffer that contains binary slots with variable lengths, so openarray doesn't apply
+[03:00:51] <FromDiscord> <Elegantbeef> What do you mean?
+[03:00:54] <arkanoid> oh man, mratsim is like the guy with the nuclear power button at hand
+[03:01:28] <FromDiscord> <auxym> In reply to @Elegantbeef "Consider using mratsim's strided": also 10$? 😉
+[03:01:51] <FromDiscord> <Elegantbeef> Nah he's paying me atleast a snickers bar for that one
+[03:02:00] <arkanoid> I mean that I have a continuous buffer that contains N items, each with different length. I have a separate "offsets" buffer that tells me where one end and the next begin
+[03:02:36] <FromDiscord> <auxym> isn't that an object?
+[03:02:58] <arkanoid> yes, but I don't know which one is (yet)
+[03:03:07] <arkanoid> I return the buffer, and the user casts it to whatever
+[03:03:30] <FromDiscord> <Elegantbeef> Well then make an object 🙂
+[03:03:44] <arkanoid> object with variable length?
+[03:04:00] <arkanoid> or you mean object with ptr + length
+[03:05:49] <FromDiscord> <auxym> well if you have your offsets buffer, you know its length and contents
+[03:06:33] <FromDiscord> <mratsim> You need to create dedicated proc to this object: ptr + len +  offset
+[03:06:37] <FromDiscord> <mratsim> procs
+[03:06:46] <FromDiscord> <mratsim> there is no nim builtin for that.
+[03:06:46] <arkanoid> thanks
+[03:07:14] <arkanoid> "func binaryItem*(arr: ArrowArray, i: int): (pointer, int) =" will do
+[03:07:33] <FromDiscord> <mratsim> you can return openarray
+[03:08:08] <FromDiscord> <mratsim> need to add {.experimental: "views".} in the fil though
+[03:08:15] <FromDiscord> <mratsim> (edit) "fil" => "file"
+[03:08:33] <FromDiscord> <mratsim> then proc can return openarray and openarray can be stored in variables and types.
+[03:08:56] <arkanoid> ok but my buffer contains items of different lengths
+[03:08:58] <FromDiscord> <mratsim> be prepared to make many bug reports. Because you'll be one of the few to test it.
+[03:09:03] <FromDiscord> <mratsim> ah
+[03:09:19] <FromDiscord> <mratsim> isn't the i parameter for selecting already one of the subbuffer?
+[03:09:47] <arkanoid> think like a cstring array, but no null character but a separate buffer that contains just offsets
+[03:10:14] <FromDiscord> <mratsim> returning the offset buffer or returning the data buffer without the offset isn't useful.
+[03:10:39] <FromDiscord> <mratsim> it would be the wrong abstraction level, so use that type as the base.
+[03:10:42] <arkanoid> sure, that's why I pasted "func binaryItem*(arr: ArrowArray, i: int): (pointer, int)"
+[03:11:01] <FromDiscord> <mratsim> what does i do then?
+[03:11:12] <FromDiscord> <mratsim> the `i: int`?
+[03:11:13] <arkanoid> you know what contains, you cast it
+[03:11:43] <arkanoid> i is the index of the element you want to get in the variable binary buffer
+[03:12:08] <FromDiscord> <mratsim> ah, itemBlob is a better name then. But that's a really low-level interface
+[03:12:24] <FromDiscord> <mratsim> and return openarray[byte]
+[03:12:33] <FromDiscord> <mratsim> blob are bytes.
+[03:12:56] <FromDiscord> <auxym> aka dangerous, if you're relying on user code to cast it arbitrarily
+[03:13:22] <FromDiscord> <mratsim> the issue here is that I think it's unusable.
+[03:13:39] <FromDiscord> <mratsim> The internal repr would depend if the machine is big or little endian
+[03:13:54] <arkanoid> well, the data structure is called Variable-size Binary, I can't make up for the user what it contains
+[03:14:11] <arkanoid> there's a spec that says if it's little or big
+[03:14:13] <FromDiscord> <mratsim> ah
+[03:14:22] <FromDiscord> <mratsim> so it really contains a blob
+[03:14:37] *** Quits: PMunch (~PMunch@user/pmunch) (Quit: leaving)
+[03:14:39] <arkanoid> I'm dealing with apache arrow specs, so I guess they made them right. It's me that requires fixing
+[03:14:48] <FromDiscord> <mratsim> well I will need to review the spec and the code, but openarray[byte] sems suitable
+[03:15:33] <FromDiscord> <mratsim> it's just that if there are added offsets, openarray[byte] is the wrong level of abstraction, the ArrowArray is the right one.
+[03:15:52] <FromDiscord> <mratsim> and a high-level API that abstract away dealing with offset should be added.
+[03:16:08] <FromDiscord> <mratsim> anyway, I'll review it later.
+[03:16:14] <arkanoid> well, openArray deals with it, right?
+[03:16:31] <arkanoid> "func itemBlob*(arr: ArrowArray, i: int): openArray[byte] ="
+[03:17:42] <FromDiscord> <mratsim> you mentioned offsets, when you pass a i, does it select a contiguous range based on these offsets?
+[03:19:27] <arkanoid> mratsim, correct
+[03:19:38] <arkanoid> I end up with a pointer and a length
+[03:42:10] *** Quits: vicfred (~vicfred@user/vicfred) (Quit: Leaving)
+[03:44:26] <FromDiscord> <Patitotective> In reply to @PMunch "Well, now I'm in": I'm already out of that boat :p
+[03:51:18] *** Quits: Guest8 (~Guest8@2806:1000:8104:32cf:92f6:52ff:fe11:578c) (Quit: Client closed)
+[03:53:03] <arkanoid> mratsim, so you see anything wrong here? I'm getting "Error cannot borrow from" https://play.nim-lang.org/#ix=3N4E
+[04:14:19] <FromDiscord> <mratsim> In reply to @arkanoid "<@570268431522201601>, so you see": `slotPosition = offsets[i].addr`↵↵and use {.experimental: "views".}
+[05:18:02] *** Quits: krux02 (~krux02@p200300e81723dd00b48b627b8314596f.dip0.t-ipconnect.de) (Remote host closed the connection)
+[07:09:05] <FromDiscord> <Bung> @ElegantBeef any news for me ?
+[07:09:41] <FromDiscord> <Elegantbeef> `ref T` should work and procs are `nil`'d dont recall what you needed
+[07:11:36] <FromDiscord> <Bung> let me see what happen after new update
+[07:11:54] <nrds> <06Prestige99> Not sure how to word this succinctly https://play.nim-lang.org/#ix=3N5j
+[07:12:00] <nrds> <06Prestige99> Is there a way to do the above?
+[07:12:19] <nrds> <06Prestige99> or do they have to be ref objects
+[07:12:57] <FromDiscord> <Elegantbeef> https://play.nim-lang.org/#ix=3N5k not overly safe but if `f` doesnt go out of scope should be fine
+[07:13:08] <FromDiscord> <Elegantbeef> Alternatively you use `views`
+[07:13:21] <nrds> <06Prestige99> ah that may be just what I need, byaddr
+[07:13:46] <nrds> <06Prestige99> thanks beef
+[07:14:07] <FromDiscord> <Elegantbeef> Should note it's also unsafe if you mutate the collection
+[07:14:42] <nrds> <06Prestige99> hm okay I'll see how this goes
+[07:15:54] <FromDiscord> <Elegantbeef> To showcase the issue https://play.nim-lang.org/#ix=3N5l
+[07:16:23] <FromDiscord> <Elegantbeef> We add another value to `mySeq` which causes it to realloc and move the memory, which means our point is no longer safe
+[07:16:37] <nrds> <06Prestige99> hm why would I be getting an error invalid pragma: byaddr
+[07:16:51] <FromDiscord> <Elegantbeef> `import std/decls`
+[07:17:05] <nrds> <06Prestige99> ah I totally missed that
+[07:18:47] <nrds> <06Prestige99> still happening 🤔
+[07:19:07] <FromDiscord> <Elegantbeef> Are you modifying the collection?
+[07:19:17] <FromDiscord> <Bung> I still get `Error: type mismatch: got 'NimNode' for '↵nil' but expected 'Node = ref Node:ObjectType'`
+[07:19:29] <FromDiscord> <Elegantbeef> Oh right that error
+[07:19:37] <FromDiscord> <Elegantbeef> I forgot, can you make an issue with a min reproduction?
+[07:19:37] <nrds> <06Prestige99> not before the object goes out of scope
+[07:20:47] <FromDiscord> <Elegantbeef> There is also this sort of thing you can do https://play.nim-lang.org/#ix=3N5m
+[07:21:35] <nrds> <06Prestige99> oh fancy
+[07:21:49] <nrds> <06Prestige99> this should still work though eh? 
+[07:21:53] <FromDiscord> <Elegantbeef> Yea i dont know what to say `byaddr` will work properly assuming the collection isnt mutated
+[07:22:07] <FromDiscord> <Elegantbeef> So unless you're causing the collection to mutate something else is the issue
+[07:22:39] <nrds> <06Prestige99> maybe there's some other issue but I'm getting the wrong compilation error
+[07:23:33] <FromDiscord> <Elegantbeef> Can you share the code?
+[07:24:15] <nrds> <06Prestige99> yeah let me finish this up and push, few mins
+[07:25:00] <FromDiscord> <Bung> In reply to @Elegantbeef "I forgot, can you": let me try
+[07:29:13] <nrds> <06Prestige99> https://github.com/avahe-kellenberger/shade/blob/aa70b81849f49d427e7c9f74eac9c0a5499455a2/src/shadepkg/math/collision/aabbtree.nim#L72 @Elegantbeef
+[07:29:28] <nrds> <06Prestige99> aabbtree.nim(72, 16) Error: invalid pragma: byaddr
+[07:30:04] *** Quits: arkurious (~arkurious@user/arkurious) (Quit: Leaving)
+[07:32:27] <FromDiscord> <Elegantbeef> Perhaps `byaddr` isnt getting mixed in
+[07:32:49] <FromDiscord> <Elegantbeef> add `mixin byaddr` to the top
+[07:33:12] <nrds> <06Prestige99> same error
+[07:33:14] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3N5r
+[07:33:23] <nrds> <06Prestige99> could it have to do with the gc?
+[07:33:41] <FromDiscord> <Elegantbeef> No
+[07:33:48] <FromDiscord> <Elegantbeef> It's to due with pragmas in generics i think
+[07:33:56] <nrds> <06Prestige99> ah :/
+[07:34:10] <FromDiscord> <Elegantbeef> `export cdecls` in this module
+[07:34:31] <nrds> <06Prestige99> decls or cdecls
+[07:34:53] <FromDiscord> <Elegantbeef> `decls`
+[07:35:00] <FromDiscord> <Elegantbeef> I'm an idiot that for some reason always thinks it's named `cdecls`
+[07:35:15] <nrds> <06Prestige99> same error but a different line, interesting
+[07:35:43] <nrds> <06Prestige99> that means line 72 worked.. but line 173 didn't
+[07:36:02] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3N5s
+[07:36:06] <FromDiscord> <Elegantbeef> instead of the byaddr
+[07:36:27] <nrds> <06Prestige99> about that, is there overhead?
+[07:36:30] <FromDiscord> <Elegantbeef> It's what `byaddr` does anyway
+[07:36:35] <nrds> <06Prestige99> ah, ok
+[07:36:59] <nrds> <06Prestige99> thanks for the help
+[07:37:01] <FromDiscord> <Elegantbeef> https://github.com/nim-lang/Nim/blob/version-1-6/lib/std/decls.nim#L15-L19
+[07:37:07] <FromDiscord> <Elegantbeef> byaddr isnt very complicated
+[07:43:09] <FromDiscord> <Bung> I dont know which part cause that , you can check this https://github.com/bung87/crown_ui/tree/nimscripter  and run nimble buildSite
+[07:46:53] *** Joins: vicfred (~vicfred@user/vicfred)
+[08:01:36] <FromDiscord> <Elegantbeef> Uhh it works for me
+[08:01:57] <FromDiscord> <Elegantbeef> Line 158 you have a `vNode = string` which errors
+[08:06:47] <FromDiscord> <Bung> which file
+[08:06:52] <FromDiscord> <Elegantbeef> generator
+[08:08:02] <FromDiscord> <Elegantbeef> There are so many indention issues in here aswell
+[08:08:55] <FromDiscord> <Bung> I dont get what you mean `vNode = string` https://media.discordapp.net/attachments/371759389889003532/934306108741394462/Screen_Shot_2022-01-22_at_12.37.37_PM.png
+[08:09:24] <FromDiscord> <Elegantbeef> `postNode: VNode` `invoke(returnType = string)`
+[08:09:50] <FromDiscord> <Elegantbeef> You're attempting to assign `postNode` to a `string`
+[08:10:40] <FromDiscord> <Elegantbeef> `type mismatch: got 'string' for '...' but expected 'VNode = ref VNode:ObjectType`
+[08:10:49] <FromDiscord> <Bung> `postNode = libTheme.invoke(renderPost,conf, data, contentNode, returnType = VNode)`
+[08:11:02] <FromDiscord> <Bung> this is what I see
+[08:11:18] <FromDiscord> <Elegantbeef> https://github.com/bung87/crown_ui/blob/nimscripter/src/crown_ui/generator.nim#L158 that's not the code you have on the repo
+[08:13:48] <FromDiscord> <Bung> okay , may bad ,updated.
+[08:19:54] <FromDiscord> <sharpcdf> can i make an anonymous process for a parameter?
+[08:22:04] <FromDiscord> <Elegantbeef> You mean procedure? Yes
+[08:22:46] <FromDiscord> <sharpcdf> is it possible to make it not have a body
+[08:22:52] <FromDiscord> <sharpcdf> just an empty function
+[08:23:01] <FromDiscord> <Elegantbeef> `proc()= discard`
+[08:23:09] <FromDiscord> <Elegantbeef> or `nil`
+[08:23:09] <FromDiscord> <sharpcdf> thanks
+[08:23:15] <FromDiscord> <Elegantbeef> `proc` is a pointer
+[08:28:14] <FromDiscord> <Elegantbeef> So interestingly bung the issue is due to the object having 0 fields
+[08:28:41] *** Quits: rockcavera (~rc@user/rockcavera) (Remote host closed the connection)
+[08:33:57] <FromDiscord> <Elegantbeef> 1.0.8 is now up so try that please
+[08:33:58] <FromDiscord> <Bung> which one , I dont see any type has no fields in this file
+[08:34:16] <FromDiscord> <Bung> okay, let me try
+[08:36:11] <FromDiscord> <Elegantbeef> Vnode has `Node`
+[08:36:22] <FromDiscord> <Elegantbeef> Node when not JS is `Node = ref object`
+[08:55:21] <FromDiscord> <Bung> oh , it compiles and run but got error `Script Error: (line: 1, col: 13, fileIndex: ...) cannot open file: karax/karaxdsl`
+[08:55:50] *** Joins: Gustavo6046 (~Gustavo60@user/gustavo6046)
+[08:56:05] <nrds> <06Prestige99> @Elegantbeef I attempted writing my own pragma but had the same error, so it's probably some weird issue with generics + concepts + pragmas
+[09:02:43] <FromDiscord> <Elegantbeef> Yea bung it doesnt have nimble paths
+[09:03:22] <FromDiscord> <Elegantbeef> You are using it weirdly, so i need to think about how best to support this
+[09:12:32] <NimEventer> New thread by Oyster: Usage of OpenMP parallel loop iterator for lazybones?, see https://forum.nim-lang.org/t/8836
+[09:23:46] <FromDiscord> <Bung> In reply to @Elegantbeef "You are using it": okay
+[09:24:18] <FromDiscord> <Elegantbeef> You could copy the karax stuff to a folder that is your stdlib, not ideal but yea
+[09:25:33] <FromDiscord> <Bung> how to apply modules in loadScript ? maybe I can assign nimble modules to this parameter ?
+[09:27:36] <FromDiscord> <Elegantbeef> There is a search path used which could be added to by user
+[09:28:04] <FromDiscord> <Bung> oh , found modules is used for preclude module
+[09:29:05] <FromDiscord> <Elegantbeef> Yea i guess the thing to do is add yet another optional parameter of `searchPaths` which are also used
+[09:29:56] <FromDiscord> <Bung> yeah, it's single one path now , need to be support sequence of string
+[09:33:26] *** Quits: joshbaptiste (~josh@2001:470:1f07:4d5:24::c2b5) (Ping timeout: 250 seconds)
+[09:54:05] *** Joins: krux02 (~krux02@p200300e81723dd00b48b627b8314596f.dip0.t-ipconnect.de)
+[10:18:33] <FromDiscord> <Mike> Quick question\: I know I can get the number of characters in a string with `myString.len`, but how do I get the number of characters that will actually be displayed if I were to print the string?
+[10:19:10] <FromDiscord> <Mike> If a string has digraphs in it, the number of characters won't actually represent the length of the string when it's printed out to the terminal
+[10:19:21] <FromDiscord> <Mike> Is there a way to get that number?
+[10:19:25] <FromDiscord> <Elegantbeef> `unicode.runeLen`?
+[10:21:39] <FromDiscord> <Elegantbeef> Or are you talking about non printable characters?
+[10:21:52] <FromDiscord> <Mike> No that's exactly what I was looking for, thank you!
+[10:22:03] <FromDiscord> <Mike> Hadn't even looked at the unicode module yet
+[10:28:13] <FromDiscord> <Elegantbeef> No problem
+[11:25:38] <FromDiscord> <Phil> I may have designed myself into a not so great situation
+[11:29:37] <FromDiscord> <Phil> Spontaneous idea, it might not be that impossible afterall, one minute
+[11:41:04] <FromDiscord> <Phil> sent a code paste, see https://play.nim-lang.org/#ix=3N6f
+[11:41:50] <FromDiscord> <mratsim> why? you put that template in a tools/utils/helpers file
+[11:41:55] <FromDiscord> <Phil> (edit) "https://play.nim-lang.org/#ix=3N6f" => "https://play.nim-lang.org/#ix=3N6g"
+[11:42:03] <FromDiscord> <mratsim> the let connection can be saved as well
+[11:43:09] <FromDiscord> <mratsim> sent a code paste, see https://play.nim-lang.org/#ix=3N6h
+[11:43:34] <FromDiscord> <mratsim> sent a code paste, see https://play.nim-lang.org/#ix=3N6i
+[11:43:56] <FromDiscord> <mratsim> and you should wrap in a try/finally to ensure recycling on exceptions
+[11:46:15] <FromDiscord> <Phil> Right, I can just pass in an empty shell of a variable and assign that within the template, while using the variable outside of it. I forgot I can pass uninitialized variables like that.↵That is really neat, thanks mratsim!
+[11:47:19] <FromDiscord> <mratsim> it's not even a variable you have to declare
+[11:47:34] <FromDiscord> <mratsim> it's just an identifier, the template will declare it with `let`
+[11:48:45] <FromDiscord> <Phil> check, identifier is a better word for it than shell, I simply pass an identifier
+[11:48:49] <FromDiscord> <Elegantbeef> You may want to add a block
+[11:49:25] <FromDiscord> <mratsim> ah yes for namespacing
+[11:49:30] <FromDiscord> <mratsim> block and try finally
+[11:49:50] <FromDiscord> <Elegantbeef> Well with try you dont need the block
+[11:50:30] <FromDiscord> <Phil> sent a code paste, see https://play.nim-lang.org/#ix=3N6m
+[11:50:44] <FromDiscord> <Elegantbeef> ah right i'm dumb
+[11:50:54] <FromDiscord> <Elegantbeef> it's just `block:`
+[11:51:06] <FromDiscord> <Elegantbeef> Creates a new scope
+[11:51:36] <FromDiscord> <Elegantbeef> You can optionally do `block name:`
+[11:51:45] <FromDiscord> <Elegantbeef> https://nim-lang.org/docs/manual.html#statements-and-expressions-block-statement
+[11:52:18] <FromDiscord> <Phil> That way I can ensure that "connection" isn't accidentally already taken as an identifier?
+[11:52:34] <FromDiscord> <Phil> No wait, that makes no sense, hmmm
+[11:52:40] <FromDiscord> <Elegantbeef> Or used after supposedly disposed
+[11:53:27] <FromDiscord> <Bung> https://github.com/haxscramper/haxdoc/commit/31b80251c09c515027954c5c74b6de6a542c3d1c found hax have written something to find nimble packages
+[11:55:40] <FromDiscord> <Phil> sent a code paste, see https://play.nim-lang.org/#ix=3N6n
+[11:58:38] <FromDiscord> <evoalg> a try/finally is already a block right? ... with its own scope?
+[11:59:35] <FromDiscord> <Elegantbeef> Yes
+[11:59:54] <FromDiscord> <Elegantbeef> The only reason block is needed is due to the fact you cannot declare it inside `try` and use it in `finally`
+[12:00:41] <FromDiscord> <Elegantbeef> blocks without scope only exists for `when`
+[12:01:12] <FromDiscord> <evoalg> ahhh thanks!
+[12:01:56] <FromDiscord> <evoalg> hehe I tried a try/finally in python and it's not a separate score (of course)
+[12:02:43] <FromDiscord> <Elegantbeef> "Why would you want a new scope in what looks like a new scope"
+[12:02:53] <FromDiscord> <evoalg> lol
+[12:14:04] *** Quits: l1x (uid1954@id-1954.tinside.irccloud.com) (Quit: Connection closed for inactivity)
+[12:18:50] <FromDiscord> <evoalg> So I can think of it like this? ... if I see something ending in ":" (and a newline) has its own scope except for "when:"?
+[12:19:08] <FromDiscord> <Elegantbeef> In the case of templates not so
+[12:19:22] <FromDiscord> <evoalg> ahhhh ok!
+[12:19:57] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3N6p
+[12:20:34] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3N6q
+[12:20:42] <FromDiscord> <Elegantbeef> All flow control is properly scoped though
+[12:21:23] <FromDiscord> <Elegantbeef> sent a code paste, see https://paste.rs/LWZ
+[12:22:07] <FromDiscord> <Elegantbeef> inb4 "Wait you can call procedures like that?!"
+[12:22:49] <FromDiscord> <Phil> wait, variable assignments within procedure calls?
+[12:22:57] <FromDiscord> <evoalg> that's nice!
+[12:23:05] <FromDiscord> <Phil> I'm not sure it is
+[12:23:14] <FromDiscord> <Elegantbeef> In Nim "everything" can be a expression
+[12:23:29] <FromDiscord> <Elegantbeef> you can also do `if (let x = 100; x) == 100`
+[12:24:00] <FromDiscord> <evoalg> lol
+[12:24:40] <FromDiscord> <Phil> I would like to ~~rage~~ veto!
+[12:25:23] <FromDiscord> <Elegantbeef> Eh it's more a case of "allowing it is nice, only idiots will miss use it"
+[12:25:29] <FromDiscord> <Phil> I have watched too many dndstreams that this phrase from one of the more popular streams is so ingrained into me
+[12:25:37] <FromDiscord> <Phil> (edit) "dndstreams" => "dnd-streams"
+[12:25:52] <FromDiscord> <evoalg> In reply to @Elegantbeef "you can also do": In this case it has it's own scope
+[12:26:02] <FromDiscord> <Elegantbeef> Yes it has the `if` scope
+[12:26:06] <FromDiscord> <Elegantbeef> Which makes sense
+[12:26:10] <FromDiscord> <evoalg> ahhh yes!
+[12:26:11] <FromDiscord> <Elegantbeef> since `if` actually makes scope
+[12:26:19] <FromDiscord> <evoalg> unlike python
+[12:26:39] <FromDiscord> <Elegantbeef> Unrelated but hey there are more matrix users!
+[12:26:58] <FromDiscord> <Elegantbeef> Lurkers i tell you 😛
+[12:27:38] <FromDiscord> <mratsim> Good Matrix client for Linux that isn't yet another web browser (TM°?
+[12:27:40] <FromDiscord> <mratsim> Nheko?
+[12:28:15] <FromDiscord> <Elegantbeef> I just use element but i have been meaning to try others
+[12:29:54] <FromDiscord> <Elegantbeef> I do kinda dumbly want to make one but knowing me it'd end with a 1/20th implemented client
+[12:30:04] <FromDiscord> <Elegantbeef> Plus i cant even use GTK without my brain imploding
+[12:30:08] <FromDiscord> <Phil> Sidenote, I am fascinated that supertux exists
+[12:30:41] <FromDiscord> <Elegantbeef> Super tux kart and super tux party exist aswell 😀
+[12:31:31] <FromDiscord> <Phil> This is ridiculous and adorable in equal measure
+[12:31:37] <FromDiscord> <Elegantbeef> I did kinda want to use my technical art skills to contribute to Super Tux Party to make it not god awful looking
+[12:32:23] <FromDiscord> <Elegantbeef> This water is just so meh
+[12:32:28] <FromDiscord> <Elegantbeef> image.png https://media.discordapp.net/attachments/371759389889003532/934372430087069726/image.png
+[12:32:44] <FromDiscord> <Elegantbeef> Anyway where are all the Nim questions! 😛
+[12:33:13] <FromDiscord> <evoalg> I have a list of questions ... I pull from it when you ask that
+[12:33:28] <FromDiscord> <Elegantbeef> Jeez a whole list
+[12:33:57] <FromDiscord> <evoalg> but I'll only ask one ... hang on finishing my "scope" notes 😉
+[12:34:29] <FromDiscord> <Elegantbeef> These notes sound quite interesting
+[12:35:04] <FromDiscord> <evoalg> maybe because it's a minor scale ... I dunno
+[12:36:06] <FromDiscord> <evoalg> I mean I have to keep notes ... "Beef's cunnings"
+[12:36:52] <FromDiscord> <Elegantbeef> At this point you should just have a github gist so you can link others to your notes 😛
+[12:37:04] <FromDiscord> <Elegantbeef> "Aw shit i have notes on this topic, look at this!"
+[12:39:56] <FromDiscord> <evoalg> hehe true
+[12:40:25] <FromDiscord> <Phil> Huh... strictly speaking that connection pooling thingy may have been the last larger roadblock for my webapp
+[12:41:19] <FromDiscord> <Phil> Oh wait, no, handling uploading myself in prologue will be another, nevermind
+[12:41:35] <FromDiscord> <Phil> (edit) "Oh wait, no, handling uploading ... myself" 03added "files by"
+[12:42:14] <FromDiscord> <evoalg> sent a code paste, see https://play.nim-lang.org/#ix=3N6x
+[12:42:33] <FromDiscord> <evoalg> (I saw it and I thought it looks interesting but I don't understand it)
+[12:42:58] <FromDiscord> <Elegantbeef> Yes it's echoing the address of the first value in the string's data
+[12:43:38] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3N6y
+[12:44:09] <FromDiscord> <Elegantbeef> They point to the same data but arent at the same place 😀
+[12:44:37] <FromDiscord> <Elegantbeef> So yes it's passed as a reference 😀
+[12:45:08] <FromDiscord> <Elegantbeef> I mean no
+[12:45:15] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3N6z
+[12:45:40] <FromDiscord> <Elegantbeef> a string is a "small object" it's only a pointer so it's not passed as a reference
+[12:46:12] <FromDiscord> <evoalg> ahhhh ok ... so now I know how to check, nice!
+[12:46:24] <FromDiscord> <Elegantbeef> sent a code paste, see https://paste.rs/gXg
+[12:46:40] <FromDiscord> <Elegantbeef> And if you make that `ref object` you get the same thing as a string
+[12:47:19] <FromDiscord> <evoalg> those a really good examples ... thank you!
+[12:48:06] <FromDiscord> <evoalg> do you use "unsafeAddr" because strings are on the heap?
+[12:48:44] <FromDiscord> <Elegantbeef> nah
+[12:48:49] <FromDiscord> <Elegantbeef> `unsafeaddr` is just a misnomer
+[12:49:22] <FromDiscord> <Elegantbeef> It's equally as unsafe as `addr` but allows you to take the address of something that is immutable
+[12:49:34] <FromDiscord> <Elegantbeef> A future Nim will allow `addr` to work in both cases
+[12:49:59] <FromDiscord> <evoalg> ahhh
+[12:50:12] <FromDiscord> <evoalg> and why do you cast to ByteAddress ?
+[12:50:20] <FromDiscord> <Elegantbeef> Just to be more descript
+[12:50:24] <FromDiscord> <Elegantbeef> It's just an alias of `int`
+[12:50:44] <FromDiscord> <Elegantbeef> Or do you mean why do i cast atall?
+[12:50:54] <FromDiscord> <evoalg> both 😉
+[12:51:06] <FromDiscord> <Elegantbeef> Pointers are just integers that are distinct types to `int` in Nim
+[12:51:11] <FromDiscord> <Elegantbeef> They do not have a `$` implemented
+[12:51:29] <FromDiscord> <evoalg> ahhhh
+[12:51:32] <FromDiscord> <Elegantbeef> Casting to `int` results in us being able to echo out the pointer address
+[12:51:37] <FromDiscord> <Elegantbeef> you could also do `.repr`
+[12:51:51] <FromDiscord> <evoalg> gotcha ok
+[12:51:52] <FromDiscord> <Elegantbeef> repr gives more information
+[12:53:47] <FromDiscord> <evoalg> why don't cast to `int` if it's shorter?
+[12:53:59] <FromDiscord> <Elegantbeef> To be more descriptive in the example 😀
+[12:54:11] <FromDiscord> <Elegantbeef> Types afterall are mainly to make things more readable
+[12:55:18] <FromDiscord> <evoalg> that's fair
+[12:55:53] <FromDiscord> <Elegantbeef> I also left out static soundness
+[12:56:12] <FromDiscord> <Elegantbeef> More questions?!
+[12:57:15] <FromDiscord> <evoalg> yep ... I can pull another one off the list 😉
+[12:57:55] <FromDiscord> <evoalg> I see you talking about constructors ... what are they and do I need to learn them at the moment?
+[12:59:27] <FromDiscord> <evoalg> if it's to do with macro's then I can wait until I learn them
+[13:01:35] <FromDiscord> <evoalg> in which case I can ask what you meant by "static soundness"
+[13:03:59] <FromDiscord> <Elegantbeef> Constructors just make objects
+[13:04:11] <FromDiscord> <Elegantbeef> Static soundness was just in reference of statically typed
+[13:05:52] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3N6F
+[13:05:53] <FromDiscord> <Elegantbeef> That's a constructor for instance
+[13:06:12] <FromDiscord> <Elegantbeef> Now i do also have a package named constructor, which is also what i've talked about
+[13:06:21] <FromDiscord> <evoalg> ohhh
+[13:06:34] <FromDiscord> <Elegantbeef> It makes it `proc init(_: typedesc[MyObject], a, b: int) : MyObject {.constr.}`
+[13:08:25] <FromDiscord> <evoalg> without the body?
+[13:08:38] <FromDiscord> <Elegantbeef> Body is optional
+[13:09:05] <FromDiscord> <Elegantbeef> https://github.com/beef331/constructor#constructor-1 shows different usages
+[13:09:09] <FromDiscord> <evoalg> so you constructor saves some (keyboard) typing?
+[13:09:23] <FromDiscord> <Elegantbeef> Yep
+[13:11:46] <FromDiscord> <evoalg> ahhh it seems to me there are mainly two types of people coming to nim ... those from C (etc) and those from python ... those from the C side are heavily into objects ... but I'm from python and I naturally don't think about using objects, so it's a bit of a shift in thinking for me, and I'm still confused by a lot of it. That `var a = Myobject.init(10, 20)` ... couldn't I write it like `var a = Myobject.init(a=10, b=20)` and not have that
+[13:12:07] <FromDiscord> <Elegantbeef> I dont come from C 😀
+[13:12:49] <FromDiscord> <evoalg> C, C++, C# ... I lump them all into the same thing because I'm from python and I don't know any better
+[13:12:52] <FromDiscord> <Elegantbeef> The benefit of constructor is when you have long field names and dont want to have to write it out fully
+[13:13:12] <FromDiscord> <evoalg> ohhh ok
+[13:13:24] <FromDiscord> <Elegantbeef> I mean most libraries that make you make many objects will have constructors
+[13:13:30] <FromDiscord> <Elegantbeef> The entire point is to make it easy to do
+[13:13:32] <FromDiscord> <evoalg> and if you use objects a lot then it makes sense
+[13:13:50] <FromDiscord> <Elegantbeef> Secondary reason can be to prevent access from internals
+[13:14:05] <FromDiscord> <Elegantbeef> I mean `newSeq` is a constructor 😛
+[13:14:45] <FromDiscord> <Elegantbeef> What do you use if not objects?
+[13:14:53] <FromDiscord> <Elegantbeef> Or are your programs not complex enough to want to have grouped fields? 😀
+[13:16:34] <FromDiscord> <evoalg> "prevent access from internals" ... what is that?  Ahhh I still think like a python programmer (and even then I usually write small things ... I'm not a programmer, and I don't do it as a job). So I just have lots of variables and I end up passing heaps of them to a proc and then it looks confusing
+[13:17:27] <FromDiscord> <Elegantbeef> Say you have a field that you want intialized but dont want to expose it to the user aside from there
+[13:17:57] <FromDiscord> <evoalg> ohhhh ok
+[13:18:58] <FromDiscord> <Elegantbeef> Yea if you're passing a bunch of variables you may consider making objects
+[13:19:19] <FromDiscord> <evoalg> I guess also it's easy to have containers of mixed types, so I use those like an object I guess
+[13:20:42] <FromDiscord> <Elegantbeef> Manually doing struct of arrays 😀
+[13:22:25] <FromDiscord> <evoalg> with objects, are they traps for young players? ... or are they pretty simple?
+[13:22:56] <FromDiscord> <Elegantbeef> They're dead simple
+[13:23:13] <FromDiscord> <Elegantbeef> They're 0 intalized databuckets with named fields 😀
+[13:24:26] <FromDiscord> <evoalg> "0 intalized" means empty for the default type?
+[13:24:42] <FromDiscord> <Elegantbeef> Just like variables `var a: int` being 0
+[13:24:50] <FromDiscord> <evoalg> ok gotcha
+[13:24:57] <FromDiscord> <Elegantbeef> `var a = MyObject()`
+[13:24:58] <FromDiscord> <Elegantbeef> All fields are 0'd
+[13:25:11] <FromDiscord> <evoalg> ahhh ok
+[13:26:57] *** Joins: PMunch (~PMunch@user/pmunch)
+[13:33:15] <FromDiscord> <evoalg> in a discussion of Nim vs Python, leorize said "oh and there's no such thing as global namespace in nim, everything is module-scoped↵that's a knowledge that will help you avoid the from-import trap that newcomers from python frequently fall into"↵... I'm wondering what this trap is?
+[13:33:39] <FromDiscord> <Elegantbeef> `from x import y`
+[13:33:54] <FromDiscord> <Elegantbeef> Or whatever the python import method is
+[13:34:32] <FromDiscord> <Elegantbeef> Many python users want to have all their modules imported and do `moduleName.procedure`
+[13:34:52] <FromDiscord> <Elegantbeef> Atleast i think that's what it was
+[13:35:01] <FromDiscord> <evoalg> Nim allows that, no?
+[13:35:18] <FromDiscord> <Elegantbeef> Bur it's doesnt compose well with Nim
+[13:35:24] <FromDiscord> <Elegantbeef> but\
+[13:36:05] <FromDiscord> <evoalg> doesn't compose well means doesn't look good or it leads to errors?
+[13:36:22] <FromDiscord> <Elegantbeef> It's tedious to use since all procedures require prefix
+[13:36:34] <FromDiscord> <Elegantbeef> say you import a module that adds operators for types
+[13:36:58] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3N6R
+[13:37:08] <FromDiscord> <evoalg> ahh
+[13:37:25] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3N6S
+[13:37:53] <FromDiscord> <evoalg> ok I see what was meant now
+[13:38:11] <FromDiscord> <Elegantbeef> I atleast imagine that's what he meant
+[13:38:31] <FromDiscord> <evoalg> gosh I think I've asked enough tonight, and it's getting late for you ... thank you Beef!
+[13:38:44] <FromDiscord> <Elegantbeef> How dare you thank me!
+[13:39:24] <FromDiscord> <evoalg> maybe it's cos I'm kiwi
+[13:40:12] <FromDiscord> <Elegantbeef> We're the stereotypical most polite countries
+[13:41:37] <FromDiscord> <Rika> Huh really
+[13:41:46] <FromDiscord> <evoalg> I remember I was in hospital and the young female doctor checked my prostate, and I said "thank you" ... she gave me such a look
+[13:42:05] <FromDiscord> <Elegantbeef> "I came in with a cough"
+[13:42:24] <FromDiscord> <evoalg> yea they don't much around in hospitals
+[13:42:44] *** Quits: Gustavo6046 (~Gustavo60@user/gustavo6046) (Quit: Leaving)
+[13:43:45] <FromDiscord> <Elegantbeef> Atleast in the english world Canadians/Kiwis are considered "overly polite"
+[13:44:06] <FromDiscord> <evoalg> yea I've heard comedians joke about that
+[13:44:33] <FromDiscord> <Rika> I guess
+[13:44:35] <FromDiscord> <evoalg> a Canadian get's hit by a car, gets up and says "sorry"
+[13:44:53] <FromDiscord> <evoalg> Kiwis are like that too
+[13:45:43] <FromDiscord> <Elegantbeef> Yea the most Kiwi thing i've ever seen was a wood carving twitch streamer getting subscriptions bought for watchers and him going "Oh no, how do i give the money back"
+[13:46:00] <FromDiscord> <evoalg> LOL
+[13:48:35] <PMunch> Haha, that is so wholesome
+[13:48:49] <PMunch> And by the way, wood carving twitch stream sounds awesome
+[13:50:38] <PMunch> Hmm, maybe Nim should have a `from module import operators` or something like that
+[13:50:53] <PMunch> To only import operators
+[13:51:02] <PMunch> Well it also breaks chaining..
+[13:51:16] <PMunch> I guess people should just stop being scared of imports :P
+[13:53:28] <FromDiscord> <Elegantbeef> Indeed
+[14:08:00] <FromDiscord> <Rika> It’s not gonna ever lead to hidden errors like if you do it in Python lol
+[14:08:08] <FromDiscord> <Rika> I guess that’s the thing
+[14:08:22] <FromDiscord> <Rika> They think oh Nim looks like Python i assume the import system does too
+[14:11:55] <NimEventer> New thread by Moigagoo: A love letter to SciNim, see https://forum.nim-lang.org/t/8837
+[14:12:59] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:d502:6835:efc4:ea15)
+[14:30:05] <PMunch> Hmm, with os:any we don't need a panicoverride, but with os:standalone we do. What is os:any doing with panics?
+[15:16:37] <FromDiscord> <mratsim> it rings Araq's personal phone
+[15:17:19] <FromDiscord> <Rika> It melts your processor
+[15:23:43] <NimEventer> New post on r/nim by derrpwave: request for input - packaging nimdice, see https://reddit.com/r/nim/comments/sa0xar/request_for_input_packaging_nimdice/
+[15:28:44] *** Quits: adigitoleo (~adigitole@2001:8003:1d19:4500:7669:2410:6555:555c) (Remote host closed the connection)
+[15:29:42] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:d502:6835:efc4:ea15) (Ping timeout: 268 seconds)
+[15:50:15] <PMunch> Haha, so I can call him by just crashing my microcontroller?
+[15:55:27] <FromDiscord> <Phil> He will direct disappointed silence at you
+[16:11:42] <FromDiscord> <auxym> what is panicoverride anyways? I've seen it used in some embedded projects
+[16:21:45] <PMunch> Essentially when your program "panics" (ie. crashes) Nim tries to output something useful. Since this typically involves some form of echo or other things which might not be supported everywhere it allows you to override the panic behaviour
+[17:04:36] <FromDiscord> <auxym> ah, so you can redirect the stack trace to uart or a debugger? Sounds useful
+[18:15:42] <FromDiscord> <Phil> Nim does not have a specific "MissingDirectoryDefect" or something like that, right? I'm not missing that while CTRl+F'ing my way through the exceptions.nim file, correct?
+[18:16:19] <FromDiscord> <Phil> Want to make sure before I make that Defect myself since I would have assumed such a defect to  exist
+[18:17:09] <PMunch> I guess that would go under a FileNotFound error
+[18:17:19] <PMunch> Since directories are pretty much the same as files
+[18:17:39] <FromDiscord> <Phil> Yeh, can't find such an error either
+[18:18:36] <FromDiscord> <Phil> I basically want to raise one if "dirExists" returns false to me, and want to give it a custom error message
+[18:26:41] <PMunch> Seems the standard library uses IOError for it
+[18:27:22] <FromDiscord> <Phil> Custom defects it is then
+[18:27:56] <PMunch> Nim unfortunately doesn't have a lot of pre-defined exceptions for things like this
+[18:27:57] <FromDiscord> <Phil> Defects are the default to use with nim's exception system right? That's what I understand given that other things appear to be deprecated
+[18:29:07] <PMunch> Nah, you should use CatchableError instead
+[18:29:35] <PMunch> Defects are for things that can't be recovered from, like div by zero or overflow
+[18:30:04] <PMunch> But you probably should make it an `object of IOError`
+[18:30:33] <PMunch> Since this is a narrower kind of IOError
+[18:30:52] *** Joins: arkurious (~arkurious@user/arkurious)
+[18:30:59] <PMunch> So if someone catches IOErrors then they will get yours as well, which makes sense
+[19:07:11] *** Joins: noeontheend (~noeonthee@207.237.194.194)
+[19:21:13] <FromDiscord> <konsumlamm> in general, the Error suffix denotes a catchable exception, while the Defect suffix means that the exception should not be catched
+[19:36:34] *** Joins: Guest31 (~Guest31@lfbn-orl-1-1907-243.w109-209.abo.wanadoo.fr)
+[19:36:57] *** Quits: Guest31 (~Guest31@lfbn-orl-1-1907-243.w109-209.abo.wanadoo.fr) (Client Quit)
+[19:53:39] <FromDiscord> <IsaacPaul> In reply to @mratsim "it rings Araq's personal": lmbooo
+[20:11:52] <PMunch> Hmm, designing presentation slides is quite different when making a video presentation from a live one
+[20:15:50] *** Quits: mahlon (~mahlon@martini.nu) (Ping timeout: 268 seconds)
+[20:30:49] *** Joins: luis_ (~luis@2600:4040:120a:3d00:f28c:7eb9:1aac:43a0)
+[20:31:01] <luis_> Hi all
+[20:31:15] <luis_> I am getting an error at startup, but I cant read it entirely
+[20:31:30] <luis_> sorry, wrong channel
+[21:22:13] <FromDiscord> <Phil> Do we have anything to convert images from png to webp?
+[21:23:15] <FromDiscord> <Phil> (edit) "webp?" => "webp?↵Edit: nevermind, we do: https://github.com/Tormund/nimwebp"
+[21:43:23] <FromDiscord> <geekrelief> Is there an way to check if a type if nilable?
+[21:43:30] <FromDiscord> <geekrelief> (edit) "if" => "is"
+[21:43:38] <FromDiscord> <geekrelief> (edit) "an" => "a"
+[21:43:39] <PMunch> is pointer?
+[21:47:19] <PMunch> @geekrelief, something like this? https://play.nim-lang.org/#ix=3N9M
+[21:47:31] <PMunch> Nabbed that type definitions from the options module
+[21:48:50] <FromDiscord> <geekrelief> thanks, I was going to do that, but I was hoping for a proc.  Appreciate the tip! fyi, I'm working on a macro that will check for nil in a chained dotExpr like ?a.b[1].c
+[21:54:17] *** Quits: noeontheend (~noeonthee@207.237.194.194) (Ping timeout: 240 seconds)
+[21:54:20] <PMunch> @geekrelief, have you checked out optionsutils?
+[21:54:46] <PMunch> Since nil == Option[pointer](none) it can be used for that (at least with some casting)
+[21:55:51] <FromDiscord> <geekrelief> I haven't checked out optionsutils
+[21:57:55] <FromDiscord> <geekrelief> are you getting a 504 for the docs? https://nimble.directory/docs/optionsutils//optionsutils.html
+[22:02:49] *** Joins: supakeen (~user@python/site-packages/supakeen)
+[22:11:17] <FromDiscord> <geekrelief> strange I do a `getType` on a `seq` and check if it's a nilable type and I get `true` in a macro but `false` at runtime.
+[22:13:51] *** Quits: vicecea (~vicecea@gateway/vpn/pia/vicecea) (Remote host closed the connection)
+[22:14:21] *** Joins: vicecea (~vicecea@gateway/vpn/pia/vicecea)
+[22:14:26] <FromDiscord> <geekrelief> oh duh.. `getType` returns NimNode
+[22:33:28] *** Joins: noeontheend (~noeonthee@207.237.194.194)
+[22:56:20] *** Joins: mahlon (~mahlon@martini.nu)
+[23:06:14] <FromDiscord> <auxym> there's no direct way to access a C `#define` from Nim right? The only way I can think of is creating a proc that uses  `{.emit}` to get value, assuming the header is included in some other way
+[23:25:05] <PMunch> @auxym, importc?
+[23:25:13] <PMunch> Maybe throw on a nodecl
+[23:26:59] <FromDiscord> <auxym> huh, didn't think of that. lemme try it out
+[23:31:27] <PMunch> Should work fine
+[23:33:21] <FromDiscord> <auxym> with a let declaration? or var?
+[23:33:34] <PMunch> Depends on what you're importing
+[23:34:00] <FromDiscord> <IsaacPaul> sent a code paste, see https://play.nim-lang.org/#ix=3Naf
+[23:34:54] <PMunch> Uhm, not quite what I meant
+[23:35:09] <PMunch> Does that actually work?
+[23:35:33] <FromDiscord> <auxym> ah something like this right? https://github.com/PMunch/badger/blob/7add5f680643ce620da06f615bb1dece214c8c45/teensy.nim#L28
+[23:35:59] <PMunch> Haha, yup, those are #define in the C code
+[23:36:11] <PMunch> Did you just go searching my GitHub for importc or something?
+[23:38:26] <FromDiscord> <IsaacPaul> In reply to @PMunch "Does that actually work?": Yea... I think the difference is that I needed a value for when the define didn't exist..
+[23:39:29] <FromDiscord> <auxym> I read a good part of it when I was figuring out how nim on embedded works a couple months ago. You mentioning it made me remember 🙂
+[23:39:54] <PMunch> @auxym, I'm actually working on more Nim on embedded stuff right now
+[23:40:23] <FromDiscord> <auxym> yeah, gathered that, looking forward to the result and your talk!
+[23:40:47] <FromDiscord> <auxym> I'm working on beef's rp pico library, getting usb and PIO working.
+[23:41:33] <PMunch> PIO?
+[23:41:50] <PMunch> Oh nice, hopefully we can combine that with what I'm working on :)
+[23:42:18] <FromDiscord> <auxym> yeah, sort-of mini-CPLDs that are integrated in the rp2040 chip, they are pretty neat!
+[23:43:12] <FromDiscord> <auxym> they're actually programmed in a small assembly language, but I need to wrap the C SDK functions for loading programs, config, etc
+[23:43:59] <FromDiscord> <auxym> really tiny though, limited to 32 instructions of program size

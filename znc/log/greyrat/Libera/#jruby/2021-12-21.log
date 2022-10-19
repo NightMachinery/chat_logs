@@ -1,0 +1,128 @@
+[01:24:23] *** Quits: sagax (~sagax_nb@user/sagax) (Ping timeout: 250 seconds)
+[04:55:08] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[08:33:26] *** Joins: sagax (~sagax_nb@user/sagax)
+[08:33:33] *** Joins: subbu (~subbu@user/subbu)
+[08:35:54] *** Quits: subbu (~subbu@user/subbu) (Client Quit)
+[17:45:59] *** Joins: subbu (~subbu@user/subbu)
+[18:21:37] *** Quits: subbu (~subbu@user/subbu) (Ping timeout: 240 seconds)
+[19:40:09] *** Joins: subbu (~subbu@user/subbu)
+[20:02:44] <enebo[m]> lopex: jruby -e 'p "abcdbce".partition(/b\Kc/)'
+[20:03:29] <enebo[m]> lopex: I think the last time I asked you said lookbehind works.
+[20:09:12] <enebo[m]> lopex: interesting 2.7 is same as JRuby for 3.0 is putting the 'b' onto first element
+[20:20:17] <enebo[m]> lopex: ah match data is correct.  our result index does not match begin in first match.
+[20:22:01] <lopex[m]> enebo: you mean 'keep' ?
+[20:22:32] <enebo[m]> \K so heh yeah I am messing up on name
+[20:22:55] <lopex[m]> so what changed in 3.0 ?
+[20:23:25] <enebo[m]> in the above partition the first element is now 'ab' where it was 'a' before 
+[20:23:47] <enebo[m]> our matcher.search will return 1 so we use 'a'.
+[20:24:20] <enebo[m]> I can change it to use matchdata[0].begin which works but that is not really a working solution
+[20:24:21] <lopex[m]> what about simpler case ?
+[20:25:03] <enebo[m]> you mean something with just a regexp?
+[20:25:09] <lopex[m]> yeah
+[20:26:16] <enebo[m]> I almost feel like I will make this more complicated because I would have to add a capture '
+[20:27:05] <enebo[m]> So my current understanding is matchdata made for \K is doing it right.  begin is 2 in the first search in partition
+[20:27:44] <enebo[m]> our result from pattern.search is returning 1
+[20:30:03] <lopex[m]> I cant see some changes for 3.0 in #partition
+[20:30:08] <enebo[m]> match(1) in joni will return 1 so it is not adding the \K part of the match
+[20:30:54] <enebo[m]> 	struct re_registers *regs = RMATCH_REGS(match);
+[20:30:55] <enebo[m]>         pos = BEG(0);
+[20:31:34] <enebo[m]> actually this is 3.0.  So I guess they do look at the beg of the first matchdata
+[20:31:59] <lopex[m]> do we use get_pat_quoted ?
+[20:32:29] <enebo[m]> nope
+[20:32:42] <enebo[m]> We just look if it is an instance of regexp
+[20:33:36] <enebo[m]> I find that method to be strange
+[20:34:11] <enebo[m]> In the case of String or Regexp it will just perform a syntax check
+[20:34:42] <enebo[m]> we will get that naturally
+[20:34:56] <enebo[m]> but the it is "something else" will rb_check_string_type then see if it is a regexp
+[20:35:01] <enebo[m]> which is weird
+[20:36:23] <enebo[m]> you know we do this wrong in our impl
+[20:36:29] <lopex[m]> so, I'm kind of lost, is it a partition of a match data issue ?
+[20:36:49] <enebo[m]> we search then we subpat again
+[20:37:02] <enebo[m]> I am now thinking this is a bug in only partition
+[20:37:44] <lopex[m]> cant see that pos = BEG(0); in 2.7
+[20:37:49] <enebo[m]> We use the result of search and then do the regexp a second time which is wasteful
+[20:38:03] <enebo[m]> yeah I was wrong this is a 3.0 change
+[20:38:26] <enebo[m]> I believe I will see this behavior all over with regexp coden ow
+[20:38:46] <lopex[m]> sep = rb_str_subseq(str, pos, END(0) - pos); vs sep = rb_str_subpat(str, sep, INT2FIX(0));
+[20:39:06] <lopex[m]> 3.0 vs 2.7
+[20:39:38] <enebo[m]> yeah
+[20:40:03] <enebo[m]> \K aside it makes me wonder why this was done line this to begin with
+[20:40:10] <enebo[m]> It could be a simple regexp call
+[20:40:22] <enebo[m]> I guess it is now :)
+[20:42:05] <enebo[m]> lopex: Thanks for the help.  I guess I just needed to chat with you
+[20:42:06] <enebo[m]> I hope things are going well
+[20:43:06] <enebo[m]> To answer my own question...match data with \K would give a different result pre-3.0 so they had to do two regexp invocations
+[20:43:17] <enebo[m]> The 3.0 behavior seems much nicer to me
+[20:45:33] <lopex[m]> and all string methods changed wrt that ?
+[20:46:00] <enebo[m]> I think so I can see now both rpartition and split have same failure
+[20:46:42] <lopex[m]> bleh
+[20:47:03] <enebo[m]> That partition example looks more "correct" to me in 3.0
+[20:47:19] <lopex[m]> but it looks like it could break a lot of things
+[20:47:44] <enebo[m]> yeah I don't know.  It definitely will break people using \K but I wonder how many people use \K in these methods
+[20:48:08] <lopex[m]> yeah, an obscure one
+[20:48:27] <enebo[m]> I would almost bet money people will just report it as a bug
+[20:48:36] <enebo[m]> the pre-3.0 behavior
+[20:48:43] <lopex[m]> \K has some tests in joni
+[20:49:00] <lopex[m]> 8 actually
+[20:49:03] <lopex[m]> :P
+[20:49:06] <lopex[m]> and one commented out
+[20:49:12] <lopex[m]> / x2s("a\\K?a", "aa", 0, 2);             // error: differ from perl
+[20:49:22] <lopex[m]> not sure if it's still broken
+[20:49:35] <enebo[m]> the question is who commented it out
+[20:49:57] <enebo[m]> comment sounds like a oniguruma comment
+[21:03:08] <lopex[m]> yep
+[21:03:09] <lopex[m]> #    x2("a\\K?a", "aa", 0, 2)        # error: differ from perl
+[21:03:15] <lopex[m]> lol that hash
+[21:03:36] <lopex[m]> so at least it adds to our confidence wrt compliance :P
+[21:04:13] <lopex[m]> onigmo tests are in python, I wonder if we could use jythin for that
+[21:06:46] <enebo[m]> good question
+[21:07:35] <enebo[m]> index and rindex fixed
+[22:46:30] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[23:18:10] <mattpatt[m]> hey all. Was looking at the last snapshot deploy github action failure
+[23:18:35] <mattpatt[m]> actually failed in javadoc generation, and not at the Sonatype maven publish stage
+[23:19:01] <mattpatt[m]> enebo: is there any chance you could run another manual snapshot publish?
+[23:19:35] <mattpatt[m]> wondering if that was a weird shouldn't-have failure
+[23:19:47] <mattpatt[m]> also wondering if the sonatype stuff is working now
+[23:22:12] <enebo[m]> mattpatt: I will re-run on master
+[23:22:38] <enebo[m]> https://github.com/jruby/jruby/actions/runs/1608430581
+[23:22:40] <mattpatt[m]> thanks
+[23:22:57] <enebo[m]> yeah hopefully it was something transient which will never happen again :)
+[23:23:19] <headius> There are a few new intermittent failures now that we have moved everything to get hub that either need to be fixed or excluded
+[23:23:38] <headius> Could be related to different timing or different number of cores or different network configuration
+[23:23:56] <headius> That has kept the full build plus deploy from having many green runs
+[23:24:26] <headius> s/get/github/, s/hub//
+[23:24:31] <enebo[m]> https://github.com/jruby/jruby/runs/4599391052?check_suite_focus=true#step:4:2753
+[23:24:33] <enebo[m]> hmm
+[23:25:03] <enebo[m]> looks like we are using too new of a JVM?
+[23:25:23] <enebo[m]> zulu 11!
+[23:29:53] <enebo[m]> so it says 8 in .yml but it appears to be 11
+[23:29:56] <headius> I don't think the Java doc generation is working at all on Java 9 and higher for us because we are not fully modularized and it throws a fit
+[23:30:03] <headius> Is not working
+[23:30:35] <headius> Whatever... I had to change the deploy build to Java 8 because it was complaining about a similar module visibility issue
+[23:30:49] <enebo[m]> That error appears to be an export issue with modules so perhaps once that works the javadocs stuff will just explode
+[23:31:04] <headius> Hmm, did I not merge my pull request correctly?
+[23:31:36] <enebo[m]> maybe I reran something before over again?
+[23:31:45] <enebo[m]> I thought I just clicked run workglow
+[23:33:16] <headius> https://github.com/jruby/jruby/commit/f6774ea88d928649562a95b30d8cd840a936473a
+[23:33:27] <headius> Yeah I think your commit might be just before this got merged
+[23:33:36] <enebo[m]> aha I ran master as well
+[23:33:42] <enebo[m]> not sure if you merged this or not
+[23:33:54] <headius> I accidentally merged it to master first but I did a second merge to 9.3
+[23:34:03] <enebo[m]> ok so it should be on both
+[23:34:09] <headius> It should be on both but I wouldn't be surprised if something got messed up
+[23:34:42] <enebo[m]> hmm this is a little confusing
+[23:35:24] <enebo[m]> I ran manual-snapshot-deploy action is that right?
+[23:36:14] <enebo[m]> just fired off a jruby-9.3 version of manual to see
+[23:36:33] <headius> I think it should work but it should also be running along with every push to 9.3 or master
+[23:36:40] <enebo[m]> but maybe we can rename one of the two workflows since they have the same textual name in actions page
+[23:36:48] <headius> Oh but I think it is using the wrong hash so it has an old version of the actual snapshot deploy workflow
+[23:37:01] <headius> Compare the hash in ci.yml with the one in the manual deploy YML
+[23:37:18] <enebo[m]> I am on master so I can see the '8' as java-version
+[23:38:09] <enebo[m]> ok jruby-9.3 has same java 11 issue
+[23:39:36] <enebo[m]>     uses: jruby/jruby/.github/workflows/snapshot-publish.yml@a144fdb39a1e2844322d9e439d02d378593a08d4
+[23:40:25] <enebo[m]> yeah I think this should be 6cd0d4d96d9406635183d81cf91acc82cd78245f
+[23:40:35] <enebo[m]> I will change it and push to master (since I am on master)
+[23:42:59] <enebo[m]> Setting Java 8.0.312+7 as the default
+[23:43:01] <enebo[m]> yay
+[23:50:18] <enebo[m]> mattpatt: ok manual works (and other one will also work).  The original issue was not using 8 which headius fixed and the manual failure was not updating the hash to the fixed non-manual action
+[23:50:28] <mattpatt[m]> woo

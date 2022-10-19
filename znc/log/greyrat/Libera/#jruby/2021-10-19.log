@@ -1,0 +1,122 @@
+[17:49:14] <headius> Good morning!
+[22:15:08] <puritylake[m]> Good evening
+[22:15:45] <puritylake[m]> Man been run off my feet this week
+[22:16:06] <puritylake[m]> Barely any time to do anything but I am free now
+[22:17:02] <enebo[m]> puritylake: howdy
+[22:19:19] <enebo[m]> so I nearly have the parser part of sprintf where all formats are correctly parsed
+[22:19:29] <puritylake[m]> How are you?
+[22:19:59] <enebo[m]> I decided to try and solidify that part so it should involve converting to the new format a little less frustrating
+[22:20:07] <enebo[m]> puritylake: doing well.
+[22:20:41] <enebo[m]> The new sprintf stuff ported actually passes some specs the old one does not 
+[22:21:01] <enebo[m]> puritylake: I can do a summary of what is involved and why this is an interesting project
+[22:21:28] <puritylake[m]> Sure, sounds good
+[22:21:43] <enebo[m]> sprintf itself is a huge piece of esoteric craziness
+[22:22:17] <enebo[m]> there is also a layer of stuff Ruby added (I think involving %{name} to extract fields out of hashes
+[22:22:35] <enebo[m]> Our implementation and in fact most implementations seem to be written into a massive switch statement in a loop
+[22:23:07] <enebo[m]> We do not handle %a or %A and at one point a couple of us looked at adding them
+[22:23:52] <enebo[m]> if you look at the code (org.jruby.util.Sprintf) then you will see that a number of format modifies in printf like %d or %b is the same chunk of code
+[22:24:05] <enebo[m]> in that chunk of code is lots of if statements
+[22:24:40] <enebo[m]> Some are obvious it is only for a particular format (like %u) but others are unclear unless you spent a lot of time reading some fairly complicated code
+[22:25:20] <enebo[m]> So motivation #1 was to untangle these sections into more straightforward separate methods even if it means some additional duplication
+[22:26:09] <enebo[m]> The second tangle of the printf implementation is that the processing of the format string "%0.2d" is processed every time you call printf and it happens in the same code which is building up the result string
+[22:26:30] <enebo[m]> This is two activities which have been stirred together
+[22:26:56] <enebo[m]> This not only makes understanding what is happening more difficult it also limits our ability to eliminate work
+[22:27:52] <enebo[m]> If at a sprintf call site (place we call it) we have a literal string (e.g. "%2d") then we can just parse that format string once and save it
+[22:28:11] <enebo[m]> Then each time we revisit that particular sprintf we just use what we have already parsed
+[22:28:32] <enebo[m]> (at this point in time saving this off is out of scope until this is working and debugged)
+[22:28:56] <enebo[m]> So this is the basic problem description.
+[22:29:50] <enebo[m]> Let me know if you have any comments or questions
+[22:31:48] <puritylake[m]> Makes sense to me, I assume a trip to the Ruby docs might be in order to make sure everything is up to mRuby?
+[22:32:32] <enebo[m]> well it would not hurt to learn sprintf beyond the simple stuff most of us will do
+[22:33:33] <puritylake[m]> I have used sprintf in the past, albeit in C but I am no expert on it yet
+[22:33:40] <puritylake[m]> * on it... yet
+[22:33:51] <enebo[m]> ok
+[22:34:37] <enebo[m]> For example '%*1$.*3$*2d' is a valid specifier :)
+[22:34:44] <enebo[m]> I have never actually seen anyone use that
+[22:35:25] <enebo[m]> but I have written the new parser already so it will generate a FormatToken which contains the data
+[22:35:52] <puritylake[m]> Pretty sure I heard a saying "imagine an obscure miniscule part of a code base, you can't remove it cause someone somewhere uses it" lol
+[22:36:27] <enebo[m]> I should say we have two test suites we can run to make sure we are passing all we passed with the old implementation
+[22:36:41] <enebo[m]> So let's talk a bit about the process of what you will work on
+[22:37:05] <enebo[m]> There is new code in SprintfParser and old code in Sprintf
+[22:38:04] <enebo[m]> In the new code I have converted %duibBoxX already
+[22:38:46] <enebo[m]> What I did was look for the letter I want to convert like %e and then in Sprintf I look for case 'e':
+[22:39:17] <enebo[m]> That will end up being a pretty big blob of code for eEgG
+[22:40:03] <enebo[m]> Actually I should not use the most complicated one as an example
+[22:40:33] <enebo[m]> %c is probably a better starting one
+[22:41:27] <enebo[m]> more or less you will make a method in SprintfParser called format_c() like format_idu() but the body of format_c you will parse from that section of the switch statement from Sprintf
+[22:41:59] <enebo[m]> It won't just compile as you will need to make some smallish changes to make it work with the new FormatToken object
+[22:42:22] <enebo[m]> but I have two methods already converted so you can look at what changes I made when I moved the code over
+[22:48:01] <enebo[m]> lol...someone was at the door
+[22:48:03] <enebo[m]> https://gist.github.com/enebo/f75b341c5d3db6ee05c1385f8097872c
+[22:48:41] <enebo[m]> At the moment the only way to turn on the new system is to set the env variable SPRINTF=anything
+[22:48:56] <enebo[m]> If it is a format specified that is not supported it will just fail back to the old system
+[22:49:21] <enebo[m]> but the nice thing about this is that you can test with SPRINTF set and without to compare the outputs
+[22:50:11] <enebo[m]> That gist above is how to run both of the tests for printf code that we have (MRI internal test suite and the ruby/spec projects test suite)
+[22:51:03] <enebo[m]> One exciting thing if I have fixed a few problems while working on the parser that we have never supported and I have little fear I was unexpectedly breaking something else
+[22:51:41] <enebo[m]> This was why I mentioned that we attempted to add %a/%A.  We failed because of the complexity of weaving it into that big switch
+[22:52:59] <enebo[m]> https://github.com/jruby/jruby/tree/new_sprintf
+[22:53:29] <puritylake[m]> I have that branch set as current at the moment
+[22:53:35] <enebo[m]> cool
+[22:53:54] <enebo[m]> And I just sort of picked this out as a fun and actually a pretty important thing to work on
+[22:54:16] <enebo[m]> If this is not fun or you are frustrated then you can say so and we can try and figure something else out
+[22:55:03] <puritylake[m]> I should be fine, if I get frustrated I'll stop for maybe a day and work on some personal stuff and come back at it the next day
+[22:55:31] <enebo[m]> Also I spent the last few days trying to make sure we passed all tests with what I ported over so my memory of this is good atm
+[22:55:50] <enebo[m]> So likely any question you have I will be pretty familiar with the code
+[22:57:24] <enebo[m]> If you have never written a recursive descent parser then looking at the Lexer (hahah well some times a lexer and parser is a fuzzy line)
+[22:58:08] <enebo[m]> Hopefully we will not need a lot more changes there but it is I think quite a bit simpler to understand than the old loop
+[22:59:48] <puritylake[m]> I wrote a lisp-like language for my final college project which was earlier this year, I should be able to figure it out albeit mine wasn't very complex lol
+[23:00:34] <enebo[m]> The indexed (unnumbered) parsing is the only icky bit
+[23:00:37] <puritylake[m]> Had written a parser combinator for it in Swift but had to change to C# and couldn't figure out it's generics
+[23:00:50] <puritylake[m]> Well not in time
+[23:01:07] <enebo[m]> heh...well not as cool as parser combinators but it is a work horse
+[23:01:20] <enebo[m]> descent parsers are easy to write anyways
+[23:02:24] <puritylake[m]> My problem with writing for something more complex than Lisp is I am unsure how to structure and iterate over the AST
+[23:03:06] <enebo[m]> yeah in other languages moving over the data requires some explicit code to allow it
+[23:03:42] <enebo[m]> If you look at IRBuilder we walk through our AST or you can look at tool/ast which does it a little differently
+[23:04:29] <enebo[m]> in JRuby 1.7 we did use an AST interpreter.  That is surprisingly simple in that you just make each node type have an interpret() method
+[23:04:51] <enebo[m]> you could decouple that if you wanted but it worked well enoug
+[23:05:35] <puritylake[m]> I've had half baked ideas to write a language in it itself, a la pypy
+[23:05:57] <puritylake[m]> Although I think technically pypy is written in RPython
+[23:06:00] <enebo[m]> yeah it is
+[23:06:16] <enebo[m]> it is close enough to be metacircular
+[23:06:28] <enebo[m]> or I will give it that :)
+[23:07:11] <enebo[m]> A lot of people are into the idea of self-hosting a language impl.  I guess I am as well but it is not clear and cut that it is always a good idea
+[23:07:52] <puritylake[m]> Everything comes with advantages and disadvantages
+[23:08:11] <puritylake[m]> If there was a perfect solution we'd all be using it
+[23:08:12] <enebo[m]> yeah exactly
+[23:11:16] <puritylake[m]> Old sprintf is a chunky file
+[23:11:47] <enebo[m]> yeah.  The new one will still be pretty chunk
+[23:12:08] <enebo[m]> just a bit more separation
+[23:12:59] <puritylake[m]> Ya, new one kinda decouples the process
+[23:13:22] <puritylake[m]> Liking the look of it so far
+[23:15:07] <enebo[m]> It is possible once the first phase of conversion is done some other types like Arg can change
+[23:15:44] <enebo[m]> We have a requirement of passing in arguments as an Array of primitive Array when in cases we only pass in a single value
+[23:15:56] <enebo[m]> The extra creation of a data structure is a tiny performance cut
+[23:16:20] <enebo[m]> but this is why this activity is valuable the more we simplify this the easier it will be to make other changes
+[23:18:47] <enebo[m]> SPRINTF=1 jruby -e 'printf("%.*d", 2, 1)'
+[23:18:53] <enebo[m]> This is currently broken.  I will try and fix it now and then we should be green with new for both test suites
+[23:28:28] <puritylake[m]> Is there meant to be no failing tests in the jruby/spec test suite?
+[23:29:01] <enebo[m]> nope
+[23:29:38] <enebo[m]> err no sprintf tests or are you seeing something else?
+[23:29:52] <enebo[m]> 2E?
+[23:30:17] <enebo[m]> 2 erros with 2 few arguments?
+[23:30:19] <puritylake[m]> No just zero failures on the specs, the first command you have in the gist
+[23:31:06] <puritylake[m]> I cleaned the files before rebuilding on the new branch
+[23:31:36] <enebo[m]> the idea was that everything in both command lines should not have anything failing or erroring
+[23:31:57] <enebo[m]> but there are 2F for the second on involving upto
+[23:32:23] <enebo[m]> I just fixed that locally but I think it hit a different error so a little mroe debugging and both should be green
+[23:32:44] <puritylake[m]> Ah cool, just making sure
+[23:33:01] <enebo[m]> upto for "00" calls sprintf %.*d internally and the new parser was going off the rails
+[23:33:19] <puritylake[m]> Thought I might have had some failing tests to make go green as I go
+[23:33:34] <enebo[m]> yeah I was hoping to give you a complete as I can do parser so it is just making sure you move over code without having to debug it
+[23:33:57] <enebo[m]> but I will push a fix once I have it and then on my machine I will be green for both of those command lines
+[23:34:18] <puritylake[m]> Cool, should I hold off til then?
+[23:34:42] <enebo[m]> naw.  This problem will not bite you per se
+[23:34:58] <enebo[m]> and I will have it fixed in next 20 minutes so I doubt you will hit it before I fix it
+[23:35:13] <enebo[m]> moving the code over will tkae some time
+[23:36:32] <puritylake[m]> Cool, heading for a shower anyway then gonna settle in for the night, hopefully get something done tonight or at least gain some more knowledge of how I can make things work
+[23:37:05] <puritylake[m]> It's one thing being told how to do a problem but actually looking at the code is another
+[23:37:24] <enebo[m]> oh yeah this will take some time to start to grok it
+[23:37:32] <enebo[m]> so many independent variables
+[23:38:16] <puritylake[m]> I'll update you on my progress as I feel necessary
+[23:40:00] <enebo[m]> sure thing

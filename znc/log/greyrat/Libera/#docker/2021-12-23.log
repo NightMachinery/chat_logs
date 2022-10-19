@@ -1,0 +1,697 @@
+[00:00:04] <ikke> What OS?
+[00:00:39] <programmerq> yeah just running docker on an ubuntu machine is different than running it on a mac or windows machine. If you run docker desktop on the latter two, then you have a VM.
+[00:00:58] <programmerq> or if you are running "docker toolbox" then you also have a vm.
+[00:02:41] <fundies> archlinux
+[00:03:02] <fundies> im doing everythin on one install
+[00:03:42] <programmerq> oh I see it
+[00:03:56] <programmerq> pip_auditor is being parsed as your image name, so anything after that is passed to the container as the command to run.
+[00:04:03] <programmerq> if you have an entrypoint that ignores the command, it'll be a noop
+[00:04:09] <programmerq> put all docker run arguments before the image name.
+[00:05:02] <fundies> ah, thanks. I had no idea
+[00:06:46] *** Joins: BenjiProd (~BenjiProd@user/benjiprod)
+[00:09:47] *** Quits: ph88 (~ph88@ip5f5af068.dynamic.kabel-deutschland.de) (Quit: Leaving)
+[00:14:02] *** Quits: fundies (~fundies@047-014-230-095.res.spectrum.com) (Remote host closed the connection)
+[00:15:36] <LordKalma> Folks, I was trying to get vscode-server on my containers to stick
+[00:16:00] <LordKalma> so I did this: volumes: - vscode_server:/home/appuser/.vscode-server
+[00:16:01] <LordKalma> buuut
+[00:16:09] <LordKalma> [7591 ms] mkdir: cannot create directory ‘/home/appuser/.vscode-server/bin’: Permission denied
+[00:16:16] <LordKalma> do you know what might be the issue?
+[00:16:23] <LordKalma> (yes,. the container runs a non-root user)
+[00:18:15] <eldowan> blind guess -- the docker container runtime user isn't appuser ?
+[00:18:40] <LordKalma> yes it is
+[00:18:52] <LordKalma> RUN adduser --disabled-password --gecos "" appuser 
+[00:18:55] <LordKalma> USER appuser
+[00:18:56] <LordKalma> :)
+[00:19:43] *** Quits: eldowan (~eldowan@99-40-97-127.lightspeed.hstntx.sbcglobal.net) ()
+[00:19:52] <LordKalma> are volumes chown'ed by root by default?
+[00:19:54] <programmerq> if /home/appuser already exists when the container is run, and the named volume is newly created, it'll copy anything from /home/appuser to the volume. This should include the owner info.
+[00:20:00] <LordKalma> maybe that's the issue?
+[00:20:19] <programmerq> if the /home/appuser/ location doesn't exist in the image, then there is nothing to copy, and you'll get the default 0:0 ownership
+[00:20:21] <LordKalma> programmerq, yeah, I just added && mkdir -p /home/appuser/.vscode-server && chown -R appuser /home/appuser/.vscode-server
+[00:20:26] <LordKalma> and I'm going to try that
+[00:20:33] <programmerq> but that only works on a *fresh* volume
+[00:20:37] <LordKalma> making the dir pre-existent and owned correctly
+[00:20:49] <programmerq> you'll need to remote the existing volume to get the volume initialization stuff to work
+[00:20:50] *** Joins: eldowan (~eldowan@99-40-97-127.lightspeed.hstntx.sbcglobal.net)
+[00:20:54] <eldowan> right, that's appuser inside the docker container, correct? But "vscode_server:/home/appuser/.vscode-server" is looking for /home/appuser on your host, not the running container. Or am I misreading something?
+[00:21:19] <LordKalma> no, after : is a path on the container
+[00:21:26] <programmerq> also, double check that /home nor /home/appuser isn't already marked as a VOLUME above the mkdir and chown RUN
+[00:22:15] <LordKalma> yap
+[00:22:25] <eldowan> LordKalma: ah, that's right. I'm a bit thick headed the last couple days
+[00:22:27] <LordKalma> adding that mkdir and chown solved it
+[00:23:02] <LordKalma> good think I'm using custom dockerfiles :)
+[00:24:06] <LordKalma> having to let vscode reinstall the server every time was getting annoyign
+[00:25:03] <LordKalma> since, like, I'm now looking at the volume and they are about 500mb big, so yeah
+[00:32:38] <eldowan> I've finally got multi arch builds working, but I'm having problems getting the image to my end device. It's over a slow cellular link, and I get messages like this when I usse docker pull <image>. => error pulling image configuration: read tcp 28.160.135.144:51648->104.18.125.25:443: read: connection reset by peer
+[00:33:41] <eldowan> Is there a way I can bypass the repo and go direct from my machine to the modem over it's internal LAN port? I can SSH in no problems, but my understanding is if I try to docker save -> ssh -> docker load it'll use my workstations amd64 image instead of the armv7 build.
+[00:37:57] *** Pokey is now known as ahorner
+[00:38:02] *** ahorner is now known as Pokey
+[00:42:34] <tabakhase> eldowan docker hub or what?
+[00:42:52] <cim> dawker
+[00:42:59] <eldowan> ah, yes docker hub.
+[00:43:03] <tabakhase> run a local registry? (just docker run command away)
+[00:44:06] <eldowan> the problem is the modem will only use it's cell interface for docker. if I could just manually dump the images in I could rsync or scp
+[00:44:08] <tabakhase> or does it build remote and you want to slurp it down? - think with the "explicit name" docker will still happy just pull/save the wrong arch.. if not https://github.com/containers/skopeo certainly should ignore it
+[00:44:37] *** Joins: Ivii (~Ivyy@2001:a62:4c3:8e01:1071:5a83:7f38:20d9)
+[00:44:52] <eldowan> I'm building on my workstation, connected to the modem via LAN. I'm looking to push direct from workstation to modem instead of modem to docker hub
+[00:45:41] <tabakhase> save ssh load as you mentioned should be just fine then... did you try it? ;D
+[00:46:39] *** Quits: optiz0r (~quassel@51.254.241.216) (Quit: http://quassel-irc.org - Chat comfortably. Anywhere.)
+[00:47:07] *** Joins: optiz0r (~quassel@51.254.241.216)
+[00:48:28] <tabakhase> (disclaimer, i havent done it, but im pretty sure to remember people that walked in here cause they "pulled the wrong arch by accident without  knowing" - so it certainly sems possible :D)
+[00:49:01] *** Joins: shokohsc (~shokohsc@lfbn-idf2-1-630-171.w86-246.abo.wanadoo.fr)
+[00:49:04] <eldowan> I'm trying to figure out how to pull the 'wrong' arch by purpose right now 
+[00:50:30] <ikke> --platofrm
+[00:50:34] <ikke> --platform
+[00:51:26] <ikke> docker pull --platform linux/arm/v7 <image> for example
+[00:51:45] <eldowan> Thanks, that let me pull the arm one. 
+[00:53:23] <eldowan> so docker save won't let me specify the platform and the only option I see is -o for file instead of STDOUT
+[00:54:54] *** Quits: shokohsc (~shokohsc@lfbn-idf2-1-630-171.w86-246.abo.wanadoo.fr) (Quit: The Lounge - https://thelounge.chat)
+[00:56:20] *** Joins: shokohsc (~shokohsc@lfbn-idf2-1-630-171.w86-246.abo.wanadoo.fr)
+[00:56:33] <ikke> The image generally already has a platform, it would not make sense to change it to something else
+[00:56:37] *** Quits: CombatVet (~c4@user/combatvet) (Remote host closed the connection)
+[00:56:57] *** Joins: CombatVet (~c4@user/combatvet)
+[00:57:35] <eldowan> I'm totally confused, brand new to multi arch. The image has amd64, arm, arm64 builds. I'm trying to manually move the arm image layer(s) from my amd64 workstation to the armv7 device.
+[00:57:54] *** thegodsquirrel is now known as theSantasquirrel
+[00:58:28] <ikke> I don't know the exact details, but generally there is a manifest that basically tells what image to use for what platform
+[01:00:01] <tabakhase> eldowan just call it by a more precise name if you have both
+[01:00:21] <tabakhase> docker inspect XYZ should give a bunch
+[01:01:12] <eldowan> I'll look into the manifest and see what I can find.
+[01:01:56] <eldowan> tabakhase: it seems to ruin the point of being able to have a common cross platform name if I'm going to be forced to tag each arch as its own doesn't it?
+[01:02:49] <tabakhase> eldowan sure, think of it more as an alias to be able to use a not-updated-docker-save-command i guess...
+[01:03:16] *** Joins: rardiol (~quassel@user/rardiol)
+[01:04:08] <tabakhase> and as said, consider hosting a registry, its just a single docker run command to spin up :P
+[01:04:27] <eldowan> ok, that's a fair point about the alias
+[01:05:00] <tabakhase> `docker run && docker tag && docker push && shh docker pull && docker stop --rm` - not great, but also not terrible :D
+[01:05:56] <tabakhase> ohhhh, and https://docs.docker.com/registry/recipes/mirror/
+[01:05:57] <eldowan> Oohhhh, now I get your point about the registry. Running a local one on the LAN should let the modem use the LAN instead of the cell interface. that makes a lot of sense now I get your point
+[01:06:05] <tabakhase> totally overread that were talking dockerhub
+[01:06:29] <tabakhase> pull through^^
+[01:07:26] <tabakhase> (for that youd still have to "run a registry somewhere", but then the netpath is fully on your controll
+[01:07:40] <tabakhase> but you dont need the extra pushing
+[01:08:35] <eldowan> sweet, I'm just getting to the pull-through section. Thanks for spoonfeeding me today :)
+[01:25:21] *** Joins: remote (~self@user/hackers)
+[01:25:35] *** Joins: C4Crawford (~C4Crawfor@2600:1700:5470:712f:ff:4b49:eece:3ea7)
+[01:32:42] *** Quits: darkstardevx (~darkstard@50.39.115.145) (Read error: Connection reset by peer)
+[01:33:44] *** Quits: BenjiProd (~BenjiProd@user/benjiprod) (Remote host closed the connection)
+[01:34:41] *** Quits: Ryu945 (Ryu945@gateway/vpn/protonvpn/ryu945) (Read error: Connection reset by peer)
+[01:35:51] *** Quits: schangg (~schangg@lfbn-idf3-1-1061-120.w90-46.abo.wanadoo.fr) (Quit: Client closed)
+[01:39:32] *** Joins: Ryu945 (Ryu945@gateway/vpn/protonvpn/ryu945)
+[01:44:45] *** Joins: DoofusCanadensis (~DoofusCan@2604:3d09:47c:f970:8c75:7f29:174a:7d48)
+[01:48:03] *** Joins: darkstardevx (~darkstard@50.39.115.145)
+[02:04:03] *** Quits: gopar (~gopar@c-67-164-79-22.hsd1.ca.comcast.net) ()
+[02:04:06] *** Joins: calm-steam1 (~calm-stea@user/calm-steam)
+[02:10:21] *** Quits: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com) (Quit: Buh bye!)
+[02:11:07] *** Quits: calm-steam1 (~calm-stea@user/calm-steam) (Quit: WeeChat 2.8)
+[02:11:19] *** Quits: maret (~maret@nat-88-212-37-89.antik.sk) (Quit: maret)
+[02:13:55] *** Joins: maret (~maret@nat-88-212-37-89.antik.sk)
+[02:14:00] *** Joins: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com)
+[02:14:55] *** Joins: Guest4673 (~Guest4673@user/jmew)
+[02:15:10] *** Parts: Guest4673 (~Guest4673@user/jmew) ()
+[02:15:32] *** Quits: Czernobog (~Czernobog@user/czernobog) (Quit: ZNC 1.8.2 - https://znc.in)
+[02:16:04] *** Joins: Czernobog (~Czernobog@user/czernobog)
+[02:16:53] *** Joins: vidbina (~vid@p5de3d763.dip0.t-ipconnect.de)
+[02:19:13] <Telgareith> how do I create a docker volume on a different filesystem?
+[02:19:32] *** Quits: FESTIVUS-MAXIMUS (~thelounge@user/Kilroy) (Quit: Bye)
+[02:19:58] <Telgareith> I created a new zfs pool and mounted a dataset inside /var/docker/volumes/<volumename> but when I tried to use it I got "error evaluating symlinks from mount source"
+[02:20:30] *** Quits: Ryu945 (Ryu945@gateway/vpn/protonvpn/ryu945) (Quit: Leaving)
+[02:21:04] *** Joins: FESTIVUS-MAXIMUS (~thelounge@user/Kilroy)
+[02:22:08] *** Quits: FESTIVUS-MAXIMUS (~thelounge@user/Kilroy) (Client Quit)
+[02:23:53] *** Joins: FESTIVUS-MAXIMUS (~thelounge@user/Kilroy)
+[02:24:46] <tabakhase> Telgareith with modern docker the "long form" of volumes supposedly works anywhere (not bindmount)
+[02:25:37] <tabakhase> for old docker there is a storage plugin "local-persist" or so...
+[02:30:37] *** Joins: calm-steam1 (calm-steam@user/calm-steam)
+[02:31:25] *** Quits: calm-steam (~calm-stea@user/calm-steam) (Quit: Leaving)
+[02:31:34] *** Quits: calm-steam1 (calm-steam@user/calm-steam) (Client Quit)
+[02:31:53] *** Joins: calm-steam (calm-steam@user/calm-steam)
+[02:41:51] *** Quits: rardiol (~quassel@user/rardiol) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[02:49:17] *** Quits: jarthur (~jarthur@2603-8080-1540-002d-800a-95c0-a608-9494.res6.spectrum.com) (Ping timeout: 240 seconds)
+[02:51:17] *** Quits: goldfish (~goldfish@user/goldfish) (Ping timeout: 240 seconds)
+[02:54:50] *** Joins: jarthur (~jarthur@2603-8080-1540-002d-4ce9-7fd7-2373-9fbb.res6.spectrum.com)
+[02:55:46] *** Quits: darkstardevx (~darkstard@50.39.115.145) (Remote host closed the connection)
+[03:03:04] *** Joins: tofran (~tofran@37.189.158.134)
+[03:11:58] *** Quits: jarthur (~jarthur@2603-8080-1540-002d-4ce9-7fd7-2373-9fbb.res6.spectrum.com) (Quit: jarthur)
+[03:13:57] *** Quits: vidbina (~vid@p5de3d763.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[03:15:17] *** Quits: junktext__ (~junktext@gateway/vpn/pia/junktext) (Ping timeout: 240 seconds)
+[03:18:00] *** Joins: CJC4 (~C4Crawfor@2600:1700:5470:712f:ff:4b49:eece:3ea7)
+[03:20:17] *** Quits: C4Crawford (~C4Crawfor@2600:1700:5470:712f:ff:4b49:eece:3ea7) (Ping timeout: 240 seconds)
+[03:24:23] *** Joins: jarthur (~jarthur@2603-8080-1540-002d-4ce9-7fd7-2373-9fbb.res6.spectrum.com)
+[03:37:09] *** Quits: tetsumaki (~unknown@ns331908.ip-5-135-162.eu) (Quit: oY)
+[03:40:00] *** Joins: tetsumaki (~unknown@ns331908.ip-5-135-162.eu)
+[03:41:03] *** Quits: Ivii (~Ivyy@2001:a62:4c3:8e01:1071:5a83:7f38:20d9) (Quit: Leaving)
+[03:45:09] *** Quits: zer0bitz (~zer0bitz@2001:2003:f444:a000:e954:6a22:3202:5b23) (Ping timeout: 250 seconds)
+[03:57:32] *** Quits: XV8 (~XV8@2601:5cb:c001:50:10cd:9e3c:2c4a:2ae1) (Quit: Textual IRC Client: www.textualapp.com)
+[04:01:42] *** Quits: jarthur (~jarthur@2603-8080-1540-002d-4ce9-7fd7-2373-9fbb.res6.spectrum.com) (Quit: jarthur)
+[04:03:17] *** Quits: fedenix (~fedenix@gateway/tor-sasl/fedenix) (Remote host closed the connection)
+[04:06:02] *** Quits: feoh (~feoh@idlerpg/player/feoh) (Quit: The Lounge - https://thelounge.chat)
+[04:07:13] *** Joins: feoh (~feoh@idlerpg/player/feoh)
+[04:08:29] *** Quits: feoh (~feoh@idlerpg/player/feoh) (Client Quit)
+[04:11:37] *** Joins: feoh (~feoh@idlerpg/player/feoh)
+[04:13:15] <feoh> OK stupid doker-compose question - I can't figure out how to redeploy a container that's specified as version 'latest' in docker-compose.yml without docker container rm; docker image rm; docker-compose up - is there an easier way?
+[04:16:03] <CJC4> feoh: a `docker-compose pull` followed by `docker-compose up` should do the trick
+[04:20:45] <feoh> AH PULL! tyvm!
+[04:20:51] <feoh> much appreciated.
+[04:34:58] *** Quits: robink (~quassel@user/robink) (Read error: Connection reset by peer)
+[04:39:06] *** Quits: leitz (~LeamHall@072-182-158-027.res.spectrum.com) (Quit: nappy time)
+[04:42:23] *** Quits: Zta (~she@5.186.52.63.static.fibianet.dk) (Ping timeout: 256 seconds)
+[04:56:52] *** Joins: Zta (~she@5.186.52.63.static.fibianet.dk)
+[04:59:31] *** Quits: cluelessperson (~cluelessp@user/cluelessperson) (Remote host closed the connection)
+[05:04:27] *** Joins: NotSatoshi (~NotSatosh@user/NotSatoshi)
+[05:09:06] *** Joins: cluelessperson (~cluelessp@user/cluelessperson)
+[05:09:17] *** Quits: trevors (~trevors@c-65-96-171-157.hsd1.ma.comcast.net) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[05:10:31] *** Joins: queue- (~nerd@user/queue/x-7267619)
+[05:10:56] *** Quits: NotSatoshi (~NotSatosh@user/NotSatoshi) (Quit: Leaving)
+[05:11:56] *** Joins: trevors (~trevors@c-65-96-171-157.hsd1.ma.comcast.net)
+[05:13:01] *** Quits: trevors (~trevors@c-65-96-171-157.hsd1.ma.comcast.net) (Client Quit)
+[05:21:55] *** Joins: monster-booster (~calm-stea@user/calm-steam)
+[05:22:53] *** Joins: trevors (~trevors@c-65-96-171-157.hsd1.ma.comcast.net)
+[05:24:46] *** Quits: monster-booster (~calm-stea@user/calm-steam) (Client Quit)
+[05:26:57] *** Quits: topor (~harry@89.36.116.194) (Ping timeout: 240 seconds)
+[05:38:29] *** Quits: tsal (~tsal@user/tsal) (Ping timeout: 256 seconds)
+[05:43:52] *** Joins: tsal (~tsal@user/tsal)
+[05:49:36] *** Quits: very_sneaky (~very_snea@user/very-sneaky/x-7432109) (Quit: very_sneaky)
+[05:56:49] *** Joins: very_sneaky (~very_snea@user/very-sneaky/x-7432109)
+[05:57:13] <bn_work> hi, docker 20.10, logger question:  I have a container that has multiple processes (yes, I know this is not best-practice but I'm being ordered to do this).  Normally in a "1 service per container" paradigm, the foreground process output would map 1:1 to the `docker logs` command output however in this case I have multiple processes that get started (in the background), each with their own log file and logging to the console.  Is 
+[05:57:13] <bn_work> there any way to configure docker to log each of these other log files to a different log stream?
+[05:58:00] *** Quits: Tach (~Tach@user/tach) (Quit: Tach)
+[05:58:47] <bn_work> looked at https://docs.docker.com/config/containers/logging/log_tags/ (and other related pages) and this the closest I could find but it seems to be only at the container level
+[06:10:37] *** Quits: cliluw (~cliluw@47.147.73.223) (Ping timeout: 240 seconds)
+[06:10:49] *** Joins: cliluw (~cliluw@47.147.73.223)
+[06:16:34] *** Joins: alchemist_ (~alchemist@user/alchemist)
+[06:17:21] *** Quits: Forsaken87 (~quassel@aftr-37-201-195-107.unity-media.net) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[06:20:16] *** Quits: alchemist (~alchemist@user/alchemist) (Ping timeout: 268 seconds)
+[06:23:17] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 240 seconds)
+[06:23:32] *** Joins: Enitin (~Enitin@82.102.22.85)
+[06:24:21] *** Joins: Forsaken87 (~quassel@aftr-37-201-195-107.unity-media.net)
+[06:30:41] *** Quits: minimal (~minimal@user/minimal) (Quit: Leaving)
+[06:39:49] *** Quits: tabakhase (tabakhase@user/tabakhase) (Ping timeout: 240 seconds)
+[06:42:17] *** Joins: z_lehinsun_ (~lehinsun@188.244.142.69)
+[06:44:47] *** Quits: z_lehinsun (~lehinsun@188.113.178.220) (Ping timeout: 256 seconds)
+[06:47:14] *** Joins: sakhd__ (~lehinsun@188.113.178.220)
+[06:47:17] *** Quits: maret (~maret@nat-88-212-37-89.antik.sk) (Quit: maret)
+[06:48:18] *** Joins: maret (~maret@nat-88-212-37-89.antik.sk)
+[06:49:37] *** Quits: z_lehinsun_ (~lehinsun@188.244.142.69) (Ping timeout: 240 seconds)
+[06:52:29] *** Joins: tabakhase (~tabakhase@user/tabakhase)
+[07:09:50] *** Quits: maret (~maret@nat-88-212-37-89.antik.sk) (Quit: maret)
+[07:12:56] *** Joins: JingleJazzy (~jaziz@user/jaziz)
+[07:23:14] *** Quits: DoofusCanadensis (~DoofusCan@2604:3d09:47c:f970:8c75:7f29:174a:7d48) (Quit: So as you can see from this flowchSQUIRREL!!)
+[07:25:53] *** Quits: remote (~self@user/hackers) (Ping timeout: 252 seconds)
+[07:27:16] *** Joins: ash_m (~androirc@user/ash-m/x-3292451)
+[07:31:06] <ash_m> If you have a service that exposes public data over http but must also consume data from other services in the same swarm, would you write two services with only what they need then build the webserver with a "serve" entrypoint and the consumer with a "run" entrypoint?
+[07:33:32] <ash_m> Or would you build one service with everything it needs (so all the interfaces and common files are in one package, rather than distributed to two) and just have one service run the default and the other override with a command?
+[07:42:54] *** Quits: cliluw (~cliluw@47.147.73.223) (Ping timeout: 268 seconds)
+[07:46:07] *** Quits: kenwoodfox (~quassel@user/kenwoodfox) (Quit: Peace homie)
+[08:03:26] *** Joins: cliluw (~cliluw@47.147.73.223)
+[08:08:18] *** Joins: codebam (~codebam@user/codebam)
+[08:10:58] *** Joins: kenwoodfox (~quassel@user/kenwoodfox)
+[08:13:12] *** Quits: sakhd__ (~lehinsun@188.113.178.220) (Remote host closed the connection)
+[08:23:17] *** Joins: node1 (~node1@user/node1)
+[08:23:26] *** Joins: jarthur (~jarthur@2603-8080-1540-002d-4ce9-7fd7-2373-9fbb.res6.spectrum.com)
+[08:51:22] *** Quits: winstonsmith (~winstonsm@gateway/vpn/pia/winstonsmith) (Remote host closed the connection)
+[08:51:42] *** Joins: winstonsmith (~winstonsm@gateway/vpn/pia/winstonsmith)
+[09:00:18] *** Quits: jarthur (~jarthur@2603-8080-1540-002d-4ce9-7fd7-2373-9fbb.res6.spectrum.com) (Quit: jarthur)
+[09:02:41] *** Joins: ash_worksi (~ash_m@user/ash-m/x-3292451)
+[09:03:14] <ash_m> If you have a service that exposes public data over http but must also consume data from other services in the same swarm, would you write two services with only what they need then build the webserver with a "serve" entrypoint and the consumer with a "run" entrypoint?
+[09:03:30] <ash_m> Or would you build one service with everything it needs (so all the interfaces and common files are in one package, rather than distributed to two) and just have one service run the default and the other override with a command?
+[09:05:19] *** Joins: jarthur (~jarthur@2603-8080-1540-002d-4ce9-7fd7-2373-9fbb.res6.spectrum.com)
+[09:14:38] *** Quits: trevors (~trevors@c-65-96-171-157.hsd1.ma.comcast.net) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[09:16:52] *** Quits: ash_m (~androirc@user/ash-m/x-3292451) (Quit: AndroIRC - Android IRC Client ( http://www.androirc.com ))
+[09:23:37] *** Quits: jarthur (~jarthur@2603-8080-1540-002d-4ce9-7fd7-2373-9fbb.res6.spectrum.com) (Quit: jarthur)
+[09:31:24] *** Joins: jarthur (~jarthur@2603-8080-1540-002d-4ce9-7fd7-2373-9fbb.res6.spectrum.com)
+[09:35:15] *** Joins: darkstardevx (~darkstard@50.39.115.145)
+[09:36:16] *** Quits: darkstardevx (~darkstard@50.39.115.145) (Remote host closed the connection)
+[09:36:42] *** Joins: darkstardevx (~darkstard@50.39.115.145)
+[09:40:14] *** Joins: martums6 (~martums@user/martums)
+[09:40:27] *** Quits: martums (~martums@user/martums) (Ping timeout: 256 seconds)
+[09:40:27] *** martums6 is now known as martums
+[09:42:57] *** Quits: alchemist_ (~alchemist@user/alchemist) (Ping timeout: 240 seconds)
+[09:44:45] *** Joins: martums1 (~martums@user/martums)
+[09:45:25] *** Quits: jarthur (~jarthur@2603-8080-1540-002d-4ce9-7fd7-2373-9fbb.res6.spectrum.com) (Quit: jarthur)
+[09:47:01] *** Quits: martums (~martums@user/martums) (Ping timeout: 240 seconds)
+[09:47:01] *** martums1 is now known as martums
+[09:52:53] *** Joins: gebbione (~gebbione@82-132-236-122.dab.02.net)
+[10:09:48] <zamba> i have a python script that uses print() to output its status.. i thought this would be logged to stdout from the container?
+[10:09:59] <zamba> but i'm not getting anything when doing docker logs
+[10:11:12] *** Joins: frittro (~frittro@user/frittro)
+[10:23:08] <zamba> i'm using docker compose and the command: to start the different scripts
+[10:27:13] *** Quits: andycooper (uid246432@id-246432.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[10:28:14] <zamba> or do i have to use the logging module?
+[10:28:54] *** Quits: node1 (~node1@user/node1) (Quit: Client closed)
+[10:30:00] *** Quits: chodonne (~chodonne@ec2-3-18-56-136.us-east-2.compute.amazonaws.com) (Quit: ZNC - https://znc.in)
+[10:33:21] *** Joins: maret (~maret@nat-88-212-37-89.antik.sk)
+[10:34:17] *** Joins: chodonne (~chodonne@ec2-3-18-56-136.us-east-2.compute.amazonaws.com)
+[10:38:19] *** Joins: ash_m (~androirc@user/ash-m/x-3292451)
+[10:44:57] <ash_m> Do people still use supervisors to reap or is running multiple processes in the background using an entrypoint and `wait -n` good enough? Has s6 been ignored into history or do people still use that?
+[10:54:42] <geirha> zamba: python will buffer the output if it's not going to a tty. You can use python's -u to get it completely unbuffered, or you can add flush=True to all print calls
+[10:56:43] *** Quits: svm_invictvs (~svm_invic@user/svm-invictvs/x-6696469) (Remote host closed the connection)
+[10:56:57] *** Quits: Enitin (~Enitin@82.102.22.85) (Ping timeout: 240 seconds)
+[10:58:09] *** Joins: Enitin (~Enitin@82.102.22.86)
+[11:01:19] *** Quits: gebbione (~gebbione@82-132-236-122.dab.02.net) (Quit: This computer has gone to sleep)
+[11:03:51] *** Parts: Kydd (~kydd@212.237.178.212) ()
+[11:09:31] *** Quits: alicef (~none@gentoo/developer/alicef) (Quit: install gentoo)
+[11:10:16] *** Joins: alicef (~none@gentoo/developer/alicef)
+[11:10:17] *** Quits: Enitin (~Enitin@82.102.22.86) (Ping timeout: 240 seconds)
+[11:10:38] *** Joins: Enitin (~Enitin@82.102.22.85)
+[11:39:49] *** Quits: artok (~azo@mobile-access-bcee09-192.dhcp.inet.fi) (Quit: to work)
+[11:45:45] *** Joins: fedenix (~fedenix@gateway/tor-sasl/fedenix)
+[11:56:11] *** Joins: lithium (~lithium@user/lithium)
+[12:04:28] *** Joins: alchemist (~alchemist@user/alchemist)
+[12:10:57] *** Quits: Enitin (~Enitin@82.102.22.85) (Ping timeout: 240 seconds)
+[12:30:57] *** Joins: Enitin (~Enitin@82.102.22.86)
+[12:37:24] *** Quits: Enitin (~Enitin@82.102.22.86) (Ping timeout: 240 seconds)
+[12:38:13] *** Joins: Enitin (~Enitin@82.102.22.85)
+[12:38:46] *** Joins: Tach (~Tach@user/tach)
+[13:02:53] *** Quits: Tach (~Tach@user/tach) (Quit: Tach)
+[13:14:42] <zamba> geirha: how long will it flush it for?
+[13:14:45] <zamba> geirha: indefinitely?
+[13:26:57] *** Quits: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com) (Ping timeout: 240 seconds)
+[13:29:52] *** Joins: vidbina (~vid@p5de3d487.dip0.t-ipconnect.de)
+[13:30:46] *** Joins: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com)
+[13:33:22] *** Quits: z8z (~x@ac255238.ppp.asahi-net.or.jp) (Quit: Quitting)
+[13:35:37] *** Quits: phalanx (~thelounge@user/phalanx) (Quit: The Lounge - https://thelounge.chat)
+[13:38:17] *** Joins: Afroboy (~afroboy@129.45.100.179)
+[13:38:46] *** Joins: phalanx (~thelounge@user/phalanx)
+[13:39:18] *** Joins: z8z (~x@ac255238.ppp.asahi-net.or.jp)
+[13:40:42] *** Joins: lowcrash (~admin@84-255-205-230.static.t-2.net)
+[13:44:37] *** Quits: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com) (Ping timeout: 240 seconds)
+[13:46:57] *** Quits: rvalue (~rvalue@user/rvalue) (Ping timeout: 256 seconds)
+[13:48:46] *** Joins: rvalue (~rvalue@user/rvalue)
+[13:50:11] *** Joins: Mattiaslndstrm (~Mattiasln@c-73a0225c.018-449-6e6b701.bbcust.telenor.se)
+[13:50:27] *** Quits: vidbina (~vid@p5de3d487.dip0.t-ipconnect.de) (Ping timeout: 268 seconds)
+[13:50:37] *** Quits: very_sneaky (~very_snea@user/very-sneaky/x-7432109) (Ping timeout: 240 seconds)
+[13:52:44] *** Joins: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com)
+[13:52:51] *** Joins: very_sneaky (~very_snea@user/very-sneaky/x-7432109)
+[14:02:39] *** Joins: Tach (~Tach@user/tach)
+[14:15:35] *** Joins: bouncy (~ben@user/benoit)
+[14:25:37] *** Quits: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com) (Ping timeout: 240 seconds)
+[14:31:58] *** Quits: Tach (~Tach@user/tach) (Quit: Tach)
+[14:33:15] *** Quits: molt (~molt@178-222-245-206.static.isp.telekom.rs) (Quit: Leaving)
+[14:33:41] *** Joins: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com)
+[14:34:42] *** Quits: zuQe8 (~zuQe8@cpc105060-sgyl40-2-0-cust136.18-2.cable.virginm.net) (Quit: Ping timeout (120 seconds))
+[14:34:56] *** Joins: zuQe8 (~zuQe8@cpc105060-sgyl40-2-0-cust136.18-2.cable.virginm.net)
+[14:35:08] *** Joins: vidbina (~vid@p5de3d487.dip0.t-ipconnect.de)
+[14:42:33] *** Quits: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com) (Read error: Connection reset by peer)
+[14:42:45] *** Joins: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com)
+[14:58:17] *** Quits: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com) (Ping timeout: 240 seconds)
+[15:06:46] *** Joins: rsx (~dummy@ppp-188-174-142-215.dynamic.mnet-online.de)
+[15:15:02] *** Quits: Flyer (~flyer@lol.flyer.org) (Ping timeout: 260 seconds)
+[15:23:54] *** Quits: codebam (~codebam@user/codebam) (Ping timeout: 260 seconds)
+[15:26:43] *** Joins: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com)
+[15:41:07] *** Joins: Flyer (~flyer@lol.flyer.org)
+[15:43:42] *** Quits: very_sneaky (~very_snea@user/very-sneaky/x-7432109) (Quit: very_sneaky)
+[15:44:07] *** Joins: very_sneaky (~very_snea@user/very-sneaky/x-7432109)
+[15:50:06] *** Joins: menace (~someone@user/menace)
+[15:51:01] *** Quits: Enitin (~Enitin@82.102.22.85) (Ping timeout: 240 seconds)
+[15:54:51] *** Joins: Enitin (~Enitin@82.102.22.86)
+[16:14:13] *** Quits: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com) (Ping timeout: 240 seconds)
+[16:17:35] *** Joins: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com)
+[16:21:08] *** Quits: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com) (Client Quit)
+[16:24:29] *** Joins: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com)
+[16:29:39] <dob1> I have postgresql running on the host system, non on docker, right now to connect to it I am using a custom network and in docker-compose file I have on environment:  POSTGRES_HOSTNAME: 172.31.0.1     and this works.   Now i was reading host.docker.internal  and I tried POSTGRES_HOSTNAME: host.docker.internal  but no luck 
+[16:33:15] <tabakhase> dob1 that extra hostname used to be a docker-for-mac only thing, think only the few latest builds add it elsewhere
+[16:33:31] <s17> --add-host=host.docker.internal:host-gateway
+[16:33:34] <dob1> ah, I think I found, I need to add - "host.docker.internal:host-gateway" to extra-hosts
+[16:33:37] <dob1> right
+[16:33:40] <s17> :)
+[16:34:07] <dob1> it seems to work
+[16:34:14] <dob1> I can drop the custom network then
+[16:34:54] <tabakhase> you dont need custom networks for any of this, lookup the gateway / the docker0-ip should work anytime (this is where host.docker.internal points to anyhow)
+[16:35:29] <dob1> but on docker-compose file I do I specify the ip of the host?
+[16:35:34] <dob1> *how
+[16:37:08] <tabakhase> you look it up once, store it in ".env" and use that var in the compose file -- if var is empty, some people like to "lookup the gateway" in the entrypoint (some "ip | grep |awk" worm for example)
+[16:37:52] <dob1> it's not my image
+[16:39:35] <tabakhase> (note that "the host" is what you want now, but maybe tomorrow you have a different db to test something - or your coworker runs the PG in another VM - so youll always leave the option to ship in a env-var)
+[16:40:33] *** Joins: Tach (~Tach@user/tach)
+[16:40:52] <pgloor> Is it possible to access a http-only web site, running in a container, using https from the outside, without a proxy?
+[16:41:05] <pgloor> My goal is to use a letsencrypt certificate generated on the host with certbot.
+[16:41:13] <tabakhase> ((and i _think_ the idea with host.docker.internal is that "its your host, not the docker-host" when using docker-desktop (as the docker-host is a vm with nothing on it) - so "looking up the gateway (what IS the vm, not your host)" would be borky, and thats kinda why that name was added in the first place - dont quote me on that tho))
+[16:43:42] <dob1> tabakhase, to be honest I didn't understand your point: you were referring to an image build by me, right?  
+[16:43:51] <tabakhase> pgloor that doesnt make much sense from start to finish :D - and no...? you cant talk https to a http server and the other way around ((generally)) - but the problem you are trying to solve kinda shouldnt be one... got some more details?
+[16:44:17] *** Quits: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com) (Ping timeout: 240 seconds)
+[16:45:39] <tabakhase> dob1 https://i.imgur.com/tasY7fh.png
+[16:46:40] <tabakhase> but as said, thats extra fancy shit :P - just ship the right value in POSTGRES_HOSTNAME and youre done with it..
+[16:46:40] <pgloor> tabakhase: it's ok. thank you. I asked because somebody told me it's possible.
+[16:47:32] <dob1> tabakhase, sorry, but the main point is what is the right value to put there.   I didn't know what docker(compose) will use as net so I forced it to use a custom one defined by me so the ip was .1
+[16:47:54] <dob1> just my workaround
+[16:48:04] <dob1> or I miss something, and it could be
+[16:48:27] <tabakhase> pgloor well im not saying "impossible" - i just think what you are trying to ask for is not actually what/how/why you want it - and "LE for containers" is like a more than solved problem, you may just be "holding it wrong" *steve jobs - also https://xyproblem.info/ ;-)
+[16:49:28] <pgloor> you are sooo right :)
+[16:49:30] *** Joins: molt (~molt@178-222-245-206.static.isp.telekom.rs)
+[16:52:32] *** Quits: NIXKnight (~NIXKnight@198.98.57.76) (Quit: bye)
+[16:53:14] <tabakhase> dob1 well the "right value" is obvs "a host/ip where that db runs" - so it isnt much about what value, but more about a "how you ship this in" - and that as you discoverd, host.docker.internal doesnt work reliable/everywhere, so the easy answer is "allow someone to put his ip in the .env file and use that in the compose file alla environment: - POSTGRESS_HOST: ${POSTGRESS_HOST:-host.docker.internal}" 
+[16:53:15] <tabakhase> and good is pretty much
+[16:54:13] *** Joins: NIXKnight (~NIXKnight@198.98.57.76)
+[17:02:50] <dob1> tabakhase, I got it now, thanks
+[17:07:37] *** Quits: Enitin (~Enitin@82.102.22.86) (Ping timeout: 240 seconds)
+[17:18:12] *** Quits: lowcrash (~admin@84-255-205-230.static.t-2.net) (Quit: The Lounge - https://thelounge.chat)
+[17:23:17] *** Joins: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com)
+[17:24:11] *** Quits: bn_work (uid268505@id-268505.uxbridge.irccloud.com) (Quit: Connection closed for inactivity)
+[17:28:37] *** Quits: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com) (Ping timeout: 240 seconds)
+[17:28:41] *** Quits: Piraty (~irc@user/piraty) (Quit: -)
+[17:31:46] *** Quits: molt (~molt@178-222-245-206.static.isp.telekom.rs) (Ping timeout: 260 seconds)
+[17:31:54] *** Joins: topor (~harry@89.36.116.194)
+[17:32:22] *** Joins: Piraty (~irc@user/piraty)
+[17:36:03] *** Quits: JingleJazzy (~jaziz@user/jaziz) (Read error: Connection reset by peer)
+[17:37:27] *** Joins: molt (~molt@178-222-245-206.static.isp.telekom.rs)
+[17:41:40] *** Joins: minimal (~minimal@user/minimal)
+[17:42:07] *** Quits: molt (~molt@178-222-245-206.static.isp.telekom.rs) (Ping timeout: 256 seconds)
+[17:45:46] *** Joins: jjakob (~quassel@2a01:260:8028:10f0::62)
+[17:49:05] *** Joins: JingleJazzy (~jaziz@user/jaziz)
+[17:55:43] *** Joins: zpfvo (~fvo@89.244.123.243)
+[17:57:16] *** Joins: Anticom (~anticom@87.190.49.75)
+[17:57:25] <zpfvo> Hi! I have a question about build time ssh key forwarding. There is an example at https://docs.docker.com/develop/develop-images/build_enhancements/#using-ssh-to-access-private-data-in-builds
+[17:58:08] <zpfvo> i got this example working, but if i chose any other image than alpine, it does not work anymore. Does anyone know why this is?
+[17:58:45] <Anticom> zpfvo: can you give a closer definition of "it does not work anymore"?
+[17:58:54] <Anticom> e.g. did you adopt to the distribution specific package manager?
+[17:59:21] <zpfvo> Anticom: the git authentification does not work any longer
+[18:00:09] <zpfvo> Permission denied (publickey,password).
+[18:01:00] *** Quits: Mattiaslndstrm (~Mattiasln@c-73a0225c.018-449-6e6b701.bbcust.telenor.se) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[18:01:20] <zpfvo> ah i forgot to try something. I had to do  RUN echo 'PubkeyAcceptedKeyTypes +ssh-rsa' >> /etc/ssh/ssh_config 
+[18:02:05] *** Joins: trevors (~trevors@c-65-96-171-157.hsd1.ma.comcast.net)
+[18:03:20] <Anticom> zpfvo: And you do have `--mount=type=ssh` in each and every RUN command present that requires ssh agent forwarding?
+[18:04:28] *** Quits: menace (~someone@user/menace) (Quit: menace)
+[18:05:29] <zpfvo> yeah i just changed the image FROM alpine -> FROM python:alpine , everything else stays the same
+[18:05:37] *** Quits: cliluw (~cliluw@47.147.73.223) (Ping timeout: 240 seconds)
+[18:06:46] *** Quits: vidbina (~vid@p5de3d487.dip0.t-ipconnect.de) (Ping timeout: 260 seconds)
+[18:07:26] *** Joins: Enitin (~Enitin@82.102.22.86)
+[18:08:31] *** Joins: vidbina (~vid@p5de3d487.dip0.t-ipconnect.de)
+[18:09:56] <Anticom> zpfvo: looking at the layers of python:alpine ( https://hub.docker.com/layers/python/library/python/alpine/images/sha256-2bc97c9353ddefb8f7dd6e4b60711e4f9eff1c31ee3f7b4a19abe85a259b7421?context=explore ) I can't see anything that would mess with ssh agent forwarding, however I'm not an expert on that topic
+[18:16:25] *** Quits: trevors (~trevors@c-65-96-171-157.hsd1.ma.comcast.net) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[18:19:59] <zpfvo> Anticom: thanks you anyway, ill try to figure out what is chaning
+[18:20:28] *** Joins: trevors (~trevors@c-65-96-171-157.hsd1.ma.comcast.net)
+[18:22:24] <Anticom> zpfvo: Maybe dive can help you troubleshoot this issue: https://github.com/wagoodman/dive
+[18:25:57] *** Joins: thiras (~thiras@user/thiras)
+[18:27:09] <zpfvo> Trying to clone with GIT_SSH_COMMAND="ssh -v" gives me: #13 1.304 debug1: pubkey_prepare: ssh_get_authentication_socket: No such file or directory
+[18:28:16] <programmerq> zpfvo▸ do you have a minimal reproducible example that illustrates the problem?
+[18:28:59] <zpfvo> i got further: i thinks the SSH_AUTH_SOCK is not set right, cause
+[18:29:18] <zpfvo> cause i try to build in vscode
+[18:29:37] <programmerq> is vscode using buildkit or regular non-buildkit builds?
+[18:29:58] <zpfvo> buildkit
+[18:30:09] *** Quits: Anticom (~anticom@87.190.49.75) (Remote host closed the connection)
+[18:31:30] *** Quits: Leonarbro (~Leonet@user/leonarbro) (Ping timeout: 260 seconds)
+[18:31:55] <zpfvo> i think i got it, sorry. I think i set the SSH_AUTH_SOCK through vscode and i dont know why it worked with the pure alpine image
+[18:35:42] *** Joins: node1 (~node1@user/node1)
+[18:38:15] *** Joins: no_gravity (~no_gravit@user/no-gravity/x-5639427)
+[18:39:28] <no_gravity> When you have run a container once like "docker run -v $(pwd):/some/where --name=mycontainer -p 80:80 debian" and then you start it via "docker start mycontainer", you don't have to provide any of the other parameters anymore, right?
+[18:55:46] *** Joins: Anticom (~anticom@87.190.49.75)
+[18:56:21] <programmerq> correct. start just starts an existing container. run will create a new container and then start it. create will create and not start.
+[18:57:38] *** Quits: JingleJazzy (~jaziz@user/jaziz) (Ping timeout: 260 seconds)
+[19:00:24] *** Quits: [diablo] (~diablo]@user/diablo/x-9068044) (Quit: The Lounge - https://thelounge.chat)
+[19:00:58] *** Joins: [diablo] (~diablo]@user/diablo/x-9068044)
+[19:01:08] *** Joins: junktext__ (~junktext@gateway/vpn/pia/junktext)
+[19:02:17] *** Quits: Enitin (~Enitin@82.102.22.86) (Ping timeout: 240 seconds)
+[19:04:37] <ash_worksi> If you have a service that exposes public data over http but must also consume data from other services in the same swarm, would you write two services with only what they need then build the webserver with a "serve" entrypoint and the consumer with a "run" entrypoint?
+[19:04:47] <ash_worksi> Or would you build one service with everything it needs (so all the interfaces and common files are in one package, rather than distributed to two) and just have one service run the default and the other override with a command?
+[19:09:36] *** Quits: Anticom (~anticom@87.190.49.75) (Remote host closed the connection)
+[19:11:26] <no_gravity> programmerq: I see. Thanks.
+[19:12:18] *** Quits: Afroboy (~afroboy@129.45.100.179) (Quit: Leaving)
+[19:13:17] <programmerq> ash_worksi▸ that's just a normal DMZ policy type question that can indeed be implemented with internal-only docker networks and having services that need access to backend stuff be on both networks.
+[19:13:36] *** Parts: no_gravity (~no_gravit@user/no-gravity/x-5639427) ()
+[19:14:40] <programmerq> normally the sensitive data storage would be in the "internal" network, and your public-facing service would be in the "DMZ" network. This can be two separate docker networks where the "internal" is a 'docker network create --internal' network so it can't even egress to the internet. It's a decent layer/hurdle for an attacker that wants to exfiltrate data.
+[19:15:30] <programmerq> the "DMZ" could be a separate docker network, or it could even simply be a service connected to that internal network but with its ports published.
+[19:15:42] <programmerq> if the public-facing service needs egress, then it'd need to be on a non-internal network
+[19:16:29] <programmerq> if the application in question is one logical application process, then it would simply need its ingress set up with a port publish, and it would also need to be able to connect to the resource on the "Internal" network.
+[19:16:51] <programmerq> I wouldn't arbitrarily split up a process into two processes to be an additional point of failure between a process and the data it needs to access.
+[19:16:58] <programmerq> not sure if that answers your question
+[19:18:54] *** Quits: Forkk (~forkk@li926-228.members.linode.com) (Quit: http://quassel-irc.org - Chat comfortably. Anywhere.)
+[19:21:59] *** Joins: Anticom (~anticom@87.190.49.75)
+[19:23:07] *** Quits: Anticom (~anticom@87.190.49.75) (Client Quit)
+[19:25:42] *** Joins: Forkk (~forkk@li926-228.members.linode.com)
+[19:26:04] *** Joins: leitz (~LeamHall@072-182-158-027.res.spectrum.com)
+[19:32:28] *** Quits: SmokenatorZ6 (~Smokenato@177.62.114.115) (Quit: Screw you guys, im going home)
+[19:36:38] *** Joins: SmokenatorZ6 (~Smokenato@177.9.250.133)
+[19:44:39] *** Quits: trevors (~trevors@c-65-96-171-157.hsd1.ma.comcast.net) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[19:46:52] *** Quits: sebastianos (~sebastian@user/sebastianos) (Ping timeout: 268 seconds)
+[19:47:26] *** Joins: agowa338 (~agowa338@p200300fb0f0afb00e1b4fcc18ad69b46.dip0.t-ipconnect.de)
+[19:47:52] *** Quits: node1 (~node1@user/node1) (Quit: Client closed)
+[19:50:11] *** Quits: fercell (~ferr@185.65.50.167) (Ping timeout: 256 seconds)
+[19:53:30] *** Quits: rsx (~dummy@ppp-188-174-142-215.dynamic.mnet-online.de) (Quit: rsx)
+[19:55:24] *** Joins: bn_work (uid268505@id-268505.uxbridge.irccloud.com)
+[19:58:16] *** Joins: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com)
+[19:58:41] *** Joins: trevors (~trevors@c-65-96-171-157.hsd1.ma.comcast.net)
+[20:04:37] *** Quits: jgrim6669 (~jgrim@d60-65-99-197.col.wideopenwest.com) (Quit: Ping timeout (120 seconds))
+[20:13:47] *** Joins: maxzor (~maxzor@laubervilliers-657-1-67-14.w90-63.abo.wanadoo.fr)
+[20:15:28] <maxzor> Hello, is there a more elegant way to install multiple packages than this https://paste.rs/tLv ?
+[20:15:47] <maxzor> A file containing a raw list of dependencies, one on each line?
+[20:17:30] *** Quits: winstonsmith (~winstonsm@gateway/vpn/pia/winstonsmith) (Remote host closed the connection)
+[20:17:47] *** Joins: winstonsmith (~winstonsm@gateway/vpn/pia/winstonsmith)
+[20:18:53] *** Quits: CJC4 (~C4Crawfor@2600:1700:5470:712f:ff:4b49:eece:3ea7) (Read error: Connection reset by peer)
+[20:23:30] *** Joins: evocatus (~rg@62.182.78.42)
+[20:27:43] *** Joins: DoofusCanadensis (~DoofusCan@2604:3d09:47c:f970:453b:7ecb:1650:a747)
+[20:28:14] *** Joins: svm_invictvs (~svm_invic@user/svm-invictvs/x-6696469)
+[20:30:00] *** Quits: lithium (~lithium@user/lithium) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[20:32:14] <maxzor> a csv, a database output?
+[20:32:22] *** Quits: trevors (~trevors@c-65-96-171-157.hsd1.ma.comcast.net) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[20:33:42] <tabakhase> maxzor apt upgrade does not belong into containers - and bundle all into one install - other than that not sure what you even mean...
+[20:34:46] <maxzor> why does it not belong there?
+[20:35:29] <tabakhase> docker is a layering filesystem, it never deletes anything - the FROM is where oyu shall get updates from
+[20:35:30] <maxzor> I am just wondering if there is a way to keep the package list representation in a usual data format, without having to "bash-erize" it (be it trailing \, && ...)
+[20:35:32] *** Joins: faLUKE (~paolo@host-95-251-179-18.retail.telecomitalia.it)
+[20:37:41] <tabakhase> and there rly is no uch thing as "usual form" - other than .dep packages themself i guess :D -- if you "want to reuse that list" for say dockerfile and a shellcript - run that shellscript from the dockerfile :D -- or even a dum txt file with a `install $(cat file)` sure anything works
+[20:37:48] <faLUKE> hello. I have a docker image of an application that runs a webserver. When I run this application without docker, I set it listening on http + 127.0.0.1 only. Unfortunately, docker requires that it listens on 0.0.0.0 in order to access it. On linux this can be fixed by using --network="host". But how can I solve this on win and mac ?
+[20:37:54] <tabakhase> *dotDeb obvs
+[20:38:47] <tabakhase> faLUKE --host "turns of docker" - so thats not fixing anything rly :D -- check how to make your application listen to all ips instead of just localhost
+[20:38:48] <maxzor> tabakhase, ah right :) thanks
+[20:40:39] <faLUKE> tabakhase: thanks! I'm googling "turns of docker" but can't find anything. What does it mean exactly?
+[20:41:17] *** Quits: evocatus (~rg@62.182.78.42) (Quit: Konversation terminated!)
+[20:41:27] <tabakhase> faLUKE --network=host disables the entire network-issolation part of docker
+[20:43:02] <tabakhase> and while that may smell like a fix - it also means that it kills container-to-container communication
+[20:43:22] *** Joins: sebastianos (~sebastian@user/sebastianos)
+[20:43:48] <faLUKE> tabakhase: but what do you mean with --host "turns of docker" ?
+[20:44:00] <tabakhase> but unless you resolve what "image of an application" may mean we cant help
+[20:44:41] <tabakhase> try it out...   run: docker run --rm alpine ip addr
+[20:44:54] <tabakhase> and then: docker run --rm --network=host alpine ip addr
+[20:45:42] <faLUKE> tabakhase: sorry, I don't understand yet: is  --host "turns of docker" an option ? 
+[20:45:47] <tabakhase> similar experiment you can do with "docker run --rm alpine ps" vs. "docker run --rm --pid=host alpine ps"
+[20:46:22] *** Joins: node1 (~node1@user/node1)
+[20:47:12] *** Joins: lithium (~lithium@user/lithium)
+[20:47:18] <faLUKE> I mean:   docker run --host "turns of docker" alpine  <--- sorry for the probably stupid question
+[20:47:28] <tabakhase> wtf no :D
+[20:47:41] <faLUKE> tabakhase: al right now I understand :-)
+[20:47:49] <faLUKE> ok, now I explain better:
+[20:47:54] *** Joins: jarthur (~jarthur@cpe-70-114-198-37.austin.res.rr.com)
+[20:48:26] <faLUKE> the problem is that 127.00.1 is the DEFAULT of that application because its default is http too. And http is unsafe
+[20:48:48] <faLUKE> so, if you want to switch to https, you have to make your own certificates
+[20:49:26] <faLUKE> (I mean, it's not 0.0.0.0 unsafe, it's http)
+[20:49:34] <tabakhase> tls-termination is a different story  - and can then be job of traefik/nginx/caddy or whoever)
+[20:50:11] *** Joins: withered_dragon (~withered_@1437135-v103.1561-static.stchilaa.metronetinc.net)
+[20:50:16] <faLUKE> tabakhase: I know, but I'm meditating that a solution can be running the application on 0.0.0.0 ONLY IF you provide certs for it
+[20:50:47] <faLUKE> tabakhase: ok, problem solved, thanks
+[20:51:02] <tabakhase> and who cares that 127. is the default - "dockerizing" something means changing that default to work in dockerland - and dockerland expects 0.0.0.0 -- as youll see in every single image out there (o yea, all the "secure by default" things like mysql and memcache and whatanot get changed to 0.0.0.0 in there dockerfiles)
+[20:51:15] <ash_worksi> programmerq: I mean, that was all very great advice for me, but no, it wasn't really addressing my train of thought; You language/framework of choice is python/django right?
+[20:51:36] *** Quits: thiras (~thiras@user/thiras) (Remote host closed the connection)
+[20:57:10] *** Quits: lithium (~lithium@user/lithium) (Quit: Textual IRC Client: www.textualapp.com)
+[20:57:25] <ash_worksi> programmerq: so like, idk django that well, but suppose you make a service public by serving using `python manage.py runserver` and it can serve data from a database -- this data also needs to be updated by some other service (producer) experiencing events, so suppose the producer pushes event data onto a queue and you update the same database using `python receive.py`
+[20:58:50] <ash_worksi> would you have 2 services with 2 different entrypoints (one being `['python','manage.py','runserver']` and the other being `['python','receive.py']`) even though they're effectively the same service?
+[21:00:34] <ash_worksi> and does it give you pause to think that two services are not isolated in that they share the same database (although, it is par for the course for 2 services to share a queue)?
+[21:00:53] <tabakhase> ash_worksi and how does "docker" have anything todo with this? ;-) smells more like a generic software-architecture question where "giving an answer" has like a 100page q&a ahead of it :D
+[21:01:23] <ash_worksi> really?
+[21:02:49] <ash_worksi> 🤔
+[21:03:04] <tabakhase> dockerland "doesnt like mulltiple things in one container" - but thats more talking about "processes" that youd have to handle with signals and init´s(tint,s6&such) - doesnt rly give a shit about what your one python process does or doesnt :D
+[21:03:50] <ash_worksi> yes, it is more of an arch question, but I don't think it's a 100-page Q&A. Still, docker figures into it because it's sort of the slicer of processes. If I can logically discern 2 entrypoints, then that makes me wonder if they should not be 2 distinct containers
+[21:04:22] <ash_worksi> tabakhase: but... they would be 2 processes
+[21:04:31] <ash_worksi> one would be a worker, one would be a webserver
+[21:04:32] <tabakhase> so you already have the answer =)
+[21:04:46] <ash_worksi> no... because they're acting on the same data and for the same purpose
+[21:04:49] <ash_worksi> so it's muddy for me
+[21:05:13] <ash_worksi> and it feels weird to break something out for that sake when they need to share the same database
+[21:05:54] <tabakhase> uh? there are people out there who run thousands of copies of the exact same thing
+[21:06:15] <ash_worksi> tabakhase: not sure what you're getting at
+[21:06:29] <ash_worksi> but more importantly, what would you do?
+[21:06:47] <ash_worksi> you have a service that needs to consume and serve data.
+[21:06:47] <tabakhase> id have a 100page Q&A first ;-)
+[21:07:48] <ash_worksi> you mean you'd read a 100-page Q&A first?
+[21:10:34] <tabakhase> those are literally things noone can reasonably answer without the whole picture - and "consume and serve data" is literally anything, you PC consumes mouse&keybd and serves a screen - but i would expect you are not trying to build a emulator...
+[21:12:08] <ash_worksi> so you're saying I need to explain a more concrete situation?
+[21:15:25] <ash_worksi> it's simple actually; I have a monolith that now needs to use oauth, so I built an oauth service, but right now I don't want that to completely feel out-of-place with regards to the theming and interactions of the monolith, so I figure I can just handle registrations nearly the same as normal except send a message to a queue for the oauth service to pickup and update.
+[21:15:32] <ash_worksi> that is the current scenario
+[21:17:52] <tabakhase> the monolith itself is NOT part of that whole thinking-scenario?
+[21:17:58] <ash_worksi> no
+[21:19:22] *** Quits: vidbina (~vid@p5de3d487.dip0.t-ipconnect.de) (Ping timeout: 268 seconds)
+[21:19:30] <ash_worksi> so, do I break them apart and put the registration stuff into its own container that consumes, or do I put everything together and just use an entrypoint script to run both of them... or a supervisor perhaps.
+[21:20:35] <tabakhase> supervisor is as said nono - if those are 2 distinct aps (with a shared db behind them or so) there is ntohing wrong with this
+[21:21:16] <tabakhase> this as in two services if you build it as 2 distinct services
+[21:21:34] <ash_worksi> "is as said" -- did someone answer that for me before or you're saying generally?
+[21:23:28] <tabakhase> if you havent actually build it yet - and wonder what makes "more sense to code" - noone can rly answer, just generic pointers to think about update schedules / deployments / availibilty / error-risk -- but to unlcear what a "oath service with in and out" may entail to give an actual answer on this
+[21:24:04] <tabakhase> "as said" == [18:33:05] <tabakhase> dockerland "doesnt like mulltiple things in one container" - but thats more talking about "processes" that youd have to handle with signals and init´s(tint,s6&such)...
+[21:24:23] <ash_worksi> ooo
+[21:25:07] <tabakhase> if thats implemented as service:8080/add and service:8080/fetch - docker doesnt give a shit is service is ONE httpd-process kinda deal :D
+[21:26:57] <ash_worksi> yes, well, it's more like `listen(8080)` and `run consume`, but I presume your advice is the same
+[21:27:17] *** Quits: sudomann (~sudomann@c-73-133-131-19.hsd1.md.comcast.net) (Ping timeout: 240 seconds)
+[21:27:18] <ash_worksi> tabakhase: just for my own reference, are you upset with me?
+[21:27:56] <ash_worksi> I'm not sure if you're saying "doesn't give a shit" because you're frustrated or not
+[21:28:31] <tabakhase> no, all good =) - just a little fustrated that you are standing yourself in your own way ;-) trying to engineer out problems that dont actually exist and such :D
+[21:28:35] <ash_worksi> (the :D sort makes me feel like that's just how you talk, which is fine, idc, I just want to know when I am pissing people off)
+[21:30:03] *** Joins: sudomann (~sudomann@c-73-133-131-19.hsd1.md.comcast.net)
+[21:30:16] <tabakhase> and the "doesnt give a shit" i usually use rarely in here thats true :D - but in this case it was specifically about making clear that docker rly doesnt care 
+[21:30:37] <ash_worksi> okay
+[21:30:44] <ash_worksi> thanks for your advice
+[21:31:23] <tabakhase> if youd "only ask docker" - anythign that doesnt need proccess-to-proccess communication (via shared memory) would prob get his own container :D
+[21:31:52] *** Quits: xep (~xep@76-210-4-7.lightspeed.sntcca.sbcglobal.net) (Read error: Connection reset by peer)
+[21:32:02] <ash_worksi> if I'd only ask docker?
+[21:32:15] <tabakhase> but now go try that with say, postfix - its only like 15 different containers or so :D - what obvs. goes a little insane (((that "mail in docker" is its own story well ignore here for a moment...)))
+[21:32:16] *** Quits: shutnoshut (~shutnoshu@ec2-52-29-68-122.eu-central-1.compute.amazonaws.com) (Quit: Bye!)
+[21:32:42] *** Joins: shutnoshut (~shutnoshu@ec2-52-29-68-122.eu-central-1.compute.amazonaws.com)
+[21:32:43] *** Parts: zpfvo (~fvo@89.244.123.243) (QUIT :Leaving.)
+[21:32:54] *** Joins: xep (~xep@76-210-4-7.lightspeed.sntcca.sbcglobal.net)
+[21:33:54] <tabakhase> and it wouldnt scale to run its own php-fcgi server "for every single file" in your wwwroot - but you totally "could" do that
+[21:35:04] <tabakhase> while at the same time "one" may stop you short as 'api shall scale different than www' - so you end up with www deployed twice, and api even 7 containers
+[21:35:51] <tabakhase> very stupid example yes, but on purpose ;-)
+[21:40:02] <ash_worksi> thanks
+[21:41:16] *** Joins: kevinnn (~kevinnn@2600:8802:3713:3b00::9548)
+[21:44:31] *** Quits: node1 (~node1@user/node1) (Quit: Client closed)
+[21:45:58] <tabakhase> point rly just is that "docker" isnt the one to make that desicion :| --- and if you made that desicion in the past (as you wrote two destinctive scripts to be ran) "you already have your answer" a i had said :D -- the only thing to argue then would be "using a supervisor to stuff it in one" whats as mentioned in the start is a "meh :/" so unless anything forces you to, why would you...
+[21:47:41] *** Joins: trevors (~trevors@c-65-96-171-157.hsd1.ma.comcast.net)
+[21:48:31] <tabakhase> so if thats, as i understood, some semi-external-auth-service the answer should be rather simple if you ask yourself "if something fails, do you want everythign to break or just the broken thing?" :D
+[21:49:25] *** Quits: compuguy (ahall@user/compuguy) (Quit: Ping timeout (120 seconds))
+[21:49:40] *** Joins: compuguy (ahall@user/compuguy)
+[21:56:57] *** Quits: withered_dragon (~withered_@1437135-v103.1561-static.stchilaa.metronetinc.net) (Quit: Leaving)
+[21:57:07] *** Quits: ash_m (~androirc@user/ash-m/x-3292451) (Quit: AndroIRC - Android IRC Client ( http://www.androirc.com ))
+[21:57:13] *** Joins: withered_dragon (~withered_@1437135-v103.1561-static.stchilaa.metronetinc.net)
+[22:03:16] *** Quits: topor (~harry@89.36.116.194) (Quit: Konversation terminated!)
+[22:03:33] *** Joins: topor (~harry@89.36.116.194)
+[22:04:07] *** Quits: topor (~harry@89.36.116.194) (Client Quit)
+[22:14:04] *** Joins: Enitin (~Enitin@82.102.22.84)
+[22:15:14] *** Quits: withered_dragon (~withered_@1437135-v103.1561-static.stchilaa.metronetinc.net) (Quit: WeeChat 3.3)
+[22:16:08] *** Joins: withered_dragon (~withered_@185.203.219.54)
+[22:25:48] *** Joins: andycooper (uid246432@id-246432.helmsley.irccloud.com)
+[22:32:40] *** Quits: Tach (~Tach@user/tach) (Quit: Tach)
+[22:34:25] *** Joins: robink (~quassel@user/robink)
+[22:39:10] *** Joins: vidbina (~vid@p5de3d487.dip0.t-ipconnect.de)
+[22:43:25] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 240 seconds)
+[22:45:11] *** Joins: Enitin (~Enitin@82.102.22.84)
+[22:46:28] *** Joins: Leonarbro (~Leonet@user/leonarbro)
+[23:00:00] *** Quits: catbehemoth (~vasyl@bras-base-lnglpq6100w-grc-16-206-172-248-162.dsl.bell.ca) (Quit: WeeChat 3.4)
+[23:01:01] *** Joins: Tach (~Tach@user/tach)
+[23:08:13] *** Joins: gamara (~gamara3@66-203-186-197.ded.execulink.com)
+[23:09:00] <gamara> Hey I have a question I was looking at a docker file and it had a volume specified like this, volume: .:/var/www:rw
+[23:09:08] <gamara> I also saw :ro
+[23:09:25] <gamara> anyone know what the rw/ro is?
+[23:10:03] <DoofusCanadensis> read-write/read-only
+[23:10:12] <ash_worksi> you beat me to it.
+[23:10:28] <gamara> thats what I thought so is that how you can edit files on local host and it be applied to inside docker
+[23:11:48] <gamara> do I just need to use volumes with those options if I wanted to edit code inside my docker container and access it via my nginx webserver
+[23:11:55] <gamara> for local development
+[23:12:51] <ash_worksi> gamara: no, you can just use `-v $PWD:/path`
+[23:13:23] <gamara> like with docker-compose? I am kind of confused how development environments work
+[23:13:49] <gamara> I was looking at the one at my job and it seems it just uses volumes with rw/ro options added
+[23:14:51] <ash_worksi> it's not required, but if you need to change files you'd obviously want to use :rw but it's not explicitly necessary. I have never had experience otherwise
+[23:16:22] <ash_worksi> I don't know if you have a question regarding compose, but it's basically just a wrapper over `docker run`
+[23:17:32] <ash_worksi> however in compose, unless specifically specified, a docker network is created and all containers it creates use that network
+[23:17:51] * ash_worksi laughs at himself
+[23:18:16] <ash_worksi> s/specifically specified/specifically configured not to/
+[23:18:45] <gamara> my quesiton is this https://github.com/istareatscreens/NFTup/blob/master/docker-compose.yml I have this docker-compose file, I basically want to be able to edit code on my local machine and have it be compiled (via my framework) in docker and be deliverd my my nginx container
+[23:18:49] <notevil> the only quirk that I know if is if you're volume mounting a single file, rather then a directory.  (try not to do just a single file)  when you edit the file, it gets renamed/created as a new file, and the mount gets lost/confused.
+[23:19:48] <ash_worksi> "delievered into my nginx container" is not a statement that jives with me
+[23:20:02] <gamara> *delivered by my nginx server to localhost
+[23:20:40] <ash_worksi> what you probably really want is to deploy a container on the same docker network when you're finished
+[23:20:46] <gamara> by delivered into my ngix container I mean ngix would be able to access the shared var/www/ to serve the content pushed there by my framework
+[23:21:14] <ash_worksi> you can accomplish that using docker volumes
+[23:21:25] <gamara> that is what I figured :D
+[23:21:33] <ash_worksi> but it's not exactly necessary
+[23:21:36] <ash_worksi> I have been down that road before
+[23:21:59] <gamara> I like the idea of not having to install anything on my host machine
+[23:22:02] <ash_worksi> you're thinking because of how webservers typically check for the file locally before running it yes?
+[23:22:23] <ash_worksi> (addressing your problem about a shared volume)
+[23:23:11] <ash_worksi> you're free to do that, but I just find it easier to keep static things that the webserver serves on THAT container and everything else in the php container; then just proxy it
+[23:23:43] <ash_worksi> usually people now-a-days have a single entrypoint for php, so security and whatnot can be handled in the application.
+[23:23:46] <ash_worksi> brb
+[23:24:11] <gamara> well the nginx server is a reverse proxy server
+[23:24:34] *** Quits: alchemist (~alchemist@user/alchemist) (Quit: Leaving)
+[23:25:00] <ash_worksi> yeah
+[23:25:12] <ash_worksi> gamara: my point is, you don't *have* to use `try_files`
+[23:25:53] <gamara> to be honest with you I have setup stuff on docker-compose etc but I still feel like a bit of a noob
+[23:25:54] <ash_worksi> personally, I don't find that you need to really have anything on the nginx server other than some assets for giving you pretty 5xx errors if something explodes
+[23:26:11] *** Quits: svm_invictvs (~svm_invic@user/svm-invictvs/x-6696469) (Remote host closed the connection)
+[23:26:25] <ash_worksi> don't worry about being a noob ;)
+[23:28:00] <gamara> im still kind of confused on how to share volumes between host and container
+[23:28:15] <gamara> dynamically
+[23:28:40] <gamara> im honestly kind of confused about containers in general I read the documentation and kind of get the idea that they are seperate from containers
+[23:29:19] <gamara> but idk I am kind of just super confused on how you would do a setup where directories are shared between containers and host
+[23:29:27] <ash_worksi> I don't know what you mean by 'dynamically' but you declare a volume in the top-level volumes: key, then use that name in your services
+[23:30:00] <ash_worksi> gamara: run `docker volume ls`
+[23:30:10] <ash_worksi> and tell me if it lists anything
+[23:30:19] <gamara> meaning I edit a file on my host machine, my framework in the php container detects that change recompiles src delivers it to var/www and then nginx auto detects the change
+[23:30:40] <gamara> well by auto detects I mean serves the new content
+[23:31:11] <gamara> oh ok ash_worksi thanks so much that is helpful :P is that the best way of doing this though?
+[23:31:30] <ash_worksi> um... well, no
+[23:31:42] <gamara> haha what is the best way then :P
+[23:31:47] <ash_worksi> what you're describing is just a bind-mount
+[23:31:58] <gamara> oh yeah I heard bind-mount is bad
+[23:32:09] <tabakhase> "bad" is very wrong..
+[23:32:12] <ash_worksi> no, it's not bad
+[23:32:25] <ash_worksi> it's just not ideal for production services
+[23:32:33] <ash_worksi> but you're developing
+[23:32:35] <ash_worksi> that's different
+[23:33:00] <ash_worksi> basically you want to add a `volumes:` under your reverse-proxy: and php: keys
+[23:33:09] <gamara> I want something that can be easily pushed to production though with not many changes
+[23:33:33] <tabakhase> bindmounts as also actual volumes both have there own knicks and operate differently - just works both with the "-v/volumes:" param but thats about it what they share
+[23:33:37] <ash_worksi> and you want that to be `- ./src:/path/on/nginx` and `./src:/path/on/php`
+[23:33:45] <ash_worksi> although I don't usually advise doing that
+[23:33:46] *** Joins: GailWynand (~GailWynan@195.216.219.1)
+[23:34:03] <gamara> what would you do?
+[23:34:15] <ash_worksi> I would focus on 1 concern
+[23:34:21] <ash_worksi> either php or nginx
+[23:34:56] <gamara> so just run the php framework from the container with a volume
+[23:35:15] <tabakhase> a bindmount, not volume ;-)
+[23:35:56] <tabakhase> bindmounts = shipping in files from your disk --- volumes "cant do that", they get whats in the container
+[23:36:25] <ash_worksi> gamara: I mean, it really depends on what you're trying to do, but I typically have in my compose files `app: volumes: - ./project:/srv/app`
+[23:36:34] *** Quits: Tach (~Tach@user/tach) (Quit: Tach)
+[23:36:38] <ash_worksi> gamara: with newlines of course
+[23:39:02] <gamara> so you use bindmounts for development
+[23:39:19] <gamara> just reading a blog post now this is super interesting thank you so much :D
+[23:40:49] <ash_worksi> gamara: this is what I would probably have: https://github.com/ash-m/NFTup/blob/master/docker-compose.yml
+[23:41:48] <ash_worksi> you can see changes in the file history: https://github.com/ash-m/NFTup/commit/7f575514205236994fffb16f2f7b63c69522bd60#diff-e45e45baeda1c1e73482975a664062aa56f20c03dd9d64a827aba57775bed0d3
+[23:41:54] <gamara> I see it :D
+[23:42:22] <gamara> you merge composer with php right
+[23:42:32] <ash_worksi> also, I would make the database use tmpfs, but that's a different can of worms
+[23:42:44] <gamara> why tmpfs?
+[23:43:18] <ash_worksi> because usually you have to populate the database with something and that can take time to index and blah blah blah; tmpfs is all in memory so that all happens pretty quickly
+[23:43:57] <gamara> oh yeah I remember that now
+[23:44:11] <gamara> isn't that similar to memcached or redis
+[23:44:37] <ash_worksi> I believe by default they are inmemory, yes
+[23:44:40] <tabakhase> if hes using mysql... likely cause he wants to KEEP that data lol... 
+[23:44:49] <gamara> yeah I was thking that as well
+[23:44:51] <ash_worksi> tabakhase: it's developement
+[23:45:09] <ash_worksi> personally, I separate out environments such that you're only focusing on 1 thing in a compose file and every tangent service is deployed separately and have their own environments
+[23:45:29] <ash_worksi> so for a project like this, the database and nginx are just dummy services
+[23:45:33] <gamara> I would just add caching I think if I was crazy about it but this is mostly a learning project I doubt anyone will even look at it haha
+[23:45:35] <ash_worksi> they aren't the "real" proxy or db
+[23:46:04] <gamara> so you are saying use tmpfs in development then use a different config for development I suppose that makes sense 
+[23:46:05] <ash_worksi> and I don't expect to deploy them together; I expect at most to do something like `docker-compose run php ...`
+[23:46:31] <ash_worksi> or just `docker run -d ... php`
+[23:47:15] <ash_worksi> then, for entirely different reasons and having a different setup, I might have a project just for mysql
+[23:47:51] <gamara> so should I create two docker-compose files one for prod one for development
+[23:47:52] <ash_worksi> that might help me setup the configuration for standby servers or migrations or whatever
+[23:48:11] <gamara> I should learn how to use make
+[23:48:30] <ash_worksi> "how to use make" is a different thing entirely
+[23:48:47] <ash_worksi> its like asking "should I learn python"
+[23:49:07] <gamara> haha I know but I am just saying it would help with deployment if I am using different docker-compose.yml files
+[23:49:18] <ash_worksi> ime, it's good to know a thing or two about make, but that doesn't have to do with workflow
+[23:49:40] <gamara> true sorry for getting side tracked
+[23:50:11] <tabakhase> i dont have time to throw down my whole -f/COMPOSE_FILE/.env TED-Talk right now sorry :D
+[23:50:24] <gamara> so I should just set everything up in my php container.. e.g. nodejs etc
+[23:50:31] <tabakhase> and lets not open that can that "compose isnt rly deployment" ;-)
+[23:50:55] <gamara> its ok tabakhase haha :D
+[23:51:22] <ash_worksi> so, this is generally the deployment strategy: have a Dockerfile which "bakes" your code into a container (you have that using the COPY command); use docker-compose to mount your `src` over that directory so you can make changes to it; use `docker build` to create a new finished image; in production run `docker run -d <prod-image>`
+[23:52:46] <gamara> thats helpful thank you
+[23:53:23] <ash_worksi> as for databases; for me personally, if I am working in developement I consider them trash.
+[23:53:57] <ash_worksi> it's only there to make sure my app works properly, but the concern is the app
+[23:54:00] <gamara> well makes sense haha
+[23:54:21] <ash_worksi> when you're deploying a _real_ database, then you probably want to use a docker-volume
+[23:55:00] <gamara> so in development I shouldn't worry about have a million things installed in my php container
+[23:55:06] <gamara> like I shouldn't do staging
+[23:55:44] <gamara> I should just install all the stuff I need do a bindmount and just expose the server port
+[23:55:46] <ash_worksi> the dev>stage>prod flow still has it's place, but the mindset changes a bit when you're being introduced to docker
+[23:56:10] <ash_worksi> you shouldn't need to install anything if you already have docker
+[23:56:27] <gamara> I mean install the stuff in the container via the Dockerfile
+[23:56:50] <ash_worksi> yes, should keep anything your app depends on in the docker file
+[23:57:22] <ash_worksi> your `apt install` directives are in a good place.
+[23:57:30] <gamara> also when I talk about staging I mean setting up a Dockerfile to start a container to package javascript, then to transfer that to another container
+[23:57:44] <ash_worksi> that sounds like a mess to me
+[23:58:21] <tabakhase> on that note, consider https://github.com/mlocati/docker-php-extension-installer
+[23:58:45] <ash_worksi> gamara: ^ that is immensely helpful, esp with alpine containers
+[23:59:02] <tabakhase> gamara answer to that last question is a multistage dockerfile
+[23:59:03] <gamara> https://github.com/istareatscreens/TTT_TG/blob/master/Dockerfile
+[23:59:42] <tabakhase> yep, that is such a multistage dockerfile =)
+[23:59:52] <ash_worksi> re: javascript -- if you mean "what about node and webpack?" then yes, I would use another container to create the output directory
+[23:59:56] <gamara> that is what I was talking about like I shouldn't do this in development 

@@ -1,0 +1,335 @@
+[12:05:28] *** Quits: kares[m] (~karesmatr@2001:470:69fc:105::30d1) (Ping timeout: 268 seconds)
+[12:05:28] *** Quits: marcheiligers[m] (~marcheili@2001:470:69fc:105::1:5286) (Ping timeout: 268 seconds)
+[12:05:52] *** Joins: marcheiligers[m] (~marcheili@2001:470:69fc:105::1:5286)
+[12:05:52] *** Joins: kares[m] (~karesmatr@2001:470:69fc:105::30d1)
+[12:50:17] *** Quits: drbobbeaty (~drbob@2601:249:1001:6940:252f:cddc:1f09:6e0f) (Ping timeout: 240 seconds)
+[12:52:12] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[16:58:34] <headius> good morning!
+[16:59:17] <headius> ahorek: ok we can sort that out today
+[16:59:42] <headius> byteit101: I will review today and look at that failure
+[17:01:37] <kares[m]> <ahorek> "headius:  any thoughts about..." <- this is a great idea but the gotcha is you can not test against Java 8 as javac in that release does not support --release ... but otherwise much better than doing manual casts
+[17:02:12] <headius> kares: I believe that plugin knows to apply the Java 8 flags on 8
+[17:02:36] <headius> it gets around having a build that requires either 8 or 9 but not both (or you have to do custom config)
+[17:03:41] <headius> I will give it a try in some of our other 8-supporting projects... almost all the dependencies we control have basic module support and need release flag now
+[17:03:41] <kares[m]> I ended up doing https://github.com/jruby/jruby-openssl/pull/246/commits/27f28cf9257f0b8d92daf4314bfe5c0050ab06ce#diff-3d8a1687c0e4b3c176e441267ca6d16a9a7749464eee67d9c95089c0136f5fecR57 ... otherwise CI under 8 wasn't working
+[17:20:45] <headius> kares: did you try that plugin and it breaks building on 8?
+[17:20:56] <kares[m]> yes
+[17:21:05] <headius> ugh well what's the use of that then
+[17:21:54] <headius> I thought the point of it was to intelligently add the right flags where appropriate
+[17:22:07] <kares[m]> as noted, useful to not have to (ByteBuffer) cast etc. assuming you do not build on Java 8 but still support 8 as a target
+[17:22:26] <headius> yeah that is what the release flag gets us but I wanted this to set release only when building on 9+
+[17:24:01] <kares[m]> yeah so just having it in the configuration https://github.com/jruby/jruby-openssl/blob/bf62e5645167451478915c6535d4ba85984ea023/pom.xml#L272 won't do
+[17:24:02] <headius> this is what I use in jnr-ffi: https://github.com/jnr/jnr-ffi/blob/master/pom.xml#L316-L333
+[17:24:15] <kares[m]> guess you can workaround this with profiles
+[17:24:38] <headius> what I have there is fairly minimal but it shouldn't be required
+[17:25:20] <kares[m]> looks good - since jossl still uses ruby-maven - work around to detect Java 8 in the Mavenfile and not set the flag seems okay
+[17:25:53] <headius> I will play with this plugin a bit and see if it really is useless
+[17:26:03] <headius> I guess that is really just a flag for compiler
+[17:26:08] <headius> I am confused, I thought I saw something that would do release only on 9
+[17:26:54] <headius> https://issues.apache.org/jira/browse/MCOMPILER-339
+[17:27:34] <headius> this is a shorter version using the property: https://issues.apache.org/jira/browse/MCOMPILER-339?focusedCommentId=17068524&page=com.atlassian.jira.plugin.system.issuetabpanels%3Acomment-tabpanel#comment-17068524
+[17:28:13] <headius> I disagree with those saying you can't have the compiler plugin do both
+[17:28:22] <headius> if you are doing --release 8 and you build on 8 omitting the release flag should be just fine
+[17:30:41] <headius> kares: I did not get around to patching the RubyArray#collect issue this weekend
+[17:30:49] <kares[m]> NP - do not worry about that
+[17:30:54] <headius> I am confused why it did not break for jossl releasees earlier last year though
+[17:30:56] <kares[m]> silly me not using .dup
+[17:31:12] <headius> this has been in 9.3 since .0
+[17:31:13] <kares[m]> I added the collect hack in the release I did on Friday
+[17:31:18] <headius> ok
+[17:31:27] <headius> I did not notice release, thank you for that
+[17:31:33] <headius> so you just patched that and built with 8
+[17:32:21] <headius> the snippit from that bug does appear to work in jnr-ffi and it
+[17:32:28] <kares[m]> fixed both regressions - doing a final round of TLS 1.3 testing -> seems some real-world scenarios when the protocol is forced have issues.
+[17:32:28] <kares[m]> this is kind of expected (the porting on the OpenSSL logic is incomplete) but I still would like to try figure smt out as a small work-around ...
+[17:32:35] <headius> it's the smallest example I've seen
+[17:32:35] <kares[m]> after that I plan on pushing 0.12.1
+[17:32:40] <headius> ok
+[17:33:39] <kares[m]> we'll also have CI back and 🟢 so that will be nice
+[17:36:17] <headius> oh yes that will be great
+[17:36:44] <headius> hey can you point me to release process for jossl these days? I would have done a quick rebuild and release on Friday but I don't know the process 
+[17:37:09] <headius> I would also like to contrib but failing tests and my own unfamiliarity with build processes have stopped me from messing with it too much
+[17:37:33] <headius> I never know whether I should be running rake targets or maven targets for anything
+[17:38:09] <headius> ick, jffi has conditional compilation for a class that accesses Unsafe...
+[17:38:10] <headius> I forgot about that
+[17:38:35] <kares[m]> yeah - let me document all of that better. locally I mostly use rake targets which shell-out to mvnw
+[17:38:35] <kares[m]> rake jar
+[17:38:35] <kares[m]> rake test
+[17:39:29] <kares[m]> we still rely on the maven plugin to do the magic of building the gem (mvn package) but need to skip tests as the ruby-maven-plugin's way of running tests is outdated
+[17:39:32] <headius> ok
+[17:40:04] <kares[m]> after that it's just a gem push - I'll review the BUILDING.md with up-to-date instructions (it's outdated due we no longer push to sonatype just rubygems)
+[17:40:23] <headius> ok thank you
+[17:41:03] <headius> I suppose varhandles are the answer to heap memory access
+[17:49:45] <headius> jnr-posix also has conditional building for sun.misc Signal stuff
+[17:55:04] <headius> I'm going to spike a pom change for JRuby
+[17:55:23] <headius> if we can start safely building with 9 it would be more convenient and less likely to cause a problem
+[17:56:14] <headius> enebo: mrnoname1000 said we could go ahead and merge the jruby.sh script now and he will continue to improve it
+[17:56:27] <headius> I say we go for it and start having it in the test cycle on master
+[18:00:53] *** Joins: enebo[m] (~enebo@2001:470:69fc:105::e6)
+[18:00:54] <enebo[m]> ok
+[18:01:11] <headius> good thing about this is if it doesn't work I can throw something at him and make him fix it
+[18:01:31] <enebo[m]> headius: sure and it is on our main devline so it is the best place to try it
+[18:01:42] <headius> yeah we have at least a few weeks of bake time
+[18:08:47] <headius> stack overflow issue in ostruct from rsim also overflows on CRuby
+[18:08:57] <headius> ostruct aliasing all these methods is a bad pattern imgo
+[18:09:06] <headius> in my grand opinion?
+[18:11:34] <headius> enebo: 3.1 stdlib + tests merged to master
+[18:13:13] <headius> shell script also (retargeted the PR from 9.3 to master without issues)
+[18:13:38] <headius> I will do some cleanup to remove jruby.bash (or have it invoke jruby.sh) and modify build to copy jruby.sh for bin/jruby
+[18:40:46] <enebo[m]> headius: I don't know if we have any ruby builders assuming that name.  I would at least softlink
+[18:50:21] <headius> not a fan of softlinks since they would be borked on Windows... I am thinking relaunch jruby.sh with a deprecation warning
+[18:52:52] <enebo[m]> headius: yeah it can be a copy also but I am not sure we care if a .bash link is borked on windows.  I don't know if we run on cygwin anymore or care...long live WSL
+[18:53:18] <enebo[m]> I guess WSL maybe will get confused if you try and run windows install from WSL
+[18:55:26] <headius> right that's a fair point
+[18:55:37] <headius> I will push a PR for you and mrnoname to look at
+[19:01:44] <headius> enebo: https://github.com/jruby/jruby/pull/7054
+[19:02:11] <headius> I think I fixed all relevant references to jruby.bash but I'm sure mrnoname will have some opinions on my jruby.bash stub
+[20:35:13] <headius> enebo: hey I am doing a call tomorrow with some folks from Google and folks that are interested in gRPC/protobuf support on JRuby to discuss how to make it happen 
+[20:35:17] <headius> dunno if you want to be on that or not
+[20:38:09] <enebo[m]> headius: I don't think so.  I am heads down on getting our 3.x stuff smashed down.  I would really like to tag off stuff soon but we need more things fixed first
+[20:39:38] <headius> ok I'll let you know how it goes
+[20:40:18] <enebo[m]> For some reason I thought protobuf stuff already had some bindings for JRuby
+[20:40:31] <enebo[m]> or perhaps someone just made a library of sorts and it was not google itself
+[20:41:07] <headius> yeah I think it was a third-party that did some protobuf work, but it is not up to latest gRPC (which uses newer tech) and the hope is that gRPC would support JRuby like it supports Ruby right now (via ext)
+[20:44:01] <headius> of course you can just call the Java gRPC stuff from JRuby but full support would allow defining protobuf types from Ruby and reducing the gap
+[20:45:43] <enebo[m]> ah I see
+[20:57:49] *** Joins: sagax (~sagax_nb@user/sagax)
+[21:05:24] <headius> this might have relevance to the "true fields" PR that byteit101 just put together
+[21:07:25] <byteit101[m]> The new Advanced™ Java Integration™
+[21:07:36] <byteit101[m]> good timing I guess
+[21:08:12] <headius> yeah given that feature with normal Ruby types, we can present a normal set of Java fields to something like protobuf
+[21:08:33] <headius> not sure if that is strictly necessary since this usually works with opaque byte[] blob and views, but it seems relevant
+[21:08:38] <byteit101[m]> Oh, did you ever inspect the JVM bytecode generated from the fields?
+[21:08:50] <headius> I did not but I'm circling around to PR review now
+[21:08:57] <byteit101[m]> Oh, I should push the jrubyfx changes I have staged for this so you can see the integration maybe?
+[21:09:02] <byteit101[m]> Cool
+[21:09:04] <byteit101[m]> Thanks!
+[21:09:12] <headius> that's up to you but it would be nice to see
+[21:09:28] <byteit101[m]> I'm actually quite pleased with it with all the new changes in the past years
+[21:09:57] <byteit101[m]> I guess I was waiting until I nailed down the config to commit, and since it all works now I think I can commit that
+[21:10:59] <headius> how would you feel about doing a blog post to describe this work and the concrete subclass work for JRuby users?
+[21:11:19] <headius> mostly just showing examples and how it integrates better with stuff like JavaFX (which would also show how we have been improving JRubyFX)
+[21:11:32] <headius> we introduce these great features and nobody knows about them
+[21:14:23] <headius> enebo: we need to discuss how to deal with this changed RubyArray#collect signature
+[21:14:28] <byteit101[m]> Hmm... I could be persuaded to do that, though maybe in a few weeks. Been rather busy recently, I think I should have more time for that after the 16th of Feb
+[21:14:50] <headius> it returns RubyArray in 9.2 and IRubyObject in 9.3 due to an oversight when I switched which method body gets bound to #collect
+[21:15:08] <headius> I'm not sure what is best now, leaving it as is or restoring it to the 9.2 return value
+[21:15:35] <headius> byteit101: yeah there's no rush... just doco on wiki that we could tweet or blog-link works too
+[21:15:47] <headius> and I know there's some there already
+[21:16:32] <byteit101[m]> Oh drat, I haven't cleaned up jrubyfx commits yet, still peppered with debug statements. I'll try to clean that up, but I can gist you the gist :-P
+[21:16:46] <headius> no problem, I get the PR and can still review
+[21:20:33] <byteit101[m]> Ok, turns out I just add bind_variable: true to this line: https://github.com/jruby/jrubyfx/blob/master/lib/jrubyfx/fxml_helper.rb#L86
+[21:20:47] <byteit101[m]> Then I don't call copy_fxml_instances
+[21:22:37] <byteit101[m]> Also similar thing addeed to the last line of module/fxml_raw_accessor: +      java_field "@javafx.fxml.FXML #{type.java_class.name} #{symbol_name}", bind_variable: true
+[21:23:45] <byteit101[m]> I would say it's straightforward, but that's part of jrubyfx's heavy reliance on generated shenanagains
+[21:24:17] <byteit101[m]> fxml_helper is where most of the recent magic is going
+[21:25:08] <headius> JavaFX's use of reflection and fields definitely stresses the more exotic JVM languages
+[21:26:25] <enebo[m]> hmmm
+[21:26:57] <enebo[m]> headius: Wasn't this because collect could return something not an Array?
+[21:28:47] <enebo[m]> headius: collect with no block returns an enumerator
+[21:29:11] <headius> Yes
+[21:29:27] <headius> This is not about what the Ruby bound collect returns as much as restoring the old signature in Java
+[21:30:03] <headius> To fix it I would flip the return value back in Java and add a new bound method collect2 or something with the less awful name
+[21:30:03] <enebo[m]> Ah so you could possibly restore the old signature and name the jrubymethod yeah
+[21:30:17] <enebo[m]> Did I miss this being an issue for something?
+[21:30:21] <headius> We can't fix the existing 9.3 releases with this incompatibility though
+[21:30:49] <headius> Yeah I'm not sure if you tracked the jossl issues on Friday but it was built against 9.3 and used the new signature which made it blow up on 9.2
+[21:31:02] <enebo[m]> oh
+[21:31:13] <enebo[m]> I didn't see that
+[21:31:29] <headius> We got a few reports within minutes of that gem being pushed so I had to yank it and kares  is working on a fix
+[21:32:06] <headius> The gem was also built on Java 9 so we discovered the build needs to be tweaked but that is trivial to fix
+[21:32:36] <enebo[m]> I am not sure how common it is to call collect from a native ext
+[21:32:38] <enebo[m]> I saw the classic bytebuffer mismatch
+[21:32:45] <enebo[m]> I just didn't see this collect thing
+[21:33:52] <enebo[m]> So we have 3 cases to consider I guess
+[21:34:18] <headius> Users on 9.2 might see either issue depending on how they load openssl. Users on 9.3 would only see the bytebuffer issue on Java 8
+[21:34:21] <enebo[m]> 9.2 which still send RubyArray which works with older and current jossl
+[21:34:45] <enebo[m]> 9.3.{0-3} which returns IRubyObject
+[21:34:51] <enebo[m]> jruby-9.3 which can be either
+[21:35:01] <headius> Yeah
+[21:35:13] <enebo[m]> So how did 9.3.3 even work with an older jossl?
+[21:35:17] <headius> It's unfortunate that we can't have overloads based on return type but this ain't no Scala
+[21:35:25] <enebo[m]> Did it just assume IRubyObject in older jossl
+[21:35:46] <headius> I am unclear about that myself. The code that calls collect might be newer and so this is the first time it was built against 9.3 using that method
+[21:35:59] <headius> Java won't let you fudge a method call to a super type so it had to have been explicit
+[21:36:12] <enebo[m]> oh if so then it is worth considering how likely this is to happening again
+[21:36:21] <enebo[m]> "if so" == it was never in a jossl release before
+[21:36:36] <enebo[m]> I feel like calling collect() from Java is going to be pretty uncommon
+[21:36:39] <headius> That is my concern
+[21:36:59] <headius> Going forward anyone else that decides to write an extension that calls this collect method will end up producing a binary that doesn't work on 9.2
+[21:36:59] <enebo[m]> The safest is to leave it as RubyArray
+[21:37:11] <enebo[m]> we should not narrow return values from bound @JRubyMethods
+[21:37:23] <headius> And without replacing the signature there's no option that's compatible with both release branches
+[21:37:32] <headius> Since there's only the one collect
+[21:37:47] <enebo[m]> but with that said a public method is the only way to access this logic and we probably do not tend to make XXXCommon methods as public
+[21:38:11] <headius> I don't know if I agree about narrowing return types but it does raise a question about the difference between our public Java API versus methods bound into Ruby
+[21:38:26] <enebo[m]> I think if we restore original signature and just make @JRubyMethod(name="collect") public IRubyObject _collect()....
+[21:38:41] <headius> Having narrower types on the Java API is clearly preferable but what happens when we need to widen that type as in this case
+[21:38:45] <enebo[m]> well the problem is any Ruby API change in the future can break it
+[21:39:01] <headius> And not just for users but for our internal use of the Java API
+[21:39:07] <enebo[m]> So we future proof by just returning IRubyObject
+[21:39:14] <enebo[m]> yeah for internal is different
+[21:39:23] <enebo[m]> I am just talking about @JRubyMethod
+[21:39:40] <headius> Using IRubyObject everywhere means we have to constantly cast to the expected type even when we know what the expected type will be
+[21:39:56] <headius> It's not a big deal but it's messier
+[21:40:16] <enebo[m]> My position is that we should not actually be using @JRubyMethod java APIs internally or externally by native extensions
+[21:40:37] <headius> That's an interesting thought. The method binding logic does currently warn if a method throws exceptions and it could certainly check if a return type is narrower than IRubyObject
+[21:40:38] <enebo[m]> but we never made things in such a way where we have a real API for calling stuff internally/native-extension wise
+[21:41:11] <headius> That seems reasonable but maybe we should start naming those methods in a less java-friendly way
+[21:41:42] <headius> ruby_collect()
+[21:41:42] <enebo[m]> So if we use collect as an example I almost feel like we should have a @API public RubyArray collect(...)
+[21:42:21] <headius> I have lived the idea of the API annotation if we actually use it and publish something based on it
+[21:42:21] <enebo[m]> This is an older idea that we can generate an embedding API java doc by just annotating the methods we endorse
+[21:42:26] <headius> Liked
+[21:42:57] <headius> It would not be difficult to add such auditing into rake-compiler as well
+[21:43:06] <enebo[m]> The second half was the idea of just having a lot of static import methods in an .embed/.api package
+[21:43:17] <headius> I wish there was something like the deprecated annotation but only for warning people about internal API usage
+[21:43:39] <enebo[m]> so most entry points are through static helpers but you have to call methods on objects and forcing static methods for that is pretty icky ergonomically
+[21:44:09] <enebo[m]> RubyArray =- new_ary(5);
+[21:44:12] <enebo[m]> Err
+[21:44:22] <headius> The static method scheme might be easier for porting C extensions but I would not expect a typical job a user to go that route
+[21:44:22] <enebo[m]> RubyArray elt = new_ary(5);
+[21:44:27] <headius> Java user
+[21:44:32] <enebo[m]> elt.collect(...)
+[21:44:44] <enebo[m]> just to get the objects
+[21:44:59] <enebo[m]> no one will new RubyArray() in our APIs
+[21:45:09] <headius> If we really wanted to do this right we build up a set of interfaces for all the core types and have a parallel API on our core classes that implements those interfaces
+[21:45:25] <enebo[m]> we have a bunch of convenience methods already for making reasonable instances of Ruby Objects so I think we just push those into static helpers
+[21:45:27] <headius> So only the methods we want to expose make it to the interfaces and we have an explicit external API for core classes
+[21:45:42] <headius> The API annotation is basically that but without any real way of enforcing it
+[21:45:59] <enebo[m]> but we don't want to enforce it I don't think
+[21:46:17] <enebo[m]> we will not be able to know all the things people will need so public is their escape hatch and then our clue later we missed something
+[21:46:45] <enebo[m]> but I think we could make something to lint their calls into jruby modules that will flag out unauthorized calls
+[21:46:53] <enebo[m]> this though is all a bunch of work :)
+[21:47:09] <headius> jruby-lint could be expanded to inspect Java code and see whether it calls internal APIs
+[21:47:31] <headius> I'm just saying the API annotation alone does nothing if we have no other mechanism for encouraging people to stick to the API
+[21:47:39] <headius> Maybe that's just publishing docs
+[21:47:47] <enebo[m]> yeah but going back to static methods I think for construction this is very simple and just a single laundry list of types
+[21:47:59] <enebo[m]> the annotation of allowable calls is just reflecting the reailty we are OO
+[21:48:06] <headius> I just see people using a Java IDE to develop JRuby extensions and then every public method is going to be visible
+[21:48:14] <headius> Probably without an easy way to see the annotations on those methods
+[21:48:19] <enebo[m]> yeah that is true
+[21:48:38] <headius> Nobody wants to have to go back to a document every time they call a method to know if they're calling the right one
+[21:48:38] <enebo[m]> but I think it is also an uncommon activity
+[21:49:03] <enebo[m]> if we had an extension guide which had a command and a few small documents it is probably ok
+[21:49:16] <headius> These are varying levels of both effort on our part and reduced effort on the user's part
+[21:49:25] <enebo[m]> I think intellij goto def on classes will still show annotations
+[21:49:29] <enebo[m]> yeah
+[21:49:39] <enebo[m]> unlimited resources and we would put out an idea plugin for this
+[21:49:47] <headius> A linter is a middle ground where they would have to go back and edit their code and an explicit set of API interfaces is the highest amount of effort for us but guarantees they'll never call an internal method
+[21:50:13] <enebo[m]> It also could provide an ability to open an issue when a method they want is not endorsed
+[21:50:17] <headius> In the short term though I think we are agreed that we should restore the old signature and add a separate method for the new one
+[21:50:27] <enebo[m]> yeah
+[21:50:47] <headius> Possibly deprecating the old signature since we know it doesn't work with early 9.3 releases and breaks 9.2 compatibility?
+[21:50:47] <enebo[m]> it is least risk and I wonder how big our project would be if we removed all deprecated methods :)
+[21:51:16] <enebo[m]> We may win a duke award for project with the most deprecated methods
+[21:51:58] <headius> I think we should also split into two collect methods, one that returns RubyArray and requires the block, and one which returns any numerator and does not take any block at all
+[21:52:02] <headius> An enumerator
+[21:52:05] <enebo[m]> we can remove them ALL for JRubyWarHammer 40k release
+[21:52:07] <headius> Damn voice typing
+[21:52:29] <enebo[m]> I am pretty impressed with your voice typing
+[21:53:12] <enebo[m]> I like the idea it might have just read out JRubyWarHammer 40k as individual characters
+[21:54:57] <headius> I have to take care not to use jargon it won't recognize, but sometimes it still falls down on unusual terms like enumerator
+[21:55:35] <headius> I can't say I've ever heard someone not in IT use the term "enumerator"
+[21:58:56] <enebo[m]> you obviously never worked for the government during census collection
+[22:02:15] <headius> enumerate, sure, but enumerator?
+[22:02:38] <headius> "one who enumerates" but I have never heard anyone outside programming use it
+[22:06:04] <enebo[m]> noun: enumerator; plural noun: enumerators
+[22:06:04] <enebo[m]>     a person employed in taking a census of the population.
+[22:06:04] <enebo[m]>     "census enumerators"
+[22:06:36] <enebo[m]> It is just funny this is the definition in Oxford Dictionary since as you say it is much more commonly used elsewhere
+[22:07:35] <enebo[m]> I suppose as a layman who does not program it will read better with this example
+[22:12:49] <headius> hah and it even references census takers
+[22:16:59] <headius> the word census throws people off anyway since it's a peculiar sort of word that only became a noun in the past few hundred years
+[22:18:39] <headius> heh, the equivalent to the old Latin form in English would be "The US censored its citizens" but clearly that doesn't work 😀
+[22:19:42] <enebo[m]> I would bet money as a child I had to learn what the work enumerator meant and it was specifically about the census
+[22:21:24] <headius> I am pretty sure I never heard the word "enumerator" until I started learning Java
+[22:21:46] <headius> but I don't know that I would have paid close attention to a census unit in my gradeschool civics courses
+[22:27:36] <headius> byteit101: reviewed, mostly minor comments
+[22:42:43] <headius> enebo: this is an interesting case: https://github.com/jruby/jruby/pull/7055
+[22:43:18] <headius> in investigating this behavior I figured out why define_method visibility seems so weird and unpredicatable: they only use the frame visibility if the frame cref matches the target module
+[22:44:10] <enebo[m]> yeah this is pretty weird
+[22:44:23] <enebo[m]> Makes me think this will get fixed in some fashion perhaps
+[22:44:29] <headius> we basically do that here but it is a quirky behavior: https://github.com/jruby/jruby/blob/552936d8a1792c51b1cb6c2d706d6287fd95c5a9/core/src/main/java/org/jruby/RubyModule.java#L2373-L2376
+[22:44:44] <headius> I just filed an issue for this: https://bugs.ruby-lang.org/issues/18561
+[22:45:20] <headius> nearly all cases of def obj.foo or obj.define_singleton_method will not match cref class and use public, so it seems better to me to make it explicit
+[22:45:53] <headius> I have obvious reservations about merging my PR without some buy-in from ruby-core here
+[22:46:18] <enebo[m]> yeah I think seeing what they say makes sense but our behavior is different already right
+[22:46:25] <enebo[m]> or can be different
+[22:46:29] <headius> no we match right now
+[22:46:49] <headius> because of that check I linked above (which is mostly right but missing some nuance from CRuby)
+[22:46:51] <enebo[m]> ah so that ostruct change affects MRI too?
+[22:47:14] <headius> it doesn't because they don't statically flag methods as needing a frame... they always frame
+[22:47:51] <headius> we warn about this alias because define_singleton_method needs a frame in a tiny percentage of use cases and we won't know that define_singleton_method! needs a frame
+[22:47:56] <headius> I wanted to chat about that also
+[22:48:19] <headius> if we see someone aliasing a method to a new name that never existed before, perhaps it's safe to allow the alias and just add the new name to our frame-aware method tables?
+[22:49:00] <headius> so the warning would be reduced to "define_singleton_method! already compiled into existing code; alias may not work as expected"
+[22:49:02] <headius> or something like that
+[22:49:40] <headius> we can also throw out compiled code that depends on frame-aware method list but that doesn't help code on stack
+[22:49:50] <headius> which is an even smaller percentage of cases
+[22:49:56] <enebo[m]> if we added aliases to frame-aware it would have removed seeing this issue with define_singleton_method but it may affect performance too
+[22:50:24] <headius> that was another possible fix on our end for ostruct, just add those core methods as frame-aware
+[22:50:37] <headius> the bang versions
+[22:50:39] <enebo[m]> I don't know how many aliases end up being called a lot.  It feels like a huge class is to inject a method which aggregates through the original method
+[22:50:39] <headius> obviously I didn't like cluttering up that table unnecessarily
+[22:50:48] <headius> right
+[22:50:54] <headius> just aliasing without wrapping is rare
+[22:51:03] <headius> and wrapping breaks on CRuby too
+[22:51:27] <headius> we warn in part because usually you alias AND wrap and the wrapper will be broken
+[22:51:59] <enebo[m]> So we alias a method which already exists and it is frame aware and we know that at that point
+[22:52:20] <enebo[m]> so we put out a warning right now saying it might be broken?
+[22:52:23] <headius> yes
+[22:52:34] <enebo[m]> Believe it or not I have been looking at comments on this but I needed to restate that :)
+[22:52:47] <headius> we warn that this method is known to access caller's frame and alias (with or without wrapping) may not work right
+[22:53:07] <enebo[m]> Adding that alias in that case will not likely fix many issues if we need that frame
+[22:53:16] <enebo[m]> that == the original method
+[22:53:26] <enebo[m]> like block_given? or caller
+[22:53:32] <headius> if we add it at runtime and no code that calls the new alias has already been optimized, there's no harm
+[22:53:43] <headius> we will eventually see code that calls the alias and know at that point that it needs a frame
+[22:54:16] <headius> we could also just not warn but I like that we are forced to deal with these issues as they come up, rather than have someone's frame-aware alias just start failing
+[22:54:17] <enebo[m]> I wonder if we could invent "needs_frame_for_parent"
+[22:54:37] <enebo[m]> blah ignore that
+[22:54:53] <headius> the frame-aware list would need to be made runtime-specific but that is not a big change
+[22:55:10] <headius> (it is static right now and should not normally be modified after boot)
+[22:55:17] <enebo[m]> Just thinking if we knew we were calling a method just to redispatch to original we could say it needs the frame but that frame should be kept for child calls
+[22:55:49] <enebo[m]> alias :my_caller :caller
+[22:56:20] <enebo[m]> my_caller says it needs a frame but then any call in there which requires a frame would inherit current methods frame
+[22:56:22] <headius> It wouldn't be the right frame though
+[22:56:43] <enebo[m]> which I would guess would be my_callers frame and no frame would get pushed for actual caller
+[22:56:49] <headius> We would not push a frame for code that calls my_caller
+[22:56:51] <headius> Yeah
+[22:57:04] <enebo[m]> but that for the sake of caller would be the right result
+[22:57:12] <headius> I'm just trying to think how we can narrow the cases that deserve a warning to such an extent that no one ever sees the warning
+[22:57:36] <enebo[m]> name would be wrong I guess
+[22:57:40] <headius> In this case none of these bang methods existed before loading ostruct so they're really isn't any harm in allowing the aliases as long as we track those names from then on
+[22:57:53] <enebo[m]> yeah
+[22:58:04] <headius> s/they're/there/
+[22:58:05] <enebo[m]> It doesn't sound like a bad solution to me 
+[22:58:15] <headius> I can mock it up
+[22:58:23] <enebo[m]> it is constrained to already knowing it is aliasing something needing frame
+[22:58:39] <enebo[m]> you are already in the weeds a bit at this point
+[22:58:44] <headius> I did merge a PR into 9.3.4 that allows aliasing from one frame aware name to another frame aware name but that's an even rarer case
+[22:59:28] <headius> In other words if the frame requirements of both names match then there's no warning
+[22:59:48] <headius> So this sort of extends that to situations where the new unframed name has never been seen in code so no harm no foul
+[23:00:16] <enebo[m]> yeah
+[23:01:21] <headius> This might want to be a mapping from the RubySymbol, weakly, as a safe in-memory list of every method name we've seen
+[23:04:43] <headius> enebo: mrnoname gave the .sh move a thumbs up so I will merge it
+[23:04:55] <headius> jruby.bash will echo a warning to stderr and relaunch jruby.sh
+[23:09:55] <headius> you know it would sure be nice if Ruby just eliminated frame visibility altogether and required you to make methods private
+[23:10:13] <enebo[m]> yep
+[23:10:27] <enebo[m]> I have always thought the section notion is gross
+[23:10:31] <headius> nobody would notice until they expect an error calling a private method
+[23:10:48] <enebo[m]> you have a larger class and you just need to scan to see which section you are in
+[23:11:35] <headius> yeah seems like the trend is toward defining the method and then explicitly calling `private :foo` anyway
+[23:11:43] <headius> since the section form is really gross and error-prone
+[23:12:42] <enebo[m]> private def foo(); end 
+[23:12:56] <enebo[m]> I know it is explicit and people want to golf this
+[23:13:57] <headius> I like it, which means normal Rubyists must hate it
+[23:14:32] <enebo[m]> I just like not having to misunderstand code
+[23:15:22] <enebo[m]> Anything unadorned is public and if it is private/protected it deserves the ceremony of being right next to the def name
+[23:15:39] <enebo[m]> but I also dislike class << self; def a; end .... ;end
+[23:15:56] <enebo[m]> I would be happier is only def self.a; end was allowed
+[23:21:31] <headius> mostly the latter form is used if you need to use things like alias_method, which could just be made public on Module
+[23:22:04] <headius> if all the metaprogramming methods on Module were public you would not need to use class << self except on non-module objects
+[23:22:14] <enebo[m]> alias is an interesting example of metaclass syntax
+[23:22:29] <enebo[m]> yeah

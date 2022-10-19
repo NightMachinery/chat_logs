@@ -1,0 +1,155 @@
+[00:32:37] *** Quits: rahl (~rahl@102.114.71.28) (Ping timeout: 240 seconds)
+[00:34:45] *** Joins: rahl (~rahl@102.114.80.148)
+[00:46:17] *** Quits: feriman (~feriman@188.163.113.151) (Ping timeout: 240 seconds)
+[00:55:01] *** Quits: tejr (~tejr@user/tejr) (Remote host closed the connection)
+[00:55:33] *** Joins: tejr (~tejr@user/tejr)
+[01:13:19] *** Quits: orenoi (~two_oes@46-116-44-20.bb.netvision.net.il) (Quit: Leaving)
+[01:31:23] <kevin8t8> rahl: I may need some pointers on getting a netbsd image running.  was there a particular docker image you used?  thank you!
+[02:25:10] *** Quits: target_i (~target_i@37.75.221.247) (Quit: leaving)
+[02:42:32] *** Quits: madage (~madage@user/madage) (Remote host closed the connection)
+[02:42:47] *** Joins: madage (~madage@user/madage)
+[03:13:05] *** Quits: reset (~reset@user/reset) (Quit: reset)
+[03:34:25] *** Quits: hedy- (hedy@tilde.team) (Quit: hmm)
+[03:41:27] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 256 seconds)
+[03:44:43] *** Joins: Vonter (~Vonter@user/vonter)
+[03:54:17] *** Quits: Haudegen (~quassel@178.115.237.87.static.drei.at) (Ping timeout: 240 seconds)
+[04:02:24] *** Quits: flatcap (flatcap@neomutt/flatcap) (Quit: WeeChat 3.3)
+[04:02:56] *** Joins: reset (~reset@user/reset)
+[04:11:09] *** Joins: flatcap (flatcap@neomutt/flatcap)
+[04:19:43] *** Joins: hedy- (~hedy@tilde.team)
+[04:53:50] *** Quits: rinzewind (~rinzewind@user/rinzewind) (Quit: leaving)
+[05:00:57] *** Joins: neutrin0 (~neutrino@modemcable243.187-162-184.mc.videotron.ca)
+[06:15:27] <kevin8t8> rahl: I'm signing off for tonight, but there's one thing I'm curious about.
+[06:15:47] <kevin8t8> rahl: https://anonhg.netbsd.org/src/file/18b44654e2bc/lib/libterminfo/ti.c
+[06:16:41] <kevin8t8> rahl: at the bottom, tigetstr() calls __UNCONST(ti_getstr(cur_term, id)) to get the capability string
+[06:17:19] <kevin8t8> rahl: https://man.netbsd.org/__UNCONST.3 notes the __UNCONST macro uses 'unsigned long' as an intermediary
+[06:17:45] <kevin8t8> rahl: which is fine as long as unsigned long is the same size as (char *).
+[06:19:15] <kevin8t8> rahl: It might work for "normal" pointers in a 4 byte user address space, but the not found case returns CANCELLED_STRING which is (char *)(-1).
+[06:19:53] <kevin8t8> rahl: that wouldn't survive the transition back to Mutt, which then checks for (char *)-1 value.
+[06:20:24] <kevin8t8> rahl: anyway, perhaps you could check the sizeof(unsized long) vs sizeof(char *) in your VM to see if they are the same.
+[06:22:31] <kevin8t8> rahl: it's a long shot, but it's the only theory I have right now, without access to a compiler and gdb myself. :-)
+[07:04:19] *** Quits: neutrin0 (~neutrino@modemcable243.187-162-184.mc.videotron.ca) (Quit: :wq)
+[09:14:04] *** Joins: kdc (~kdc@196.211.197.159)
+[09:22:56] *** Quits: reset (~reset@user/reset) (Quit: reset)
+[09:29:59] <rahl> kevin8t8: Thanks for the feedback. Sorry for a late response
+[09:31:58] <rahl> kevin8t8: as for netbsd version; I just downloaded their 9.1 .iso for amd64, and used virtualbox on my local machine - sorry no docker
+[09:33:03] <rahl> kevin8t8: I will do as you suggest and get back to you asap
+[10:32:59] <rahl> kevin8t8: both sizeof(unsigned long) and sizeof(char *) are 8 
+[10:36:31] *** Joins: Akiva (~Akiva@user/Akiva)
+[11:46:10] *** Joins: feriman (~feriman@188.163.113.151)
+[12:06:15] <rahl> kevin8t8: The netbsd installer also facilitates installing debug symbols and sources, so I'm trying that out, to see if it will help me dig into libterminfo
+[12:13:14] *** Quits: madage (~madage@user/madage) (Remote host closed the connection)
+[12:13:27] *** Joins: madage (~madage@user/madage)
+[12:15:44] <rahl> kevin8t8: Looks like you are still correct though perhaps
+[12:17:26] <rahl> libterminfo ti.c return e.g. 0x7ceff023e4a1, but tcaps then holds 0xffffffff023e4a1
+[12:21:22] *** Joins: YuGiOhJCJ (~YuGiOhJCJ@gateway/tor-sasl/yugiohjcj)
+[12:23:17] *** Joins: target_i (~target_i@217.175.4.122)
+[12:42:26] <rahl> I've also seen leading zero's instead of f's ... 
+[13:01:32] <rahl> This seems pretty weird to me
+[13:47:31] <rahl> __UNCONST doesn't appear to be the problem, but somethin that I so far can't see, is causing this truncation
+[13:49:34] *** Joins: reset (~reset@user/reset)
+[13:58:08] *** Joins: Haudegen (~quassel@178.115.237.87.static.drei.at)
+[14:08:11] *** Quits: Akiva (~Akiva@user/Akiva) (Ping timeout: 256 seconds)
+[14:19:30] <rahl> kevin8t8: I'm no asm expert (not even intermediate), but had a quick look at the disassembly of curs_main.c
+[14:19:57] <rahl> at the return from tigetstr()
+[14:21:10] <rahl> and indeed, we have the instruction `movslq %eax,%rdi`, where `rax` holds our full return value, but for some reason the compiler decided to only use the last 4 bytes...
+[14:49:35] *** Joins: furrymcgee (~devuan@cgn-213-196-210-78.nc.de)
+[15:11:32] *** Quits: gossie (~gossie@2001:1c02:18d:2900:ab04:8a13:19b2:197e) (Ping timeout: 240 seconds)
+[15:32:52] <rahl> kevin8t8: Not sure if it'll be much use to you, but I decided to keep notes of what I've done so far while looking into this: https://gitlab.com/givingback/mutt/-/snippets/2227350
+[15:33:26] *** Quits: kdc (~kdc@196.211.197.159) (Remote host closed the connection)
+[15:38:58] *** Quits: rahl (~rahl@102.114.80.148) (Quit: leaving)
+[15:40:27] *** Joins: rahl (~rahl@102.114.80.148)
+[15:59:15] *** Quits: feriman (~feriman@188.163.113.151) (Ping timeout: 256 seconds)
+[16:02:23] *** Joins: szutt (~szutt@116.37.2.145)
+[16:12:52] *** Quits: bket (~bket@84-85-227-212.fixed.kpn.net) (Remote host closed the connection)
+[16:15:18] *** Joins: bket (~bket@84-85-227-212.fixed.kpn.net)
+[16:17:57] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 240 seconds)
+[16:21:35] *** Joins: kdc (~kdc@196.211.197.159)
+[16:55:26] *** Joins: Vonter (~Vonter@user/vonter)
+[16:57:53] *** Quits: kdc (~kdc@196.211.197.159) (Quit: Leaving)
+[17:15:19] *** Joins: feriman (~feriman@188.163.113.151)
+[17:16:19] *** Joins: filePeter (~filePeter@user/filepeter)
+[17:49:03] *** Joins: rinzewind (~rinzewind@user/rinzewind)
+[18:00:43] *** Quits: furrymcgee (~devuan@cgn-213-196-210-78.nc.de) (Quit: leaving)
+[18:31:21] *** Joins: furrymcgee (~devuan@cgn-213-196-210-78.nc.de)
+[19:59:51] *** Quits: furrymcgee (~devuan@cgn-213-196-210-78.nc.de) (Quit: leaving)
+[20:08:33] *** Quits: Vonter (~Vonter@user/vonter) (Quit: WeeChat 3.4)
+[20:11:57] *** Quits: feriman (~feriman@188.163.113.151) (Ping timeout: 240 seconds)
+[20:22:46] *** Quits: YuGiOhJCJ (~YuGiOhJCJ@gateway/tor-sasl/yugiohjcj) (Quit: YuGiOhJCJ)
+[21:05:03] *** Quits: szutt (~szutt@116.37.2.145) (Quit: Client closed)
+[21:18:15] <kevin8t8> rahl: thanks for all your debugging work!
+[21:19:21] <kevin8t8> rahl: It could be a compiler bug, but I wonder why it would work for other cases then?  If it were mangilng pointers there, surely xterm-256color would blow up too?  check infocmp does show a tsl entry for both, right?
+[21:20:25] <kevin8t8> rahl: I'll try out virtualbox.  Honestly I haven't worked with vm's much.  I barely know my way around docker and haven't used virtualbox at all.
+[21:20:42] <kevin8t8> rahl: so it may take me some time but I'll see if I can get something running.
+[21:21:20] <kevin8t8> rahl: the gitlab url isn't working for me.  perhaps it isn't public?
+[21:23:57] *** Quits: CryptoClub (~fafs@88.red-83-34-81.dynamicip.rima-tde.net) (Ping timeout: 256 seconds)
+[21:25:05] <kevin8t8> rahl: oh interesting, on debian, xterm-256color doesn't have a tsl entry.  perhaps the same on NetBSD.  what happens if you set TERM=tmux
+[21:26:29] <rahl> kevin8t8: I'll get back to you as soon as I can and try to answer your questions
+[21:27:06] <rahl> I thought the gitlab url was public - will check
+[21:29:12] <kevin8t8> rahl: don't hurry :-)  I'm a bit busy today, so please don't too much time out of the holiday for this right now.
+[21:34:53] <rahl> kevin8t8: likewise, take your time; enjoy whatever you may be doing :)
+[21:35:44] <rahl> I'll just drop info in here as I find anything - but no rush in responding
+[21:38:09] <rahl> hmm, annoyingly gitlab looks like certain links might be public, but maybe only if you have a gitlab account
+[21:38:23] <rahl> I may just set up something elsewhere as well
+[21:55:49] <rahl> kevin8t8: this url should work, sorry: https://gitlab.com/-/snippets/2227416
+[21:56:28] <rahl> It's not much, but will give an idea of what I've been poking at
+[22:03:07] <kevin8t8> rahl: that's great already.  nice debugging!
+[22:03:53] <kevin8t8> rahl: I'm not sure what mutt would be doing wrong there.  maybe there is something in the #include file defining tigetstr() that is confusing something.
+[22:03:54] <rahl> kevin8t8: btw, `TERM=tmux` also segfaults it seems. I'll check `xterm-256color` next 
+[22:04:26] <rahl> kevin8t8: quite - mutt code looks good afaict
+[22:04:43] <rahl> (not that I know what I'm talking about :D)
+[22:06:12] <rahl> ah yeah, `TERM=xterm-256color ./mutt` in the vm causes a weird issue, where I get the ncurses cursor on a blank screen, and the tty is borked
+[22:06:39] <rahl> (but on the original system where I found the bug, I can use xterm-256color just fine)
+[22:07:09] <kevin8t8> oh man... that adds to the fun.
+[22:07:49] <kevin8t8> `infocmp xterm-256color | grep tsl` outputs what? same with tmux and tmux-256color?
+[22:11:17] <kevin8t8> also, what about `cd /include; grep -r tigetstr'
+[22:18:56] <rahl> `infocmp ... | grep tsl`: 1. nothing for xterm-256color 2. both tmux and tmux-256color output the same single line
+[22:19:25] <rahl> (matching codes for a few things, including tsl)
+[22:20:04] <kevin8t8> rahl: okay, so perhaps that explains on the vm why xterm-256color was working.
+[22:20:34] <kevin8t8> rahl: library was return -1, and it was somehow being interpreted correctly as -1 by mutt too.
+[22:20:57] <kevin8t8> rahl: but when the library returns an actual pointer, things go crazy
+[22:21:27] <kevin8t8> rahl: I'm starting to wonder if there is a header file issue here.
+[22:21:58] <kevin8t8> rahl: man page on debian says #include <term.h> should be included for the low level routines.
+[22:22:47] <kevin8t8> rahl: #include <curses.h> defines those value here, so I think we got away with it, but maybe that's not the case on NetBSD now.
+[22:23:19] <kevin8t8> rahl: I wonder if the compiler is doing something like assuming a default return type of int or something
+[22:24:42] <kevin8t8> rahl: would be interested if you just added a #include <term.h> in curs_main.c if that fixed the problem
+[22:25:14] <rahl> will check
+[22:26:11] <kevin8t8> rahl: man page says term.h has to be included *after* curese.h
+[22:26:37] <rahl> ack
+[22:26:45] <kevin8t8> rahl: so be sure to put it below the #include "mutt_cureses.h"
+[22:26:50] <kevin8t8> rahl: thank you!
+[22:29:12] <rahl> kevin8t8: cool. Luckily I'd done so, just by sticking it with the rest of the system includes :)
+[22:32:18] <rahl> kevin8t8: It's looking good. Both `tmux` and `tmux-256color` now behave
+[22:32:28] <rahl> `xterm-256color` still has the weird other bug going on though
+[22:32:36] <kevin8t8> rahl: whoa!
+[22:32:42] <rahl> I'd love to know why that worked
+[22:32:44] <kevin8t8> rahl: that's great.
+[22:32:48] <rahl> indeed!
+[22:33:10] <kevin8t8> rahl: try `cd /include; grep -r tigetstr .'
+[22:33:19] <rahl> ah yeah, sorry, I forgot
+[22:33:51] <kevin8t8> rahl: np, I've only been sending dozens of questions your way ;)
+[22:35:43] <rahl> kevin8t8: `cd /usr/include; grep -r tigetstr .` yields: "./term.h:char *         tigetstr(const char*);"
+[22:36:32] <kevin8t8> rahl: so only defined in term.h.  you'd think compiler would give an undefined function warning when compiling...
+[22:37:19] <kevin8t8> rahl: my guess is it somehow assumed return type of int or something, and so on mutt's size was only grabbing and int-sized chunk of the return value.
+[22:38:16] <rahl> kevin8t8: agreed, there should be a warning. I'm gonna double check what the compiler does spit out
+[22:38:31] <rahl> kevin8t8: the assumed `int` makes sense at least
+[22:38:46] <rahl> c defaults to int right?
+[22:38:53] <kevin8t8> rahl: well, I'm just guessing.  I can't explain the xterm256-color bug, but at least we have the segv fixed.  I'll include that fix in 2.1.5 
+[22:39:10] <kevin8t8> rahl: I *think* so.  but I'm stil just guessing :)
+[22:41:11] <rahl> seems a reasonable guess at least
+[22:41:13] <kevin8t8> rahl: yeah a quick search shows C used to make that assumption.  it's deprecated and compiler should give a warning now-a-days
+[22:41:22] <rahl> oh
+[22:41:29] <rahl> interesting
+[22:41:45] <kevin8t8> https://stackoverflow.com/questions/30542092/function-without-return-type-specified-in-c
+[22:41:55] <rahl> only warning afaict is for unused `tcapi`
+[22:42:00] <rahl> thanks
+[22:42:54] <kevin8t8> rahl: I have to run for now, but a million thank you's.  I'll give credit for your help in the commit and try to get 2.1.5 out in the next week!
+[22:46:29] <rkta> if C assumes int as return value depends on the C standard the compiler uses by default, AFAIK mutt does not set -std
+[22:53:02] <kevin8t8> rkta: hmm... we do have a AC_PROG_CC_C99 test in there.  is that not sufficient?  I know the Mutt code uses C99 defined changes now.
+[22:53:34] <rahl> kevin8t8: np. Thank you so much for your time and effort. Am glad we sorted something
+[22:54:01] <kevin8t8> rahl: me too
+[22:54:39] <kevin8t8> rkta: I have to run, but will try to look into that later.  thanks!
+[22:56:47] <rahl> kevin8t8: for later only, the end of this screencap shows the xterm bug - try as I might, I can't fix the tty without reboot: https://file.io/11Q2vWyEn5VR
+[22:56:56] <rkta> kevin8t8: I'm not sure about the magic involved behind the scenes, I just grep'd for std in the Makefile. At least gcc has some modes where it uses e.g. C89 with some C99 extensions, IIRC. I can look into this tomorrow (UTC), it's an interesting question.
+[23:06:37] *** Joins: CryptoClub (~fafs@88.red-83-34-81.dynamicip.rima-tde.net)
+[23:07:42] <rkta> kevin8t8: Looking at the manual and configure.ac I'd say that is is sufficent for compiling C99 code. I'm not sure if it is sufficent for strictly conforming C99 code, in the sense that the compiler is not allowed to assume int or that it should warn about it.

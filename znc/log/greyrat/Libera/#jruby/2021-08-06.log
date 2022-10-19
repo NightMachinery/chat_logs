@@ -1,0 +1,92 @@
+[00:03:20] <enebo[m]> RCLASS_SET_INCLUDER(VALUE iclass, VALUE klass)
+[00:03:21] <enebo[m]> {
+[00:03:21] <enebo[m]>     RB_OBJ_WRITE(iclass, &RCLASS_INCLUDER(iclass), klass);
+[00:03:21] <enebo[m]> }
+[00:03:25] <enebo[m]>                 RCLASS_SET_INCLUDER(origin, RCLASS_INCLUDER(iclass->klass));
+[00:04:04] <enebo[m]> This is 3.0 but that sort of looks like the included module put into a particular hierarchy is being recorded by the original module it is made from
+[00:05:00] <enebo[m]> I don't ever recall seeing this macro/function though.
+[00:05:07] <headius> neither do I
+[00:05:19] <enebo[m]> Maybe this is just some refactoring
+[00:06:18] <enebo[m]> 2.6 is quite a bit different and the logic looks more like ours with include_modules_at
+[00:07:36] <headius> ah yeah that is the one I know
+[00:07:44] <headius> that takes modules from over here and puts them over there
+[00:07:59] <headius> blame that macro and maybe we will get some useful info
+[00:09:57] <enebo[m]> ok well so I learned something...gist coming
+[00:10:00] <enebo[m]> I am distracting with 3.0 stuff I think
+[00:10:54] <enebo[m]> https://gist.github.com/enebo/89e7ef251e3f159ca61be8f53591e3e8
+[00:11:22] <enebo[m]> So 3.0 is recording module using sites and updating them 2.7 is order dependent
+[00:11:52] <enebo[m]> This I simplified to just behavior of include so prepend issue we have may be different
+[00:12:08] <enebo[m]> but it explains the macro I saw in it does what it implies
+[00:12:28] <headius> yeah so it seems like they are doing what I described above, providing a way to walk the other module's hierarch in place
+[00:12:38] <headius> rather than copying it over at include time
+[00:12:53] <headius> oh I have a thought then
+[00:12:53] <enebo[m]> our problem is pre-3.0 so I think we don't emulate this behavior at all here
+[00:12:56] <headius> so we are still doing the "gather" and copy
+[00:13:12] <headius> so at include time there's only the module M itself right
+[00:13:42] <enebo[m]> yeah
+[00:13:42] <headius> so then back to searching for super... we walk into the M include wrapper and find it is prepended and then only get the prepend method table
+[00:13:46] <headius> so we only call the X method
+[00:14:16] <headius> so we need to go to M's method location I think, which should be the prepend shim where the methods were moved
+[00:15:44] <enebo[m]> we should be calling the M method because we did the prepend afterwards so A should not ever see it
+[00:15:44] <headius> this may be a problem with how we reference the module
+[00:15:58] <headius> we put a pointer to the module into the include wrapper, where I think MRI puts a pointer to the method table
+[00:16:22] <headius> so when the method table moves, they still have the right reference but we are pointing at the module itself, now gutted because of the prepend
+[00:16:45] <headius> we are trying to find the right method table at the moment of the call but they find it at the moment of the include and save that
+[00:17:06] <headius> I might be wrong about how they do includes but I remember somewhere that they only save a reference to the method table
+[00:17:44] <headius> again a case where our old logic was wrong because we copy AND delegate where 2.7 only copies and 3.0 only delegates?
+[00:17:48] <enebo[m]> well I think method table and constants table
+[00:17:52] <headius> right
+[00:19:53] <enebo[m]> rb_include_class_new
+[00:20:03] <headius> 3.0?
+[00:20:08] <enebo[m]> 2.6
+[00:20:11] <headius> ok
+[00:21:11] <enebo[m]> it seems to make a new class and gives it ivars, constants and ids (methods) from the original module
+[00:21:48] <enebo[m]> So those are probably shared pointers?
+[00:22:27] <enebo[m]>  RCLASS_IV_TBL(klass) = RCLASS_IV_TBL(module);
+[00:23:43] <headius> yup
+[00:23:53] <headius> and they do prepend by moving the method table up to the prepend shim
+[00:24:09] <headius> so CRuby still has the reference to M's method table even though it is moved, and we try to find it at call time
+[00:24:13] <enebo[m]> yeah the shim is made by that method
+[00:24:16] <headius> and find the wrong one
+[00:24:23] <headius> we find the prepend table
+[00:24:27] <headius> so we call X instead of M
+[00:24:39] <headius> and then super proceeds up regular hierarch and we never see M
+[00:24:45] <headius> what is with my hierarchy spelling today
+[00:24:50] <enebo[m]> so our includedModule could just hold same Map as the original
+[00:38:15] <headius> "just"
+[00:38:21] <headius> I have been scared to make that change
+[00:38:31] <headius> but it is part of the root issue here
+[00:39:25] <enebo[m]> "JUST"
+[00:39:44] <enebo[m]> yeah I did not imply it is not scary :)
+[00:40:09] <headius> heheh
+[00:40:35] <headius> on the other hand it may be easier than we think because it kills logic we have to dig the method out of the included wraper
+[00:40:43] <headius> so we just go to included wrapper and use its table, done and done
+[00:40:52] <enebo[m]> yeah I was thinking of that in a positive and a scarily negative way
+[00:41:05] * headius  < https://libera.ems.host/_matrix/media/r0/download/libera.chat/54d4be5df6499c9f57d7dce49712e3260f1facab/message.txt >
+[00:41:08] <enebo[m]> it is much simpler but it is removing a lot of little code snippets
+[00:41:13] <headius> jit fix turned out easier than I thought so I just did it
+[00:41:35] <headius> nice formatting on that code
+[00:41:38] <headius> er on that output
+[00:41:52] * headius  < https://libera.ems.host/_matrix/media/r0/download/libera.chat/54d4be5df6499c9f57d7dce49712e3260f1facab/message.txt >
+[00:42:10] <headius> ah they must have added content type... three backticks with "text" renders right
+[00:42:14] <headius> but it should assume "text"
+[01:26:24] <headius> https://github.com/jruby/jruby/pull/6771
+[01:26:42] <headius> got a bit larger due to some refactoring but all cases I know of will have a proper backtrace element for arity errors
+[01:27:10] <headius> this may also have affected required and unknown kwargs
+[01:28:16] <headius> ah yeah, affected in the same way variable arity methods are affected (line number is because it was not set until after arity and kwarg checks)
+[01:28:27] * headius  < https://libera.ems.host/_matrix/media/r0/download/libera.chat/de4a3435294fcf847821c2013cfa0721765d3a5d/message.txt >
+[01:38:43] <enebo[m]> looks reasonable
+[03:38:15] <headius> why is this failing on Windows
+[03:38:16] <headius> https://github.com/jruby/jruby/pull/6772
+[03:38:35] <headius> two commits that just fixed backtrace line numbers and somehow a tempfile test is failing
+[05:40:22] <headius> Ok it went green after another unrelated commit. Something odd happened in the previous run that failed a tempfile test
+[10:52:04] *** Quits: satyanash (~satyanash@143.110.247.92) (Quit: kthnxbai)
+[10:52:33] *** Joins: satyanash (~satyanash@143.110.247.92)
+[21:08:06] <headius> enebo: any progress on prepends?
+[21:09:39] <headius> so FTR that spurious failure is here: https://github.com/jruby/jruby/runs/3256912234#step:8:384
+[21:09:58] <headius> looks like tempfiles were not cleaned up as expected, so this might just be a finalization issue
+[21:10:21] <headius> I have merged #6772 and master is back in line with 9.2 fixes
+[21:16:48] <headius> I think we need to prioritize getting this fixed: https://github.com/jnr/jnr-posix/issues/170
+[21:41:39] <enebo[m]> headius: not yet but I am working no it
+[21:58:26] <enebo[m]> headius: https://github.com/jruby/jruby/issues/6445#issuecomment-894407106
+[21:58:48] <enebo[m]> I decided to writeup the summary of yesterday.

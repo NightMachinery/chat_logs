@@ -1,0 +1,1648 @@
+[00:00:04] <chiselfuse> where's the least significant here?
+[00:00:06] <fizzie> The lowest-addressed byte may be either the least or most significant one, but the point is, it must be consistent with the rest of the loop.
+[00:00:27] <fizzie> The *value* 0xaabbccddeeff has 0xff as its least significant byte.
+[00:01:06] *** Joins: caveman (~caveman@gateway/tor-sasl/caveman)
+[00:01:10] <chiselfuse> that's what i thought
+[00:01:11] <chiselfuse> but
+[00:01:44] *** Quits: xa0s (~xa0s@mab.sdf.org) (Quit: leaving)
+[00:02:17] *** Joins: zlg (~zlg@user/zlg)
+[00:02:30] <chiselfuse> < fizzie> Like, if your input buffer is the four bytes [aa bb cc dd], the loop will read [aa bb] and [cc dd] in whatever the native endianness is. If the buffer is instead the three bytes [aa bb cc], the loop will read [aa bb] in the native endianness, and then you want it to behave as if it had read [cc 00] in the native endianness too, so you must write 'cc' to the lowest-addressed byte of a `short`, not
+[00:02:36] <chiselfuse> the least-significant byte (in case there's a difference).
+[00:02:53] <chiselfuse> most-significant now, come on
+[00:02:57] <chiselfuse> it's cc 00
+[00:03:01] *** Quits: Techcable (~Techcable@168.235.93.147) (Ping timeout: 240 seconds)
+[00:03:02] <fizzie> No.
+[00:03:32] <chiselfuse> 0xcc00, cc is most-significant, no?
+[00:03:56] <fizzie> The *bytes* are [cc 00]. In little-endian, that's the value 0x00cc, because the lowest-addressed byte is the least significant one. In big-endian, that's the value 0xcc00, because the lowest-addressed byte is the most significant.
+[00:04:27] <fizzie> There's a difference between the two consecutive bytes [cc 00] in memory, and a two-byte value like 0x00cc or 0xcc00, and that difference is exactly what endianness is all about.
+[00:04:56] <fizzie> And to reiterate: the handling of the last odd byte needs to be consistent with the earlier part of the loop, which reads two-byte values as if they were in the platform's native endianness.
+[00:05:54] <fizzie> So to behave as if the final odd byte cc had in fact been padded with an extra zero to make the buffer an even length, the cc must be written to the lowest-addressed byte (whether that's least or most significant), because that's what would happen if the earlier loop had read the two bytes [cc 00].
+[00:06:10] *** Quits: nf (~n@monade.li) (Quit: Fairfarren.)
+[00:06:29] *** Joins: Guest9 (~Guest9@c-68-60-127-126.hsd1.mi.comcast.net)
+[00:06:37] <Betal> constxd: does chromium open 2 connections too? I can't reproduce the problem, seems it only open other conenction when I press F5
+[00:07:05] *** Joins: gry (~kvirc@botters/gry)
+[00:07:20] *** Quits: strajder (~strajder@user/strajder) (Quit: leaving)
+[00:07:27] *** Joins: kitsunenokenja (~kitsunech@68.91.220.96)
+[00:07:29] <chiselfuse> just let me try to digest...
+[00:08:34] *** Quits: the_lanetly_052_ (~the_lanet@194.135.167.86) (Ping timeout: 260 seconds)
+[00:08:52] <constxd> Betal: how are u testing
+[00:08:57] *** Quits: HaMsTeRs (~Thunderbi@210.3.213.4) (Quit: HaMsTeRs)
+[00:09:50] *** Quits: tiotags (~tiotags@user/tiotags) (Quit: Leaving)
+[00:10:15] <chiselfuse> fizzie: i understand now
+[00:11:09] <fizzie> Think of it like this (since I wrote it already): there should be no difference in the checksums of the two buffers [aa bb cc] and [aa bb cc 00]. The code does whatever it needs to so that the effect of lines 14-16 in the case of processing the [cc] of the shorter buffer are exactly the same as the effect of lines 9-10 would have been when processing the [cc 00] of the longer one.
+[00:12:01] <chiselfuse> yes yes i get what you mean
+[00:12:08] <Betal> constxd: executed the nc command, then tryed to connect in chromium (localhost:3000)
+[00:12:12] <fizzie> Yeah, I just didn't want to waste the explanation. :)
+[00:12:29] <chiselfuse> thank you btw
+[00:12:40] <constxd> Betal: and what happened?
+[00:13:18] <Betal> constxd: https://paste.rs/akE
+[00:13:47] <constxd> yes that's what i get as well
+[00:14:49] *** Quits: Teukka (~teukka@user/Teukka) (Read error: Connection reset by peer)
+[00:15:00] <Betal> constxd: what you do to get the 2nd connection?
+[00:17:38] <constxd> ok try this
+[00:17:52] <constxd> printf 'HTTP/1.1 200 OK\nConnection: close\nContent-Length: 0\n\n' | nc -klvC 3000
+[00:17:55] *** Quits: alch (~alch@151.44.47.142) (Ping timeout: 256 seconds)
+[00:18:06] <constxd> and then request localhost:3000 in your browser
+[00:18:20] *** Joins: Teukka (~teukka@84-216-41-232.customers.ownit.se)
+[00:18:20] *** Quits: Teukka (~teukka@84-216-41-232.customers.ownit.se) (Changing host)
+[00:18:20] *** Joins: Teukka (~teukka@user/Teukka)
+[00:19:00] <constxd> does it open a second connection and send nothing?
+[00:20:12] *** Quits: iomari891 (~iomari891@105.112.138.38) (Ping timeout: 240 seconds)
+[00:21:43] <Betal> constxd: if I understand, we get one for / and one for favicon.ico, https://paste.rs/W70
+[00:22:13] <constxd> not for me
+[00:23:39] <constxd> ok in your case try this
+[00:23:44] <masoudd> install wireshark :)
+[00:23:51] <Betal> constxd: this is chromium 98.0.4758.10, you said you were testing chrome in the first question
+[00:24:04] <constxd> nvm idk how to do it with netcat
+[00:24:07] <constxd> but
+[00:24:30] <constxd> i think if you sent a response for the favicon request it would open a 3rd connection and send nothing
+[00:24:54] *** Joins: WidTurnur (~WidTurnur@7.164.208.46.dyn.plus.net)
+[00:26:09] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[00:26:27] *** Joins: elkalamar (elkalamar@gateway/vpn/airvpn/elkalamar)
+[00:26:50] *** Quits: elkalamar (elkalamar@gateway/vpn/airvpn/elkalamar) (Max SendQ exceeded)
+[00:27:16] *** Joins: elkalamar (elkalamar@gateway/vpn/airvpn/elkalamar)
+[00:27:23] *** Quits: Burger (~textual@user/burger) (Quit: Textual IRC Client: www.textualapp.com)
+[00:27:57] *** Quits: hashfunc1818 (~user@2601:5c0:c280:7090:8c1e:afa3:b36b:39be) (Ping timeout: 240 seconds)
+[00:29:23] *** Joins: jkotra (~jkotra@122.169.141.242)
+[00:30:40] *** Quits: phrix (~phrix@185.76.176.47) (Quit: Leaving)
+[00:31:03] *** Joins: seninha (~chatzilla@user/seninha)
+[00:32:07] *** Joins: simpl_e (~user@user/simpl-e/x-8589812)
+[00:32:49] *** Quits: gildasio (~gildasio@gateway/tor-sasl/gildasio) (Quit: WeeChat 3.4)
+[00:35:55] *** Parts: Guest9 (~Guest9@c-68-60-127-126.hsd1.mi.comcast.net) ()
+[00:36:42] *** Joins: oxfuxxx (~oxfuxxx@195.47.194.46)
+[00:38:10] *** Quits: meator (~meator@user/meator) (Quit: Leaving)
+[00:39:03] *** Quits: boB_K7IQ (~boB_K7IQ@ip72-201-138-188.ph.ph.cox.net) ()
+[00:39:15] *** Joins: nf (~n@monade.li)
+[00:42:37] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 240 seconds)
+[00:47:54] *** Quits: WidTurnur (~WidTurnur@7.164.208.46.dyn.plus.net) (Quit: Quit)
+[00:48:19] *** Quits: ik (uid540109@id-540109.uxbridge.irccloud.com) (Quit: Connection closed for inactivity)
+[00:50:55] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[00:56:52] *** Quits: Cienisty (Cienisty@user/cienisty) (Quit: Error 606 | Demon not found)
+[00:57:28] *** Joins: Cienisty (Cienisty@user/cienisty)
+[00:59:21] *** Joins: lichliu_ (~lichliu@219.142.145.152)
+[01:01:17] *** Quits: jkotra (~jkotra@122.169.141.242) (Ping timeout: 256 seconds)
+[01:01:37] *** Quits: lichliu__ (~lichliu@219.142.145.152) (Read error: Connection reset by peer)
+[01:01:55] *** Quits: SGautam (uid286066@id-286066.ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[01:04:28] *** Joins: Dsee4 (~DSee@66.115.182.102)
+[01:07:13] *** Quits: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it) (Ping timeout: 256 seconds)
+[01:08:14] *** Joins: virgin (~root@5.2.79.79)
+[01:08:17] <virgin> hay
+[01:09:46] *** Quits: Serpent7776 (~Serpent77@90-156-31-193.internetia.net.pl) (Quit: leaving)
+[01:11:11] <gry> hello
+[01:14:28] <virgin> im at the insane asylum
+[01:14:33] *** Quits: beepbooptheory (~mik-wsl@50.216.98.94) (Remote host closed the connection)
+[01:14:52] <Rounin> Ah... C++?
+[01:14:55] *** Joins: SymbioticFemale (~Symbiotic@user/SymbioticFemale)
+[01:15:11] <virgin> anyone been at insane asylum and got out from hacking or
+[01:15:21] <virgin> atleast upped medication dosages?
+[01:16:01] <Rounin> Not as such, no
+[01:16:13] <virgin> ahh, nlp?
+[01:16:26] <virgin> that usually does the trick but im in for arson this time
+[01:17:13] *** Dsee4 is now known as DSee
+[01:17:27] <virgin> (dw it was a tiny burn hole in the fabric of a curtain)
+[01:18:09] <Rounin> Hmmm... Someon else's curtain?
+[01:18:26] <virgin> nah my parents curtain but that makes them mine
+[01:19:08] <virgin> bottom line i didnt find my bank card so i couldnt buy pills
+[01:19:28] <virgin> for muh ptsd wich is totally unrelated to my parents so i decided to drink
+[01:19:33] <virgin> beer instead
+[01:19:56] <virgin> (u can take covid mask on and take beer out the main entrance as if u paid for it)
+[01:20:10] <virgin> but got SUPER wasted just from 6 beers
+[01:20:48] <virgin> ls
+[01:20:52] <virgin> ops
+[01:23:36] *** Joins: Torr (~Torr@user/torr)
+[01:25:35] *** Quits: crashrep (~crashrep@user/crashrep) (Ping timeout: 240 seconds)
+[01:27:35] *** Joins: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it)
+[01:28:55] <virgin> hmm
+[01:32:28] *** Quits: savolla (~quassel@95.10.204.117) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[01:36:27] <nitrix> I don't recommend connecting to IRC from a root account.
+[01:44:46] *** Quits: geranim0 (~geranim0@modemcable242.171-178-173.mc.videotron.ca) (Remote host closed the connection)
+[01:45:50] *** Quits: brad_mssw (~bhouse@2601:344:4100:b490:190c:d2cf:ee88:db3e) (Quit: This computer has gone to sleep)
+[01:47:15] *** Joins: alch (~alch@151.46.87.211)
+[01:47:16] *** Joins: boB_K7IQ (~boB_K7IQ@152.44.147.180)
+[01:48:01] *** Quits: Alhazred (~Alhazred@ool-18b829c5.dyn.optonline.net) (Ping timeout: 256 seconds)
+[01:48:09] *** Joins: Alhazred (~Alhazred@86.106.74.40)
+[01:48:45] *** Joins: D0mi7usl0l (uid512140@id-512140.tinside.irccloud.com)
+[01:51:19] *** Joins: jkotra (~jkotra@122.169.141.242)
+[01:54:23] *** Parts: thd (~user@45.76.37.129) ()
+[01:54:36] *** Quits: Betal (~Betal@user/betal) (Quit: WeeChat 3.4)
+[01:57:30] *** Joins: crashrep (~crashrep@user/crashrep)
+[01:59:23] *** Joins: mrgz (~mrgz@201-42-0-191.dsl.telesp.net.br)
+[01:59:45] *** Quits: Akuli (~Akuli@82-203-161-20.bb.dnainternet.fi) (Quit: Akuli)
+[02:02:15] *** Quits: crashrep (~crashrep@user/crashrep) (Ping timeout: 240 seconds)
+[02:06:30] *** Quits: gh34 (~textual@cpe-184-58-181-106.wi.res.rr.com) (Quit: Textual IRC Client: www.textualapp.com)
+[02:11:51] *** Quits: wootehfoot (~wootehfoo@user/wootehfoot) (Quit: Leaving)
+[02:12:17] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:602a:2cae:7652:6a22)
+[02:13:26] *** Joins: sdfgsdfg (~dfghsfgs@user/sdfgsdfg)
+[02:13:51] *** Quits: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net) (Ping timeout: 272 seconds)
+[02:14:05] *** Joins: bnchs___ (~bnchs@41.141.57.206)
+[02:14:23] *** Quits: oxfuxxx (~oxfuxxx@195.47.194.46) (Ping timeout: 256 seconds)
+[02:14:54] *** Quits: tech_exorcist (txrcst@user/tech-exorcist/x-0447479) (Quit: Disconnecting)
+[02:15:08] *** Quits: Telvana (~capo@user/telvana) (Quit: ZNC 1.9.x-git-170-9be0cae1 - https://znc.in)
+[02:15:28] *** Quits: alch (~alch@151.46.87.211) (Quit: leaving)
+[02:15:30] *** Quits: bolovanos_ (~bolovanos@user/bolovanos) (Ping timeout: 260 seconds)
+[02:23:56] *** Quits: Maaaanu (~manuel@ip5b429007.dynamic.kabel-deutschland.de) (Quit: leaving)
+[02:25:25] *** Quits: cherrry9 (~jan@ded246.neoplus.adsl.tpnet.pl) (Ping timeout: 240 seconds)
+[02:27:34] *** Quits: magla (~gelignite@d5362c15.access.ecotel.net) (Quit: Stay safe!)
+[02:27:56] *** Joins: tforever (~Terabyte@95.7.167.222)
+[02:28:16] *** Quits: wovixo (~wovixo@128.104.205.49) (Quit: Leaving)
+[02:29:13] *** Joins: brad_mssw (~bhouse@c-76-106-206-149.hsd1.fl.comcast.net)
+[02:29:47] *** Quits: brad_mssw (~bhouse@c-76-106-206-149.hsd1.fl.comcast.net) (Client Quit)
+[02:30:15] *** Quits: dom2 (~dom2@c-65-96-173-68.hsd1.ma.comcast.net) (Ping timeout: 256 seconds)
+[02:30:44] *** Joins: jwoe324 (~jwoe324@2001:470:69fc:105::1:1a67)
+[02:33:43] *** Joins: pizdets_ (~pizdets@183.182.115.3)
+[02:34:12] *** Joins: crashrep (~crashrep@user/crashrep)
+[02:34:19] <virgin> hy
+[02:34:32] *** Quits: pizdets (~pizdets@183.182.111.223) (Ping timeout: 265 seconds)
+[02:34:45] <virgin> nitrix: i know u aint supposed to but
+[02:36:15] <virgin> https://www.youtube.com/watch?v=aTyY8dQtyi4
+[02:36:28] <virgin> but you aint supposed to make moonshine liquor either KAHAAA HA HA
+[02:38:55] *** Quits: crashrep (~crashrep@user/crashrep) (Ping timeout: 240 seconds)
+[02:39:01] *** Quits: adip_ (~adip@den37.neoplus.adsl.tpnet.pl) (Ping timeout: 256 seconds)
+[02:39:10] *** Quits: adip (~adip@den37.neoplus.adsl.tpnet.pl) (Ping timeout: 272 seconds)
+[02:41:31] *** Quits: VoidSync (~sync@user/voidsync) ()
+[02:42:13] *** Quits: tforever (~Terabyte@95.7.167.222) (Quit: Segmentation fault (core dumped))
+[02:43:16] *** Quits: kitsunenokenja (~kitsunech@68.91.220.96) (Ping timeout: 245 seconds)
+[02:46:06] *** Joins: drin (~Geezabisc@user/geezabiscuit)
+[02:46:46] *** Quits: geezabiscuit (~Geezabisc@user/geezabiscuit) (Ping timeout: 272 seconds)
+[02:47:18] <virgin> ay how
+[02:48:18] *** Joins: graywolf (~wolf@user/graywolf)
+[02:48:50] *** Quits: graywolf (~wolf@user/graywolf) (Client Quit)
+[02:49:09] *** Joins: graywolf (~wolf@user/graywolf)
+[02:49:12] *** Joins: rgrinberg (~textual@2806:101e:7:70b6:5c5e:da58:6afa:ce86)
+[02:49:28] *** Quits: graywolf (~wolf@user/graywolf) (Client Quit)
+[02:50:36] *** Joins: arinov (~arinov@213.194.126.155)
+[02:51:29] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 256 seconds)
+[02:51:39] *** Quits: caveman (~caveman@gateway/tor-sasl/caveman) (Remote host closed the connection)
+[02:55:01] *** Quits: rgrinberg (~textual@2806:101e:7:70b6:5c5e:da58:6afa:ce86) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[02:55:18] *** Joins: hiroshi_ (~freedom@151.57.62.172)
+[02:58:57] *** SymbioticFemale is now known as EndTheGlowies
+[02:59:26] <bnchs___> i agree
+[02:59:29] <bnchs___> end the glowies
+[02:59:55] *** Quits: EndTheGlowies (~Symbiotic@user/SymbioticFemale) (K-Lined)
+[03:00:17] *** Quits: KimK (~KimK@2600:8803:740b:4700:4a5b:39ff:fe0b:57d2) (Ping timeout: 240 seconds)
+[03:02:10] *** Quits: sdfgsdfg (~dfghsfgs@user/sdfgsdfg) (Quit: ayo yoyo ayo yoyo hololo, hololo.)
+[03:03:15] *** Quits: aradesh (~aradesh@user/aradesh) (Quit: WeeChat 1.9.1)
+[03:07:09] <bnchs___> oh well he got klined
+[03:07:21] *** Quits: arinov (~arinov@213.194.126.155) (Ping timeout: 256 seconds)
+[03:09:57] *** Quits: joev (~joev@user/joev) (Ping timeout: 240 seconds)
+[03:10:23] *** Joins: joev (~joev@user/joev)
+[03:17:24] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[03:20:58] *** Quits: bnchs___ (~bnchs@41.141.57.206) (Ping timeout: 268 seconds)
+[03:21:31] *** Joins: oxfuxxx (~oxfuxxx@217.138.213.29)
+[03:22:44] *** Joins: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net)
+[03:23:16] *** Quits: gry (~kvirc@botters/gry) (Ping timeout: 245 seconds)
+[03:23:58] *** Joins: AbleBacon_ (~AbleBacon@user/AbleBacon)
+[03:26:30] *** Quits: ioxzev1z (~ioxzev1z@user/ioxzev1z) (Quit: Leaving)
+[03:27:18] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Ping timeout: 272 seconds)
+[03:27:29] *** Quits: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net) (Ping timeout: 256 seconds)
+[03:27:35] *** Joins: sudoer (~username@c-73-4-114-202.hsd1.ma.comcast.net)
+[03:28:36] *** Quits: LucaTM (~LucaTM@user/lucatm) (Quit: Textual IRC Client: www.textualapp.com)
+[03:29:11] *** Quits: Darkcoal (~user@user/Darkcoal) (Quit: Darkcoal)
+[03:29:23] *** Joins: Telvana (~capo@user/telvana)
+[03:30:19] *** Quits: oxfuxxx (~oxfuxxx@217.138.213.29) (Ping timeout: 256 seconds)
+[03:30:33] *** Quits: mrig (~mrig@user/mrig) (Quit: WeeChat 2.8)
+[03:30:34] *** Quits: blindguard (~blindguar@2a02:908:1864:c200::ef3c) (Quit: Konversation terminated!)
+[03:31:00] *** Quits: kenanmarasli (~kenanmara@user/kenanmarasli) (Quit: Leaving)
+[03:36:55] *** Joins: oxfuxxx (~oxfuxxx@217.138.213.28)
+[03:36:56] *** Joins: gry (~kvirc@botters/gry)
+[03:38:08] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[03:38:27] *** Joins: rgrinberg (~textual@2806:101e:7:70b6:5c5e:da58:6afa:ce86)
+[03:39:09] *** Joins: korg815 (~korg815@user/korg815)
+[03:39:51] *** Quits: rgrinberg (~textual@2806:101e:7:70b6:5c5e:da58:6afa:ce86) (Client Quit)
+[03:41:18] *** Quits: hiroshi_ (~freedom@151.57.62.172) (Quit: hiroshi_)
+[03:42:08] *** Quits: Wulf (~Wulf@user/wulf) (Ping timeout: 250 seconds)
+[03:44:02] *** Joins: Wulf (~Wulf@user/wulf)
+[03:45:43] *** Quits: goepsilongo (~chacho@2603-7000-ab00-62ed-0000-0000-0000-0bd0.res6.spectrum.com) (Quit: Konversation terminated!)
+[03:47:53] *** Quits: joev (~joev@user/joev) (Ping timeout: 256 seconds)
+[03:48:25] *** Joins: eddybilley (~freddieti@2a02-a454-7f89-1-ed6c-71bb-23cc-5eac.fixed6.kpn.net)
+[03:48:42] *** Joins: joev (~joev@user/joev)
+[03:48:55] *** Joins: kurahaupo_ (~kurahaupo@pa49-197-101-189.pa.qld.optusnet.com.au)
+[03:49:17] *** Quits: gry (~kvirc@botters/gry) (Ping timeout: 256 seconds)
+[03:50:12] *** Quits: freep (~freepppp@193.92.35.32.dsl.dyn.forthnet.gr) (Read error: Connection reset by peer)
+[03:51:35] *** Joins: goepsilongo (~chacho@2603-7000-ab00-62ed-0000-0000-0000-0bd0.res6.spectrum.com)
+[03:52:04] *** Quits: goepsilongo (~chacho@2603-7000-ab00-62ed-0000-0000-0000-0bd0.res6.spectrum.com) (Client Quit)
+[03:52:07] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Ping timeout: 256 seconds)
+[03:55:04] *** Quits: Atque (~Atque@user/atque) (Remote host closed the connection)
+[03:55:34] *** Quits: eddybilley (~freddieti@2a02-a454-7f89-1-ed6c-71bb-23cc-5eac.fixed6.kpn.net) (Ping timeout: 250 seconds)
+[03:56:48] *** Joins: Atque (~Atque@user/atque)
+[03:59:44] *** Quits: virgin (~root@5.2.79.79) (Quit: Lost terminal)
+[04:04:12] *** Quits: marcj (~marc@205.175.215.11) (Ping timeout: 240 seconds)
+[04:04:24] *** Joins: paravida (~myChateau@user/paravida)
+[04:04:31] *** Quits: mven (~mven@ip68-104-39-54.lv.lv.cox.net) (Quit: Goodbye.)
+[04:06:03] *** Quits: Klinda (~superleag@user/klinda) (Quit: Konversation terminated!)
+[04:06:03] *** Joins: marcj (~marc@205.175.215.11)
+[04:07:30] *** Parts: ravella (~ravella@user/ryanavella) ()
+[04:07:59] *** Quits: D0mi7usl0l (uid512140@id-512140.tinside.irccloud.com) (Quit: Connection closed for inactivity)
+[04:09:25] *** Joins: mven (~mven@ip68-104-39-54.lv.lv.cox.net)
+[04:10:47] *** Quits: sh0ne (~sh0ne@2a06:5b00:6fb:2a00:4d2e:385:779a:d7c4) (Quit: Textual IRC Client: www.textualapp.com)
+[04:12:01] *** Joins: paravida_ (~myChateau@71-208-79-162.ftmy.qwest.net)
+[04:12:13] *** Quits: paravida (~myChateau@user/paravida) (Read error: Connection reset by peer)
+[04:14:41] *** Joins: ymwm (~yingmanwu@110.85.66.170)
+[04:17:57] *** Quits: mven (~mven@ip68-104-39-54.lv.lv.cox.net) (Quit: Goodbye.)
+[04:21:25] *** Joins: ferdna (~ferdna@user/ferdna)
+[04:22:17] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 240 seconds)
+[04:22:35] *** Joins: mven (~mven@ip68-104-39-54.lv.lv.cox.net)
+[04:22:39] *** Quits: jmiehe (~Thunderbi@user/jmiehe) (Quit: jmiehe)
+[04:25:08] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[04:26:31] *** Quits: mven (~mven@ip68-104-39-54.lv.lv.cox.net) (Client Quit)
+[04:26:51] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Quit: WeeChat 3.4)
+[04:28:09] *** Joins: mven (~mven@ip68-104-39-54.lv.lv.cox.net)
+[04:28:24] *** Joins: cthi (~cthi@99-12-166-26.lightspeed.rlghnc.sbcglobal.net)
+[04:29:31] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 245 seconds)
+[04:32:23] *** Quits: cosimone` (~user@93-34-132-33.ip49.fastwebnet.it) (Quit: ERC (IRC client for Emacs 27.1))
+[04:32:31] *** Quits: zeenk (~zeenk@2a02:2f04:a30d:1300:51a3:bcfc:6cda:9fc5) (Quit: Konversation terminated!)
+[04:32:37] *** Quits: mven (~mven@ip68-104-39-54.lv.lv.cox.net) (Client Quit)
+[04:33:03] *** Joins: MsPoop (~MsPoop@S01069050ca4e3573.cg.shawcable.net)
+[04:34:16] *** Joins: mven (~mven@ip68-104-39-54.lv.lv.cox.net)
+[04:35:07] *** Joins: crashrep (~crashrep@user/crashrep)
+[04:35:59] *** Joins: sdfgsdfg (~dfghsfgs@user/sdfgsdfg)
+[04:38:39] *** Quits: mven (~mven@ip68-104-39-54.lv.lv.cox.net) (Client Quit)
+[04:39:16] *** Joins: beepbooptheory (~mik@c-73-13-112-194.hsd1.pa.comcast.net)
+[04:39:55] *** Quits: crashrep (~crashrep@user/crashrep) (Ping timeout: 240 seconds)
+[04:40:32] *** Quits: cation (cation@user/cation) (Ping timeout: 240 seconds)
+[04:41:29] *** Joins: cation (cation@user/cation)
+[04:43:07] *** Quits: nehsou^ (~nehsou@50-202-219-146-static.hfc.comcastbusiness.net) (Ping timeout: 256 seconds)
+[04:44:08] *** Joins: Everything (~Everythin@37.115.210.35)
+[04:45:18] *** Joins: rgrinberg (~textual@2806:101e:7:70b6:5c5e:da58:6afa:ce86)
+[04:47:25] *** Quits: paravida_ (~myChateau@71-208-79-162.ftmy.qwest.net) (Changing host)
+[04:47:25] *** Joins: paravida_ (~myChateau@user/paravida)
+[04:48:13] *** Quits: paravida_ (~myChateau@user/paravida) (Quit: Leaving)
+[04:48:38] *** Joins: lukedashjr (~luke-jr@user/luke-jr)
+[04:50:47] *** Quits: luke-jr (~luke-jr@user/luke-jr) (Ping timeout: 256 seconds)
+[04:50:58] *** lukedashjr is now known as luke-jr
+[04:53:59] *** Joins: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net)
+[04:54:12] *** Quits: random-nick (~random-ni@87.116.179.129) (Ping timeout: 240 seconds)
+[04:54:30] *** Quits: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net) (Remote host closed the connection)
+[04:55:20] *** Quits: Alhazred (~Alhazred@86.106.74.40) (Ping timeout: 272 seconds)
+[04:55:41] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[04:55:41] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[04:55:41] *** Joins: wroathe (~wroathe@user/wroathe)
+[04:56:37] *** Quits: ymwm (~yingmanwu@110.85.66.170) (Ping timeout: 272 seconds)
+[04:56:58] *** Joins: Alhazred (~Alhazred@ool-18b829c5.dyn.optonline.net)
+[04:57:14] *** Quits: steve__ (~steve@ool-182c2b80.dyn.optonline.net) (Ping timeout: 272 seconds)
+[05:03:53] *** Joins: off^ (~off@50-202-219-146-static.hfc.comcastbusiness.net)
+[05:04:17] *** Joins: crashrep (~crashrep@user/crashrep)
+[05:09:13] *** Quits: soul-d (~uknown@user/soul-d) (Read error: Connection reset by peer)
+[05:10:06] *** Quits: dogbert2 (~Bill@ip70-170-79-7.lv.lv.cox.net) (Remote host closed the connection)
+[05:10:21] *** Joins: dogbert2 (~Bill@ip70-170-79-7.lv.lv.cox.net)
+[05:10:32] *** Quits: masoudd (~masoudd@user/masoudd) (Ping timeout: 240 seconds)
+[05:14:17] *** Quits: oxfuxxx (~oxfuxxx@217.138.213.28) (Ping timeout: 240 seconds)
+[05:17:29] *** Quits: xel (~xel@user/xel) (Remote host closed the connection)
+[05:18:04] *** Joins: soul-d (~uknown@user/soul-d)
+[05:18:14] *** Quits: plastico (~plastico@neomutt/plastico) (Quit: WeeChat 3.4)
+[05:19:47] *** Joins: xel (~xel@user/xel)
+[05:22:31] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[05:22:48] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[05:24:28] *** Quits: Alhazred (~Alhazred@ool-18b829c5.dyn.optonline.net) (Ping timeout: 272 seconds)
+[05:24:38] *** Joins: Alhazred (~Alhazred@86.106.74.40)
+[05:28:02] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[05:28:02] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[05:28:02] *** Joins: wroathe (~wroathe@user/wroathe)
+[05:32:43] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[05:35:21] *** Joins: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net)
+[05:44:31] *** AbleBacon_ is now known as AbleBacon
+[05:46:35] *** Quits: boB_K7IQ (~boB_K7IQ@152.44.147.180) (Ping timeout: 256 seconds)
+[05:50:15] *** Quits: sdfgsdfg (~dfghsfgs@user/sdfgsdfg) (Quit: ayo yoyo ayo yoyo hololo, hololo.)
+[05:51:13] *** Joins: zer0x_ (~zer0x@58.186.58.26)
+[05:53:32] *** Quits: FluffyMask (~masque@user/fluffymask) (Quit: WeeChat 3.4)
+[05:54:41] *** Joins: harveypwca (~harveypwc@2601:246:c180:a570:3828:d8:e523:3f67)
+[05:55:00] *** Quits: Rounin (~david@84.212.130.215) (Ping timeout: 240 seconds)
+[05:55:04] *** Joins: usickduck (~qooupapn@142.167.143.188)
+[05:58:34] *** Quits: Alhazred (~Alhazred@86.106.74.40) (Quit: leaving)
+[05:58:44] *** Joins: Alhazred (~Alhazred@86.106.74.40)
+[06:05:28] *** Quits: xel (~xel@user/xel) (Quit: Leaving)
+[06:05:29] *** Quits: usickduck (~qooupapn@142.167.143.188) (Quit: quit)
+[06:08:37] *** Quits: justAstache (~justache@user/justache) (Read error: Connection reset by peer)
+[06:09:16] *** Joins: justAstache (~justache@user/justache)
+[06:15:29] *** Joins: usickduck (~qooupapn@142.167.143.188)
+[06:19:55] *** Quits: Atque (~Atque@user/atque) (Ping timeout: 240 seconds)
+[06:21:09] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[06:22:28] *** Quits: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it) (Read error: Connection reset by peer)
+[06:22:39] *** Joins: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it)
+[06:22:51] *** Quits: kurahaupo_ (~kurahaupo@pa49-197-101-189.pa.qld.optusnet.com.au) (Ping timeout: 256 seconds)
+[06:24:00] *** Quits: usickduck (~qooupapn@142.167.143.188) (Remote host closed the connection)
+[06:24:28] *** Joins: usickduck (~qooupapn@142.167.143.188)
+[06:24:46] *** Joins: ymwm (~yingmanwu@110.85.66.170)
+[06:25:22] *** Quits: ymwm (~yingmanwu@110.85.66.170) (Max SendQ exceeded)
+[06:25:29] *** Joins: Atque (~Atque@user/atque)
+[06:25:50] *** Joins: ymwm (~yingmanwu@110.85.66.170)
+[06:27:30] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:602a:2cae:7652:6a22) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[06:30:05] *** Joins: whatsupdoc (uid509081@id-509081.hampstead.irccloud.com)
+[06:30:11] *** Joins: danielcamiel (~danielcam@user/danielcamiel)
+[06:30:36] *** Joins: SGautam (uid286066@id-286066.ilkley.irccloud.com)
+[06:33:41] *** Quits: banc (banc@gateway/vpn/airvpn/banc) (Ping timeout: 245 seconds)
+[06:38:04] *** Quits: usickduck (~qooupapn@142.167.143.188) (Quit: quit)
+[06:38:06] *** Quits: ymwm (~yingmanwu@110.85.66.170) (Quit: Leaving)
+[06:39:06] *** Joins: usickduck (~qooupapn@142.167.143.188)
+[06:40:05] *** Quits: usickduck (~qooupapn@142.167.143.188) (Remote host closed the connection)
+[06:40:05] *** Quits: seninha (~chatzilla@user/seninha) (Remote host closed the connection)
+[06:40:23] *** Quits: pulse (~pulse@user/pulse) (Quit: Look behind you, a three headed monkey!)
+[06:40:50] *** Joins: usickduck (~qooupapn@142.167.143.188)
+[06:41:57] *** Quits: usickduck (~qooupapn@142.167.143.188) (Client Quit)
+[06:42:48] *** Joins: xel (~xel@user/xel)
+[06:43:41] *** Joins: gco (~gco@2601:647:4c00:50e0:7dfe:b7a3:3c0b:5aa5)
+[06:45:13] *** Joins: malina (~malina@user/malina)
+[06:45:31] *** Quits: nyah (~nyah@05453449.skybroadband.com) (Ping timeout: 256 seconds)
+[06:46:29] *** Joins: soapsudsxx (~soapsudsx@209.221.40.142)
+[06:46:35] *** Quits: System_Error (~SystemErr@user/systemerror) (Ping timeout: 240 seconds)
+[06:47:31] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Ping timeout: 256 seconds)
+[06:48:08] *** Quits: Torr (~Torr@user/torr) ()
+[06:48:37] *** Joins: System_Error (~SystemErr@user/systemerror)
+[06:50:37] *** Quits: shailangsa (~shailangs@host109-152-9-189.range109-152.btcentralplus.com) (Ping timeout: 256 seconds)
+[06:50:50] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[06:52:36] *** Joins: banc (banc@gateway/vpn/airvpn/banc)
+[06:53:21] *** Joins: icy (~icy@user/icy)
+[06:58:12] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Ping timeout: 272 seconds)
+[06:58:37] *** Quits: danielcamiel (~danielcam@user/danielcamiel) (Ping timeout: 240 seconds)
+[06:59:58] *** Quits: pendarsoheil (~pendarsoh@63.238.189.98) (Quit: Leaving)
+[07:00:23] *** Joins: caveman (~caveman@gateway/tor-sasl/caveman)
+[07:02:25] *** Joins: sdfgsdfg (~dfghsfgs@user/sdfgsdfg)
+[07:06:23] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[07:07:41] *** Joins: Emet-Selch (~haise01@user/haise01)
+[07:08:20] *** Quits: jkotra (~jkotra@122.169.141.242) (Ping timeout: 272 seconds)
+[07:09:44] *** Quits: pucara (~i@host14.181-1-101.telecom.net.ar) (Quit: Lost terminal)
+[07:11:01] *** Quits: Azem (~haise01@user/haise01) (Ping timeout: 256 seconds)
+[07:17:32] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Ping timeout: 240 seconds)
+[07:18:31] *** Joins: Betal (~Betal@user/betal)
+[07:19:57] *** Joins: fe23 (~fe23@2409:8a34:46c:f80:dd23:5c72:1c25:f23d)
+[07:22:54] *** Quits: malina (~malina@user/malina) (Ping timeout: 272 seconds)
+[07:22:58] *** Quits: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it) (Read error: Connection reset by peer)
+[07:23:11] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[07:23:14] *** Joins: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it)
+[07:24:29] *** Quits: caveman (~caveman@gateway/tor-sasl/caveman) (Remote host closed the connection)
+[07:24:56] *** Joins: caveman (~caveman@gateway/tor-sasl/caveman)
+[07:27:02] *** Quits: soapsudsxx (~soapsudsx@209.221.40.142) (Remote host closed the connection)
+[07:35:15] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[07:35:15] *** Joins: malina (~malina@user/malina)
+[07:35:15] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[07:35:15] *** Joins: wroathe (~wroathe@user/wroathe)
+[07:35:52] *** Joins: cuppajoe (~joe@ip70-171-93-122.no.no.cox.net)
+[07:36:01] *** Quits: supakeen (~user@python/site-packages/supakeen) (Quit: WeeChat 3.4)
+[07:36:32] *** Joins: supakeen (~user@python/site-packages/supakeen)
+[07:37:42] *** Joins: shailangsa (~shailangs@host86-185-102-18.range86-185.btcentralplus.com)
+[07:37:52] *** Joins: lichliu__ (~lichliu@219.142.145.152)
+[07:39:03] *** Quits: lichliu_ (~lichliu@219.142.145.152) (Read error: Connection reset by peer)
+[07:39:04] *** Quits: cuppajoe (~joe@ip70-171-93-122.no.no.cox.net) (Client Quit)
+[07:39:27] *** Quits: lichliu__ (~lichliu@219.142.145.152) (Read error: Connection reset by peer)
+[07:39:52] *** Joins: lichliu__ (~lichliu@219.142.145.152)
+[07:43:32] *** Quits: caveman (~caveman@gateway/tor-sasl/caveman) (Remote host closed the connection)
+[07:44:29] *** Joins: caveman (~caveman@gateway/tor-sasl/caveman)
+[07:45:40] *** Quits: gco (~gco@2601:647:4c00:50e0:7dfe:b7a3:3c0b:5aa5) (Quit: gco)
+[07:46:20] *** Joins: lichliu_ (~lichliu@219.142.145.152)
+[07:47:08] *** Quits: lichliu__ (~lichliu@219.142.145.152) (Read error: Connection reset by peer)
+[07:50:52] *** Joins: Techcable (~Techcable@168.235.93.147)
+[07:51:48] *** Joins: eddybilley (~freddieti@2a02-a454-7f89-1-ed6c-71bb-23cc-5eac.fixed6.kpn.net)
+[07:56:04] *** Quits: eddybilley (~freddieti@2a02-a454-7f89-1-ed6c-71bb-23cc-5eac.fixed6.kpn.net) (Ping timeout: 250 seconds)
+[07:57:25] *** Quits: mrgz (~mrgz@201-42-0-191.dsl.telesp.net.br) (Ping timeout: 240 seconds)
+[08:00:35] *** Quits: sdfgsdfg (~dfghsfgs@user/sdfgsdfg) (Quit: ayo yoyo ayo yoyo hololo, hololo.)
+[08:02:35] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Ping timeout: 256 seconds)
+[08:03:23] <jrm> ,english lbuf[strcspn(lbuf, "\r\n")] = '\0';
+[08:03:24] <candide> jrm: Assign to the element at location the result of the function `strcspn` with arguments `lbuf` and "\r\n" of `lbuf` the value '\0'.
+[08:03:53] <jrm> ,english strcspn(lbuf, "\r\n")
+[08:03:54] <candide> jrm: Call the function `strcspn` with arguments `lbuf` and "\r\n".
+[08:05:49] *** Quits: moog (~moog@107.126.53.146) (Ping timeout: 240 seconds)
+[08:06:05] *** Joins: moog (~moog@107.77.244.104)
+[08:07:12] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[08:08:07] <pragma-> https://lwn.net/SubscriberLink/885941/01fdc39df2ecc25f/
+[08:08:09] <candide> Title of pragma-'s link: Moving the kernel to modern C [LWN.net]
+[08:08:19] <pragma-> >2022
+[08:08:46] <pragma-> the linux kernel is finally considering moving from c89 to c99 or even c11+
+[08:09:15] <jrm> I thought lbuf[strcspn(lbuf, "\r\n")] = '\0'; would replace the first occurrence of *either* \r or \n with '\0', but that doesn't seem to be the case.
+[08:13:46] *** Joins: soapsudsxx (~soapsudsx@209.221.40.142)
+[08:15:13] *** Joins: waveclaw (~quassel@ip98-162-237-241.ok.ok.cox.net)
+[08:15:27] <jrm> Oh, it does.  My test was wrong.
+[08:19:13] *** Parts: Vsg21\[m] (~vtrollmat@2001:470:69fc:105::17a8) ()
+[08:19:16] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Ping timeout: 272 seconds)
+[08:19:42] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[08:20:50] *** Joins: thesemicolons (~thesemico@user/thesemicolons)
+[08:24:07] *** Joins: ominionx (~ominionx@7.sub-174-250-20.myvzw.com)
+[08:25:40] *** Joins: Juliu (~Juliu@2a02:810b:c640:3ec0:350b:c716:fa56:ddbc)
+[08:26:26] *** Quits: caveman (~caveman@gateway/tor-sasl/caveman) (Remote host closed the connection)
+[08:27:31] *** Joins: caveman (~caveman@gateway/tor-sasl/caveman)
+[08:29:10] *** Joins: pendarsoheil (~pendarsoh@63.238.189.98)
+[08:30:43] <pendarsoheil> I have a struct whose member values I am attempting to change within a void function but they are not changing. Am I simply doing something else wrong?
+[08:31:05] <cehteh> likely
+[08:31:08] <absentia> pendarsoheil: please paste code
+[08:31:28] <cehteh> vague question, vague answer :D
+[08:32:04] <caze> Why did you feel the need to include the fact that the function is void?
+[08:32:35] <pendarsoheil> https://pastebin.com/dQsthg2j
+[08:33:37] <caze> generateSparseSquareMatrix is wrong.
+[08:34:26] <caze> (SparseSquareMatrix) *sparseSquareMatrixPtr;
+[08:34:32] <caze> Why are you casting to the same type?
+[08:34:39] <absentia> `  SparseSquareMatrix sparseSquareMatrix = (SparseSquareMatrix) *sparseSquareMatrixPtr;` what do you think this is doing
+[08:34:42] <cehteh> just use the pointer
+[08:34:55] <cehteh> sparseSquareMatrixPtr->member = something
+[08:35:15] <cehteh> and eh why so many variables, why int
+[08:35:31] <absentia> `  int nonZeroRowStart[0];
+[08:35:33] <absentia>   sparseSquareMatrix.nonZeroRowStart = nonZeroRowStart;
+[08:35:42] <absentia> you can't do this, you are pointing to stack memory that will go out of scope soon
+[08:36:06] <caze> return sparseSquareMatrixPtr;
+[08:36:07] <cehteh> and no error handling at all
+[08:36:16] <caze> He does it a lot sooner than that.
+[08:36:26] <pendarsoheil> reading
+[08:36:45] <caze> Oh wait, nvm.
+[08:36:50] <caze> He does the malloc at the end lol.
+[08:36:53] <cehteh> the whole thing could be done in a better way with half as much code :D
+[08:37:02] <absentia> heh yeah
+[08:37:52] <cehteh> struct SparseSquareMatrix { ... lets say thats good as is (i wont use int's but mkay)
+[08:38:48] <absentia> the only thing i would store in a struct is a pointer to an array of memory and its length
+[08:39:02] <absentia> you can encode a 2d matrix with clever indexing schemes
+[08:39:12] <absentia> and probably compute the rest of these properties
+[08:39:23] <cehteh> yeah, just pretend its ok this way, i dont know the actual problem he wants to solve
+[08:39:36] <absentia> eh, you'd probably need row & col length actually
+[08:39:43] <cehteh> looks way to bulky too me but mkay
+[08:39:49] *** Quits: SGautam (uid286066@id-286066.ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[08:40:02] <cehteh> its square  rows== cols :D
+[08:40:17] *** Quits: soapsudsxx (~soapsudsx@209.221.40.142) (Remote host closed the connection)
+[08:40:34] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[08:40:46] <cehteh> ok sparse
+[08:40:48] <caze> pendarsoheil: Just pointing out, you seem to have a pattern in your struct of: int A_length; int *A; int B_Length; int *B; int C_Length; int *C;
+[08:41:03] <caze> pendarsoheil: Did you know that you can nest structs?
+[08:41:12] <cehteh> pendarsoheil: whats the worst case length that you expect?
+[08:41:27] *** Joins: soapsudsxx (~soapsudsx@209.221.40.142)
+[08:41:53] *** Joins: kurahaupo_ (~kurahaupo@pa49-197-101-189.pa.qld.optusnet.com.au)
+[08:43:14] <cehteh> calculate the worst wasted memory and then think if you really need some outsmart-yourself sparse implementation or if a dense one would just work, perhaps with a bitmap for accounting populated places (in case you cant use sentinel values)
+[08:44:05] <pendarsoheil> caze, yes, I am trying to get the fill function to work first
+[08:44:36] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Ping timeout: 272 seconds)
+[08:44:54] <cehteh> 5x5 matrix ... its just tiny, i would start to worry when its 50000x50000 and less than 50% populated
+[08:45:09] <caze> pendarsoheil: What is the format of your input file?
+[08:45:45] <pendarsoheil> cehteh, Well really I am trying to do a deep dive approach to c
+[08:45:48] <cehteh> pendarsoheil: get the datastructire right first
+[08:46:22] <cehteh> filling is just an utility, will be simple later when the groundwork is laied out well
+[08:46:31] *** Quits: sudoer (~username@c-73-4-114-202.hsd1.ma.comcast.net) (Ping timeout: 256 seconds)
+[08:47:08] <pendarsoheil> caze, input file should be correct -- printing the matrix gives me what I expect
+[08:48:12] <caze> pendarsoheil: Well then what is it doing that surprises you?
+[08:49:13] <pendarsoheil> well I expect `sparseSquareMatrix.nonZeroRowStartLength = nonZeroRowStartIndex;` which is `25` after assignment to continue to hold that value... right. So it's probably local variable
+[08:49:14] <pendarsoheil> haha.
+[08:50:03] <pendarsoheil> Besides creating a structure for the pattern in structure..... is there any way to make this easier?
+[08:50:04] <cehteh> struct SquareMartrix {size_t edge_len; int* data;}      as simple as that .. then      struct SquareMatrix* create_squarematrix(size_t len) { SquareMatrix* sm = malloc(sizeof(struct SquareMatrix)); sm->len = len;  sm->data = calloc(len*len, sizeof int); return sm}
+[08:50:51] <cehteh> (considering zeroed is ok, or do you need some other marker for unpopulated entries? or bitmap?)
+[08:50:56] <caze> pendarsoheil: Learn about the -> operator.
+[08:51:15] *** Quits: teepee (~teepee@openscad/teepee) (Ping timeout: 240 seconds)
+[08:51:36] <cehteh> pendarsoheil: you can simplify all this significantly
+[08:52:32] <cehteh> in case your mutation shall be atomic you may need to read from file into a temporary location and then swap/copy over when no error happend, but you dont evne care about the possibility of errors yet
+[08:52:48] <cehteh> (i didnt in the above example as well to keep it simple)
+[08:52:59] *** Joins: teepee (~teepee@openscad/teepee)
+[08:53:24] *** Quits: Cyp (~cyp@213.237.87.172) (Ping timeout: 240 seconds)
+[08:54:13] <cehteh> so first most important thing: whats sparse to you?
+[08:57:02] <pendarsoheil> thanks, it's like 4 integers per 1k rows or something like that. I'll consider the possibility thoo
+[08:57:17] *** Quits: ominionx (~ominionx@7.sub-174-250-20.myvzw.com) (Ping timeout: 272 seconds)
+[08:58:31] <cehteh> so its very sparse, consider a hashmap for such
+[08:58:58] <cehteh> completely different beast
+[08:59:04] <cehteh> some tree may work too
+[09:00:44] <cehteh> in rust i'd just say HashMap<(usize,usize), i32> .... but unfortunally in C its a bit more work :D
+[09:04:14] *** Quits: kurahaupo_ (~kurahaupo@pa49-197-101-189.pa.qld.optusnet.com.au) (Ping timeout: 272 seconds)
+[09:05:52] *** Joins: lichliu__ (~lichliu@219.142.145.152)
+[09:06:02] *** Quits: lichliu_ (~lichliu@219.142.145.152) (Read error: Connection reset by peer)
+[09:11:43] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[09:13:27] *** Quits: rgrinberg (~textual@2806:101e:7:70b6:5c5e:da58:6afa:ce86) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[09:16:38] *** Joins: evex (~user@45.131.193.113)
+[09:16:38] *** Quits: evexor (~user@176.217.239.55) (Read error: Connection reset by peer)
+[09:17:03] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[09:17:03] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[09:17:03] *** Joins: wroathe (~wroathe@user/wroathe)
+[09:17:33] *** Quits: twinkiecream (~tux1@user/twinkiecream) (Remote host closed the connection)
+[09:21:58] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 272 seconds)
+[09:23:03] *** Quits: raym (~raym@user/raym) (Ping timeout: 256 seconds)
+[09:23:18] *** Joins: raym (~raym@user/raym)
+[09:25:15] *** Joins: Aaron_ (~Aaron@c-73-73-137-44.hsd1.il.comcast.net)
+[09:25:19] *** Parts: Aaron_ (~Aaron@c-73-73-137-44.hsd1.il.comcast.net) (Leaving)
+[09:25:38] *** Joins: dave0 (~davezero@069.d.003.ncl.iprimus.net.au)
+[09:27:29] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[09:27:29] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[09:27:29] *** Joins: wroathe (~wroathe@user/wroathe)
+[09:29:21] *** Joins: lichliu_ (~lichliu@219.142.145.152)
+[09:30:07] *** Quits: lichliu__ (~lichliu@219.142.145.152) (Read error: Connection reset by peer)
+[09:32:41] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[09:33:01] *** Joins: moog_ (~moog@107.126.53.115)
+[09:35:00] *** Quits: moog (~moog@107.77.244.104) (Ping timeout: 240 seconds)
+[09:35:26] *** Joins: ominionx (~ominionx@7.sub-174-250-20.myvzw.com)
+[09:35:28] *** Quits: ominionx (~ominionx@7.sub-174-250-20.myvzw.com) (Remote host closed the connection)
+[09:36:37] *** Quits: analognoise (~analognoi@45.83.89.205) (Quit: Leaving)
+[09:40:08] *** Quits: suss (~user@user/suss) (Remote host closed the connection)
+[09:42:12] *** Joins: suss (~user@user/suss)
+[09:48:36] *** Quits: Alhazred (~Alhazred@86.106.74.40) (Ping timeout: 240 seconds)
+[09:50:15] *** Joins: pendarsoheil2 (~pendarsoh@173-255-243-214.ip.linodeusercontent.com)
+[09:50:45] *** Joins: Alhazred (~Alhazred@ool-18b829c5.dyn.optonline.net)
+[09:52:23] *** Joins: steve__ (~steve@ool-182c2b80.dyn.optonline.net)
+[09:52:36] *** Quits: pendarsoheil (~pendarsoh@63.238.189.98) (Ping timeout: 240 seconds)
+[09:55:02] *** Quits: kts (~kts@103.73.237.100) (Quit: Konversation terminated!)
+[09:57:52] *** Quits: mongrel (uid508343@id-508343.ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[10:00:36] *** Quits: raym (~raym@user/raym) (Ping timeout: 272 seconds)
+[10:00:50] *** Joins: mcleuder (~mcleuder@gateway/tor-sasl/mcleuder)
+[10:01:52] *** Joins: pendarsoheil3 (~pendarsoh@63.238.189.98)
+[10:01:59] *** Joins: raym (~raym@user/raym)
+[10:02:26] *** Joins: frost (~frost@user/frost)
+[10:02:27] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 256 seconds)
+[10:04:43] *** Quits: pendarsoheil2 (~pendarsoh@173-255-243-214.ip.linodeusercontent.com) (Ping timeout: 256 seconds)
+[10:06:47] *** Quits: korg815 (~korg815@user/korg815) (Quit: WeeChat 2.8)
+[10:08:41] *** Quits: euandreh (~euandreh@2804:14c:33:9fe5:5bf7:7723:bd1c:6732) (Ping timeout: 245 seconds)
+[10:10:08] *** Quits: Jong (~Jong@184-99-74-148.boid.qwest.net) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[10:15:57] *** Joins: cherrry9 (~jan@ded246.neoplus.adsl.tpnet.pl)
+[10:20:17] *** Quits: pendarsoheil3 (~pendarsoh@63.238.189.98) (Ping timeout: 256 seconds)
+[10:20:17] *** Quits: malina (~malina@user/malina) (Ping timeout: 256 seconds)
+[10:23:01] *** Joins: sh0ne (~sh0ne@2a06:5b00:6fb:2a00:5978:1fe6:e63:65c1)
+[10:26:27] *** Joins: ymwm (~yingmanwu@110.85.66.170)
+[10:27:51] *** Quits: ymwm (~yingmanwu@110.85.66.170) (Remote host closed the connection)
+[10:33:36] *** Quits: fluter (~fluter@user/fluter) (Read error: Connection reset by peer)
+[10:39:48] *** Quits: Juliu (~Juliu@2a02:810b:c640:3ec0:350b:c716:fa56:ddbc) (Ping timeout: 240 seconds)
+[10:41:31] *** Joins: lichliu__ (~lichliu@219.142.145.152)
+[10:43:43] *** Quits: lichliu_ (~lichliu@219.142.145.152) (Read error: Connection reset by peer)
+[10:50:28] *** Joins: kts (~kts@103.73.237.69)
+[10:51:01] <chiselfuse> hello fizzie
+[10:51:16] <chiselfuse> what do you think of this instead of the code i showed you yesterday?
+[10:51:27] <chiselfuse> sum += (uint16_t)*(uint8_t *)ptr<<8;
+[10:51:39] <chiselfuse> where more explicit order would be: sum  +=   ((uint16_t)  (*( (uint8_t *)ptr))  )<<8;
+[10:52:15] *** Joins: kamarat (~kamarat@81.161.60.198)
+[10:52:22] <chiselfuse> could it work or does that last cast not create any space?
+[10:52:55] *** Quits: System_Error (~SystemErr@user/systemerror) (Ping timeout: 240 seconds)
+[10:53:04] <ChoHag> ((uint16_t) *(uint8_t *) ptr) << 8
+[10:53:36] <chiselfuse> huh? but i just checked precedence and it looked fine
+[10:53:45] <ChoHag> It's the same just readable.
+[10:53:50] <chiselfuse> ah
+[10:53:51] *** Joins: lichliu_ (~lichliu@219.142.145.152)
+[10:54:01] *** Quits: zer0x_ (~zer0x@58.186.58.26) (Ping timeout: 256 seconds)
+[10:54:02] <ChoHag> (Opinionated of course).
+[10:54:12] <chiselfuse> what do you think though?
+[10:54:15] <chiselfuse> would it work?
+[10:54:42] <chiselfuse> i mean where "work" is doing what was intended :P
+[10:54:48] <ChoHag> Depends what was intended.
+[10:54:52] <chiselfuse> lol
+[10:54:58] <chiselfuse> uhmm
+[10:55:04] <dave0> chiselfuse: is this the same checksum code from yesterday?
+[10:55:06] <ChoHag> If you wanted a 16 bit value with the contents of an 8 bit value in its upper half, that's what you've got.
+[10:55:36] <chiselfuse> dave0: yes, but no, i re-wrote this a different way
+[10:55:43] <chiselfuse> the code you see on this screen i mean
+[10:56:00] <dave0> chiselfuse: you pretend to be the computer, and work through the function both as little endian, then as big endian
+[10:56:01] *** Quits: lichliu__ (~lichliu@219.142.145.152) (Read error: Connection reset by peer)
+[10:56:08] <ChoHag> I don't know the checksum algorthm at all so I couldn't say which bits should be put where.
+[10:56:34] <chiselfuse> ChoHag: i think it's exactly what i want to do
+[10:56:39] <chiselfuse> so the final cast
+[10:56:51] <chiselfuse> it creates memory
+[10:57:06] <dave0> chiselfuse: do a separate simulation of the code ... they work differently
+[10:57:07] <chiselfuse> not just reads from the bit after *ptr
+[10:57:25] *** Quits: Akiva (~Akiva@user/Akiva) (Ping timeout: 256 seconds)
+[10:57:34] <chiselfuse> dave0: but the result is the same
+[10:57:46] <chiselfuse> because in this case it works like this
+[10:57:48] <chiselfuse> and also
+[10:58:02] <chiselfuse> i found that explained in some rfc-related document
+[10:58:33] <chiselfuse> where they said that you can ignore endianness in some ways when computing because 1's complement etc, like people here said
+[10:58:35] <dave0> chiselfuse: the calculation is different, but through excessive tricks the result happens to work
+[10:58:55] <chiselfuse> yes
+[10:59:11] *** Joins: adip (~adip@den37.neoplus.adsl.tpnet.pl)
+[10:59:19] <dave0> chiselfuse: or if you prefer, work through the function once, but keep two tally's, one for big endian and one for little endian
+[10:59:41] <dave0> chiselfuse: i would draw it on paper
+[10:59:52] <chiselfuse> fizzie also explained it to me in another way yesterday, where you just add 00 padding at the end agnostically and then the algorithm ignores endianness
+[11:00:00] <ChoHag> Yeah I always end up giving up on bit twiddling in my head.
+[11:00:02] <chiselfuse> dave0: i drew it in vim :P
+[11:00:12] <chiselfuse> i did work through it
+[11:00:13] <dave0> chiselfuse: get a piece of paper, draw a line down the middle, and on the left side work through the function like it was little endian, andon th right side work through like it's big endian
+[11:00:13] <ChoHag> Pen and paper is the most important tool for programming.
+[11:00:33] <chiselfuse> dave0: i did the exact thing in my vim
+[11:00:38] <dave0> keep the steps together, and watch what happens to the `sum` variable
+[11:00:52] <dave0> okay sure text editor no worries
+[11:00:59] <chiselfuse> you don't beleive me, i will paste you my vim then
+[11:01:02] <chiselfuse> one sec
+[11:01:05] <dave0> i believe you
+[11:01:24] <dave0> ChoHag: absolutely
+[11:01:30] <dave0> in all seriousness
+[11:01:38] <dave0> drawing a picture really helps
+[11:02:41] *** Joins: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net)
+[11:02:45] <ChoHag> Vim can help too: https://www.jacvapour.com/vape-kits/aio-vim
+[11:03:05] <ChoHag> Hard to quit though.
+[11:03:22] <dave0> made for programmers :-)
+[11:03:30] <chiselfuse> hehe i use vim when i'm lazy to pull out pen and paper but otherwise yes, i have tons of papers with illustrations i drew of things
+[11:03:33] <dave0> ChoHag: did you used to smoke?
+[11:03:58] * ChoHag looks at the joint in his hand.
+[11:04:01] *** Quits: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net) (Remote host closed the connection)
+[11:04:02] <ChoHag> Uhh yes?
+[11:04:07] <dave0> puff puff go go go
+[11:04:15] *** Joins: adip_ (~adip@den37.neoplus.adsl.tpnet.pl)
+[11:04:26] *** Joins: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net)
+[11:04:31] <dave0> i quit before vapes took off
+[11:04:33] <chiselfuse> https://termbin.com/je2g
+[11:04:43] *** Quits: kamarat (~kamarat@81.161.60.198) (Changing host)
+[11:04:43] *** Joins: kamarat (~kamarat@user/kamarat)
+[11:05:13] <ChoHag> I never got into vaping.
+[11:05:19] <dave0> chiselfuse: you have to add them up with extra precision
+[11:05:22] <ChoHag> I started but a) no weed, and b) it's got a fucking computer in it.
+[11:05:29] <ChoHag> I don't need a computer in my cigarettes ffs.
+[11:05:53] <chiselfuse> dave0: what adding them up?
+[11:06:04] <chiselfuse> the confusion is about how they get stored in oddbyte
+[11:06:13] <dave0> ,cc printf("%x %x ", 0xeeff+0xaabb, 0xffee+0xbbaa);
+[11:06:13] <chiselfuse> then adding is no mental twister
+[11:06:15] <candide> dave0: 199ba 1bb98
+[11:06:59] <chiselfuse> ah, you mean how in the end they end up the same? i choose to just believe that they do :P
+[11:07:27] <dave0> chiselfuse: for now, ignore buffers that are not even length
+[11:07:47] <dave0> chiselfuse: that's the problem, you need to work your way through an example
+[11:07:59] <ChoHag> chiselfuse: It may help or confuse you to learn that << and >> work the same way *despite* the platform's orientation.
+[11:08:19] *** Joins: iomari891 (~iomari891@105.112.138.38)
+[11:08:19] <ChoHag> So (0xff<<8) is always the numeric value 0xff00 but may be stored in memory as the bytes ff 00 or 00 ff.
+[11:08:41] <dave0> notice 199ba 1bb98 are totally different? it's because the algorithm happens to still work if they are byte-swapped
+[11:09:04] <ChoHag> Possibly weirder with non-n²-bit bytes.
+[11:09:13] <dave0> it is 1'scomplement addition, which means any carry (that would happen with 2's complement) gets added to the low bit
+[11:09:27] <dave0> 99ba+1  and bb98+1
+[11:09:28] <chiselfuse> ChoHag: oh, i did not think about that..
+[11:09:29] *** Joins: KimK (~KimK@2600:8803:740b:4700:4a5b:39ff:fe0b:57d2)
+[11:09:49] <chiselfuse>  dave0: i mean, if you want to explain how they end up the same irrespective of endianness then go ahead
+[11:09:49] <dave0> which is 99bb and bb99 ... notice that now it makes more sense.. the values are clearly byte-swapped
+[11:10:02] <ChoHag> You need to take care to know when you're performing operations on numbers and when on bytes/words.
+[11:10:24] <dave0> chiselfuse: that's the whole point... someone was too clever and wrote something that happens to work for either endianess, even though the method depends on endianness
+[11:10:44] <chiselfuse> but dave0
+[11:10:46] <chiselfuse> like
+[11:10:48] <chiselfuse> one sec
+[11:11:00] <chiselfuse> i agree but i'll show you something
+[11:11:02] <chiselfuse> like
+[11:11:18] <ChoHag> Think with your mind, not with your fingers.
+[11:11:25] <dave0> it is incomprehensible ... really.. write it in assembly
+[11:11:31] <chiselfuse> they weren't the too clever ones, the too clever ones were the rfc guys
+[11:11:37] <chiselfuse> wait
+[11:11:37] *** Quits: vdamewood (~vdamewood@fedora/vdamewood) (Read error: Connection reset by peer)
+[11:11:43] <chiselfuse> i'll show you something
+[11:11:57] <ChoHag> They were just clever enough. UDP is still going strong.
+[11:12:17] <ChoHag> That's the trick. Be as clever as you need, but no cleverer.
+[11:12:23] <dave0> chiselfuse: it was obviously coded to be as fast as possible, at the expense of readability
+[11:12:26] <chiselfuse> dave0: http://www.faqs.org/rfcs/rfc1071.htm
+[11:12:28] <candide> Title of chiselfuse's link: RFC 1071 - Computing the Internet checksum (RFC1071)
+[11:12:39] <chiselfuse> dave0: Ctrl-f  "endian"
+[11:12:53] *** Joins: vdamewood (~vdamewood@fedora/vdamewood)
+[11:13:12] <chiselfuse> dave0: they *tell* us to code it this way
+[11:14:24] <chiselfuse> dave0: the paragraph before that too says why it works
+[11:14:29] <dave0> oh okay this is talking about the fastest possible implementations
+[11:14:45] <dave0> it mentions saving a microsecond
+[11:14:49] <ChoHag> Bear in mind this was in the days, and especially for a protocol, where the speed matters.
+[11:15:08] <ChoHag> This was 1988. Megabytes were uncommon and expensive.
+[11:15:44] <chiselfuse> what if we take into account the average number of udp datagrams sent in all history, how many secondsdoes that microsecond become
+[11:16:02] <ChoHag> Also the audience would have been expected to understand the code (all of them) and the engineering tradeoffs being worked.
+[11:16:02] <dave0> it starts to math-out towards the end
+[11:16:29] <ChoHag> Cray didn't choose particularly mnemonic instructions did he?
+[11:17:00] <ChoHag> The IBM ones are at least vaguely mumblable.
+[11:17:45] <chiselfuse> why is there a link to "Sex offenders" on top of the document?
+[11:18:21] <ChoHag> Maybe it answers a question frequently asked?
+[11:18:36] <ChoHag> Or it's a sponsored link?
+[11:18:39] <ChoHag> (ie. ad)
+[11:19:43] <chiselfuse> is it maybe common that people look up their local sex offenders? i guess for their childrens' safety and such?
+[11:20:50] <ChoHag> It's become a popular crime recently. Much popcorn and newspaper columns have been consumed.
+[11:21:00] <ChoHag> It was mostly serial killers in the previous millenium.
+[11:21:22] <chiselfuse> kids and their modern trends eh?
+[11:21:36] * ChoHag shrugs
+[11:21:41] <ChoHag> I turned the news off years ago.
+[11:21:52] <ChoHag> It wasn't new any more.
+[11:22:15] <ChoHag> Well actually I eventually discovered it never was.
+[11:22:41] *** Joins: the_lanetly_052_ (~the_lanet@194.135.167.86)
+[11:22:45] *** Quits: the_lanetly_052_ (~the_lanet@194.135.167.86) (Remote host closed the connection)
+[11:22:46] *** Joins: lichliu (~lichliu@219.142.145.152)
+[11:24:01] *** Quits: lichliu_ (~lichliu@219.142.145.152) (Read error: Connection reset by peer)
+[11:24:38] <chiselfuse> it's waste of time imo
+[11:24:47] <chiselfuse> entertaining at best though
+[11:25:52] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[11:27:01] *** Joins: freep (~freepppp@193.92.35.32.dsl.dyn.forthnet.gr)
+[11:27:31] <dave0> chiselfuse: i just noticed something... the rfc says summing 32 bits at a time also works
+[11:27:47] <dave0> chiselfuse: already the checksum code is obsolete... we have 64 bit machines now
+[11:28:03] *** Quits: freep (~freepppp@193.92.35.32.dsl.dyn.forthnet.gr) (Remote host closed the connection)
+[11:28:17] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[11:28:17] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[11:28:17] *** Joins: wroathe (~wroathe@user/wroathe)
+[11:28:17] <dave0> you could have    uint64_t sum;   and in the inner loop   sum += *(uint32_t *)ptr;
+[11:28:27] *** Joins: freep (~freepppp@193.92.35.32.dsl.dyn.forthnet.gr)
+[11:29:07] *** Joins: zer0bitz_ (~zer0bitz@2001:2003:f74d:b800:14c2:362b:4032:a582)
+[11:29:47] <dave0> we even have SIMD instructions (but i can't see how to use them off the top of my head)
+[11:29:50] *** Quits: ckdCreations (~ckdCreati@147.55.133.133) (Read error: Connection reset by peer)
+[11:30:00] <dave0> AVX2 could potentially sum 512 bits at a time
+[11:30:01] *** Quits: kts (~kts@103.73.237.69) (Quit: Konversation terminated!)
+[11:30:49] *** Joins: ckdCreations (~ckdCreati@147.55.133.137)
+[11:31:36] *** Quits: evex (~user@45.131.193.113) (Read error: Connection reset by peer)
+[11:32:44] *** Quits: zer0bitz (~zer0bitz@2001:2003:f74d:b800:fc98:bb5f:7d17:fcbd) (Ping timeout: 250 seconds)
+[11:33:07] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[11:33:23] *** Joins: evexor (~user@45.131.193.113)
+[11:36:35] *** Joins: loganlee[gnu] (~Thunderbi@user/loganlee)
+[11:37:00] *** Joins: kts (~kts@103.73.237.69)
+[11:38:24] *** Quits: soapsudsxx (~soapsudsx@209.221.40.142) (Remote host closed the connection)
+[11:40:42] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[11:41:13] *** Quits: sh0ne (~sh0ne@2a06:5b00:6fb:2a00:5978:1fe6:e63:65c1) (Quit: Textual IRC Client: www.textualapp.com)
+[11:45:19] *** Quits: kts (~kts@103.73.237.69) (Quit: Konversation terminated!)
+[11:45:31] *** Joins: mrig (~mrig@user/mrig)
+[11:49:16] *** Joins: eddybilley (~freddieti@2a02-a454-7f89-1-ed6c-71bb-23cc-5eac.fixed6.kpn.net)
+[11:51:51] *** Joins: lichliu_ (~lichliu@219.142.145.152)
+[11:52:13] *** Quits: lichliu (~lichliu@219.142.145.152) (Read error: Connection reset by peer)
+[11:53:24] *** Quits: eddybilley (~freddieti@2a02-a454-7f89-1-ed6c-71bb-23cc-5eac.fixed6.kpn.net) (Ping timeout: 240 seconds)
+[11:55:00] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 240 seconds)
+[11:57:52] *** Joins: lichliu__ (~lichliu@219.142.145.152)
+[11:58:56] *** Joins: Thedarkb1 (~Thedarkb@82.3.80.190)
+[11:59:13] *** Quits: Thedarkb (~Thedarkb@82.3.80.190) (Read error: Connection reset by peer)
+[12:00:19] *** Quits: lichliu_ (~lichliu@219.142.145.152) (Ping timeout: 256 seconds)
+[12:02:51] *** Quits: Hexmind (~Hexmind@modemcable049.25-131-66.mc.videotron.ca) (Quit: Leaving)
+[12:04:51] *** Joins: lichliu_ (~lichliu@219.142.145.152)
+[12:07:00] *** Quits: lichliu__ (~lichliu@219.142.145.152) (Ping timeout: 240 seconds)
+[12:07:29] <chiselfuse> dave0: oh really?
+[12:07:50] <dave0> sure
+[12:08:35] <chiselfuse> i don't know much about compiler optimization but could/should a compiler notic this stuff?
+[12:09:00] <chiselfuse> like, decide that it works on 64 bit chunks
+[12:09:02] <chiselfuse> or 32
+[12:09:15] <dave0> i don't know either
+[12:09:37] <dave0> there has been effort to automatically vectorize loops
+[12:09:38] <chiselfuse> i think i also saw the register specifier in the code i posted here
+[12:09:53] <chiselfuse> maybe it was written for 16 bit?
+[12:10:20] <dave0> chiselfuse: the link to the rfc 1071 has a date of september 1988 .. more than 30 years ago
+[12:10:38] <chiselfuse> yep, not sure of the code though
+[12:10:53] <dave0> it doesn't mention x86
+[12:10:57] <dave0> or arm
+[12:11:09] *** Quits: dogbert2 (~Bill@ip70-170-79-7.lv.lv.cox.net) (Remote host closed the connection)
+[12:11:25] *** Joins: dogbert2 (~Bill@ip70-170-79-7.lv.lv.cox.net)
+[12:11:48] <chiselfuse> you think linux kernel uses 32 bits for x86? i'm too lazy to look, it's all assembly
+[12:12:00] <dave0> chiselfuse: the algorithms would still be valid, just the example code is obsolete
+[12:12:02] <chiselfuse> and rabbit holes
+[12:12:09] <chiselfuse> within wrapper functions
+[12:12:34] <dave0> dunno, i heard linux code is not particularly pretty
+[12:12:58] *** Quits: mountaingoat (~mountaing@user/mountaingoat) (Ping timeout: 272 seconds)
+[12:13:14] <dave0> i might click on openbsd and see what they did
+[12:13:27] <chiselfuse> well i could look up the link to it that fizzie found, if you're interested i'll do it
+[12:13:37] <chiselfuse> to linux, thatis
+[12:13:59] <chiselfuse> but yeah, bsd sounds much cleaner to look at
+[12:14:30] <dave0> doh i don't know where to look.. https://cvsweb.openbsd.org/src/
+[12:15:06] <chiselfuse> i thought bsd shipped with source already :P
+[12:16:43] <chiselfuse> < fizzie> chiselfuse: Yes. Also that one's specifically for the fixed-length header bits. I think the one for an arbitrary-sized buffer is (for x86-64) is `csum_partial` here, but...: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/tree/arch/x86/lib/csum-partial_64.c#n35
+[12:16:49] <chiselfuse> dave0: linux ^
+[12:17:30] <dave0> oh okay looks like they use assembler
+[12:18:05] <chiselfuse> yeah all of it
+[12:19:22] *** Joins: lichliu__ (~lichliu@219.142.145.152)
+[12:19:56] *** Quits: lichliu_ (~lichliu@219.142.145.152) (Read error: Connection reset by peer)
+[12:25:04] <dave0> https://cvsweb.openbsd.org/src/sys/netinet/in_cksum.c?rev=1.9
+[12:25:10] <dave0> not as pretty as i expected
+[12:25:25] *** Quits: lichliu__ (~lichliu@219.142.145.152) (Read error: Connection reset by peer)
+[12:25:54] *** Joins: Rounin (~david@84.212.130.215)
+[12:27:25] *** Joins: kts (~kts@103.73.237.69)
+[12:27:47] *** Quits: manjaroi3 (~manjaro-i@125.131.131.26) (Ping timeout: 256 seconds)
+[12:30:54] *** Quits: crashrep (~crashrep@user/crashrep) (Quit: WeeChat 3.4)
+[12:33:24] *** Quits: fe23 (~fe23@2409:8a34:46c:f80:dd23:5c72:1c25:f23d) (Ping timeout: 240 seconds)
+[12:34:37] *** Quits: Rounin (~david@84.212.130.215) (Ping timeout: 240 seconds)
+[12:36:42] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[12:37:52] *** Joins: cadmio (~cadmio@151.37.49.197)
+[12:38:21] <cadmio> I don't know if you're familiar with Glib: this line https://paste.gnome.org/peyvnavln#line-45 must be introducing some non utf-8 character since the check at l.35 is passed
+[12:38:35] *** Joins: LucaTM (~LucaTM@user/lucatm)
+[12:40:38] *** Joins: hashfunc750 (~user@2601:5c0:c280:7090:78e9:5f82:1899:8c96)
+[12:40:41] *** Joins: jellie (~luv_panda@user/jellie)
+[12:44:25] *** Joins: aradesh (~aradesh@user/aradesh)
+[12:48:09] *** Joins: pavlushka (~pavlushka@user/pavlushka)
+[12:48:28] *** Quits: justaguy (~quassel@2a05:d014:742:eb00:7693:c44f:1fc3:29) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[12:48:47] *** Joins: justaguy (~quassel@2a05:d014:742:eb00:7693:c44f:1fc3:29)
+[12:50:55] *** Joins: hashfunc` (~user@2601:5c0:c280:7090:78e9:5f82:1899:8c96)
+[12:51:47] *** Quits: kts (~kts@103.73.237.69) (Quit: Konversation terminated!)
+[12:52:21] *** Joins: Juliu (~Juliu@2a02:810b:c640:3ec0:350b:c716:fa56:ddbc)
+[12:52:36] *** Joins: Livio (~livio@user/livio)
+[12:52:42] *** Joins: mountaingoat (~mountaing@user/mountaingoat)
+[12:54:36] *** Quits: hashfunc750 (~user@2601:5c0:c280:7090:78e9:5f82:1899:8c96) (Ping timeout: 240 seconds)
+[12:55:00] *** Joins: nyah (~nyah@05453449.skybroadband.com)
+[12:56:35] <chiselfuse> dave0: did you notice the comments there?
+[12:57:12] <chiselfuse> Checksum routine for Internet Protocol family headers (*Portable* Version).
+[12:57:18] <dave0> where it says it should be modified for each cpu to be as fast as possible?
+[12:57:20] *** Joins: test_ (flooded@gateway/vpn/protonvpn/flood/x-43489060)
+[12:57:27] <dave0> oh yeah portable
+[12:57:31] <chiselfuse> yeah
+[12:57:37] *** Joins: imm__ (~imm_@user/imm/x-3405860)
+[12:57:45] <chiselfuse> the one in the end too
+[12:58:25] <chiselfuse> "The last mbuf has odd # of bytes. Follow the standard (the odd byte may be shifted left by 8 bits or not as determined by endian-ness of the machine)"
+[12:58:47] <chiselfuse> so is this actually used by the bsd kernel?
+[12:59:10] <dave0> i guess? it's in the source
+[12:59:14] *** Joins: kts (~kts@103.73.237.69)
+[12:59:21] <chiselfuse> it's slow and outdated and self-aware too
+[12:59:50] *** Quits: imm_ (~imm_@user/imm/x-3405860) (Ping timeout: 272 seconds)
+[12:59:54] <chiselfuse> hmm
+[13:00:27] *** Quits: _flood (flooded@gateway/vpn/protonvpn/flood/x-43489060) (Ping timeout: 250 seconds)
+[13:00:55] <dave0> i couldn't find an amd64-specific version, but this was in i386    https://cvsweb.openbsd.org/src/sys/arch/i386/i386/in_cksum.s?rev=1.9
+[13:01:04] <dave0> it's hard to read
+[13:02:11] <dave0> i prefer higher level optimizations.. like trying to make it always sum an even number of bytes (perhaps by putting a 0 at the end of the buffer)
+[13:02:12] <chiselfuse> can i use this code btw? it's MIT right?
+[13:02:31] <dave0> oh i dunno
+[13:02:36] <dave0> it's open source
+[13:02:39] <chiselfuse> oh it says in the comment
+[13:02:39] <dave0> not copyleft
+[13:02:49] *** Parts: cadmio (~cadmio@151.37.49.197) (WeeChat 3.0)
+[13:02:58] *** Quits: Juliu (~Juliu@2a02:810b:c640:3ec0:350b:c716:fa56:ddbc) (Quit: Quit)
+[13:03:29] *** Joins: roan (~roan@user/roan)
+[13:03:56] *** Joins: fluter (~fluter@user/fluter)
+[13:07:00] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 240 seconds)
+[13:07:28] <chiselfuse> dave0: this is how masscan does it:
+[13:07:30] <chiselfuse> https://github.com/robertdavidgraham/masscan/blob/2895fa0acfe45983a3e9b2bbfadf25934c8d2c65/src/util-checksum.c
+[13:07:50] <chiselfuse> looks like almost no one does it 32 bits
+[13:08:53] <chiselfuse> that looks very inefficient too, the way it handles the odd byte
+[13:08:55] <ChoHag> That's straight from the RFC.
+[13:09:24] <ChoHag> I suspect people generally copy that --- *working* --- implementation without bothering to look into it.
+[13:09:43] <chiselfuse> copy what?
+[13:09:48] <chiselfuse> which code?
+[13:09:50] <ChoHag> The algorithm from the RFC.
+[13:10:15] <chiselfuse> well the one in the *actual* rfc of udp isn't detailed at all
+[13:10:16] <ChoHag> That's even got the same comments.
+[13:10:30] <ChoHag> (I think; they look familiar)
+[13:10:38] <chiselfuse> which document are you talking about,?
+[13:10:47] <chiselfuse> hmm
+[13:11:08] <ChoHag> RFC 1701 §4.1.
+[13:11:19] <ChoHag> I was wrong about the comments.
+[13:11:43] <chiselfuse> but it's very inefficient compared to other code we looked at so far
+[13:11:55] <chiselfuse> of masscan
+[13:12:10] <chiselfuse> and yet it's able to send millions of packets a minute
+[13:12:12] <ChoHag> And the algorithm for that matter but they don't look as different under examination as they at a glance.
+[13:12:21] <ChoHag> s/they at/they do at/
+[13:12:33] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[13:12:34] <chiselfuse> you mean it gets optimized?
+[13:12:43] <chiselfuse> i mean, it's c...
+[13:12:47] <ChoHag> AFAICT just changed.
+[13:13:05] <chiselfuse> define AFAICT
+[13:13:22] <ChoHag> There's an extra function call to _checksum_finish which isn't in the RFC but to achieve what looks like the same effect.
+[13:15:00] <dave0> chiselfuse: i like it
+[13:15:18] <ChoHag> You'll notice I'm being rather noncomittal.
+[13:15:43] <dave0> chiselfuse: _checksum_calculate is a fraction of the size of the other implementations
+[13:16:00] <ChoHag> I haven't considered how the algorithms work more than superficially because they have what I need: Function call/return signature and a comment describing what they do.
+[13:16:15] <dave0> chiselfuse: very straightforward to read... i would use this code
+[13:16:22] <ChoHag> They look good to me. Until told otherwise the details can be the compiler's problem.
+[13:16:36] <chiselfuse> what i showed you originall is a fraction of all of that, but you're so against how it looks like
+[13:16:41] <ChoHag> That way I'd get to move on to something that isn't god damn bit twiddling.
+[13:17:13] <ChoHag> Satisfy yourself that there are bits and that they can be twiddled, then move on and never do it again.
+[13:18:19] <chiselfuse> yeah, should add a comment /* this here is perfect, do not touch it or think about it */
+[13:18:48] <dave0> chiselfuse: i don't know anything about network packets, i just looked at _checksum_calculate() and _checksum_finish()
+[13:19:06] <dave0> chiselfuse: you could refer to the rfc 1021 or whatever number it was
+[13:20:09] <chiselfuse> hmm, i'm tempted to rewrite that old code but with register uint32_t
+[13:20:53] *** Joins: xa0s (~xa0s@mab.sdf.org)
+[13:21:19] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:d0d7:ba7d:5a5a:630f)
+[13:22:05] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[13:23:23] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[13:24:45] <ChoHag> You'll be working at Cisco within the week.
+[13:25:31] *** Quits: roan (~roan@user/roan) (Quit: Lost terminal)
+[13:28:26] <chiselfuse> nah, that's more like NASA level
+[13:28:52] *** Quits: kamarat (~kamarat@user/kamarat) (Quit: Leaving)
+[13:29:03] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[13:29:03] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[13:29:03] *** Joins: wroathe (~wroathe@user/wroathe)
+[13:30:08] *** Joins: elkalamar_ (elkalamar@gateway/vpn/airvpn/elkalamar)
+[13:32:43] *** Quits: elkalamar (elkalamar@gateway/vpn/airvpn/elkalamar) (Ping timeout: 256 seconds)
+[13:33:08] *** Joins: elkalamar__ (elkalamar@gateway/vpn/airvpn/elkalamar)
+[13:34:02] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 260 seconds)
+[13:35:36] *** Joins: elkalamar (elkalamar@gateway/vpn/airvpn/elkalamar)
+[13:35:57] *** Quits: elkalamar_ (elkalamar@gateway/vpn/airvpn/elkalamar) (Ping timeout: 272 seconds)
+[13:38:03] *** Quits: elkalamar__ (elkalamar@gateway/vpn/airvpn/elkalamar) (Ping timeout: 256 seconds)
+[13:41:51] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[13:43:31] *** Quits: skapate (~Skapata@user/skapata) (Remote host closed the connection)
+[13:43:32] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[13:43:51] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Client Quit)
+[13:45:27] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[13:45:46] *** Quits: Livio (~livio@user/livio) (Ping timeout: 245 seconds)
+[13:47:08] *** Quits: frost (~frost@user/frost) (Quit: Connection closed)
+[13:53:25] *** Quits: hashfunc` (~user@2601:5c0:c280:7090:78e9:5f82:1899:8c96) (Ping timeout: 240 seconds)
+[13:53:57] *** Joins: jkotra (~jkotra@122.169.141.242)
+[13:57:07] *** Joins: frost (~frost@user/frost)
+[14:01:32] *** Quits: unixpro1970 (~unixpro19@c-73-181-185-205.hsd1.wa.comcast.net) (Remote host closed the connection)
+[14:01:55] *** Joins: unixpro1970 (~unixpro19@c-73-181-185-205.hsd1.wa.comcast.net)
+[14:02:38] *** Joins: fe23 (~fe23@2409:8a34:46c:f80:599c:8d3b:2e15:2605)
+[14:02:43] *** Quits: Atque (~Atque@user/atque) (Quit: ...)
+[14:09:33] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 256 seconds)
+[14:10:04] *** Joins: Klinda (~superleag@user/klinda)
+[14:10:30] <zwr> that rfc has a cool section about what they called "deferred carries". I never thought of that trick
+[14:14:18] *** Joins: Pentode (~Pentode@mobile-166-177-59-244.mycingular.net)
+[14:19:12] *** Joins: koork (~koork@87.68.91.83)
+[14:19:52] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[14:21:14] *** Joins: ioxzev1z (~ioxzev1z@user/ioxzev1z)
+[14:25:07] *** Quits: shailangsa (~shailangs@host86-185-102-18.range86-185.btcentralplus.com) (Remote host closed the connection)
+[14:25:58] *** Quits: Betal (~Betal@user/betal) (Quit: WeeChat 3.4)
+[14:33:24] *** Joins: jusski (~user@78-56-151-211.static.zebra.lt)
+[14:36:54] *** Joins: Livio (~livio@user/livio)
+[14:39:50] *** Quits: koork (~koork@87.68.91.83) (Quit: Client closed)
+[14:40:37] *** Quits: loganlee[gnu] (~Thunderbi@user/loganlee) (Quit: loganlee[gnu])
+[14:42:43] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[14:47:43] *** Joins: random-nick (~random-ni@87.116.176.196)
+[14:48:30] *** Joins: shailangsa (~shailangs@host86-185-102-18.range86-185.btcentralplus.com)
+[14:48:48] *** imm__ is now known as imm_
+[14:48:50] *** Joins: blindguard (~blindguar@2a02:908:1864:c200::ef3c)
+[14:50:30] *** Joins: Jong (~Jong@184-99-74-148.boid.qwest.net)
+[14:54:39] *** Joins: strajder (~strajder@user/strajder)
+[14:54:48] <zwr> this seemed like the perfect code for https://gcc.gnu.org/onlinedocs/gcc/Integer-Overflow-Builtins.html but neither of GCC and Clang vectorize when I use it. Seems we'd have to write a bunch of versions and benchmark all of them to see which is better
+[14:55:25] <zwr> i.e is vectorization a good thing when internet packets are fairly small? is that gcc extension helpful? is the ancient code the best?
+[15:01:19] *** Joins: akuma (~i.am@user/marlboro)
+[15:01:34] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:d0d7:ba7d:5a5a:630f) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[15:06:29] *** Joins: bolovanos_ (~bolovanos@user/bolovanos)
+[15:10:56] *** Quits: suss (~user@user/suss) (Ping timeout: 272 seconds)
+[15:11:33] *** Quits: Livio (~livio@user/livio) (Ping timeout: 256 seconds)
+[15:15:22] *** Quits: beepbooptheory (~mik@c-73-13-112-194.hsd1.pa.comcast.net) (Ping timeout: 272 seconds)
+[15:29:06] *** Joins: Livio (~livio@user/livio)
+[15:32:34] *** Quits: csrf (~csrf@user/csrf) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[15:33:22] *** Joins: csrf (~csrf@user/csrf)
+[15:34:10] *** Quits: Tempesta (~Tempesta@user/tempesta) (Ping timeout: 265 seconds)
+[15:36:01] *** Quits: supakeen (~user@python/site-packages/supakeen) (Quit: WeeChat 3.4)
+[15:36:12] *** Quits: cation (cation@user/cation) (Ping timeout: 240 seconds)
+[15:36:31] *** Joins: supakeen (~user@python/site-packages/supakeen)
+[15:36:36] *** Joins: the_lanetly_052 (~the_lanet@194.135.169.254)
+[15:36:38] *** Joins: cation (cation@user/cation)
+[15:39:41] *** Joins: euandreh (~euandreh@2804:14c:33:9fe5:a81a:aef8:4653:fe6c)
+[15:41:24] *** Quits: pavlushka (~pavlushka@user/pavlushka) (Ping timeout: 240 seconds)
+[15:44:15] <chiselfuse> zwr: what do you mean with "vectorize?
+[15:45:24] *** Quits: jkotra (~jkotra@122.169.141.242) (Ping timeout: 240 seconds)
+[15:46:42] <sham1> Vectorising in this case probably means that the compiler or you manually would replace the looping with SIMD instructions
+[15:54:18] *** Joins: Tempesta (~Tempesta@user/tempesta)
+[15:57:47] *** Joins: suss (~user@user/suss)
+[15:59:05] *** Joins: kenanmarasli (~kenanmara@user/kenanmarasli)
+[15:59:09] *** Quits: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it) (Ping timeout: 256 seconds)
+[16:01:34] <the_lanetly_052> Hi, I know here is not place to ask this question but i need a help. I did have error when I compiled linux kernel is there any place to ask about that?
+[16:03:22] *** Quits: iomari891 (~iomari891@105.112.138.38) (Quit: WeeChat 3.3)
+[16:06:13] *** Quits: Everything (~Everythin@37.115.210.35) (Quit: leaving)
+[16:06:17] <zwr> chiselfuse: what sham1 says, when the compiler uses SIMD instructions in the loops.
+[16:10:06] <chiselfuse> do side effects in operators like ++ or << take effect when they are evaluated in the arithetic expression?
+[16:11:21] <chiselfuse> so like in    y = (x<<16) + (x<<16)    are the evaluated operands of the addition different?
+[16:11:32] *** Quits: jellie (~luv_panda@user/jellie) (Ping timeout: 240 seconds)
+[16:11:55] <sham1> There's no side-effect there
+[16:12:07] <chiselfuse> oh right
+[16:12:26] <sham1> y = (x <<= 16) + (x <<= 16); would
+[16:12:40] <sham1> And that'd be undefined behaviour because you don't have a sequence point around here
+[16:12:57] *** Joins: Y4knotiS (~YaknotiS@cpc1-cmbg18-2-0-cust87.5-4.cable.virginm.net)
+[16:12:57] <chiselfuse> what? what's a sequence point?
+[16:13:16] <sham1> But y = (x << 16) + (x << 16); => y = 2 * (x << 16); => y = (x << 17); essentially
+[16:14:25] <chiselfuse> did you typo the '+' into a '*' there?
+[16:15:12] <sham1> No
+[16:15:22] <sham1> x + x <=> 2 * x
+[16:15:27] <chiselfuse> oh
+[16:15:37] <sham1> That's just simple algebra
+[16:16:01] <chiselfuse> and how does it end up to 17?
+[16:16:04] <sham1> Well
+[16:16:12] <sham1> x << y is the same thing as x * 2 ^ y
+[16:16:20] <sham1> That is, 2 to the power of y
+[16:16:22] <chiselfuse> ah right
+[16:16:24] <chiselfuse> ye eya
+[16:16:28] <chiselfuse> yea*
+[16:16:32] <sham1> So (x << 16) is the same thing as x * 2^16
+[16:16:58] <chiselfuse> can you explain what you mean with "sequence point"?
+[16:17:08] <sham1> And when you do 2 * (x * 2^16), that's the same thing as x * 2 * 2^16 = x * 2^1 * 2^16 = x * 2^(1 + 16) = x * 2^17 = x << 17
+[16:17:17] *** Quits: Livio (~livio@user/livio) (Ping timeout: 240 seconds)
+[16:17:26] <sham1> ,give chiselfuse ,cc 5.1.2.3p3
+[16:17:39] <sham1> ,give chiselfuse c11 5.1.2.3p3
+[16:17:41] <candide> chiselfuse: http://www.iso-9899.info/n1570.html#5.1.2.3p3 [Program execution] Sequenced before is an asymmetric, transitive, pair-wise relation between evaluations executed by a single thread, which induces a partial order among those evaluations. Given any two evaluations A and B, if A is sequenced before B, then the execution of A shall precede the execution of B. (Conversely, if A is sequenced before B... <truncated; https://0x0.st/oKE-.txt>
+[16:17:45] <chiselfuse> thanks forthe bool algebra lesson :P
+[16:18:05] *** Joins: savolla (~quassel@95.10.207.236)
+[16:19:06] <sham1> Basically a sequence point can be thought of as a point in the execution of an expression where all the side-effectful subexpressions have been evaluated.
+[16:22:04] <chiselfuse> sham1: where do i find annex C.?
+[16:22:27] <sham1> chiselfuse: http://www.open-std.org/jtc1/sc22/wg14/www/docs/n1570.pdf
+[16:23:16] *** Quits: kts (~kts@103.73.237.69) (Ping timeout: 245 seconds)
+[16:26:15] *** Joins: pavlushka (~pavlushka@user/pavlushka)
+[16:26:32] *** Quits: cruncher (~cruncher@90.68.118.49) (Ping timeout: 240 seconds)
+[16:29:10] *** Quits: unlink2 (~unlink@p200300ebcf147a00a0c5a97c70c72521.dip0.t-ipconnect.de) (Read error: Connection reset by peer)
+[16:29:30] *** Joins: kts (~kts@103.73.237.203)
+[16:29:58] *** Joins: iomari891 (~iomari891@105.112.138.38)
+[16:31:42] <ioxzev1z> the_lanetly_052, #linux
+[16:32:09] *** Quits: freep (~freepppp@193.92.35.32.dsl.dyn.forthnet.gr) (Read error: Connection reset by peer)
+[16:33:20] *** Quits: the_lanetly_052 (~the_lanet@194.135.169.254) (Remote host closed the connection)
+[16:34:53] *** Joins: cvmn (~caveman@gateway/tor-sasl/caveman)
+[16:38:00] *** Joins: freep (~freepppp@193.92.35.32.dsl.dyn.forthnet.gr)
+[16:41:51] *** Quits: kts (~kts@103.73.237.203) (Quit: Konversation terminated!)
+[16:43:55] *** Quits: cvmn (~caveman@gateway/tor-sasl/caveman) (Ping timeout: 240 seconds)
+[16:45:05] *** Quits: evexor (~user@45.131.193.113) (Quit: Leaving)
+[16:45:56] *** Quits: cherrry9 (~jan@ded246.neoplus.adsl.tpnet.pl) (Ping timeout: 272 seconds)
+[16:47:25] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[16:47:25] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[16:47:25] *** Joins: wroathe (~wroathe@user/wroathe)
+[16:48:34] *** Joins: easyme (~easyme@user/easyme)
+[16:48:43] *** Joins: manjaroi3 (~manjaro-i@218.233.99.3)
+[16:50:05] *** Joins: ik (uid540109@id-540109.uxbridge.irccloud.com)
+[16:51:08] <chiselfuse> sham1: so y = (x <<= 16) + (z <<= 16); has no sequence points but is well-defined
+[16:51:29] <sham1> It's not well defined, it's undefined
+[16:51:36] <sham1> Err I misread
+[16:51:38] <sham1> Yeah, that's good
+[16:52:12] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 240 seconds)
+[16:52:12] <sham1> y = (x <<= 16) + (x <<= 16); would be undefined for the same reason y = x++ + x++; is, but since it's akin to y = x++ + z++; it's okay
+[16:52:26] <chiselfuse> oki
+[16:54:03] *** Quits: fe23 (~fe23@2409:8a34:46c:f80:599c:8d3b:2e15:2605) (Read error: Connection reset by peer)
+[16:54:49] *** Joins: fe23 (~fe23@2409:8a34:46c:f80:599c:8d3b:2e15:2605)
+[16:55:20] *** Joins: plastico (~plastico@neomutt/plastico)
+[16:55:26] *** Quits: frost (~frost@user/frost) (Quit: Ping timeout (120 seconds))
+[16:56:14] *** Joins: cherrry9 (~jan@ded246.neoplus.adsl.tpnet.pl)
+[16:56:18] *** Quits: noose (~noose@user/noose) (Quit: Bye)
+[16:56:31] *** Joins: noose (~noose@user/noose)
+[16:57:39] <easyme> https://dpaste.com/4ZT2V7WFU this works
+[16:57:57] <easyme> https://dpaste.com/CVRXBR5D9 , but this does not work, why?
+[17:00:37] <katsuragi> https://termbin.com/7mx1 the pdf gets sent to the destination but the pdf received is corrupted. help
+[17:02:52] <caze> easyme: C++?
+[17:02:58] <katsuragi> and mutt shows the file size as 117k but the file received is 49 bytes
+[17:03:03] <constxd> kings
+[17:03:59] <caze> easyme: Why do you have both an iterative loop, *and* a recursive call?
+[17:04:14] <fizzie> In *neither* of those does the recursive call make any sense whatsoever. But anyway, the reason they're different is that in the first one `start` is not modified, while in the other it is.
+[17:05:13] <caze> start == (len)
+[17:05:33] <constxd> katsuragi: king
+[17:05:45] <constxd> more context
+[17:06:26] <caze> easyme: Also why do you pass len, but then you hardcode i < 3?
+[17:07:35] <katsuragi> constxd: using libcurl to send an attachment MIME formatted, the pdf gets delivered with the appropriate headers but the received file has incorrect size
+[17:07:38] <caze> easyme: https://ideone.com/6X83mX
+[17:08:20] <constxd> katsuragi: yes i mean can u post the whole function
+[17:08:51] *** Quits: pavlushka (~pavlushka@user/pavlushka) (Ping timeout: 256 seconds)
+[17:10:11] <katsuragi> https://termbin.com/2bfe
+[17:10:58] *** Joins: mrgz (~mrgz@201-42-0-191.dsl.telesp.net.br)
+[17:11:12] <constxd> ok
+[17:11:22] *** Joins: Juliu (~Juliu@2a02:810b:c640:3ec0:350b:c716:fa56:ddbc)
+[17:11:24] *** Joins: gr33n7007h (~gr33n7007@user/gr33n7007h)
+[17:11:36] <constxd> for (cpp = &header_list; *cpp; cpp++)
+[17:11:42] <constxd> what do you think this is doing
+[17:11:49] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 240 seconds)
+[17:12:41] <katsuragi> copying the contents of headerlist to cpp
+[17:13:05] <katsuragi> address..
+[17:13:41] <fizzie> That part's quite wrong. You have a single pointer to a single string, not a list of things to loop over. (It might work by accident, though, if the next thing in memory is a null pointer.)
+[17:14:08] <constxd> ^
+[17:15:43] <katsuragi> i understand
+[17:15:47] <easyme> caze: I wanted output: 8 8 8 5 8 8 8 5 8 8 8 5 2
+[17:17:14] <easyme> caze: Is it possible to use ++start in recursive call?
+[17:17:46] <katsuragi> fizzie: and about the attachment not getting uploaded correctly?
+[17:17:53] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[17:18:46] <fizzie> katsuragi: That part's rather less clear. What's in those 49 bytes you get instead?
+[17:19:31] <katsuragi> I cannot open it in the pdf viewer..it's random data
+[17:20:10] <constxd> just print its contents with cat or so
+[17:20:18] <katsuragi> yes, random binary data
+[17:20:59] <katsuragi> http://i.imgur.com/NHzYfjh.png
+[17:21:01] <katsuragi> ^
+[17:21:07] <constxd> wait why do you have that base64 header
+[17:21:08] *** Quits: Giovanni (~Giovanni@176.67.166.45) (Read error: Connection reset by peer)
+[17:21:16] <constxd> it's not actually base64 encoded is it?
+[17:21:16] <fizzie> Well, I meant things like, is it the first 49 bytes of the PDF file?
+[17:21:55] <katsuragi> fizzie: no
+[17:22:20] <fizzie> Yeah, you'd want to add a curl_mime_encoder if you want it to auto-encode it for you.
+[17:22:23] *** Quits: jusski (~user@78-56-151-211.static.zebra.lt) (Read error: Connection reset by peer)
+[17:22:27] <katsuragi> constxd: the other emails in my mailbox had base64 encoding for application/pdf so I chose it
+[17:22:31] <fizzie> (It'll add the header for you.)
+[17:22:37] <katsuragi> oh okay
+[17:22:46] *** Joins: Giovanni (~Giovanni@216.73.161.200)
+[17:23:35] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 256 seconds)
+[17:26:22] <katsuragi> ah
+[17:26:34] <katsuragi> that fixed it
+[17:26:49] <katsuragi> thank you
+[17:28:25] <fizzie> TBH, not quite sure about that MIME structure as well. `part = curl_mime_addpart(mime); curl_mime_subparts(part, mime);` looks a *little* odd. You start with a MIME structure, add to it a new part (that's going to be a multipart/mixed container), but then add the original MIME structure as the subparts.
+[17:29:21] *** Quits: kenanmarasli (~kenanmara@user/kenanmarasli) (Quit: Leaving)
+[17:29:27] <katsuragi> no, I had to get rid of that. That was a mistake
+[17:29:37] <fizzie> Okay, I'll stop thinking about it then. :)
+[17:30:02] *** Joins: ymwm (~yingmanwu@117.26.69.135)
+[17:30:56] *** Joins: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it)
+[17:31:24] *** Joins: Rounin (~david@84.212.130.215)
+[17:32:32] *** Parts: easyme (~easyme@user/easyme) ()
+[17:32:46] *** Joins: wroathe (~wroathe@user/wroathe)
+[17:33:40] *** Joins: tech_exorcist (txrcst@user/tech-exorcist/x-0447479)
+[17:33:53] *** Quits: Giovanni (~Giovanni@216.73.161.200) (Ping timeout: 250 seconds)
+[17:34:58] *** Joins: Giovanni (~Giovanni@176.67.166.45)
+[17:35:46] *** Joins: LordJohn (~lordjohn@l37-194-102-53.novotelecom.ru)
+[17:42:05] *** Joins: alch (~alch@151.46.54.221)
+[17:59:15] *** Joins: frost (~frost@user/frost)
+[18:07:18] *** Quits: gr33n7007h (~gr33n7007@user/gr33n7007h) (Quit: WeeChat 3.4)
+[18:10:30] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[18:12:38] *** Joins: gr33n7007h (~gr33n7007@user/gr33n7007h)
+[18:12:49] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[18:14:36] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 240 seconds)
+[18:16:08] *** Joins: cvmn (~caveman@gateway/tor-sasl/caveman)
+[18:17:06] *** Joins: shivesh (~shivesh@user/shivesh)
+[18:17:26] *** Quits: akuma (~i.am@user/marlboro) (Quit: a pentium 100 "running" windows 11 trying to play Last of Us II at ps4emu... that's my brain trying understand 0->R->R->R/2R->0)
+[18:19:17] *** Quits: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it) (Read error: Connection reset by peer)
+[18:20:33] *** Quits: dave0 (~davezero@069.d.003.ncl.iprimus.net.au) (Quit: dave's not here)
+[18:20:49] *** Joins: pavlushka_ (~pavlushka@user/pavlushka)
+[18:20:51] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[18:20:51] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[18:20:51] *** Joins: wroathe (~wroathe@user/wroathe)
+[18:20:56] *** Quits: frost (~frost@user/frost) (Ping timeout: 250 seconds)
+[18:25:21] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[18:26:04] *** Joins: freakazoid343 (~matt@2603:9000:cf03:86c3:8059:ca9e:cb16:df78)
+[18:29:05] *** Joins: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it)
+[18:29:39] *** Quits: freakazoid333 (~matt@2603-9000-cf03-86c3-b5a4-a7e7-7857-050c.inf6.spectrum.com) (Ping timeout: 256 seconds)
+[18:29:43] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[18:29:43] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[18:29:43] *** Joins: wroathe (~wroathe@user/wroathe)
+[18:30:33] *** Quits: plastico (~plastico@neomutt/plastico) (Quit: WeeChat 3.4)
+[18:31:05] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 250 seconds)
+[18:31:53] *** Joins: plastico (~plastico@neomutt/plastico)
+[18:34:07] *** Joins: masoudd (~masoudd@user/masoudd)
+[18:34:52] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Ping timeout: 272 seconds)
+[18:35:32] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[18:36:38] *** Quits: ioxzev1z (~ioxzev1z@user/ioxzev1z) (Quit: Leaving)
+[18:38:31] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[18:38:46] *** Joins: FH_thecat (~FH_thecat@75.11.25.212.ftth.as8758.net)
+[18:39:23] *** Joins: hiroshi_ (~freedom@151.35.208.175)
+[18:40:04] *** Joins: Hexmind (~Hexmind@modemcable049.25-131-66.mc.videotron.ca)
+[18:42:37] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 240 seconds)
+[18:44:04] *** Quits: plastico (~plastico@neomutt/plastico) (Quit: WeeChat 3.4)
+[18:44:36] *** Joins: kenanmarasli (~kenanmara@user/kenanmarasli)
+[18:44:43] *** Joins: Livio (~livio@user/livio)
+[18:48:15] *** Joins: ferdna (~ferdna@user/ferdna)
+[18:48:19] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 256 seconds)
+[18:56:37] <pragma-> smh lwn.net requires you to manually escape html characters when writing code blocks. this is in 2022! https://lwn.net/Articles/886144/
+[18:56:39] <candide> Title of pragma-'s link: Moving the kernel to modern C [LWN.net]
+[18:56:41] <pragma-> absurd
+[18:58:29] *** Quits: fbiagent (~fbiagent@user/fbiagent) (Remote host closed the connection)
+[18:59:29] *** Joins: X-Scale (~ARM@135.232.28.37.rev.vodafone.pt)
+[19:00:21] <sham1> It is quite absurd
+[19:01:54] <constxd> cringe, even
+[19:01:58] *** Joins: pulse (~pulse@user/pulse)
+[19:04:08] *** Joins: Guest254 (~mt@2804:4d98:f800:17:45fc:761:fc1:e5c3)
+[19:04:12] *** Quits: ymwm (~yingmanwu@117.26.69.135) (Ping timeout: 240 seconds)
+[19:05:41] *** Joins: mahmutov (~mahmutov@37.155.58.102)
+[19:06:35] *** Parts: Guest254 (~mt@2804:4d98:f800:17:45fc:761:fc1:e5c3) ()
+[19:08:47] *** Joins: terminalpusher (~terminalp@2a01:586:91e7:1:6498:94da:f7da:72b2)
+[19:09:15] <Amun-Ra> she'll be righ
+[19:09:17] <Amun-Ra> t
+[19:11:47] <NRK> oof, wtf
+[19:12:05] <NRK> why don't they use markdown?
+[19:12:12] *** Quits: dogbert2 (~Bill@ip70-170-79-7.lv.lv.cox.net) (Remote host closed the connection)
+[19:12:29] *** Joins: dogbert2 (~Bill@ip70-170-79-7.lv.lv.cox.net)
+[19:12:43] *** Quits: pavlushka_ (~pavlushka@user/pavlushka) (Quit: See you on the other side)
+[19:12:57] *** Joins: ioxzev1z (~ioxzev1z@user/ioxzev1z)
+[19:13:14] *** Joins: pavlushka (~pavlushka@user/pavlushka)
+[19:15:49] *** Quits: Juliu (~Juliu@2a02:810b:c640:3ec0:350b:c716:fa56:ddbc) (Quit: Quit)
+[19:17:25] *** Joins: meator (~meator@user/meator)
+[19:19:19] *** Joins: ian| (~ian|@cpe-104-228-101-152.stny.res.rr.com)
+[19:19:37] <ian|> how do i create an on-the-fly array of type T* or T[x]
+[19:20:27] <ian|> this is my simple code: https://paste.centos.org/view/dfc488af
+[19:21:05] <ian|> as the error message says, `{DT_VOID}` is not a valid array of type `enum data_type*` or [x]
+[19:22:46] <sham1> ian|: (enum data_type []){DT_VOID}
+[19:22:59] <ian|> ah yes, i just tested that and it worked
+[19:23:10] <ian|> rather annoying that the language cannot infer that type though
+[19:23:42] *** Joins: Waynes (~Waynes@user/waynes)
+[19:25:51] *** Quits: LordJohn (~lordjohn@l37-194-102-53.novotelecom.ru) (Read error: Connection reset by peer)
+[19:29:16] *** Joins: skapata (~Skapata@2804:14c:87b0:9d2e:54ee:ce2:bd55:ea75)
+[19:29:16] *** Quits: skapata (~Skapata@2804:14c:87b0:9d2e:54ee:ce2:bd55:ea75) (Changing host)
+[19:29:16] *** Joins: skapata (~Skapata@user/skapata)
+[19:30:09] *** Quits: kolmogorov[m] (~kolmogoro@2001:470:69fc:105::e03b) (Quit: You have been kicked for being idle)
+[19:31:49] <wroathe> pragma-: You're absurd
+[19:32:04] *** Quits: ian| (~ian|@cpe-104-228-101-152.stny.res.rr.com) (Quit: ian|)
+[19:37:31] *** Joins: mcleuder_ (~mcleuder@gateway/tor-sasl/mcleuder)
+[19:37:55] *** Quits: mcleuder (~mcleuder@gateway/tor-sasl/mcleuder) (Ping timeout: 240 seconds)
+[19:40:44] *** Quits: bolovanos_ (~bolovanos@user/bolovanos) (Ping timeout: 272 seconds)
+[19:42:24] <pragma-> wroathe: you're a bird
+[19:42:44] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[19:43:49] <Amun-Ra> he'll only fly away, he doesn't know where his soul is […]
+[19:45:35] *** Quits: cvmn (~caveman@gateway/tor-sasl/caveman) (Ping timeout: 240 seconds)
+[19:45:57] *** Quits: bebyx (~Thunderbi@user/bebyx) (Read error: Connection reset by peer)
+[19:46:14] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[19:46:32] *** Quits: terminalpusher (~terminalp@2a01:586:91e7:1:6498:94da:f7da:72b2) (Remote host closed the connection)
+[19:47:00] *** Quits: dld (~davidlowr@2601:197:600:1210:ed7b:e2c7:ff84:e953) (Ping timeout: 240 seconds)
+[19:47:49] *** Quits: slidercrank (~slidercra@user/slidercrank) (Ping timeout: 256 seconds)
+[19:49:42] *** Joins: dld (~davidlowr@73.61.8.214)
+[19:49:52] *** Quits: pavlushka (~pavlushka@user/pavlushka) (Quit: See you on the other side)
+[19:54:37] *** Quits: Livio (~livio@user/livio) (Ping timeout: 240 seconds)
+[19:57:24] <chiselfuse> *((uint16_t *)ptr)++;
+[19:57:26] <chiselfuse> error: lvalue required as increment operand
+[19:57:35] *** Joins: freakazoid12345 (~matt@2603-9000-cf03-86c3-0c55-f913-c8d2-48f1.inf6.spectrum.com)
+[19:57:40] <chiselfuse> i don't understand what's wrong with it
+[19:58:44] <sham1> Did you mean (*(uint16_t *)ptr)++;
+[19:58:46] <wroathe> pragma-: touche
+[19:58:59] <chiselfuse> sham1: no
+[19:59:09] <chiselfuse> i want the post-increment to do first
+[19:59:19] <chiselfuse> then i dereference the evaluation
+[19:59:20] <sham1> Well, (uint16_t *)ptr isn't an lvalue so you can't increment it
+[19:59:42] <sham1> *(((uint16_t *)ptr) + 1)
+[19:59:47] <chiselfuse> yes i can, it complains when i add the * at the beginning
+[19:59:57] <chiselfuse> i can increment (uint16_t *)ptr
+[20:00:03] <NRK> unless you're doing it for learning, you shouldn't be writing shit like that
+[20:00:38] <chiselfuse> please be more polite when referring to shit i do
+[20:00:47] *** Quits: freakazoid343 (~matt@2603:9000:cf03:86c3:8059:ca9e:cb16:df78) (Ping timeout: 250 seconds)
+[20:01:26] *** Joins: AbleBacon (~AbleBacon@user/AbleBacon)
+[20:01:38] *** Quits: cthi (~cthi@99-12-166-26.lightspeed.rlghnc.sbcglobal.net) (Ping timeout: 272 seconds)
+[20:01:41] *** Quits: hiroshi_ (~freedom@151.35.208.175) (Quit: hiroshi_)
+[20:02:27] <chiselfuse> sham1: (uint16_t *)ptr++;   // this compiles
+[20:03:32] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Ping timeout: 272 seconds)
+[20:04:08] *** Joins: soapsudsxx (~soapsudsx@209.221.40.142)
+[20:05:36] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[20:05:38] *** Joins: the_lanetly_052 (~the_lanet@194.135.154.101)
+[20:06:10] <chiselfuse> i think i actually wanted sum += *((uint16_t *)ptr++);
+[20:06:19] <pragma-> absurd
+[20:06:31] <pragma-> why do you want to put so much into one statement
+[20:06:36] <pragma-> break that up into 3 statements or something
+[20:06:46] <chiselfuse> because fuck noobs
+[20:07:11] <chiselfuse> excuse me...
+[20:07:11] <pragma-> a pro like you should be able to figure this out then
+[20:07:25] <chiselfuse> i never said i was a pro :P
+[20:10:11] *** Quits: Techcable (~Techcable@168.235.93.147) (Ping timeout: 256 seconds)
+[20:11:25] <chiselfuse> is there a redundant set of brackets in there?
+[20:11:38] <chiselfuse> *(uint16_t *)ptr++;
+[20:11:58] <chiselfuse> i want to post-increment, then cast, then dereference
+[20:12:28] <chiselfuse> it doesn't need any brackets right?
+[20:13:36] *** Joins: Livio (~livio@user/livio)
+[20:15:13] <masoudd> >because fuck noobs    You mean fuck yourself 6 month from now trying to figure out wtf this is doing. right?
+[20:16:19] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[20:16:53] *** Joins: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net)
+[20:17:41] *** Quits: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net) (Remote host closed the connection)
+[20:23:57] *** Joins: cadmio (~cadmio@151.37.15.60)
+[20:23:59] <cadmio> Hello
+[20:24:21] <cadmio> I've a conflict at this line https://paste.gnome.org/p9sp2rjws#line-28
+[20:24:39] *** Joins: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net)
+[20:24:43] *** Joins: pendarsoheil (~pendarsoh@173-255-243-214.ip.linodeusercontent.com)
+[20:24:54] <pendarsoheil> How does C overflow behave?
+[20:24:57] <cadmio> I need a const char because g_file_replace_contents_async takes a const as 2nd argument
+[20:25:19] <pendarsoheil> If I have a long long and store it in an int, why is the resultant overflow the value that it is?
+[20:25:24] *** Quits: immibis (~hexchat@62.156.144.218) (Ping timeout: 240 seconds)
+[20:26:15] *** Quits: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net) (Client Quit)
+[20:27:18] *** Joins: fbiagent (~fbiagent@user/fbiagent)
+[20:27:24] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 240 seconds)
+[20:28:59] <ioxzev1z> masoudd, all programmers write sufficient comments that it's impossible to not know 6 months from now
+[20:31:05] *** Joins: Juliu (~Juliu@2a02:810b:c640:3ec0:350b:c716:fa56:ddbc)
+[20:32:12] <cadmio> if the memory for that pointer was not dinamically allocated do I have to free it?
+[20:32:34] *** Joins: auk (auk@gateway/vpn/protonvpn/auk)
+[20:33:10] <beastie> cadmio: if it has not been dynamically allocated, how are you going to free it?
+[20:33:41] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[20:33:41] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[20:33:41] *** Joins: wroathe (~wroathe@user/wroathe)
+[20:33:57] <beastie> are you planning to call free() ?
+[20:33:59] *** Joins: seninha (~chatzilla@user/seninha)
+[20:34:40] <beastie> you cannot free() anything that hast not been allocated with malloc() (directly or indirectly)
+[20:34:50] <cadmio> wait in my case gtk_text_buffer_get_text returns a memory allocated pointer
+[20:36:14] <beastie> what does the documentation of that function about how has it been allocated... can you use free() with it?
+[20:37:12] <cadmio> it says "The returned string is dynamicallyallocated and should be freed using g_free."
+[20:37:25] *** Joins: Zambyte (~Zambyte@cpe-104-228-60-14.nycap.res.rr.com)
+[20:37:28] <pragma-> usually if a library provides a function that allocates something, it'll also provide a function to deallocate rather than telling you to use free()
+[20:37:50] <cadmio> I cannot free a const pointer
+[20:37:59] <beastie> then use g_free() (it's probable that gtk uses a memory allocator independent or dependent of malloc()/free())
+[20:38:10] *** Joins: flooded (flooded@gateway/vpn/protonvpn/flood/x-43489060)
+[20:38:15] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[20:38:22] <beastie> hmmmm... why cannot you free a const pointer?
+[20:38:42] <cadmio> warning: passing argument 1 of ‘g_free’ discards ‘const’ qualifier from pointer target type
+[20:39:19] <beastie> yes.... but read the first word  (warning)  it says... this is probably not what you want... but it's not an error.
+[20:40:14] *** Joins: wingsorc__ (~wingsorc@user/wingsorc)
+[20:40:32] <beastie> the problem is that probably you have stored the pointer into a const variable... the conversion from writable to const is allowed without warning... but the reverse is not.  If you try to convert a const value into a writable one, you will receive a warning.. .probably you should now use a const pointer for a writable variable.
+[20:40:33] *** Quits: test_ (flooded@gateway/vpn/protonvpn/flood/x-43489060) (Ping timeout: 256 seconds)
+[20:40:48] <beastie> (for a dynamically allocated buffer)
+[20:41:21] <cadmio> g_file_replace_contents_async requires a const pointer to char
+[20:41:46] <beastie> requires?  have you tried to pass a non const pointer?
+[20:42:25] <beastie> you can pass a non const pointer to a function that has a const declared pointer.... it means it is not going to change the referred contents....
+[20:43:08] <beastie> you are converting the pointer into a const pointer for the inside of the function not be able to touch it.
+[20:43:26] *** Quits: Livio (~livio@user/livio) (Ping timeout: 272 seconds)
+[20:43:50] <beastie> but that's normal use.... have you tried?  the const <-- non-const is possible in this direction... but not in the other.
+[20:44:13] <cadmio> right, I can avoid to use const but I've to free in save_file_complete
+[20:45:05] <beastie> a function that has a const pointer is not requiring a const pointer... you can perfectly pass it a const pointer... or non const... whe you convert the pointer it becomes const, and the compiler doesn't allow you to write the pointed value....
+[20:45:51] <beastie> how have you declared the pointer?
+[20:45:58] *** Quits: fbiagent (~fbiagent@user/fbiagent) (Remote host closed the connection)
+[20:46:10] <cadmio> ok. So I need to add a new member in the structure for that string and pass it in userData and then free it in save_file_complete
+[20:46:16] <beastie> const type *p = something;
+[20:46:16] <cadmio> this is a bit boring
+[20:46:28] <beastie> or type * const p = something; ???
+[20:47:26] *** Quits: phryk (~totallyno@user/phryk) (Quit: ZNC 1.8.2 - https://znc.in)
+[20:47:47] *** Joins: immibis (~hexchat@62.156.144.218)
+[20:49:02] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Ping timeout: 240 seconds)
+[20:49:11] *** Joins: Enitin (~Enitin@82.102.22.85)
+[20:49:31] *** Quits: kuber (~kuber@75-172-6-223.tukw.qwest.net) (Remote host closed the connection)
+[20:49:58] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:d0d7:ba7d:5a5a:630f)
+[20:51:43] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[20:52:09] *** Joins: wroathe (~wroathe@user/wroathe)
+[20:53:21] *** Joins: plastico (~plastico@neomutt/plastico)
+[20:55:55] *** Quits: pendarsoheil (~pendarsoh@173-255-243-214.ip.linodeusercontent.com) (Quit: Leaving)
+[20:57:58] <cadmio> I think it is better off to use g_file_replace_contents_bytes_async
+[20:58:09] *** Quits: FH_thecat (~FH_thecat@75.11.25.212.ftth.as8758.net) (Quit: Leaving)
+[20:58:39] *** Quits: Enitin (~Enitin@82.102.22.85) (Ping timeout: 272 seconds)
+[21:01:11] *** Quits: tetravus (~tetravus@c-71-231-69-112.hsd1.wa.comcast.net) (Ping timeout: 272 seconds)
+[21:01:18] *** Joins: Cyp (~cyp@213.237.85.100)
+[21:01:25] *** Joins: Enitin (~Enitin@82.102.22.85)
+[21:02:04] <fizzie> If you have a `char *` and a function wants a `const char *`, you can just pass your `char *` to it.
+[21:02:25] <fizzie> Since `gtk_text_buffer_get_text` returns a `char *`, there should be no particular need to use a `const char *` for its result.
+[21:04:14] *** Quits: fe23 (~fe23@2409:8a34:46c:f80:599c:8d3b:2e15:2605) (Quit: fe23)
+[21:04:29] <fizzie> ,cc  char *get(void) { return strdup("hello"); }  void use(const char *str) { puts(str); }  char *str = get(); use(str); free(str);  // no issues with const-ness at all
+[21:04:31] <candide> fizzie: hello
+[21:05:32] <fizzie> I guess you did cover all that, I just missed it while skimming.
+[21:05:37] *** Quits: Enitin (~Enitin@82.102.22.85) (Ping timeout: 240 seconds)
+[21:08:13] *** Joins: Enitin (~Enitin@82.102.22.84)
+[21:08:14] *** Joins: xyaan (~xaayanx@2401:4900:385f:e6f1:f12d:9c31:f63:1f58)
+[21:11:49] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Ping timeout: 240 seconds)
+[21:12:13] *** Joins: saayanx (~xaayanx@2401:4900:385f:e6f1:f12d:9c31:f63:1f58)
+[21:12:41] *** Joins: Livio (~livio@user/livio)
+[21:14:36] *** Quits: xyaan (~xaayanx@2401:4900:385f:e6f1:f12d:9c31:f63:1f58) (Ping timeout: 240 seconds)
+[21:16:37] *** Quits: cherrry9 (~jan@ded246.neoplus.adsl.tpnet.pl) (Ping timeout: 240 seconds)
+[21:17:01] *** Quits: Livio (~livio@user/livio) (Ping timeout: 245 seconds)
+[21:17:07] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[21:17:34] *** Joins: Torr (~Torr@user/torr)
+[21:18:27] *** Joins: cation21 (cation@user/cation)
+[21:18:34] *** Quits: saayanx (~xaayanx@2401:4900:385f:e6f1:f12d:9c31:f63:1f58) (Quit: Leaving)
+[21:18:36] *** Quits: cation (cation@user/cation) (Ping timeout: 240 seconds)
+[21:19:01] *** Joins: Livio (~livio@user/livio)
+[21:19:19] *** Quits: Enitin (~Enitin@82.102.22.84) (Ping timeout: 256 seconds)
+[21:19:49] *** Joins: Enitin (~Enitin@82.102.22.85)
+[21:20:03] *** Parts: Waynes (~Waynes@user/waynes) ()
+[21:21:47] *** cation21 is now known as cation
+[21:22:30] *** Quits: Torr (~Torr@user/torr) (Quit: leaving)
+[21:23:58] *** Joins: tetravus (~tetravus@c-71-231-69-112.hsd1.wa.comcast.net)
+[21:24:56] *** Joins: Torr (~Torr@user/torr)
+[21:25:31] *** Quits: MrMobius (~MrMobius@pool-108-31-243-125.washdc.fios.verizon.net) (Read error: Connection reset by peer)
+[21:25:51] *** Joins: rgrinberg (~textual@2806:101e:7:70b6:5c5e:da58:6afa:ce86)
+[21:25:58] *** Joins: MrMobius (~MrMobius@pool-108-31-243-125.washdc.fios.verizon.net)
+[21:27:16] *** Quits: shivesh (~shivesh@user/shivesh) (Quit: leaving)
+[21:27:49] *** Joins: Maaaanu (~manuel@ip5b429007.dynamic.kabel-deutschland.de)
+[21:28:01] *** Joins: FluffyMask (~masque@user/fluffymask)
+[21:28:41] *** Quits: Livio (~livio@user/livio) (Ping timeout: 256 seconds)
+[21:28:57] *** Quits: Enitin (~Enitin@82.102.22.85) (Ping timeout: 256 seconds)
+[21:28:57] *** Quits: cadmio (~cadmio@151.37.15.60) (Read error: Connection reset by peer)
+[21:29:07] *** Joins: phryk (~totallyno@user/phryk)
+[21:30:30] *** Joins: Enitin (~Enitin@82.102.22.86)
+[21:30:42] *** Quits: phryk (~totallyno@user/phryk) (Remote host closed the connection)
+[21:32:12] *** Quits: tetravus (~tetravus@c-71-231-69-112.hsd1.wa.comcast.net) (Ping timeout: 240 seconds)
+[21:33:37] *** Joins: cadmio (~cadmio@na-19-87-67.service.infuturo.it)
+[21:34:18] *** Joins: tetravus (~tetravus@c-71-231-69-112.hsd1.wa.comcast.net)
+[21:34:28] *** Joins: phryk (~totallyno@user/phryk)
+[21:35:03] *** Joins: kurahaupo_ (~kurahaupo@pa49-197-101-189.pa.qld.optusnet.com.au)
+[21:36:00] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Ping timeout: 272 seconds)
+[21:36:07] *** Joins: unlink2 (~unlink@p200300ebcf147a00a0c5a97c70c72521.dip0.t-ipconnect.de)
+[21:36:36] *** Joins: mcleuder (~mcleuder@gateway/tor-sasl/mcleuder)
+[21:37:01] *** Quits: zer0bitz_ (~zer0bitz@2001:2003:f74d:b800:14c2:362b:4032:a582) (Ping timeout: 240 seconds)
+[21:37:35] *** Quits: mcleuder_ (~mcleuder@gateway/tor-sasl/mcleuder) (Ping timeout: 240 seconds)
+[21:37:45] <chiselfuse> < masoudd> >because fuck noobs    You mean fuck yourself 6 month from now trying to figure out wtf this is doing. right?
+[21:37:50] <chiselfuse> AHAHAHAHA
+[21:37:51] <chiselfuse> yes
+[21:37:54] *** Quits: phryk (~totallyno@user/phryk) (Remote host closed the connection)
+[21:38:00] <chiselfuse> or maybe never touch it again
+[21:39:03] *** Joins: phryk (~totallyno@user/phryk)
+[21:39:38] *** Quits: cadmio (~cadmio@na-19-87-67.service.infuturo.it) (Quit: WeeChat 3.0)
+[21:41:14] *** Joins: owensjrw (~owensjrw1@2600:1700:b5b0:6380::41)
+[21:41:24] *** Quits: alch (~alch@151.46.54.221) (Ping timeout: 240 seconds)
+[21:41:40] *** Joins: jkotra (~jkotra@122.169.141.242)
+[21:41:42] *** Joins: zer0bitz (~zer0bitz@2001:2003:f74d:b800:4d3e:ae3:d6a0:1183)
+[21:42:02] <owensjrw> Good afternoon everyone (at least here in central time zone).
+[21:42:23] <owensjrw> Hope all is well for everyone.
+[21:42:41] <apotheon> so far so good
+[21:43:09] <apotheon> Ideally, I wouldn't have been up before noon today, but Saturday mornings aren't that kind to me.
+[21:43:28] *** Joins: alch (~alch@151.46.37.244)
+[21:43:47] *** Quits: jkotra (~jkotra@122.169.141.242) (Read error: Connection reset by peer)
+[21:43:56] <owensjrw> I am working on another exercism practice project to create a circular buffer the first test though is supposed to EXIT_FAILURE and ENODATA due to empty buffer.
+[21:44:44] *** Joins: jkotra (~jkotra@122.169.141.242)
+[21:45:49] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[21:47:12] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 250 seconds)
+[21:47:19] *** Quits: Enitin (~Enitin@82.102.22.86) (Read error: Connection reset by peer)
+[21:48:34] <owensjrw> https://bpa.st/GZNQ
+[21:49:03] <owensjrw> Having trouble implementing the read when null or 0 is passed to the function.
+[21:50:36] *** Quits: tetravus (~tetravus@c-71-231-69-112.hsd1.wa.comcast.net) (Ping timeout: 240 seconds)
+[21:52:18] <boreas> owensjrw: it would be easier if your read() function had a way to report errors or an end-of-file condition
+[21:52:38] *** Joins: tetravus (~tetravus@c-71-231-69-112.hsd1.wa.comcast.net)
+[21:53:20] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[21:53:20] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[21:53:20] *** Joins: wroathe (~wroathe@user/wroathe)
+[21:54:32] <owensjrw> how do I set errno after a return? I was thinking something like if(read_value == NULL){ return EXIT_FAILURE; } but then how do I set errno?
+[21:55:34] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[21:55:38] <owensjrw> OR even something like if(buffer.head == buffer.tail) { return EXIT_FAILURE; }
+[21:56:05] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 252 seconds)
+[21:58:44] *** Quits: Torr (~Torr@user/torr) (Quit: leaving)
+[21:59:19] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[21:59:27] *** Joins: velgin (~velgin@pool-96-237-105-119.bstnma.fios.verizon.net)
+[22:00:02] *** Quits: TonyStone (~TonyStone@2603-7080-8607-c36a-a068-f96d-6ad8-5504.res6.spectrum.com) (Remote host closed the connection)
+[22:01:46] *** Joins: TonyStone (~TonyStone@cpe-74-76-51-197.nycap.res.rr.com)
+[22:02:36] *** Quits: kurahaupo_ (~kurahaupo@pa49-197-101-189.pa.qld.optusnet.com.au) (Ping timeout: 272 seconds)
+[22:04:48] *** Joins: unlink_ (~unlink@p200300ebcf3d8c00bba10b4628004518.dip0.t-ipconnect.de)
+[22:06:29] *** Joins: ekathva (~ekathva@2001:999:409:1b9d:fde2:72ac:eabf:c1c)
+[22:06:30] *** Quits: ekathva (~ekathva@2001:999:409:1b9d:fde2:72ac:eabf:c1c) (Remote host closed the connection)
+[22:06:32] *** Quits: unlink2 (~unlink@p200300ebcf147a00a0c5a97c70c72521.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[22:07:25] <chiselfuse> int *ptr; ptr = ptr+1;   this increases the value by 4   ptr = (int)ptr + 1;   i imagine this does by 1   can someone tell me how the compiler decides this in more detail?
+[22:08:15] <chiselfuse> how does it decide that "1" in the first example is bit representation 4
+[22:08:34] *** Joins: terminalpusher (~terminalp@2a01:586:91e7:1:6498:94da:f7da:72b2)
+[22:08:36] *** Joins: bnchs___ (~bnchs@105.157.19.247)
+[22:08:37] <owensjrw> I believe its due to size of the integer variable in bytes.
+[22:08:39] <chiselfuse> like, how do i imagine this logic in my head
+[22:09:03] *** Joins: Andrm (~Andrm@190.244.62.157)
+[22:09:21] <owensjrw> if you change int to char it should increase by 1
+[22:09:23] *** Joins: unlink2 (~unlink@p200300ebcf3e190012b7094ba83de7f3.dip0.t-ipconnect.de)
+[22:09:31] *** Quits: unlink_ (~unlink@p200300ebcf3d8c00bba10b4628004518.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[22:09:50] <chiselfuse> owensjrw: i understand that, because int is 4 bytes, so its pointer would be pointing at 4 bytes, i'm talking about int * vs just int incrementing
+[22:10:24] <Inline> pointer types are 8 bytes
+[22:10:30] *** Joins: beepbooptheory (~mik@c-73-13-112-194.hsd1.pa.comcast.net)
+[22:10:32] <Inline> afaik on my system at least
+[22:11:07] <bnchs___> if you cast a 32-bit to 8-bit does it show the first byte of the 32-bit integer
+[22:11:24] <chiselfuse> that doesn't answer my question of why when incrementing said 8 byte long pointer it adds 4 to its binary representation
+[22:11:51] <chiselfuse> bnchs___: that would depend on endianness
+[22:12:18] <bnchs___> so on little endian, it will point to the last byte of the 32-bit integer
+[22:12:26] <bnchs___> and on the big endian, it's the first
+[22:12:27] <chiselfuse> yea
+[22:12:36] <chiselfuse> but that's not my question :P
+[22:13:05] <bnchs___> whats your question
+[22:13:14] <owensjrw> 4
+[22:13:14] <owensjrw> ptr is a pointer to anything. (int *) ptr is a pointer to int which points to the same place than ptr, but assumes the pointee to be int. (int *)ptr + 1 points one cell (aka. one int) further in memory. *((int *)ptr+1) is that int.
+[22:13:33] <owensjrw> got that from https://stackoverflow.com/questions/14953897/meaning-of-int-ptr1
+[22:13:38] <chiselfuse> bnchs___: int *ptr; ptr = ptr+1; /* vs */ ptr = ((int)ptr) + 1
+[22:14:14] *** Joins: crashrep (~crashrep@user/crashrep)
+[22:14:16] <bnchs___> maybe checking the assembly output may help
+[22:14:26] <owensjrw> But I am just a very much noobie beginner
+[22:16:10] <chiselfuse> owensjrw: i know that it's like ptr = ptr[1]; too
+[22:16:17] <chiselfuse> or umm
+[22:16:36] <chiselfuse> ptr = &(ptr[1]);
+[22:17:27] <fizzie> How you should think of pointer arithmetic is that it's based on indices of an array of the pointed-to type.
+[22:17:48] <fizzie> So if you have an `int *` that you add an integer to, you're adding that integer to the index of the element that the pointer points at.
+[22:17:50] <chiselfuse> fizzie: like i just described right?
+[22:17:54] <fizzie> (Because that's how it's defined.)
+[22:18:16] <chiselfuse> with my last example i mean
+[22:18:46] <fizzie> Well, if that's how you think of `&ptr[1]`, then yes. :) You could also just think of the array subscripting operator as a syntacting shorthand for pointer arithmetic.
+[22:19:15] <fizzie> And then it'd be kind of a circular argument. ptr+1 means what &ptr[1] means, and &ptr[1] means what ptr+1 means.
+[22:19:35] <bnchs___> chiselfuse: whats the question
+[22:20:01] <chiselfuse> bnchs___: i ran out of ways to ask it :P
+[22:20:17] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[22:20:45] <chiselfuse> but i understood a bit now
+[22:20:57] <chiselfuse> i just hoped for some deeper "why" though
+[22:21:01] <chiselfuse> idk
+[22:21:50] <chiselfuse> like why does it work that way, but apparently it's just the way it's defined
+[22:21:55] <fizzie> The standard goes the way of defining the semantics of ptr[1] via ptr+1 (C11 6.5.2.1p2: "The definition of the subscript operator [] is that `E1[E2]` is identical to `(*((E1)+(E2)))`"), and having the "real" semantics in the + operator (6.5.6p8, which is far too long to quote).
+[22:22:41] *** Quits: Thedarkb1 (~Thedarkb@82.3.80.190) (Remote host closed the connection)
+[22:22:46] *** Joins: Torr (~Torr@user/torr)
+[22:22:54] *** Joins: Thedarkb1 (~Thedarkb@82.3.80.190)
+[22:24:06] <chiselfuse> hmm
+[22:24:24] *** Joins: eroux (~eroux@102-65-85-242.ftth.web.africa)
+[22:24:34] *** Quits: eroux (~eroux@102-65-85-242.ftth.web.africa) (Client Quit)
+[22:24:34] *** Quits: strajder (~strajder@user/strajder) (Quit: leaving)
+[22:24:46] *** Joins: nostar (~nostar@2601:406:4100:34d:8f4:5ea7:30b2:b7e6)
+[22:25:00] <fizzie> Not quite sure what deeper 'why' there could be, beyond that it's a useful definition for writing the kinds of programs people want to write. Compared to (for example) defining it strictly in terms of bytes, which would just end up with programs that have `sizeof`s in pretty much every expression that involves a pointer to a non-character type.
+[22:25:28] <chiselfuse> i find it amusing how combination of a certain type and the addition operator is defined by pointer logic in a way
+[22:25:37] *** Quits: steve__ (~steve@ool-182c2b80.dyn.optonline.net) (Ping timeout: 256 seconds)
+[22:26:13] <chiselfuse> and the other way around
+[22:26:17] <ChoHag> chiselfuse: Because pointers are only integers pointing to a usually-byte array by accident.
+[22:26:22] *** Quits: kenanmarasli (~kenanmara@user/kenanmarasli) (Quit: Leaving)
+[22:26:53] <chiselfuse> like    int x = 1234; x[0];    now the logic can be understood that x is a pointer
+[22:27:23] <chiselfuse> ChoHag: yeah
+[22:27:39] <chiselfuse> "by accident" is what does it
+[22:27:44] <ChoHag> The fact that they are that in fact nearly 100% of the time is probably the confusing part.
+[22:28:46] <fizzie> `int x = 1234; x[0];` is just invalid, because neither `x` nor `0` have a pointer type, so `*(x+0)` is not valid.
+[22:29:02] *** Joins: boB_K7IQ (~boB_K7IQ@184-98-165-139.phnx.qwest.net)
+[22:30:06] <chiselfuse> fizzie: can i try to run that or will it crash the device?
+[22:30:10] <chiselfuse> i mean
+[22:30:12] <fizzie> (Well, also becase 6.5.2.1p1 makes it a direct constraint of the [] operator: "One of the expressions shall have type 'pointer to complete object /type/', the other expression shall have integer type, and the result has type '/type/'.")
+[22:30:15] <Inline> https://pastebin.com/FAVhVub4 my machine defs
+[22:30:16] <chiselfuse> that is if it even compiles
+[22:30:54] <fizzie> As a constraint violation, it requires a diagnostic. And I would imagine it's a fatal error for any reasonable compiler.
+[22:30:57] <Inline> so for pointer types 8 and ptrdiff_t 8 too
+[22:31:06] *** Quits: Grell (~john@ool-4579c605.dyn.optonline.net) (Ping timeout: 272 seconds)
+[22:32:02] *** Joins: strajder (~strajder@user/strajder)
+[22:32:17] <chiselfuse> welp, no biggie, then we do ((int *)x)[0]
+[22:33:24] <chiselfuse> can i do it safely though?
+[22:33:32] <chiselfuse> will it just segfault or worse?
+[22:33:49] <chiselfuse> what memory is usually at 1234
+[22:33:51] <chiselfuse> ?
+[22:33:56] <fizzie> That, on the other hand, is just implementation-defined. Given that it still dereferences the resulting pointer, assuming x was "just a number", a segfault sounds the most likely outcome.
+[22:33:57] <Xgc> chiselfuse: No.What makes you think the value 1234 will suffice when converted to a pointer.
+[22:34:20] <fizzie> Usually addresses "near" 0 tend to be unmapped, to make null pointer dereferences crash reliably.
+[22:34:27] *** Joins: mcleuder_ (~mcleuder@gateway/tor-sasl/mcleuder)
+[22:34:49] <Xgc> chiselfuse: If you know enough about the address space of your process, you can use that behavior.
+[22:34:53] <chiselfuse> Xgc: i don't understantd what you said
+[22:34:57] <chiselfuse> ah
+[22:35:21] <Xgc> chiselfuse: Is address 1234 well defined in your address space?
+[22:35:37] <fizzie> Now, `&((int *) x)[0]` is something you *probably* could on most systems use as an equivalent of `x + sizeof (int)`, but the conversion between integers and pointers is entirely implementation-defined, and adding an integer to a pointer is only defined for valid pointers, so it doesn't *have* to work.
+[22:35:48] *** Quits: meator (~meator@user/meator) (Ping timeout: 240 seconds)
+[22:35:50] <chiselfuse> Xgc: i don't think so
+[22:36:10] <chiselfuse> i think it might be some kernel there or whatever
+[22:36:10] *** Joins: Grell (~john@ool-4579c605.dyn.optonline.net)
+[22:36:24] <fizzie> ,cc -w int x = 1234; x = (int) &((int *)x)[1]; printf("x = %d", x);
+[22:36:26] <candide> fizzie: x = 1238
+[22:37:01] *** Joins: mcleuder1 (~mcleuder@gateway/tor-sasl/mcleuder)
+[22:37:05] <fizzie> (Should've probably added a "but don't do this" comment in that.)
+[22:37:35] *** Quits: mcleuder (~mcleuder@gateway/tor-sasl/mcleuder) (Ping timeout: 240 seconds)
+[22:37:47] <chiselfuse> fizzie: wait a sec
+[22:38:23] <chiselfuse> i understand that &((int *) x)[0] evaluates to just x
+[22:38:46] <chiselfuse> am i wrong?
+[22:39:02] <fizzie> Not, it evaluates to `(int *) x`.
+[22:39:13] <fizzie> The implementation-defined result of converting x to an `int *`.
+[22:39:15] *** Quits: mcleuder_ (~mcleuder@gateway/tor-sasl/mcleuder) (Ping timeout: 240 seconds)
+[22:39:18] <Xgc> chiselfuse: It's the kind of thing that is common in embedded system, where the address space is often defined by strict area.  The C language knows nothing about it.  But we can still derive these magic numbers / addresses if we wish.  Think about how memory mapped devices might be used from a C program.
+[22:39:33] <fizzie> But the `&(...)[0]` part around it does "cancel out", yes.
+[22:40:13] <chiselfuse> fizzie: before i continue reading, then why do you say that it is "equivalent of `x + sizeof (int)`"?
+[22:40:20] <fizzie> Because I had a [1] in there, not a [0].
+[22:40:29] <chiselfuse> wait a second
+[22:40:38] <fizzie> Oh, I didn't.
+[22:40:42] <chiselfuse> :P
+[22:40:44] <fizzie> That's on me. I had [1] in the example.
+[22:40:55] *** Quits: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 256 seconds)
+[22:41:01] <chiselfuse> alright, now let me digest
+[22:41:50] <chiselfuse> you can go on though, i'll read everything
+[22:42:08] <chiselfuse> i'm just.. slow at comprehension
+[22:42:58] *** Joins: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[22:43:04] <fizzie> I also forgot the cast back to an integer. So to be clear, what I *meant* to say is that `(int) &((int *) x)[1]` would be something that likely in practice does the equivalent of `x + sizeof (int)` on an integer x, but strictly speaking does not have to, because converting random integer values to pointers (and doing arithmetic on non-valid pointers) isn't fully defined.
+[22:43:39] *** Joins: fbiagent (~fbiagent@user/fbiagent)
+[22:44:50] <fizzie> Anyway, it wasn't any sort of Fundamental Truth™ or anything. I'm kind of regretting bringing it up in retrospect, since it's more of the kind of "pointers are just numbers" thinking.
+[22:45:21] <chiselfuse> fizzie: "but the conversion between integers and pointers is entirely implementation-defined",  by conversion you mean like casting?
+[22:45:23] *** Joins: cart_ (~cart@213.205.194.4)
+[22:45:54] *** shan is now known as shantaram
+[22:46:21] *** Quits: Juliu (~Juliu@2a02:810b:c640:3ec0:350b:c716:fa56:ddbc) (Ping timeout: 256 seconds)
+[22:46:27] *** Quits: fbiagent (~fbiagent@user/fbiagent) (Remote host closed the connection)
+[22:48:41] <chiselfuse> nvm i think i got it
+[22:51:11] *** Quits: cart_ (~cart@213.205.194.4) (Read error: Connection reset by peer)
+[22:51:36] <owensjrw> Wow I have a lot to learn.
+[22:51:58] <owensjrw> That was alot and some of it I did not understand.
+[22:52:05] *** Quits: terminalpusher (~terminalp@2a01:586:91e7:1:6498:94da:f7da:72b2) (Remote host closed the connection)
+[22:52:55] <strajder> back in the DOS days, video RAM had (still has, but it is usually not used directly) a fixed address to which you could point an array and write out text/bytes to text mode/VGA screen
+[22:53:21] <strajder> an example of int<->pointer
+[22:53:31] <chiselfuse> that feels like more computer than today's virtual everything
+[22:54:07] *** Quits: perro (~perro@072-191-245-069.res.spectrum.com) (Quit: WeeChat 3.3)
+[22:54:37] *** Joins: Akuli (~Akuli@213.216.208.110)
+[22:55:03] *** Joins: kamarat (~kamarat@81.161.60.198)
+[22:55:56] <fizzie> Those use cases tend to be constants rather than `int`-typed variables though. Not that there's any difference from the language perspective in the conversion. But GCC for example has an (optional) warning for an int-to-pointer cast that's exempted when the operand is a constant.
+[22:56:01] <fizzie> ,cc int *ptr = (int *) 0xa0000; // no warnings
+[22:56:03] <candide> fizzie: no output: ptr = 0xa0000
+[22:56:04] <fizzie> ,cc int x = 0xa0000; int *ptr = (int *) x; // complains
+[22:56:06] <candide> fizzie: [warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]] no output: x = 655360; ptr = 0xa0000
+[22:57:13] <fizzie> (Presumably because there's a lot of code around that converts magic numbers into equally magic pointers.)
+[22:57:14] *** Quits: kamarat (~kamarat@81.161.60.198) (Changing host)
+[22:57:14] *** Joins: kamarat (~kamarat@user/kamarat)
+[22:57:51] <pragma-> it's how we used to access hardware on realmode oses
+[22:58:09] <strajder> for real mode dos programs, I it was pretty straightforward
+[22:58:17] *** Joins: fbiagent (~fbiagent@user/fbiagent)
+[22:58:29] *** Joins: gnx (~heh@yep.i.am.1337.cx)
+[22:58:32] *** Joins: perro (~perro@072-191-245-069.res.spectrum.com)
+[22:58:47] <strajder> similar to what you would get from asm program
+[23:00:08] *** Joins: tc_ (~tc@103-140-203-11.vic.as139284.net.au)
+[23:01:27] <owensjrw> I take it you all have been programing in C and assembly for a very long time.
+[23:01:44] *** Joins: goodfella (~archer@user/tessio)
+[23:01:51] <goodfella> good evening
+[23:02:09] *** Quits: Thedarkb1 (~Thedarkb@82.3.80.190) (Remote host closed the connection)
+[23:02:15] *** Joins: Thedarkb (~Thedarkb@82.3.80.190)
+[23:03:26] <pragma-> good fella
+[23:04:03] *** Quits: trycatch (~tc@user/trycatch) (Ping timeout: 272 seconds)
+[23:04:42] *** Joins: newpy (~newpy@206.168.231.90)
+[23:05:20] <newpy> can you use `struct x{...} *x;` and then just use x as a variable?
+[23:05:46] *** Joins: oxfuxxx (~oxfuxxx@217.138.213.29)
+[23:06:00] <newpy> I mean does that automatically make "x" a global variable?
+[23:06:30] <newpy> I saw it in code, author says it compiled/worked, but he could be wrong
+[23:06:54] <goodfella> that's because something compiled doesn't mean you should do it
+[23:07:16] <newpy> haha, not planning on it, just want to know if it's true or he compiled incorrectly or something
+[23:07:45] <goodfella> wait for an expert
+[23:08:06] <TonyStone> what is the easiest way to do some thing at random in C?  I want to do something like if random(1000000000) == 7474653 then printf("random number matched")   ....   <---something liek that
+[23:08:14] <TonyStone> I cant code in C... just pascal. lol
+[23:09:01] *** Quits: the_lanetly_052 (~the_lanet@194.135.154.101) (Ping timeout: 240 seconds)
+[23:09:31] <masoudd> no
+[23:11:19] *** Joins: cart_ (~cart@213.205.194.4)
+[23:12:31] *** Quits: auk (auk@gateway/vpn/protonvpn/auk) (Quit: Leaving)
+[23:12:47] <masoudd> newpy, That makes x to be a pointer to struct x. you can do to it whatever you can do to a pointer. because it is a pointer. There no magic here to make something impossible like a global variable
+[23:12:51] <masoudd> ,global
+[23:12:51] <candide> There is no "global" scope in C. There are four kinds of scopes: function, file, block, and function prototype. A variable that appears outside of any block or list of parameters has file scope, which terminates at the end of the translation unit.
+[23:14:13] <newpy> masoudd, I thought you needed typedef to write *x at the end like that, surprised the compiler didn't complain
+[23:14:43] <masoudd> you use typedef to define a type. you are not defining a type there
+[23:14:44] <newpy> masoudd, also he never actually creates a pointer (eg. x* ptr = malloc(sizeof(x));)
+[23:14:44] *** Quits: oxfuxxx (~oxfuxxx@217.138.213.29) (Ping timeout: 252 seconds)
+[23:14:59] <masoudd> that's wrong
+[23:15:14] <masoudd> ,english struct x{int i} *x;
+[23:15:14] <candide> masoudd: error: no semicolon at end of struct or union
+[23:15:16] <newpy> masoudd, oh I see, so if you write `struct x {...] *x;` you've defined a global struct and x is a reference to it?
+[23:15:48] <masoudd> stop saying global. there is no global
+[23:15:59] <fizzie> And `x` is just an uninitialized pointer.
+[23:16:30] <newpy> so you would still need to say x = malloc(...); somewhere?
+[23:16:41] <masoudd> ,english struct x{int i;} *x;
+[23:16:42] <candide> masoudd: Declare `x` as a pointer to a structure tagged `x`, with member `i` as an int.
+[23:16:45] <newpy> he just starts using it, eg. x->var = 2; etc
+[23:17:00] <masoudd> well, he is wrong
+[23:17:05] <fizzie> Well, that's not right, at least in general.
+[23:17:49] <strajder> newpy: try it, program will segfault if you use x
+[23:17:52] <fizzie> In some rather special circumstances (at file scope, with address 0 mapped) it could make sense. But not in "regular code".
+[23:18:13] <masoudd> doesn't even have to segfault I think
+[23:18:30] <strajder> something like struct x{ int i; } *x; int main() { printf("%d\n", x->i); return 0; }
+[23:18:35] <masoudd> it could sell your house for 1$ on craiglist
+[23:18:50] <newpy> that's what I was wondering, if it could fail silently
+[23:18:55] <newpy> that would explain the behavior he saw
+[23:18:56] *** Joins: Lord_of_Life_ (~Lord@user/lord-of-life/x-2819915)
+[23:19:00] *** Quits: Lord_of_Life (~Lord@user/lord-of-life/x-2819915) (Ping timeout: 240 seconds)
+[23:19:08] <fizzie> If it's at file scope (read: with static storage duration), it's of course not an uninitialized pointer, but a pointer initialized to be a null pointer, which is more likely to crash.
+[23:19:35] *** Joins: ghost4096 (pranshukha@envs.net)
+[23:19:40] <newpy> oh also it's C99 if that makes a difference
+[23:19:40] <fizzie> If it's at block scope (automatic storage duration), yes, it could silently just work, if whatever the indeterminate value the pointer gets happened to be a valid pointer.
+[23:19:44] <masoudd> ,ub
+[23:19:44] <candide> Undefined behavior is behavior for which the C standard does not impose any requirements. This is to allow C the freedom to be implemented on systems with different architectures. Programs invoking undefined behavior may appear to compile and even run without errors at first, only to fail on another system, or even at a later time. If you want to write reliable code, don't use such behaviors.
+[23:20:20] <newpy> fizzie, I believe it's at file scope (at the top of a file, not inside a function)
+[23:20:42] *** Joins: oxfuxxx (~oxfuxxx@217.138.213.28)
+[23:20:46] <fizzie> Then it should become a null pointer.
+[23:21:11] <newpy> hmm, ok
+[23:21:23] <newpy> I just fixed it, not gonna bother trying to figure out what he saw
+[23:21:37] *** Lord_of_Life_ is now known as Lord_of_Life
+[23:22:01] <fizzie> A declaration like `struct x {...} y, *z = &y;` at file scope would work to define one instance of that struct, and one pointer pointing at that instance.
+[23:22:27] <fizzie> (Though it would invite the question of what the pointer's really there for, since you could just write &y wherever you need z.)
+[23:25:47] *** Quits: velgin (~velgin@pool-96-237-105-119.bstnma.fios.verizon.net) (Remote host closed the connection)
+[23:26:01] *** Joins: velgin (~velgin@pool-96-237-105-119.bstnma.fios.verizon.net)
+[23:27:02] <goodfella> ,knr 1-17
+[23:27:02] <candide> Chapter 1: A Tutorial Introduction; Exercise 1-17. Write a program to print all input lines that are longer than 80 characters.
+[23:27:24] *** Quits: luke-jr (~luke-jr@user/luke-jr) (Ping timeout: 240 seconds)
+[23:27:33] <goodfella> there is also
+[23:27:35] <goodfella> ,cc
+[23:27:36] <candide> goodfella: Usage: cc [-lang=<language>] [-info] [-paste] [-args "command-line arguments"] [compiler/language options] <code> [-stdin <stdin input>]
+[23:28:07] <goodfella> im impressed pragma-
+[23:29:39] <pragma-> oh that's missing the new -vm flag
+[23:29:56] *** Quits: ckdCreations (~ckdCreati@147.55.133.137) (Read error: Connection reset by peer)
+[23:29:58] *** Joins: luke-jr (~luke-jr@user/luke-jr)
+[23:30:08] <masoudd> TonyStone, You'd want to learn to code in C... before coding in C
+[23:31:01] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 240 seconds)
+[23:31:10] <goodfella> masoudd: it's not easy as it's look ...
+[23:31:41] <masoudd> Well if you're following random tutorials on the internet then of course it'll be hard
+[23:31:48] *** Quits: fbiagent (~fbiagent@user/fbiagent) (Remote host closed the connection)
+[23:32:27] <masoudd> It's like breaking both your legs before you attempt an everest climb.
+[23:32:29] *** Joins: fbiagent (~fbiagent@user/fbiagent)
+[23:32:55] <goodfella> from now on i stick only to knr and after doing exercise, posting it here so you can do it better
+[23:33:20] <goodfella> masoudd: that's a tactic ..
+[23:33:34] <goodfella> s/you/i
+[23:33:36] <masoudd> read good books and have the standard at hand and you'll do just fine
+[23:35:06] * chiselfuse likes Modern C by Jens Gustedt
+[23:35:08] <goodfella> masoudd: yeah that's for learning the language, but how do you konw that your logic is now flawed ? or even knowing what the book even asked cause knr cab be ambiguous as i already learned
+[23:35:29] *** Joins: ckdCreations (~ckdCreati@147.55.130.37)
+[23:35:49] <goodfella> s/now/not
+[23:36:18] <masoudd> If you have problem with logical reasoning I suggest start there before attempting to use it to write programs
+[23:37:09] <goodfella> i don't have problem with logical reasoning, but it seems that not always my logical reasoning was correct for the given problem
+[23:37:45] <chiselfuse> goodfella: it's alright, try resolving and analyzing from differnt angles, it'll come little by little
+[23:37:47] <masoudd> I can't help you there though. We had a course about flowcharts and such before learning a programming language and it bored me to death
+[23:38:14] *** Quits: oxfuxxx (~oxfuxxx@217.138.213.28) (Ping timeout: 272 seconds)
+[23:38:27] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:d0d7:ba7d:5a5a:630f) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[23:39:01] *** Quits: rgrinberg (~textual@2806:101e:7:70b6:5c5e:da58:6afa:ce86) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[23:39:51] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[23:41:09] *** Quits: kamarat (~kamarat@user/kamarat) (Quit: Leaving)
+[23:43:39] *** Joins: oxfuxxx (~oxfuxxx@217.138.213.28)
+[23:44:02] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 240 seconds)
+[23:45:24] *** Joins: Viewday112 (~Viewday@user/viewday)
+[23:47:24] *** Quits: Viewday11 (~Viewday@user/viewday) (Ping timeout: 240 seconds)
+[23:47:25] *** Viewday112 is now known as Viewday11
+[23:49:50] *** Joins: Betal (~Betal@user/betal)
+[23:51:32] *** Joins: magla (~gelignite@55d47826.access.ecotel.net)
+[23:52:30] *** mcleuder1 is now known as mcleuder
+[23:53:43] *** Quits: oxfuxxx (~oxfuxxx@217.138.213.28) (Read error: Connection reset by peer)
+[23:55:06] *** Quits: ckdCreations (~ckdCreati@147.55.130.37) (Read error: Connection reset by peer)
+[23:55:19] *** Joins: ckdCreations (~ckdCreati@c-73-140-151-116.hsd1.wa.comcast.net)
+[23:57:01] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[23:57:16] *** Joins: rgrinberg (~textual@2806:101e:7:79ba:dc50:f4f5:8b68:5890)
+[23:57:47] *** Quits: freakazoid12345 (~matt@2603-9000-cf03-86c3-0c55-f913-c8d2-48f1.inf6.spectrum.com) (Read error: Connection reset by peer)
+[23:58:27] *** Joins: freakazoid12345 (~matt@2603:9000:cf03:86c3:c55:f913:c8d2:48f1)

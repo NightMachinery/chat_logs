@@ -1,0 +1,639 @@
+[00:01:54] <vt> b0nn: you mean, like this https://go.dev/play/p/_26ebsQci7k ? I'm not sure why it is preferable to https://go.dev/play/p/MHeCXEc7Fvi
+[00:05:04] <b0nn> I mean, I get that that's MVP, but GetItem is a misnomer, that's a CreateItem
+[00:05:56] <vt> b0nn: good point, indeed
+[00:08:01] *** Joins: __alex (~alex@ip5f5be2d7.dynamic.kabel-deutschland.de)
+[00:08:12] *** Joins: crashrep (~crashrep@user/crashrep)
+[00:08:28] <b0nn> And as a FactoryMethod you're probably more in line with returning a pointer - there's a bit of nuance in there
+[00:08:52] <b0nn> You're going to be creating on the heap, because that value most def escapes
+[00:09:14] *** Joins: hobo (~hobo@204.128.242.10)
+[00:10:57] <vt> b0nn: I am copying it *anyway* to have it in []Item, which is not []*Item. There are not a lot of them, they are used a lot, I think they are better contiguous in a slice of struct than in a slice of pointers
+[00:11:12] <b0nn> I can only find C++ references for whether to return a value or a pointer with a factory method (they all say a pointer)
+[00:11:19] *** Quits: jpw (~jpw@user/jpw) (Remote host closed the connection)
+[00:11:23] <b0nn> Yeah I noted the dereference
+[00:12:26] *** Joins: hobo_ (~hobo@204.128.242.10)
+[00:12:55] *** Quits: crashrep (~crashrep@user/crashrep) (Ping timeout: 240 seconds)
+[00:13:40] <vt> bookworm: it's not really a factory, I am not creating the object, I am getting its content. If I would write this program in C, I would have use a macro or an inlined function.
+[00:13:50] <vt> s/bookworm/b0nn/
+[00:14:12] *** Quits: hobo (~hobo@204.128.242.10) (Ping timeout: 272 seconds)
+[00:14:20] <b0nn> You're creating it, the function is given a value, and a new Item is created with that value inside it
+[00:14:26] <b0nn> That's a factory
+[00:15:03] <b0nn> The question is, should that new Item be copied ornot
+[00:15:39] <b0nn> I mean, this is a bit semantic as you're only really concerned about the mutex inside the Item
+[00:17:14] *** Quits: CaryHartline (~CaryHartl@cpe-76-185-112-162.tx.res.rr.com) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[00:17:49] <b0nn> Although, the fact that you store them as values in the slice means you have no way to prevent someone taking a copy of an item from your slice
+[00:18:19] <b0nn> f := items[1] is going to mean a new copy
+[00:18:33] *** Joins: avemestr (~avemestr@2a01:4f8:121:228f::2)
+[00:19:12] *** Joins: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com)
+[00:19:19] *** Joins: k8yun (~k8yun@user/k8yun)
+[00:21:12] <b0nn> The other option is to have type Items struct { mu sync.Mutex; Vals []Item}
+[00:21:27] <b0nn> that way the access to all the Items is guarded by the mutext
+[00:21:59] <b0nn> And then you remove the mutex from Item
+[00:23:45] <b0nn> Although that will kill multiple workers processing an item each - which is better served with channels I think
+[00:24:01] <vt> it is important to have separate mutex for all the items, the contention would be too high otherwise
+[00:25:01] <b0nn> Hmm, multiple goroutines trying to access a given Item
+[00:25:20] <b0nn> what arch are you employing there, Boss/Worker, Peer, or Pipeline?
+[00:25:53] <vt> all the "items" are living their life independently after that. There are indeed a couple of channels in each item, and the slice is only used to reference those channels (item[idx].channel1 and item[idx].channel2, etc).
+[00:27:20] <b0nn> because if the issue I pointed to earlier (f := items[1]) you might be best served with []*Item
+[00:27:48] <vt> each items is a connection to some endpoints and they are channels for different type of data to be sent to those endpoints. In the structure sent over those channels, there is a channel to receive the answer. I'm not sure how this model is named
+[00:28:48] <b0nn> It /sounds/ to me very much "peer" - the processors are largely independent of one another
+[00:28:49] <vt> b0nn: I understand, will do, for the compiler to complain if I'm copying by mistake
+[00:29:05] *** Quits: dalek_caan (~Thunderbi@109-252-124-86.nat.spd-mgts.ru) (Quit: dalek_caan)
+[00:32:58] *** Quits: hobo_ (~hobo@204.128.242.10) (Ping timeout: 256 seconds)
+[00:33:29] *** Joins: hobo (~hobo@204.128.242.10)
+[00:34:50] <vt> b0nn: as a bonus question, this []Item (or now []*Item) slice used to be a global variable of the package managing those connections. So any other package could access this slice read-only (knowing that it has been initialised and is now constant) using packagename.Items. Now I moved to a Factory (that will produce only one object, I don't need more) and so this slice has moved inside a structure. Should I keep a reference to this slice in the other packages as *[]*
+[00:34:50] <vt> Items, or just copy the slice header and therefore keep a copy of []Items  ?
+[00:35:53] <b0nn> Slices are magic, they are a struct that contains two ints and a reference to a backing array
+[00:36:20] <b0nn> so you can happily pass a copy of the slice about and they all point to the backing array of goodness
+[00:36:28] <b0nn> BUT and this is a YUGE caveat
+[00:37:33] <b0nn> If you call append on any of those copies you run the real risk of a SECOND (or more) backing array being created, which will mean that nobody (else) knows about the new data
+[00:37:53] <vt> (indeed, I don't need the capacity part of this magic structure once initialised. string is the immutable variant of []byte. Is there a general immutable variant of []Type ?)
+[00:38:05] <b0nn> To protest against /that/ you would pass a *[]*Item about ( a pointer to the slice metadata object)
+[00:38:18] <b0nn> protect*
+[00:40:21] <b0nn> I don't think that there's an immutable []Type - you could gurad with sync.Once and sync.Do for a function, or put a unexported firled inside your object so that nobody can initialise it
+[00:42:42] *** Quits: mikoto-chan (~mikoto-ch@213.177.151.239) (Ping timeout: 272 seconds)
+[00:45:36] *** Quits: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[00:46:31] <fizzie> There's no general immutable/read-only slices, but there's been a lot of (unsuccessful) proposals, e.g. in https://github.com/golang/go/issues/20443 and various things linked from it.
+[00:48:25] *** Joins: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com)
+[00:50:32] <b0nn> I think that the key problem is to make something immutable (in the language) you need to make it non-addressable within the runtime (the GC, ofc, can still address it for clean-up)
+[00:51:33] <vt> and immutable is maybe not the good name here. Sometimes things should be mutable at initialisation and then made constant for the rest of the life of the program
+[00:51:37] <b0nn> The reason for the non-addressable attribute is given in the reason that strings/etc are non-addressable, once you have a pointer to that area of memory, you can mutate it
+[00:52:24] <b0nn> vt: Yeah -there are hacks for you there )already mentioned)
+[00:52:39] <b0nn> damn my typing is not flash
+[00:54:18] <KirkMcDonald> D has played in this space with its `const` and `immutable` type qualifiers.
+[00:54:41] <KirkMcDonald> I don't think I want Go to grow that particular set of features.
+[00:54:56] <b0nn> javascript, OTOH has just thrown the const keyword to the wind :-)
+[00:55:08] <b0nn> or is it swift, I forget which
+[00:59:11] *** Quits: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[01:01:17] *** Quits: zwr (~zwr@2804:d45:b966:fb00:b63f:5fd6:7c74:2962) (Ping timeout: 240 seconds)
+[01:01:47] *** Quits: esro (~esro@nat1.krakowskiinternet.pl) (Quit: Leaving)
+[01:02:27] *** Joins: zwr (~zwr@2804:d45:b966:fb00:ef0a:b873:5367:9d0e)
+[01:06:09] *** Quits: rendar (~rendar@user/rendar) (Quit: Leaving)
+[01:08:23] *** Joins: crashrep (~crashrep@user/crashrep)
+[01:09:16] *** Joins: llorllale (~llorllale@198.98.119.85)
+[01:15:24] *** Joins: hobo_ (~hobo@204.128.242.10)
+[01:15:37] *** Joins: ovelny (~ovelny@user/ovelny)
+[01:16:16] *** Quits: hobo (~hobo@204.128.242.10) (Ping timeout: 272 seconds)
+[01:18:22] *** Quits: _mikey (~mikey@user/mikey/x-4335048) (Quit: WeeChat 3.4)
+[01:22:10] *** Joins: Atlas (~atlas@user/atlas)
+[01:26:31] *** Quits: hobo_ (~hobo@204.128.242.10) (Ping timeout: 256 seconds)
+[01:27:47] *** Joins: hobo (~hobo@204.128.242.10)
+[01:31:12] *** Joins: goldfish (~goldfish@user/goldfish)
+[01:33:54] *** Joins: bluedust (~bluedust@103.165.167.221)
+[01:35:35] *** Quits: zim (~zim@user/zim) (Ping timeout: 256 seconds)
+[01:36:43] *** Quits: hobo (~hobo@204.128.242.10) (Ping timeout: 256 seconds)
+[01:37:23] *** Quits: Atlas (~atlas@user/atlas) (Quit: Textual IRC Client: www.textualapp.com)
+[01:38:25] *** Quits: bluedust (~bluedust@103.165.167.221) (Ping timeout: 256 seconds)
+[01:38:34] *** Joins: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com)
+[01:39:13] *** Joins: rogersm (~rogersm@90.166.180.250)
+[01:51:21] *** Joins: Atlas (~atlas@user/atlas)
+[02:04:06] *** Quits: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[02:10:14] *** Quits: tachoknight (~tachoknig@2600:1700:3060:3ee0:1d79:7c54:c545:7cd5) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[02:15:10] *** Joins: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com)
+[02:20:13] *** Joins: ofl^ (~ofl@50.233.120.162)
+[02:20:16] *** Joins: saml (~saml@cpe-74-73-80-162.nyc.res.rr.com)
+[02:24:35] *** Quits: crashrep (~crashrep@user/crashrep) (Ping timeout: 240 seconds)
+[02:25:09] *** Quits: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[02:28:39] *** Joins: crashrep (~crashrep@user/crashrep)
+[02:30:48] *** Quits: mrig (~mrig@user/mrig) (Quit: WeeChat 2.8)
+[02:31:27] *** Quits: chasmo77 (~chas77@c-71-193-246-4.hsd1.or.comcast.net) (Read error: Connection reset by peer)
+[02:31:53] *** Joins: chasmo77 (~chas77@c-71-193-246-4.hsd1.or.comcast.net)
+[02:36:13] *** Quits: absc (~absc@dynamic-adsl-94-34-165-20.clienti.tiscali.it) (Remote host closed the connection)
+[02:43:09] *** Joins: Church (~aleph@68.161.207.188)
+[02:45:34] *** Quits: shka (~herr@109.231.3.55) (Ping timeout: 256 seconds)
+[02:46:11] *** Quits: vimal (~vimal@2a02:a210:9600:1f00:cf25:5fe2:fd13:9e52) (Ping timeout: 245 seconds)
+[02:46:35] *** Joins: _mikey (~mikey@user/mikey/x-4335048)
+[02:52:25] *** Quits: zer0bitz (~zer0bitz@2001:2003:f74d:b800:34e0:8b74:dd2c:1d62) (Ping timeout: 256 seconds)
+[02:54:24] *** Joins: alyx (~alyx@173.30.132.213)
+[02:59:13] *** Quits: alyx (~alyx@173.30.132.213) (Ping timeout: 256 seconds)
+[03:12:57] *** Quits: tane (~tane@user/tane) (Quit: Leaving)
+[03:19:00] *** Quits: adip_ (~adip@aeiw26.neoplus.adsl.tpnet.pl) (Ping timeout: 240 seconds)
+[03:19:00] *** Quits: adip (~adip@aeiw26.neoplus.adsl.tpnet.pl) (Ping timeout: 240 seconds)
+[03:22:07] *** Joins: hobo (~hobo@2600:1700:8972:63f:3313:2d33:be9f:8246)
+[03:28:08] *** Joins: evanextreme (~evan@2604:4080:1000:8150:c4dd:92db:20cd:4512)
+[03:35:37] *** Quits: evanextreme (~evan@2604:4080:1000:8150:c4dd:92db:20cd:4512) (Ping timeout: 240 seconds)
+[03:39:49] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:852c:c89f:7cdd:a935) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[03:42:17] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Ping timeout: 240 seconds)
+[03:46:24] *** Quits: Torr (~Torr@user/torr) (Quit: leaving)
+[03:47:28] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[03:55:18] *** Joins: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com)
+[04:02:04] *** Joins: rcernin (~rcernin@124.190.132.36)
+[04:08:32] *** Quits: __alex (~alex@ip5f5be2d7.dynamic.kabel-deutschland.de) (Ping timeout: 272 seconds)
+[04:10:02] *** Quits: benji (~benji@user/benji) (Quit: ZNC - https://znc.in)
+[04:10:20] *** Joins: benji (~benji@user/benji)
+[04:22:45] *** Quits: Kohe (~Kohe@77.49.10.102.dsl.dyn.forthnet.gr) (Ping timeout: 256 seconds)
+[04:27:14] *** Quits: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[04:28:54] *** Quits: crashrep (~crashrep@user/crashrep) (Remote host closed the connection)
+[04:29:57] *** Quits: llorllale (~llorllale@198.98.119.85) (Quit: WeeChat 3.4)
+[04:29:57] *** Joins: crashrep (~crashrep@user/crashrep)
+[04:39:42] *** Joins: tripfandango (~tripfanda@2a00:a040:19e:72a1:3508:e21f:c535:2dd)
+[04:45:52] *** Quits: Seirdy (~Seirdy@sourcehut/user/seirdy) (Quit: exiting 3.4)
+[04:46:01] *** Quits: predmijat (~predmijat@mail.strogopro.com) (Quit: bye)
+[04:47:36] *** Joins: predmijat (~predmijat@mail.strogopro.com)
+[04:51:17] *** Quits: itsalexjones (~itsalexjo@82.4.99.241) (Read error: Connection reset by peer)
+[04:52:04] *** Joins: ejjfunky (~ejjfunky@125.164.19.4)
+[04:53:43] *** Quits: NCS_One (~NCS_One@bl11-90-133.dsl.telepac.pt) (Quit: Lost terminal)
+[05:06:17] *** Quits: rairden (~rairden@2603:9000:de04:9613::1a20) (Remote host closed the connection)
+[05:06:42] *** Quits: blinux (~blinux@pool-108-48-11-122.washdc.fios.verizon.net) (Quit: WeeChat 3.4)
+[05:09:28] *** Quits: bkircher (~bkircher@2001:a61:246d:f401:4760:9a66:af72:3722) (Remote host closed the connection)
+[05:09:30] *** Quits: k8yun (~k8yun@user/k8yun) (Ping timeout: 256 seconds)
+[05:09:42] *** Joins: bkircher (~bkircher@2001:a61:246d:f401:4760:9a66:af72:3722)
+[05:12:51] *** Quits: ovelny (~ovelny@user/ovelny) (Quit: leaving)
+[05:14:24] *** Quits: ofl^ (~ofl@50.233.120.162) (Remote host closed the connection)
+[05:15:29] *** Joins: __alex (~alex@ip5f5be2d7.dynamic.kabel-deutschland.de)
+[05:30:00] *** Quits: sztanpet (sztanpet@user/sztanpet) (Quit: asd)
+[05:30:33] *** Quits: mattfoxxx (~mattfoxxx@200116b822bce800e99fd6ce5d2e87dc.dip.versatel-1u1.de) (Quit: WeeChat 3.4)
+[05:32:01] *** Joins: sztanpet (sztanpet@user/sztanpet)
+[05:40:18] *** Quits: RhinosF1 (uid339563@miraheze/RhinosF1) (Quit: Connection closed for inactivity)
+[05:43:23] *** Joins: dsrt^ (~dsrt@50.233.120.162)
+[05:53:42] *** Quits: goldfish (~goldfish@user/goldfish) (Quit: Leaving)
+[06:03:24] *** Joins: tachoknight (~tachoknig@2600:1700:3060:3ee0:1d79:7c54:c545:7cd5)
+[06:09:00] *** Quits: tachoknight (~tachoknig@2600:1700:3060:3ee0:1d79:7c54:c545:7cd5) (Ping timeout: 240 seconds)
+[06:09:08] *** Quits: rcernin (~rcernin@124.190.132.36) (Quit: WeeChat 3.4)
+[06:32:38] *** Joins: cskr (~cskr@49.207.213.182)
+[06:36:35] *** Quits: art_vandelay (~art_vande@142.126.234.156) (Quit: Textual IRC Client: www.textualapp.com)
+[06:39:34] *** Quits: kn10072 (~kn100@wireguard/tunneler/kn100) (Quit: https://kn100.me :))
+[06:53:51] *** Quits: arkurious (~arkurious@user/arkurious) (Quit: Leaving)
+[07:00:15] *** Quits: gspbirel56 (~gspbirel5@c-73-214-199-7.hsd1.pa.comcast.net) (Quit: The Lounge - https://thelounge.chat)
+[07:01:39] *** Joins: gspbirel56 (~gspbirel5@c-73-214-199-7.hsd1.pa.comcast.net)
+[07:11:12] *** Joins: DrAnything (uid538291@id-538291.lymington.irccloud.com)
+[07:11:34] *** Quits: cskr (~cskr@49.207.213.182) (Ping timeout: 272 seconds)
+[07:15:18] *** Quits: saml (~saml@cpe-74-73-80-162.nyc.res.rr.com) (Quit: Leaving)
+[07:22:50] *** Joins: nostalgia (~nostalgia@c-24-13-122-176.hsd1.in.comcast.net)
+[07:24:53] *** Quits: anon__ (~nostalgia@c-24-13-122-176.hsd1.in.comcast.net) (Read error: Connection reset by peer)
+[07:30:04] *** Quits: mooff (mooff@awful.cooking) (Quit: Quit)
+[07:32:08] *** Joins: mooff (mooff@awful.cooking)
+[07:33:00] *** Quits: troseman (~troseman@c-75-70-98-121.hsd1.co.comcast.net) (Ping timeout: 240 seconds)
+[07:36:25] *** Joins: bluedust (~bluedust@103.165.167.221)
+[07:40:51] *** Joins: evanextreme (~evan@2604:4080:1000:8150:c4dd:92db:20cd:4512)
+[07:41:05] *** Quits: bluedust (~bluedust@103.165.167.221) (Ping timeout: 256 seconds)
+[07:44:57] *** Quits: evanextreme (~evan@2604:4080:1000:8150:c4dd:92db:20cd:4512) (Ping timeout: 240 seconds)
+[07:59:25] *** Joins: evanextreme (~evan@2604:4080:1000:8150:c4dd:92db:20cd:4512)
+[08:07:57] *** Quits: evanextreme (~evan@2604:4080:1000:8150:c4dd:92db:20cd:4512) (Ping timeout: 240 seconds)
+[08:12:04] *** Joins: kn10072 (~kn100@wireguard/tunneler/kn100)
+[08:12:59] *** Quits: kn10072 (~kn100@wireguard/tunneler/kn100) (Client Quit)
+[08:13:20] *** Joins: Seirdy (~Seirdy@sourcehut/user/seirdy)
+[08:15:10] *** Joins: kn10072 (~kn100@wireguard/tunneler/kn100)
+[08:19:23] *** Quits: decartes (sid240036@id-240036.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[08:23:02] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-98.dsl.bell.ca) (Remote host closed the connection)
+[08:26:21] *** Quits: andlabs (~andlabs@70.107.171.168) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[08:26:59] *** Quits: dansan (~daniel@75.81.148.51) (Ping timeout: 256 seconds)
+[08:34:10] *** Quits: masoudd (~masoudd@user/masoudd) (Quit: Leaving)
+[08:37:27] *** Joins: dansan (~daniel@75.81.148.51)
+[08:41:08] *** Joins: adip (~adip@aeiw26.neoplus.adsl.tpnet.pl)
+[08:46:10] *** Joins: adip_ (~adip@aeiw26.neoplus.adsl.tpnet.pl)
+[08:52:46] *** Quits: sudoforge (~sudoforge@wireguard/tunneler/sudoforge) (Ping timeout: 256 seconds)
+[08:54:25] *** Joins: bluedust (~bluedust@103.165.167.221)
+[09:01:09] *** Joins: andlabs (~andlabs@70.107.171.168)
+[09:04:18] *** Quits: Wouter0100 (~Wouter010@entry.nbg.netvos.nl) (Remote host closed the connection)
+[09:04:21] *** Quits: bluedust (~bluedust@103.165.167.221) (Remote host closed the connection)
+[09:04:28] *** Joins: Wouter0100 (~Wouter010@entry.nbg.netvos.nl)
+[09:24:09] *** Joins: evanextreme (~evan@2604:4080:1000:8150:c4dd:92db:20cd:4512)
+[09:28:36] *** Quits: evanextreme (~evan@2604:4080:1000:8150:c4dd:92db:20cd:4512) (Ping timeout: 240 seconds)
+[09:41:38] *** Joins: alyx (~alyx@173.30.132.213)
+[09:42:02] *** Quits: opcode (~opcode@user/opcode) (Quit: we freebsd now)
+[09:44:03] *** Quits: internut (~internut@2601:280:4e00:7b70:c5a3:a1bb:d434:4025) (Remote host closed the connection)
+[09:44:35] *** Joins: internut (~internut@98.38.226.136)
+[09:46:02] *** Quits: alyx (~alyx@173.30.132.213) (Ping timeout: 256 seconds)
+[09:48:18] *** Quits: __alex (~alex@ip5f5be2d7.dynamic.kabel-deutschland.de) (Ping timeout: 256 seconds)
+[09:49:26] *** Quits: internut (~internut@98.38.226.136) (Ping timeout: 256 seconds)
+[09:50:48] *** Joins: cskr (~cskr@49.207.213.182)
+[09:57:57] *** Joins: internut (~internut@2601:280:4e00:7b70:1e9:f172:c194:bf16)
+[09:58:13] *** Quits: normen_ (~normen@pd9eec481.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[10:01:47] *** Joins: k8yun (~k8yun@user/k8yun)
+[10:01:52] *** Quits: crashrep (~crashrep@user/crashrep) (Quit: WeeChat 3.4)
+[10:02:17] *** Quits: internut (~internut@2601:280:4e00:7b70:1e9:f172:c194:bf16) (Ping timeout: 240 seconds)
+[10:24:30] *** Joins: normen_ (~normen@p200300d717235c0045bcb6d3b71b8c0f.dip0.t-ipconnect.de)
+[10:32:15] *** Joins: alyx (~alyx@173.30.132.213)
+[10:33:32] *** Joins: regulate (~regulate@koduro.com)
+[10:36:51] *** Joins: dalek_caan (~Thunderbi@109-252-124-86.nat.spd-mgts.ru)
+[10:37:24] *** Quits: alyx (~alyx@173.30.132.213) (Ping timeout: 272 seconds)
+[10:45:20] *** Joins: Kohe (~Kohe@77.49.10.102.dsl.dyn.forthnet.gr)
+[10:45:45] *** Quits: k8yun (~k8yun@user/k8yun) (Quit: Leaving)
+[10:46:55] <yuckey2d> where do I start with go? getting devops jobs, where the office uses a bunch of go; im not going to be directly programming tons of go I suspect, but I should start being able to CICD it, or read syntax
+[10:50:45] *** Quits: DrAnything (uid538291@id-538291.lymington.irccloud.com) (Quit: Connection closed for inactivity)
+[10:52:10] <b0nn> yuckey2d: Then start with the tooling https://pkg.go.dev/golang.org/x/tools
+[10:53:25] *** Joins: sdfgsdfg (~dfghsfgs@user/sdfgsdfg)
+[10:53:43] *** Joins: art_vandelay (~art_vande@142.126.234.156)
+[10:58:30] *** Quits: cskr (~cskr@49.207.213.182) (Quit: Leaving)
+[11:00:45] *** Quits: redquasar (~redquasar@redquasar.xyz) (Quit: redquasar.xyz)
+[11:01:48] *** Quits: normen_ (~normen@p200300d717235c0045bcb6d3b71b8c0f.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[11:02:21] *** Joins: WaterLabs (~WaterLabs@athedsl-4411968.home.otenet.gr)
+[11:04:40] *** Quits: _mikey (~mikey@user/mikey/x-4335048) (Quit: WeeChat 3.4)
+[11:04:59] *** Joins: bluedust (~bluedust@103.165.167.221)
+[11:10:11] *** Quits: bluedust (~bluedust@103.165.167.221) (Ping timeout: 256 seconds)
+[11:14:37] *** Joins: internut (~internut@2601:280:4e00:7b70:1e9:f172:c194:bf16)
+[11:24:53] *** Quits: mickey8 (~user@user/mickey) (Quit: Ping timeout (120 seconds))
+[11:25:48] *** Quits: internut (~internut@2601:280:4e00:7b70:1e9:f172:c194:bf16) (Ping timeout: 240 seconds)
+[11:25:57] *** Joins: mickey8 (~user@user/mickey)
+[11:28:44] *** Quits: sdfgsdfg (~dfghsfgs@user/sdfgsdfg) (Quit: ayo yoyo ayo yoyo hololo, hololo.)
+[11:30:12] *** Quits: Kohe (~Kohe@77.49.10.102.dsl.dyn.forthnet.gr) (Ping timeout: 240 seconds)
+[11:33:41] *** Quits: WaterLabs (~WaterLabs@athedsl-4411968.home.otenet.gr) (Quit: Leaving)
+[11:35:57] *** Joins: bluedust (~bluedust@103.165.167.221)
+[11:43:00] *** Quits: tripfandango (~tripfanda@2a00:a040:19e:72a1:3508:e21f:c535:2dd) (Ping timeout: 240 seconds)
+[11:46:24] *** Quits: benji (~benji@user/benji) (Quit: ZNC - https://znc.in)
+[11:47:34] *** Joins: benji (~benji@user/benji)
+[11:48:36] *** Quits: wolfshappen (~waff@irc.furworks.de) (Ping timeout: 240 seconds)
+[11:49:17] *** Joins: wolfshappen (~waff@irc.furworks.de)
+[11:53:42] *** Quits: Batzy (~quassel@user/batzy) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[11:54:44] *** Joins: Batzy (~quassel@user/batzy)
+[12:03:17] *** Joins: normen_ (~normen@p200300d717235c0045bcb6d3b71b8c0f.dip0.t-ipconnect.de)
+[12:05:20] *** Joins: rendar (~rendar@user/rendar)
+[12:09:17] *** Quits: normen_ (~normen@p200300d717235c0045bcb6d3b71b8c0f.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[12:11:54] *** Joins: Kohe (~Kohe@77.49.10.102.dsl.dyn.forthnet.gr)
+[12:15:38] *** Quits: bluedust (~bluedust@103.165.167.221) (Remote host closed the connection)
+[12:17:49] *** Joins: RhinosF1 (uid339563@miraheze/RhinosF1)
+[12:20:45] <albertito> yuckey2d: the tour teaches you the basics, and doesn't take too long to do: https://go.dev/tour/welcome/1
+[12:25:08] *** Joins: mrig (~mrig@user/mrig)
+[12:27:43] *** Joins: krackout (~krackout@77.49.103.110.dsl.dyn.forthnet.gr)
+[12:28:58] *** Quits: bkircher (~bkircher@2001:a61:246d:f401:4760:9a66:af72:3722) (Remote host closed the connection)
+[12:29:12] *** Joins: bkircher (~bkircher@2001:a61:246d:f401:4760:9a66:af72:3722)
+[12:29:37] *** Joins: tripfandango (~tripfanda@2a02:6680:1100:77bc:ed83:687a:c4fb:f996)
+[12:33:57] *** Joins: dayimproper (amit@2a01:7e00::f03c:91ff:fe08:f7b7)
+[12:36:31] *** Joins: mikoto-chan (~mikoto-ch@213.177.151.239)
+[12:43:10] *** Joins: mattfoxxx (~mattfoxxx@200116b822f4490071cd60d41e462908.dip.versatel-1u1.de)
+[12:43:12] *** Joins: shka (~herr@109.231.3.55)
+[12:49:05] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:852c:c89f:7cdd:a935)
+[12:51:18] *** Joins: absc (~absc@dynamic-adsl-94-34-165-20.clienti.tiscali.it)
+[12:58:11] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:852c:c89f:7cdd:a935) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[13:09:00] *** Quits: dalek_caan (~Thunderbi@109-252-124-86.nat.spd-mgts.ru) (Quit: dalek_caan)
+[13:09:11] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:852c:c89f:7cdd:a935)
+[13:11:20] *** Parts: krackout (~krackout@77.49.103.110.dsl.dyn.forthnet.gr) ()
+[13:16:36] *** Quits: tripfandango (~tripfanda@2a02:6680:1100:77bc:ed83:687a:c4fb:f996) (Ping timeout: 240 seconds)
+[13:23:27] *** Joins: internut (~internut@2601:280:4e00:7b70:1e9:f172:c194:bf16)
+[13:25:00] *** Quits: kcrk (~kcrk@user/kcrk) (Quit: http://quassel-irc.org - Chat comfortably. Anywhere.)
+[13:25:31] *** Joins: kcrk (~kcrk@user/kcrk)
+[13:29:37] *** Quits: internut (~internut@2601:280:4e00:7b70:1e9:f172:c194:bf16) (Ping timeout: 240 seconds)
+[13:38:46] *** Quits: mikoto-chan (~mikoto-ch@213.177.151.239) (Read error: Connection reset by peer)
+[13:47:33] *** Joins: normen_ (~normen@pd9eec481.dip0.t-ipconnect.de)
+[13:51:24] *** Quits: Midjak (~Midjak@82.66.147.146) (Quit: This computer has gone to sleep)
+[14:01:43] *** Joins: Ergo^ (~ergo@91.238.59.144)
+[14:04:30] *** Quits: normen_ (~normen@pd9eec481.dip0.t-ipconnect.de) (Ping timeout: 272 seconds)
+[14:05:22] *** Joins: NCS_One (~NCS_One@bl11-90-133.dsl.telepac.pt)
+[14:06:48] *** Joins: zim (~zim@user/zim)
+[14:07:26] *** Quits: NCS_One (~NCS_One@bl11-90-133.dsl.telepac.pt) (Client Quit)
+[14:07:49] *** Quits: zim (~zim@user/zim) (Client Quit)
+[14:08:29] *** Joins: NCS_One (~NCS_One@bl11-90-133.dsl.telepac.pt)
+[14:10:51] *** Joins: mikoto-chan (~mikoto-ch@213.177.151.239)
+[14:11:09] <mikoto-chan> https://github.com/BurntSushi/toml
+[14:11:15] <mikoto-chan> does this require exported fields
+[14:11:37] <mikoto-chan> it uses reflection internally
+[14:14:29] *** Joins: bluedust (~bluedust@103.165.167.221)
+[14:15:15] <ikke> "Beware that like other most other decoders only exported fields are considered when encoding and decoding; private fields are silently ignored."
+[14:15:41] <A_Dragon> I mean technically
+[14:15:52] <A_Dragon> you could still fill unexported fields
+[14:15:59] <A_Dragon> but Im going to be very annoyed with you if you did
+[14:16:27] <A_Dragon> also Ive built an IRC library
+[14:16:34] <A_Dragon> and it appears to ... work
+[14:17:53] *** Joins: normen_ (~normen@p200300d717235c0045bcb6d3b71b8c0f.dip0.t-ipconnect.de)
+[14:21:48] *** Quits: normen_ (~normen@p200300d717235c0045bcb6d3b71b8c0f.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[14:22:14] *** Joins: averell (~averell@user/averell)
+[14:27:31] <mikoto-chan> A_Dragon: annoyed? don't worry, unexported doesn't work anyway :)
+[14:27:40] <mikoto-chan> isn't there already goirc?
+[14:27:55] <A_Dragon> ¯\_(ツ)_/¯
+[14:28:05] <A_Dragon> and annoyed because there are tricks to get at unexported fields
+[14:28:13] <A_Dragon> but if you use them you should really reconsider why
+[14:29:55] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:852c:c89f:7cdd:a935) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[14:36:14] *** Joins: internut (~internut@98.38.226.136)
+[14:36:40] <mikoto-chan> ...
+[14:36:43] <mikoto-chan> I don't understand
+[14:37:17] <mikoto-chan> whenever I call template.ParseFiles sometimes my pages break simply because of the template order
+[14:37:23] <mikoto-chan> should I open an issue about this?
+[14:39:35] <A_Dragon> do you have templates that are dependent on eachother?
+[14:41:24] *** Quits: internut (~internut@98.38.226.136) (Ping timeout: 240 seconds)
+[14:42:05] <mikoto-chan> A_Dragon: yes both are dependent on each other
+[14:42:43] <A_Dragon> I'd assume some undefined behaviour at work if they're interdependent, someone smarter than I may have a better answer
+[14:42:49] <mikoto-chan> https://dpaste.com/EGWVF5JSQ
+[14:43:25] *** Joins: redquasar (~redquasar@li2205-77.members.linode.com)
+[14:46:13] <A_Dragon> that probably should work
+[14:46:18] <A_Dragon> I'd open an issue
+[14:47:39] *** Joins: tripfandango (~tripfanda@2a02:6680:1100:77bc:ed83:687a:c4fb:f996)
+[14:51:50] *** Quits: tripfandango (~tripfanda@2a02:6680:1100:77bc:ed83:687a:c4fb:f996) (Ping timeout: 250 seconds)
+[14:54:28] *** Joins: dalek_caan (~Thunderbi@109-252-124-86.nat.spd-mgts.ru)
+[14:55:21] *** Quits: redquasar (~redquasar@li2205-77.members.linode.com) (Quit: redquasar.xyz)
+[14:55:40] *** Joins: redquasar (~redquasar@li2205-77.members.linode.com)
+[15:02:25] *** Joins: tomasfarias (~tomasfari@user/tomasfarias)
+[15:06:35] *** Joins: normen_ (~normen@p200300d717235c0045bcb6d3b71b8c0f.dip0.t-ipconnect.de)
+[15:06:37] *** Quits: teasea (~teasea@user/teasea) (Quit: teasea)
+[15:07:33] *** Joins: teasea (~teasea@user/teasea)
+[15:11:36] *** Quits: redquasar (~redquasar@li2205-77.members.linode.com) (Changing host)
+[15:11:36] *** Joins: redquasar (~redquasar@user/redquasar)
+[15:14:08] *** Joins: internut (~internut@2601:280:4e00:7b70:1e9:f172:c194:bf16)
+[15:15:45] *** Joins: dingdreher (~dingdrehe@2a02:aa08:401e:fff2:4939:5e11:de52:5ed3)
+[15:18:37] *** Quits: internut (~internut@2601:280:4e00:7b70:1e9:f172:c194:bf16) (Ping timeout: 240 seconds)
+[15:24:25] *** Quits: RhinosF1 (uid339563@miraheze/RhinosF1) (Quit: Connection closed for inactivity)
+[15:43:17] *** Joins: jjonah (~jjonah@p200300d5d727ec00dea632fffeb3342f.dip0.t-ipconnect.de)
+[16:18:12] *** Joins: RhinosF1 (uid339563@miraheze/RhinosF1)
+[16:20:27] *** Joins: internut (~internut@2601:280:4e00:7b70:fdc6:a338:37a8:cf2b)
+[16:21:08] *** Joins: vimal (~vimal@2a02:a210:9600:1f00:cf25:5fe2:fd13:9e52)
+[16:23:45] *** Joins: greenhood (~sharanvar@171.61.65.9)
+[16:24:35] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-98.dsl.bell.ca)
+[16:24:57] *** Quits: internut (~internut@2601:280:4e00:7b70:fdc6:a338:37a8:cf2b) (Ping timeout: 240 seconds)
+[16:27:25] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:602f:2025:c843:6cf4)
+[16:27:32] *** Quits: whaley (~whaley@097-082-197-228.res.spectrum.com) (Quit: It won't give up.  It wants me dead.  Goddamn this noise inside my head.)
+[16:29:28] *** Joins: saml (~saml@cpe-74-73-80-162.nyc.res.rr.com)
+[16:33:26] *** Parts: greenhood (~sharanvar@171.61.65.9) (WeeChat 3.4)
+[16:39:45] *** Quits: jjonah (~jjonah@p200300d5d727ec00dea632fffeb3342f.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[16:39:51] *** Joins: jjonah_0 (~jjonah@p200300d5d744e000dea632fffeb3342f.dip0.t-ipconnect.de)
+[16:48:30] <mikoto-chan> how would I retrieve the base URL of my website?
+[16:48:46] <mikoto-chan> there's r.URL but what part of the struct contains it ...
+[16:50:47] <mikoto-chan> it's r.Host
+[16:54:52] *** Quits: whoami (~whoami@d118-75-170-49.try.wideopenwest.com) (Ping timeout: 272 seconds)
+[17:02:16] *** Joins: whoami (~whoami@d118-75-170-49.try.wideopenwest.com)
+[17:13:27] *** Joins: esro (~esro@nat1.krakowskiinternet.pl)
+[17:16:32] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Quit: elastic_dog)
+[17:17:00] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[17:20:19] *** Joins: eroux (~eroux@102-65-85-242.ftth.web.africa)
+[17:21:42] <mickey8> can i have a test that is not associated with a particular module or file? it's basically going to test external modules to make sure they're working fine
+[17:23:33] <bookworm> you can add the tests wherever you like
+[17:23:52] <bookworm> just need to adhere to the naming convention
+[17:24:09] <mickey8> is there good practice as to where to put such tests?
+[17:25:06] <bookworm> testing other packages is a bit funny... just add an integration test for your own stuff and that shows you breakage
+[17:26:27] <mickey8> okay
+[17:37:23] *** Joins: internut (~internut@2601:280:4e00:7b70:fdc6:a338:37a8:cf2b)
+[17:41:24] *** Quits: internut (~internut@2601:280:4e00:7b70:fdc6:a338:37a8:cf2b) (Ping timeout: 240 seconds)
+[17:47:42] *** Joins: tripfandango (~tripfanda@2a02:6680:1100:77bc:e81a:45a:a034:d993)
+[17:50:05] *** Joins: arkurious (~arkurious@user/arkurious)
+[17:52:45] *** Quits: saml (~saml@cpe-74-73-80-162.nyc.res.rr.com) (Quit: Leaving)
+[18:10:18] *** Quits: jjonah_0 (~jjonah@p200300d5d744e000dea632fffeb3342f.dip0.t-ipconnect.de) (Ping timeout: 250 seconds)
+[18:11:43] *** Joins: internut (~internut@2601:280:4e00:7b70:fdc6:a338:37a8:cf2b)
+[18:12:02] *** Quits: noboruma (~noboruma@202-189-221-251.tokyo.fdn.vectant.ne.jp) (Remote host closed the connection)
+[18:12:24] *** Quits: esro (~esro@nat1.krakowskiinternet.pl) (Quit: Leaving)
+[18:13:36] *** Joins: noboruma (~noboruma@202-189-221-251.tokyo.fdn.vectant.ne.jp)
+[18:15:57] *** Quits: internut (~internut@2601:280:4e00:7b70:fdc6:a338:37a8:cf2b) (Ping timeout: 240 seconds)
+[18:24:47] *** Joins: Torr (~Torr@user/torr)
+[18:31:08] *** Joins: neurocyte0917090 (~neurocyte@IP-213188112151.dynamic.medianet-world.de)
+[18:31:09] *** Quits: neurocyte0917090 (~neurocyte@IP-213188112151.dynamic.medianet-world.de) (Changing host)
+[18:31:09] *** Joins: neurocyte0917090 (~neurocyte@user/neurocyte)
+[18:35:53] *** Joins: analogsalad (~analogsal@user/analogsalad)
+[18:40:16] <lidless> Is there a maintained WX go package or should I use Qt? Just looking for a GUI that's cross-platform and easy for the end user to set up
+[18:41:49] *** Joins: Onkel1234 (~Guest69@pppoe-62-84-108-224.dubna.ru)
+[18:42:25] *** Joins: goldfish (~goldfish@user/goldfish)
+[18:45:50] *** Joins: OnkelTem (~OnkelTem@user/onkeltem)
+[18:46:36] *** Joins: esro (~esro@nat1.krakowskiinternet.pl)
+[18:49:46] *** Joins: mmfood (~mmfood@c-5eea3747-74736162.cust.telenor.se)
+[18:54:14] *** Quits: mmfood (~mmfood@c-5eea3747-74736162.cust.telenor.se) (Client Quit)
+[18:54:33] *** Joins: mmfood (~mmfood@c-5eea3747-74736162.cust.telenor.se)
+[18:55:07] *** Quits: mmfood (~mmfood@c-5eea3747-74736162.cust.telenor.se) (Client Quit)
+[18:55:23] *** Joins: mmfood (~mmfood@94.234.55.71)
+[18:55:49] *** Joins: alyx (~alyx@173.30.132.213)
+[18:55:57] *** Quits: tomasfarias (~tomasfari@user/tomasfarias) (Ping timeout: 240 seconds)
+[18:56:20] *** Joins: tomasfarias (~tomasfari@user/tomasfarias)
+[18:57:28] *** Quits: mmfood (~mmfood@94.234.55.71) (Client Quit)
+[18:57:44] *** Joins: mmfood (~mmfood@c-5eea3747-74736162.cust.telenor.se)
+[18:58:35] *** Quits: mmfood (~mmfood@c-5eea3747-74736162.cust.telenor.se) (Client Quit)
+[18:58:51] *** Joins: mmfood (~mmfood@c-5eea3747-74736162.cust.telenor.se)
+[19:00:16] *** Quits: alyx (~alyx@173.30.132.213) (Ping timeout: 272 seconds)
+[19:05:19] *** Quits: bluedust (~bluedust@103.165.167.221) (Remote host closed the connection)
+[19:10:26] *** Quits: mmfood (~mmfood@c-5eea3747-74736162.cust.telenor.se) (Ping timeout: 256 seconds)
+[19:11:14] *** Joins: mmfood (~mmfood@c-5eea3747-74736162.cust.telenor.se)
+[19:12:13] *** Quits: Chepra (~chepra@summer.c137.eu) (Quit: WeeChat 3.4)
+[19:13:16] *** Quits: KirkMcDonald (~Kirk@python/site-packages/KirkMcDonald) (Ping timeout: 256 seconds)
+[19:13:55] *** Joins: Chepra (~chepra@summer.c137.eu)
+[19:19:02] *** Joins: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com)
+[19:20:05] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:602f:2025:c843:6cf4) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[19:20:39] *** Joins: KirkMcDonald (~Kirk@python/site-packages/KirkMcDonald)
+[19:21:03] *** Joins: __alex (~alex@ip5f5be2d7.dynamic.kabel-deutschland.de)
+[19:21:24] *** Quits: Torr (~Torr@user/torr) (Ping timeout: 240 seconds)
+[19:23:10] *** Joins: zer0bitz (~zer0bitz@2001:2003:f74d:b800:7d50:ed7b:88e6:c382)
+[19:23:19] *** Joins: markkuit_ (~markkuit@81.56.16.6)
+[19:24:02] *** Quits: markkuit (~markkuit@81.56.16.6) (Ping timeout: 256 seconds)
+[19:24:28] *** Quits: esro (~esro@nat1.krakowskiinternet.pl) (Quit: Leaving)
+[19:24:32] *** Quits: mugen (~mugen@gateway/tor-sasl/mugen) (Remote host closed the connection)
+[19:24:46] *** Joins: esro (~esro@nat1.krakowskiinternet.pl)
+[19:25:09] *** Joins: mugen (~mugen@gateway/tor-sasl/mugen)
+[19:29:35] *** Joins: _mikey (~mikey@user/mikey/x-4335048)
+[19:29:57] *** Quits: tripfandango (~tripfanda@2a02:6680:1100:77bc:e81a:45a:a034:d993) (Ping timeout: 240 seconds)
+[19:31:00] *** Joins: Midjak (~Midjak@82.66.147.146)
+[19:34:23] *** Joins: markkuit (~markkuit@81.56.16.6)
+[19:35:39] *** Quits: markkuit_ (~markkuit@81.56.16.6) (Ping timeout: 256 seconds)
+[19:36:14] *** Quits: analogsalad (~analogsal@user/analogsalad) (Quit: bye)
+[19:38:16] *** Quits: lidless (lidless@user/lidless) (Quit: ZNC 1.8.2+deb1+focal2 - https://znc.in)
+[19:39:03] *** Quits: cync_ (~blah@192.180.187.81.in-addr.arpa) (Ping timeout: 256 seconds)
+[19:39:06] *** Joins: lidless (~lidless@45-33-96-118.ip.linodeusercontent.com)
+[19:39:11] *** Joins: cync (~blah@192.180.187.81.in-addr.arpa)
+[19:39:52] <A_Dragon> theres gio and... whats the exp one
+[19:39:54] <A_Dragon> sparkle?
+[19:39:58] <A_Dragon> shiny
+[19:40:06] *** Quits: lidless (~lidless@45-33-96-118.ip.linodeusercontent.com) (Changing host)
+[19:40:06] *** Joins: lidless (~lidless@user/lidless)
+[19:44:19] *** Joins: alyx (~alyx@173.30.132.213)
+[19:45:34] *** Quits: noarb- (~noarb@user/noarb) (Quit: ZNC 1.8.2 - https://znc.in)
+[19:45:52] *** Quits: Kohe (~Kohe@77.49.10.102.dsl.dyn.forthnet.gr) (Ping timeout: 272 seconds)
+[19:46:08] *** Joins: noarb (~noarb@user/noarb)
+[19:47:15] *** Quits: anessen97 (~Anessen97@host-82-57-222-18.retail.telecomitalia.it) (Quit: The Lounge - https://thelounge.chat)
+[19:47:34] *** Quits: lidless (~lidless@user/lidless) (Quit: ZNC 1.8.2+deb1+focal2 - https://znc.in)
+[19:48:27] *** Joins: anessen97 (~Anessen97@host-82-57-222-18.retail.telecomitalia.it)
+[19:49:02] *** Quits: alyx (~alyx@173.30.132.213) (Ping timeout: 272 seconds)
+[19:49:10] *** Joins: tripfandango (~tripfanda@2a00:a040:19e:72a1:8981:b93b:382d:ee32)
+[19:49:30] *** Quits: bkircher (~bkircher@2001:a61:246d:f401:4760:9a66:af72:3722) (Quit: Leaving)
+[19:53:38] *** Joins: TcM1911 (~tcm1911@2001:470:69fc:105::3649)
+[19:54:59] *** Quits: esro (~esro@nat1.krakowskiinternet.pl) (Quit: Leaving)
+[20:01:01] *** Joins: lidless (lidless@2600:3c02::f03c:93ff:fe98:5c43)
+[20:01:38] *** Quits: lidless (lidless@2600:3c02::f03c:93ff:fe98:5c43) (Changing host)
+[20:01:38] *** Joins: lidless (lidless@user/lidless)
+[20:03:21] *** Quits: noarb (~noarb@user/noarb) (Quit: ZNC 1.8.2 - https://znc.in)
+[20:07:30] *** Joins: noarb (~noarb@user/noarb)
+[20:08:13] *** Quits: monchi (~joints@143.198.92.132) (Read error: Connection reset by peer)
+[20:10:13] *** Quits: ejjfunky (~ejjfunky@125.164.19.4) (Ping timeout: 256 seconds)
+[20:12:24] *** Joins: Kohe (~Kohe@77.49.10.102.dsl.dyn.forthnet.gr)
+[20:12:36] *** Joins: internut (~internut@2601:280:4e00:7b70:fdc6:a338:37a8:cf2b)
+[20:17:21] *** Quits: internut (~internut@2601:280:4e00:7b70:fdc6:a338:37a8:cf2b) (Ping timeout: 256 seconds)
+[20:26:04] <L1Cafe> b0nn: I know it's a big question, but I'm not sure how to phrase it better. I'm working on this https://github.com/Nabia-DB and would love some input
+[20:27:27] *** Quits: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[20:29:20] *** Joins: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-f863-5727-5d9c-7f8d.res6.spectrum.com)
+[20:32:27] *** Joins: tane (~tane@user/tane)
+[20:37:06] *** Quits: fjmorazan (~quassel@user/fjmorazan) (Quit: fjmorazan)
+[20:37:37] *** Joins: fjmorazan (~quassel@user/fjmorazan)
+[20:38:35] *** Quits: adanwan (~adanwan@gateway/tor-sasl/adanwan) (Ping timeout: 240 seconds)
+[20:38:55] *** Quits: _mikey (~mikey@user/mikey/x-4335048) (Ping timeout: 240 seconds)
+[20:38:55] *** Quits: todd (~todd@gateway/tor-sasl/toddf) (Ping timeout: 240 seconds)
+[20:39:15] *** Quits: mugen (~mugen@gateway/tor-sasl/mugen) (Ping timeout: 240 seconds)
+[20:39:16] *** Quits: bindu (~bindu@user/bindu) (Ping timeout: 240 seconds)
+[20:39:35] *** Quits: mickey8 (~user@user/mickey) (Ping timeout: 240 seconds)
+[20:39:35] *** Quits: Atque (~Atque@user/atque) (Ping timeout: 240 seconds)
+[20:44:25] *** Joins: Torr (~Torr@user/torr)
+[20:51:35] *** Quits: markkuit (~markkuit@81.56.16.6) (Ping timeout: 256 seconds)
+[20:52:56] *** Joins: Atque (~Atque@user/atque)
+[20:53:19] *** Joins: markkuit (~markkuit@81.56.16.6)
+[20:54:15] *** Joins: adanwan (~adanwan@gateway/tor-sasl/adanwan)
+[20:54:26] *** Joins: bindu (~bindu@user/bindu)
+[20:54:29] *** Joins: mickey8 (~user@user/mickey)
+[20:55:04] *** Joins: todd (~todd@gateway/tor-sasl/toddf)
+[20:56:47] *** Joins: mugen (~mugen@gateway/tor-sasl/mugen)
+[20:58:51] *** Joins: bluedust (~bluedust@103.165.167.221)
+[20:58:55] *** Quits: Ergo^ (~ergo@91.238.59.144) (Remote host closed the connection)
+[20:59:22] *** Quits: tripfandango (~tripfanda@2a00:a040:19e:72a1:8981:b93b:382d:ee32) (Ping timeout: 260 seconds)
+[21:01:31] *** Quits: bluedust (~bluedust@103.165.167.221) (Remote host closed the connection)
+[21:02:55] *** Joins: bluedust (~bluedust@103.165.167.221)
+[21:04:35] *** Joins: tripfandango (~tripfanda@2a00:a040:19e:72a1:9129:4252:d36a:96a1)
+[21:07:46] *** Quits: vimal (~vimal@2a02:a210:9600:1f00:cf25:5fe2:fd13:9e52) (Ping timeout: 260 seconds)
+[21:08:14] *** Quits: bluedust (~bluedust@103.165.167.221) (Ping timeout: 260 seconds)
+[21:08:46] *** Joins: alyx (~alyx@173.30.132.213)
+[21:13:00] *** Quits: alyx (~alyx@173.30.132.213) (Ping timeout: 240 seconds)
+[21:20:39] *** Joins: yagamilito (~yagamilit@2601:642:4600:34b0:fd4b:5aa1:208c:c7ea)
+[21:21:01] *** Quits: yagamilito (~yagamilit@2601:642:4600:34b0:fd4b:5aa1:208c:c7ea) (Client Quit)
+[21:22:24] *** Joins: markkuit_ (~markkuit@81.56.16.6)
+[21:22:28] *** Quits: markkuit (~markkuit@81.56.16.6) (Ping timeout: 256 seconds)
+[21:28:59] *** Quits: paddymahoney (~paddymaho@cpe9050ca207f83-cm9050ca207f80.cpe.net.cable.rogers.com) (Ping timeout: 256 seconds)
+[21:33:33] *** Quits: dsrt^ (~dsrt@50.233.120.162) (Ping timeout: 272 seconds)
+[21:38:29] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:602f:2025:c843:6cf4)
+[21:42:22] *** Quits: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-f863-5727-5d9c-7f8d.res6.spectrum.com) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[21:47:07] *** Quits: tofran (~tofran@bl15-47-228.dsl.telepac.pt) (Ping timeout: 256 seconds)
+[21:47:45] *** Joins: cync_ (~blah@192.180.187.81.in-addr.arpa)
+[21:48:24] *** Joins: dsrt^ (~dsrt@50.233.120.162)
+[21:48:49] *** Quits: cync (~blah@192.180.187.81.in-addr.arpa) (Ping timeout: 256 seconds)
+[21:50:14] *** Joins: internut (~internut@2601:280:4e00:7b70:fdc6:a338:37a8:cf2b)
+[21:50:23] *** Joins: sudoforge (~sudoforge@wireguard/tunneler/sudoforge)
+[21:52:09] *** Joins: _mikey (~mikey@user/mikey/x-4335048)
+[21:52:12] *** Quits: dsrt^ (~dsrt@50.233.120.162) (Remote host closed the connection)
+[21:53:15] *** Joins: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-f863-5727-5d9c-7f8d.res6.spectrum.com)
+[21:53:57] *** Quits: _nuke (~nuke@50-193-103-211-static.hfc.comcastbusiness.net) (Ping timeout: 240 seconds)
+[21:58:36] *** Quits: internut (~internut@2601:280:4e00:7b70:fdc6:a338:37a8:cf2b) (Ping timeout: 240 seconds)
+[22:00:11] *** Joins: masoudd (~masoudd@user/masoudd)
+[22:01:14] *** Joins: bluedust (~bluedust@103.165.167.221)
+[22:01:50] *** Quits: hobo (~hobo@2600:1700:8972:63f:3313:2d33:be9f:8246) (Quit: ZNC 1.8.2 - https://znc.in)
+[22:02:39] *** Quits: bluedust (~bluedust@103.165.167.221) (Remote host closed the connection)
+[22:06:29] *** Joins: _nuke (~nuke@50-193-103-211-static.hfc.comcastbusiness.net)
+[22:18:07] *** Quits: adanwan (~adanwan@gateway/tor-sasl/adanwan) (Remote host closed the connection)
+[22:18:20] *** Joins: adanwan (~adanwan@gateway/tor-sasl/adanwan)
+[22:19:16] *** Joins: cync (~blah@192.180.187.81.in-addr.arpa)
+[22:20:36] *** Quits: cync_ (~blah@192.180.187.81.in-addr.arpa) (Ping timeout: 240 seconds)
+[22:24:26] *** Joins: cync_ (~blah@192.180.187.81.in-addr.arpa)
+[22:25:48] *** Quits: cync (~blah@192.180.187.81.in-addr.arpa) (Ping timeout: 240 seconds)
+[22:28:32] *** Quits: epony (epony@user/epony) (Ping timeout: 240 seconds)
+[22:29:44] *** Joins: paddymahoney (~paddymaho@cpe9050ca207f83-cm9050ca207f80.cpe.net.cable.rogers.com)
+[22:30:13] *** Joins: antarus (~antarus@gentoo/developer/antarus)
+[22:31:23] *** Joins: tofran (~tofran@bl15-47-228.dsl.telepac.pt)
+[22:32:05] <antarus> So process question, someone has published a go-module whose origin is a git repo that is mine, but its not the origin for the go module
+[22:32:16] <antarus> any idea how to find who published the module, or how to get it unpublished?
+[22:32:35] <antarus> (my origin is getting a ton of unexpected traffic from the goproxy system)
+[22:32:45] *** Joins: xsteadfastx (~marv@94.31.99.245)
+[22:34:31] *** Joins: epony (epony@user/epony)
+[22:35:17] *** Joins: crashrep (~crashrep@user/crashrep)
+[22:40:14] *** Joins: internut (~internut@2601:280:4e00:7b70:fdc6:a338:37a8:cf2b)
+[22:41:45] *** Quits: DogHackit (~doghackit@c-76-27-57-63.hsd1.ut.comcast.net) (Quit: WeeChat 3.4)
+[22:45:17] *** Quits: internut (~internut@2601:280:4e00:7b70:fdc6:a338:37a8:cf2b) (Ping timeout: 240 seconds)
+[22:47:15] <seebs> that is a fascinating question and i don't know of an obvious way to do this, but there's an easy way to find out quickly
+[22:47:29] <seebs> which is to change your module and find out who complains
+[22:48:58] *** Joins: internut (~internut@2601:280:4e00:7b70:fdc6:a338:37a8:cf2b)
+[22:50:10] *** Quits: neurocyte0917090 (~neurocyte@user/neurocyte) (Ping timeout: 272 seconds)
+[22:50:40] <antarus> seebs: its not my module ..
+[22:50:42] <antarus> https://github.com/golang/go/issues/51284
+[22:50:44] <antarus> is what I ended up filing
+[22:50:52] <seebs> i mean, your git repo
+[22:51:03] <antarus> I can't change it..its the repo for my entire linux distribution ;)
+[22:51:13] <seebs> that does make it hard, hmm
+[22:51:27] <seebs> well, i mean. you can break the entire linux distro for a day to find out what happens, i guess
+[22:51:43] <antarus> I mean I'd block gomirrorproxy before doing that
+[22:51:48] *** Quits: xsteadfastx (~marv@94.31.99.245) (Ping timeout: 240 seconds)
+[22:52:13] <seebs> that would be a completely reasonable thing to do
+[22:52:25] <antarus> I really just need ot know which module is pointing to my origin so I can follow up with the module author
+[22:52:27] <seebs> there's no valid use case for this, i don't think
+[22:52:59] <seebs> yeah, and i don't see a way to find out. probably the go mirror proxy should state what it redirected there from, but also, like. no problem to just block it, it's definitely not a legit use case
+[22:53:15] <seebs> honestly my guess would be it's an intentional DOS against gentoo
+[22:53:25] <seebs> like, someone realized that they could exploit gomirrorproxy to do this
+[22:53:26] <antarus> i'm a bit worried that if I block the gomoduleproxy it will just cause users to go direct
+[22:53:34] <antarus> but that assumes the module has any users
+[22:53:43] <antarus> I assume gomoduleproxy prefetches
+[22:53:48] <seebs> if they go direct, you get information also
+[22:54:28] <seebs> because then you start getting specific users showing up, and they're requesting specific versions that you can recognize.
+[22:54:40] <seebs> and you can say "hey it's really weird that you're requesting this very specifically formatted version"
+[22:55:04] <seebs> like, i don't think other sources use "v0.0.0-20220214235306-7a973fdc5ef1" as a way of identifying things
+[22:55:21] <b0nn> how do you search the module proxy
+[22:55:46] <antarus> https://index.golang.org/index
+[22:55:51] <antarus> has an index you can page through
+[22:58:53] *** Joins: neurocyte0917090 (~neurocyte@IP-213188112151.dynamic.medianet-world.de)
+[22:58:53] *** Quits: neurocyte0917090 (~neurocyte@IP-213188112151.dynamic.medianet-world.de) (Changing host)
+[22:58:53] *** Joins: neurocyte0917090 (~neurocyte@user/neurocyte)
+[23:02:14] <b0nn> the good news that you know from that that it was created feb 14 2022 at 23:53:06 :=)
+[23:02:21] <antarus> nah its older
+[23:02:25] <antarus> thats just the current rev
+[23:02:38] <b0nn> ok, well you know when it was updated :)
+[23:02:52] <antarus> the module is annoying, but mostly it looks like gomoduleproxy did a rollout that was rolle back
+[23:03:00] <antarus> because it was buggy / bandwidth intensive
+[23:03:26] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-98.dsl.bell.ca) (Remote host closed the connection)
+[23:03:34] <ikke> So someone imported the gentoo repo in a go project and now the go proxy is constantly fetching it?
+[23:04:14] <seebs> someone appears to have created a module that uses the module-metadata thing to point to the gentoo repo as its actual git repo source.
+[23:06:27] <ikke> Ah
+[23:07:29] <b0nn> I keep finding the ebuild when I search for "go.mod" and "gentoo"
+[23:07:38] <b0nn> https://github.com/UncleGart/gentoo-ebuilds/blob/e162bd23ea6f3466dc2b936955fd25dd61f7f15f/eclass/go-module.eclass
+[23:09:32] <b0nn> antarus: Strongly suggest you also raise this on golang-dev mailing list (link to the issue too) https://groups.google.com/g/golang-dev
+[23:11:23] <antarus> yeah go-module eclass does normally-ishs tuff
+[23:11:30] <antarus> I've already spoken with the eclass author
+[23:13:30] <antarus> b0nn: Whats the goal for raising it there?
+[23:13:44] <antarus> visibility?
+[23:14:08] <antarus> (again I think teh real problem is a change in gomoduleproxy software rollout; which looks like it was rolled back)
+[23:14:18] <b0nn> Yeah + urgency
+[23:14:57] *** Quits: neurocyte0917090 (~neurocyte@user/neurocyte) (Ping timeout: 256 seconds)
+[23:17:46] *** Joins: girafe (~girafe@176-147-142-235.abo.bbox.fr)
+[23:17:49] *** Joins: troseman (~troseman@c-75-70-98-121.hsd1.co.comcast.net)
+[23:21:37] *** Quits: mugen (~mugen@gateway/tor-sasl/mugen) (Remote host closed the connection)
+[23:22:03] *** Joins: mugen (~mugen@gateway/tor-sasl/mugen)
+[23:22:51] *** Quits: _mikey (~mikey@user/mikey/x-4335048) (Quit: WeeChat 3.4)
+[23:25:00] *** Quits: admin123 (~harrymore@ool-2f12f5b1.dyn.optonline.net) (Ping timeout: 272 seconds)
+[23:27:51] *** Quits: rendar (~rendar@user/rendar) (Quit: Leaving)
+[23:29:28] *** Joins: Maxattax97 (~max@2600:1700:68c0:3bb0::1b)
+[23:29:37] *** Quits: Maxattax97 (~max@2600:1700:68c0:3bb0::1b) (Client Quit)
+[23:30:40] *** Quits: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-f863-5727-5d9c-7f8d.res6.spectrum.com) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[23:30:46] *** Joins: XenophonF (~xenophon@24-123-13-50.irtnog.org)
+[23:31:27] *** Joins: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-f863-5727-5d9c-7f8d.res6.spectrum.com)
+[23:31:37] *** Quits: Midjak (~Midjak@82.66.147.146) (Read error: Connection reset by peer)
+[23:31:55] <XenophonF> hey I'm new to golang and am trying to install https://github.com/docker-library/bashbrew, which says "For building bashbrew yourself, it's a pretty standard Go application."
+[23:32:12] *** Quits: girafe (~girafe@176-147-142-235.abo.bbox.fr) (Read error: Connection reset by peer)
+[23:32:24] *** Joins: Midjak (~Midjak@82.66.147.146)
+[23:32:56] <XenophonF> I assume that means `go install github.com/docker-library/bashbrew`, but that doesn't work (go says "no Go files in $GOLANG/src/github.com/docker-library/bashbrew").
+[23:33:24] <XenophonF> So what am I missing?  Is there another way to install standard Go apps from GitHub?
+[23:33:49] <b0nn> git clone; cd; go build
+[23:33:58] <XenophonF> ok thanks
+[23:34:46] <b0nn> Recommend that you raise an issue on their repo - because assuming ppl know what "standard" is is.. poor work
+[23:35:24] <XenophonF> yeah... I have a number of complaints along those lines for all the things in the Docker Official Images library.
+[23:35:59] <XenophonF> when I run `go build`, I get this error: "build .: cannot find module for path ."
+[23:36:10] <b0nn> https://github.com/docker-library/bashbrew/blob/master/bashbrew.sh
+[23:36:13] <XenophonF> so I'm going to RTFM and come back if I can't figure it out
+[23:36:17] <XenophonF> oh thanks
+[23:36:43] <b0nn> I found that looking at their Dockerfile
+[23:37:50] <XenophonF> oof I should have looked for one
+[23:38:10] <b0nn> Heh, know for next time ;)
+[23:38:20] <fizzie> If it's a "pretty standard Go application", you should be able to `go install github.com/docker-library/bashbrew/cmd/bashbrew` without any faffing around by cloning the repository.
+[23:38:38] <XenophonF> oh thank goodness it isn't just me
+[23:38:43] <XenophonF> that's how all the other go apps are
+[23:38:55] <XenophonF> the Dockerfile makes the actual process clearer
+[23:38:58] *** Quits: Onkel1234 (~Guest69@pppoe-62-84-108-224.dubna.ru) (Quit: Client closed)
+[23:39:06] <XenophonF> if I have the energy for it, I'll file a PR
+[23:39:16] <XenophonF> thanks for all your help!
+[23:39:21] <fizzie> Not sure if you missed the part of including `.../cmd/bashbrew` in the go install command.
+[23:39:34] <XenophonF> I did miss that
+[23:40:03] <ikke> You basically need to find a main package to build
+[23:41:58] <fizzie> That sentence in the readme would be a really good place to mention the package you'd want to build though.
+[23:45:31] <XenophonF> so if you don't want to read the Dockerfile, you gotta clone it, run `go mod download`, copy bin/bashbrew to somewhere in $PATH, and finally set BASHBREW_CACHE to somewhere
+[23:46:11] <b0nn> The problem is their poor docs
+[23:46:19] <XenophonF> I will file a PR because I surely can't be the only person wanting to build a Docker Official Image-style container using their tooling.
+[23:47:19] <XenophonF> on the plus side, I've learned a few new shell scripting tricks reading through their repos
+[23:48:00] *** Quits: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-f863-5727-5d9c-7f8d.res6.spectrum.com) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[23:49:47] <XenophonF> thanks again for your help!
+[23:50:02] *** Quits: hannibal_ad_port (c99abf4150@2604:bf00:561:2000::297) (Ping timeout: 250 seconds)
+[23:50:02] *** Quits: nhanb_ (522d4a25ea@2604:bf00:561:2000::13b) (Ping timeout: 250 seconds)
+[23:50:02] *** Quits: frode_ (9b90a24314@2604:bf00:561:2000::1d1) (Ping timeout: 250 seconds)
+[23:50:02] *** Quits: paulgrmn_ (4935b8e2c8@2604:bf00:561:2000::93) (Ping timeout: 250 seconds)
+[23:50:02] *** Quits: k0ta (3da8335bb9@2604:bf00:561:2000::10a) (Ping timeout: 250 seconds)
+[23:50:02] *** Quits: d4ve (3c3f700800@user/d4ve) (Ping timeout: 250 seconds)
+[23:50:02] *** Quits: akelly (24aca7a63b@2604:bf00:561:2000::152) (Ping timeout: 250 seconds)
+[23:50:02] *** Quits: ddevault (e7b4bb6755@sourcehut/staff/ddevault) (Ping timeout: 250 seconds)
+[23:50:02] *** Quits: hwrd (aa272caead@2604:bf00:561:2000::137) (Ping timeout: 250 seconds)
+[23:50:02] *** Quits: mendelmaleh (e58b23db5e@2604:bf00:561:2000::22b) (Ping timeout: 250 seconds)
+[23:50:02] *** Quits: sharktamer (9bafe1e1bb@2604:bf00:561:2000::17) (Ping timeout: 250 seconds)
+[23:51:00] *** Joins: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-f863-5727-5d9c-7f8d.res6.spectrum.com)
+[23:51:20] *** Quits: filwisher (2e6936c793@2604:bf00:561:2000::170) (Ping timeout: 250 seconds)
+[23:51:51] *** Joins: nhanb (522d4a25ea@2604:bf00:561:2000::13b)
+[23:51:51] *** Joins: sharktamer (9bafe1e1bb@2604:bf00:561:2000::17)
+[23:51:51] *** Joins: paulgrmn (4935b8e2c8@user/paulgrmn)
+[23:51:51] *** Joins: frode (9b90a24314@2604:bf00:561:2000::1d1)
+[23:51:53] *** Joins: hannibal_ad_port (c99abf4150@2604:bf00:561:2000::297)
+[23:51:53] *** Joins: k0ta (3da8335bb9@2604:bf00:561:2000::10a)
+[23:51:53] *** Joins: filwisher (2e6936c793@2604:bf00:561:2000::170)
+[23:51:54] *** Joins: mendelmaleh (e58b23db5e@2604:bf00:561:2000::22b)
+[23:51:54] *** Joins: akelly (24aca7a63b@2604:bf00:561:2000::152)
+[23:51:54] *** Joins: ddevault (e7b4bb6755@sourcehut/staff/ddevault)
+[23:51:54] *** Joins: d4ve (3c3f700800@user/d4ve)
+[23:51:55] *** Joins: hwrd (aa272caead@2604:bf00:561:2000::137)
+[23:59:17] *** Joins: alyx (~alyx@173.30.132.213)

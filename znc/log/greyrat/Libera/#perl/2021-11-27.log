@@ -1,0 +1,603 @@
+[00:00:14] <phryk> Okay, I'll be reading the Mojo::Pg docs a bit more to see if I can figure out why stuff is going into the database without me calling $tx->commit. :)
+[00:01:19] *** Joins: joshisanonymous (~joshisano@2601:246:200:7080:50ab:42:3ddb:a066)
+[00:01:35] *** Quits: deadmarshal (~deadmarsh@95.38.116.172) (Ping timeout: 265 seconds)
+[00:01:46] *** Quits: joshisanonymous (~joshisano@2601:246:200:7080:50ab:42:3ddb:a066) (Client Quit)
+[00:01:59] <Grinnz> make sure that you are calling your queries while the $tx is in scope, and on the same $db that you called begin on
+[00:02:54] <phryk> Grinnz: Not 100% sure what "in scope" here means, but I assume that's where my problem lies. :P
+[00:03:22] <Grinnz> { my $tx = $db->begin; # $tx is in scope here } # $tx is no longer in scope here
+[00:05:06] *** Joins: joshisanonymous (~joshisano@2601:246:200:7080:50ab:42:3ddb:a066)
+[00:05:10] <phryk> Grinnz: Yes, but what about child(?) scopes? I'm doing $db->begin and then call some model functions doing $db->insert before the $tx->commit
+[00:05:36] <Grinnz> you mean sub calls?
+[00:05:42] <phryk> yes.
+[00:05:53] <Grinnz> here we're referring to the runtime scope, so as long as the scope where you declared it hasn't exited yet, it'll still be active
+[00:06:09] <Grinnz> and you're passing that exact $db in to the model functions to act on?
+[00:06:48] <phryk> They access the same Mojo::Pg objects' ->db, so I think within a request that should be true…
+[00:06:53] <Grinnz> it isn't
+[00:07:29] <Grinnz> it's a connection manager. it may hold more than one connection, and won't give the same one that's currently active
+[00:07:43] *** Joins: kensanata (~user@user/kensanata)
+[00:08:05] <phryk> Oh, I assumed it'd pick one available connection at the begin of the request and stick with it. Thanks for pointing that out.^^
+[00:08:07] <Grinnz> normally accessing a new ->db in a sub call is the right thing to do. a transaction is the exception, that must be completed with the same db object
+[00:08:15] <Grinnz> a transaction only exists in one connection
+[00:09:25] <phryk> Aye. So I should add an optional parameter for the db object… Also have to look up whether nested transactions are a thing cause I just noticed one query depends on having the result from the other…
+[00:09:56] <Grinnz> they aren't - you can use savepoints for that effect, but Mojo::Pg doesn't support that
+[00:10:13] *** Quits: latk (~latk@2001:470:69fc:105::255) (Ping timeout: 250 seconds)
+[00:10:28] *** Joins: latk (~latk@2001:470:69fc:105::255)
+[00:11:29] <phryk> Mhh, then I have some of my data integrity checking within perl and that's bad. I guess I'll be looking to improve my data modeling to keep it db-side…^^
+[00:11:44] <phryk> Thanks for your assistance, helped clear up a lot. :)
+[00:12:12] <Grinnz> this sort of stuff gets kind of tricky as to the right balance of abstraction
+[00:13:02] <Grinnz> if you really need it, you should be able to use https://metacpan.org/pod/DBD::Pg#Savepoints on the $db->dbh during the transaction
+[00:13:03] <Paperbot> Link title(s): [ DBD::Pg - PostgreSQL database driver for the DBI module - metacpan.org ]
+[00:13:56] <Grinnz> but you do have to make sure the rollback occurs on scope exit when doing that yourself
+[00:14:33] <Grinnz> which you could do with https://metacpan.org/pod/Syntax::Keyword::Defer or https://metacpan.org/pod/Scope::Guard or various other options
+[00:14:34] <Paperbot> Link title(s): [ Syntax::Keyword::Defer - execute code when leaving a block - metacpan.org ] [ Scope::Guard - lexically-scoped resource management - metacpan.org ]
+[00:14:41] <gordonfish> What might I be doing wrong here?
+[00:14:45] <gordonfish> sweval: use Object::Pad; role R1 { method foo :override { } } class C1 does R1 { method foo { 123 } } C1->new;
+[00:14:47] <perlbot> gordonfish: ERROR: Superclass does not have a method named 'foo' at (IRC) line 1. 
+[00:15:04] <Grinnz> oh, there's also https://metacpan.org/pod/Mojo::Util#scope_guard
+[00:15:04] <Paperbot> Link title(s): [ Mojo::Util - Portable utility functions - metacpan.org ]
+[00:15:44] <phryk> Ah, so with that I'd already have all the components I'd need without necessitating any extra dependencies…
+[00:17:00] <Grinnz> try/finally from https://metacpan.org/pod/Syntax::Keyword::Try is another option (and I always recommend having SKT around if possible)
+[00:17:00] <Paperbot> Link title(s): [ Syntax::Keyword::Try - a try/catch/finally syntax for perl - metacpan.org ]
+[00:18:35] <gordonfish> Oh, I should be using requires methodname; in roles. Whoops.
+[00:19:23] <gordonfish> sweval: use Object::Pad; role R1 { requires foo; } class C1 does R1 { method foo { 123 } } C1->new->foo;
+[00:19:25] <perlbot> gordonfish: 123 🛍
+[00:40:01] *** Joins: geli (~gelignite@55d411d7.access.ecotel.net)
+[00:40:07] *** Quits: magla (~gelignite@55d411d7.access.ecotel.net) (Read error: Connection reset by peer)
+[00:41:38] *** Joins: deadmarshal (~deadmarsh@95.38.116.172)
+[00:42:56] *** Quits: gamo (~Thunderbi@cm-93-156-61-102.telecable.es) (Ping timeout: 256 seconds)
+[00:47:26] *** Joins: BSaboia (~bsaboia@177.37.198.107)
+[00:49:21] *** Quits: rgrinberg (~textual@201.198.177.243) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[00:51:00] *** Joins: rgrinberg (~textual@201.198.177.243)
+[00:52:09] *** Quits: rgrinberg (~textual@201.198.177.243) (Client Quit)
+[00:53:18] *** Quits: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[00:56:08] *** Joins: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net)
+[01:06:59] * GumbyPAN CPAN Upload: Code-TidyAll-0.80 by DROLSKY https://metacpan.org/release/DROLSKY/Code-TidyAll-0.80
+[01:10:46] *** Quits: joshisanonymous (~joshisano@2601:246:200:7080:50ab:42:3ddb:a066) (Ping timeout: 245 seconds)
+[01:17:00] * GumbyPAN CPAN Upload: App-perlimports-0.000026 by OALDERS https://metacpan.org/release/OALDERS/App-perlimports-0.000026
+[01:20:57] *** Joins: rgrinberg (~textual@201.198.177.243)
+[01:24:38] *** Quits: zer0bitz (~zer0bitz@2001:2003:f6bc:f00:75c5:c6ed:c91:17fe) (Read error: Connection reset by peer)
+[01:27:21] *** Joins: trace (~trace@pop.92-184-102-161.mobile.abo.orange.fr)
+[01:27:23] <trace> A
+[01:27:23] <trace> a
+[01:27:24] <trace> a
+[01:27:24] <trace> a
+[01:27:25] <trace> as
+[01:27:25] <trace> e
+[01:27:26] <trace> a
+[01:27:26] <trace> a
+[01:27:27] <trace> a
+[01:27:27] <trace> w
+[01:27:28] <trace> a
+[01:27:29] <trace> a
+[01:27:29] <trace> e
+[01:27:30] <trace> a
+[01:27:30] <trace> s
+[01:27:31] <trace> e
+[01:27:31] <trace> a
+[01:27:32] <trace> a
+[01:27:34] <trace> A
+[01:27:34] <trace> a
+[01:27:35] <trace> w
+[01:27:54] <gordonfish> You must really suck as hangman / wheel of fortune
+[01:27:56] *** Parts: trace (~trace@pop.92-184-102-161.mobile.abo.orange.fr) ()
+[01:27:57] <gordonfish> at*
+[01:28:11] <ehuelsmann[m]> lol
+[01:32:46] *** Joins: trace (~trace@pop.92-184-102-161.mobile.abo.orange.fr)
+[01:32:49] <trace> Hi
+[01:32:55] <trace> A
+[01:32:56] <trace> v
+[01:32:57] <trace> a
+[01:32:59] <trace> a
+[01:33:00] <trace> e
+[01:33:03] <trace> x
+[01:33:04] <trace> a
+[01:33:05] <trace> a
+[01:33:07] <trace> e
+[01:33:08] <trace> n
+[01:33:09] <trace> y
+[01:33:09] <trace> e
+[01:33:11] <trace> a
+[01:33:13] <trace> a
+[01:33:18] <trace> A
+[01:33:19] <trace> a
+[01:33:22] <trace> a
+[01:33:22] <trace> a
+[01:33:26] *** ChanServ sets mode: +o xenu
+[01:33:29] *** trace is now known as mst_
+[01:33:30] <gordonfish> BANKRUPT
+[01:33:30] *** xenu sets mode: +b *!*@host-176-37-124-197.b025.la.net.ua
+[01:33:30] *** troydm was kicked by xenu (troydm)
+[01:33:30] <mst_> a
+[01:33:32] <mst_> a
+[01:33:34] <mst_> a
+[01:33:36] <mst_> e
+[01:33:37] <mst_> a
+[01:33:38] <mst_> a
+[01:33:40] <mst_> lol
+[01:33:40] *** xenu sets mode: +b *!*@pop.92-184-102-161.mobile.abo.orange.fr
+[01:33:40] *** mst_ was kicked by xenu (mst_)
+[01:33:57] *** xenu sets mode: -b *!*@host-176-37-124-197.b025.la.net.ua
+[01:34:02] <xenu> tab fail
+[01:34:20] <gordonfish> Might not be your fault, bastard changes nicks on you
+[01:34:36] <gordonfish> *ed nicks
+[01:35:18] *** xenu sets mode: -ooo xenu xenu xenu
+[01:37:34] <gordonfish> Ah crap he's multiplying
+[01:37:46] <gordonfish> (Who fed him after midnight?)
+[01:53:50] *** Joins: zeraphel (~zeraphel@2a00:a040:196:56d:96de:80ff:fefa:44a)
+[01:54:13] *** Quits: haj1 (~haj@ip5f5bf913.dynamic.kabel-deutschland.de) (Quit: Leaving.)
+[01:59:38] <daemon> wow spam bots
+[01:59:40] <daemon> old school
+[02:00:38] <daemon> spammers used to try harder in the 90s >.>
+[02:02:53] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Remote host closed the connection)
+[02:02:56] <Grinnz> kinda weird that libera doesn't have flood throttle channel modes
+[02:03:32] *** Quits: deadmarshal (~deadmarsh@95.38.116.172) (Ping timeout: 240 seconds)
+[02:03:59] <keir> Grinnz: the ozone bot will automatically join a channel if it detects flooding on the network
+[02:04:27] <keir> if it's ever been kicked from #perl it won't ever return to do it though
+[02:04:32] <Grinnz> thats good, but doesn't really help with lazy spammers
+[02:06:10] *** Joins: FinnElija (~finn_elij@user/finn-elija/x-0085643)
+[02:06:13] <Grinnz> there's a join throttle limit similar to the flood throttle from unreal
+[02:07:51] <daemon> I mean ... that was so low pressure does it even matter -_-
+[02:08:04] <daemon> the amount of open proxies and low hanging fruit is quite small now days
+[02:08:13] <Grinnz> with a bit more persistence it would
+[02:08:48] <daemon> I do not think spammers/trolls even have the ability/persistence to really maintain an attack now days
+[02:08:57] <Grinnz> don't tempt fate
+[02:09:10] <Grinnz> do you not remember like, last year?
+[02:09:11] <daemon> its such a tiny platform
+[02:09:16] <daemon> I remember the 90s
+[02:09:36] *** Quits: kensanata (~user@user/kensanata) (Ping timeout: 268 seconds)
+[02:09:42] <daemon> 5000+ bots with unicode and background+foreground colour blocks cpu locking clients
+[02:10:06] <daemon> when socks and http proxies was open on every 100th host
+[02:11:21] <keir> daemon: it might not have been a bot. there were responding on #linux-offtopic
+[02:11:32] <keir> s/there/they/
+[02:11:50] <keir> odd channels to target though? #perl and #linux-offtopic
+[02:12:00] <daemon> irc is an odd target
+[02:12:08] <daemon> its seriously niche now really 
+[02:12:20] *** Quits: zeraphel (~zeraphel@2a00:a040:196:56d:96de:80ff:fefa:44a) (Quit: zeraphel)
+[02:12:43] <choroba> there are spammers on PerlMonks
+[02:12:47] <keir> to me it seems like IRC has been on the up in the last year
+[02:12:48] *** Joins: zeraphel (~zeraphel@2a00:a040:196:56d:96de:80ff:fefa:44a)
+[02:13:18] <daemon> choroba, there are on efnet too, but there really nothing compared to what it was like 20 years ago
+[02:14:00] <daemon> keir, netsplit.de can likely tell you
+[02:14:24] <Grinnz> not easily, because of the incident
+[02:15:15] <keir> yeah, the freenode and libera surge makes it hard to tell
+[02:15:34] <Grinnz> OFTC seems to be steadily growing https://netsplit.de/networks/top10.php
+[02:15:35] <Paperbot> Link title(s): [ IRC Networks - Top 10 in the annual comparison ]
+[02:15:36] <daemon> we do have the numbers of freenode leading up to it totally being killed though
+[02:15:44] <daemon> OFTC is an interesting one
+[02:15:47] <Grinnz> and libera very slightly
+[02:16:10] <keir> i think the freenode incident is what cause IRC to go on the up though
+[02:16:29] <daemon> it certainly probably alerted some people to 'its still a thing'
+[02:16:39] <daemon> but it also caused a lot of 'sod this we are going to discord/slack'
+[02:16:43] <Grinnz> really hard to say
+[02:16:48] *** Quits: NotAres (uid527990@user/notares) (Quit: Connection closed for inactivity)
+[02:16:48] <Grinnz> also matrix
+[02:16:51] <keir> and probably put itself infront of new people
+[02:17:27] <daemon> IRC really just needs marketing right
+[02:17:45] <keir> it needs more use within enterprise settings
+[02:17:56] <keir> instead of Slack (groan)
+[02:17:58] <daemon> back in the day of windows 95 'cchat' -> irc.msn.com + the fact IRC was a primary tech medium massively boosted the platform
+[02:18:15] <daemon> if you look at pidgin and others that offer IRC as a chat medium, they are all lack luster
+[02:18:32] <Grinnz> https://www.irccloud.com/ is enterprise team ready :)
+[02:18:33] <Paperbot> Link title(s): [ IRCCloud ]
+[02:18:35] <keir> the fact that Slack without threads is nearly a IRC ripoff
+[02:18:50] <daemon> everythign is an IRC rip off its an IM
+[02:19:04] <daemon> IRC is pretty damn old :P
+[02:19:11] <keir> the way Slack is organised is a mirror of IRC
+[02:19:36] <keir> slash commands and #channels for example
+[02:19:40] <Grinnz> and discord is like if someone heard of IRC and then implemented it all wrong
+[02:19:45] <keir> ha
+[02:19:59] <Grinnz> (i will say the discord permissions system is second to none though)
+[02:20:18] <daemon> except they log everything on servers and you can't even SLA them
+[02:20:19] *** Quits: choroba (~E_Choroba@89-101-243-80.cust.centrio.cz) (Quit: Leaving)
+[02:20:26] <daemon> including voice comms
+[02:20:36] <daemon> sorry not SLA
+[02:20:44] <daemon> ... what is it called the data request thing
+[02:21:05] <keir> GDPR stuff?
+[02:21:09] <xenu> the fact that you need a shell, bnc or irccloud is a huge problem for irc
+[02:21:10] <daemon> not GDPR
+[02:21:26] <daemon> there is a way you can request all logs related to yourself and data as well stored on any companies server
+[02:21:32] <daemon> it is a S... something reuqest
+[02:21:33] <keir> yeah GDPR
+[02:21:40] <keir> Subject Access Request
+[02:21:42] <keir> part of GDPR
+[02:21:48] <daemon> SAR
+[02:21:53] <daemon> subject Access Request
+[02:22:13] <xenu> chathistory (ircv3 has a draft spec) is something we need *badly* to save irc
+[02:22:14] <keir> there's an echo in here
+[02:22:19] <xenu> and by 'save' i mean make it die slower
+[02:22:32] <keir> xenu: i'm not a fan of that
+[02:22:47] <keir> and typing notifs
+[02:22:52] *** Joins: proller (~p@80.240.216.69)
+[02:22:53] <daemon> xenu, we need to take a websocket approach to IRC and have extensions allowed onto the base protocol, but always have a pure text media type carried
+[02:23:15] <daemon> so people can base platforms on established networks, that clients of a different access medium can still interact with
+[02:23:16] <xenu> i don't know what 'websocket approach' means but ircv3 allows negotiating features
+[02:24:01] <keir> i also don't like this idea to allow people to edit/delete messages on the protocol
+[02:24:02] *** Quits: martinus__ (~martin@96.19.201.77.rev.sfr.net) (Ping timeout: 240 seconds)
+[02:24:16] <Grinnz> irccloud uses websockets to communicate with its client
+[02:24:21] <xenu> that reminds me
+[02:24:23] <xenu> https://www.youtube.com/watch?v=0R--_ATzE6o
+[02:24:23] <Paperbot> YouTube video linked by xenu: Introducing "VoIRC" - voice-chat over IRC - published by Arcane Stockade (Secondary Ch.)
+[02:24:28] <Grinnz> that has nothing to do with IRC though, that's just the interface
+[02:24:56] <keir> Grinnz: what doesn't?
+[02:25:00] <Grinnz> but yeah, what xenu said - that's how we've been adding extensions already
+[02:25:33] <Grinnz> what i said
+[02:25:51] <keir> oh
+[02:26:36] <keir> https://github.com/ircv3/ircv3-specifications/pull/425
+[02:26:39] <Paperbot> Link title(s): [ Message editing and deletion by jwheare · Pull Request #425 · ircv3/ircv3-specifications · GitHub ]
+[02:27:01] <Grinnz> anyway, the joke network that got setup with unreal during the freenode incident has support for typing notifications and voice over irc
+[02:27:32] *** Quits: proller (~p@80.240.216.69) (Ping timeout: 240 seconds)
+[02:27:36] <Grinnz> and irccloud's slack connector has support for edit/delete and reactions, using irccloud's internal bridge ircds
+[02:27:52] <xenu> typing notifications or message editing makes sense if you want to deploy irc as a slack replacement
+[02:28:02] <xenu> but i don't think it's something that public networks should adopt
+[02:28:08] <Grinnz> you can always just use a client that doesn't support them
+[02:28:43] <xenu> tbh typing notifications don't make sense even on slack
+[02:28:49] <daemon> xenu, Grinnz fancy developing it? for perl :)
+[02:28:52] <xenu> but i guess some people like them
+[02:28:57] <Grinnz> developing what?
+[02:29:04] <daemon> an ircv3 compatible ircd
+[02:29:10] <Grinnz> huh?
+[02:29:19] <Grinnz> those exist already
+[02:29:25] <Grinnz> we're talking on one right now
+[02:29:29] <xenu> iirc someone wrote one in perl
+[02:29:34] <daemon> this supports extensions?
+[02:29:37] <Grinnz> yes
+[02:29:49] <Grinnz> CAP Server supports: account-notify | away-notify | chghost | extended-join | multi-prefix | sasl=PLAIN,ECDSA-NIST256P-CHALLENGE,EXTERNAL | tls | account-tag | cap-notify | echo-message | solanum.chat/identify-msg | solanum.chat/oper | solanum.chat/realhost
+[02:29:53] <keir> inspIRCd is IRCv3 compatible
+[02:29:59] <Grinnz> it's highly likely you are using several of those 
+[02:30:01] <daemon> which one can carry voice
+[02:30:05] <Grinnz> none of them
+[02:30:06] <xenu> https://github.com/cooper/juno
+[02:30:07] <Paperbot> Link title(s): [ GitHub - cooper/juno: a seriously modern IRC daemon written from scratch in Perl. designed to be ... ]
+[02:30:09] <keir> so is Ergo
+[02:30:14] <Grinnz> ircv3 is not a single thing
+[02:30:24] <Grinnz> it's an extension mechanism
+[02:30:25] <keir> https://ircv3.net/software/servers
+[02:30:26] <Paperbot> Link title(s): [ Servers - IRCv3 ]
+[02:30:32] <Grinnz> and a working group
+[02:31:02] <daemon> so the extensions are simply extended auth mechanisms 
+[02:31:16] <Grinnz> requested on connection
+[02:32:50] *** Quits: pizdets (~pizdets@183.182.110.223) (Ping timeout: 250 seconds)
+[02:33:12] <daemon> really seems underwhelming realy
+[02:33:42] <Grinnz> depends what you're looking for
+[02:33:55] *** Joins: pizdets (~pizdets@183.182.111.236)
+[02:34:21] <Grinnz> away-notify allows clients to implement away status checking with 1000% less spam to the server
+[02:34:43] <Grinnz> echo-message allows clients to know if their message was sent
+[02:35:00] <Grinnz> tls and sasl are... self explanatory
+[02:35:16] <daemon> I was expecting multi server connections (single client to multi server), DHO so that all servers are known and a single server death does not mean anything, network redundancy through distribution and dynamic extension and bandwidth channels via negotiation
+[02:35:36] <Grinnz> that's oddly specific
+[02:35:45] <daemon> I had the idea a while ago >.>
+[02:35:58] <Grinnz> well, the ircv3 proposal tracker is over there
+[02:36:31] <gordonfish> I personally rather like the idea of building upon existing things, extending it without destroying compatibility with old clients. There's a whole host of things in the tech world that could learn a thing or two from that.
+[02:36:43] *** Joins: deadmarshal (~deadmarsh@95.38.228.146)
+[02:36:45] <Grinnz> like a certain programming language
+[02:37:53] <gordonfish> Well before I ever heard of ircv3 I always thought the existing irc protocol could be extended in such a way that new things could be added that new willing clients could take advantage of, and was rather impressed when I first learned that that was reality.
+[02:40:04] *** Joins: proller (~p@2a02:6b8:b081:1216::1:22)
+[02:40:46] *** Quits: deadmarshal (~deadmarsh@95.38.228.146) (Ping timeout: 245 seconds)
+[02:41:31] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Remote host closed the connection)
+[02:41:32] <gordonfish> Grinnz: Perl, Bash (if I'm not mistaken, can run just about any classic bourne shell code, while providing a lot more), hell even Batch Files on windows can still run just about anything from the pure DOS era but have some new things added.
+[02:41:51] *** Joins: FinnElija (~finn_elij@user/finn-elija/x-0085643)
+[02:43:33] <gordonfish> (And iirc, it only took Microsoft about 2 years to introduce an imcompatible version of .Net langs, going from VS .Net 2002 to VS .Net 2003)
+[02:44:05] <gordonfish> (And I recall similar problems for Power Shell 1.x to 2.x)
+[02:45:11] *** Joins: whynot (~whynot@37.73.152.16)
+[02:46:23] <gordonfish> It's one thing to write new code using newer ways, it's another to have to update entire code bases because someone decided to completely change how something worked, or even just renaming some functions. PHP is a nice example of that too.
+[02:46:55] <gordonfish> (Also Python 2.7-ish to 3.x, to an extent)
+[02:53:19] *** Quits: rgrinberg (~textual@201.198.177.243) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[02:58:36] *** Quits: Darkcoal (~user@143.92.183.8) (Quit: Darkcoal)
+[03:00:39] *** Quits: Manderson (~manderson@047-028-019-189.res.spectrum.com) (Read error: Connection reset by peer)
+[03:03:31] *** Quits: R2robot (~R2robot@user/r2robot) (Quit: Pull the lever, Kronk.  Wrong leverrrrrrr!)
+[03:05:09] *** Joins: R2robot (~R2robot@user/r2robot)
+[03:09:59] *** Joins: nedzadhrnjica (~nedzadhrn@80.80.36.58)
+[03:10:04] <gordonfish> LeoNerd, etc: Man, I am just finding my self so hooked on Object::Pad now.
+[03:12:20] *** Quits: nedzadhrnjica (~nedzadhrn@80.80.36.58) (Client Quit)
+[03:19:27] *** Quits: llh (~llh@user/llh) (Quit: :::: ( UPP ) ::::)
+[03:20:45] *** Quits: BSaboia (~bsaboia@177.37.198.107) (Quit: This computer has gone to sleep)
+[03:21:46] *** Joins: BSaboia (~bsaboia@177.37.198.107)
+[03:23:03] *** Quits: X-Scale (~ARM@31.22.203.240) (Ping timeout: 250 seconds)
+[03:23:24] *** Joins: X-Scale` (~ARM@25.55.43.5.rev.vodafone.pt)
+[03:28:11] *** Joins: X-Scale (~ARM@83.223.225.150)
+[03:29:09] *** Quits: X-Scale` (~ARM@25.55.43.5.rev.vodafone.pt) (Ping timeout: 268 seconds)
+[03:42:24] *** Quits: BSaboia (~bsaboia@177.37.198.107) (Quit: This computer has gone to sleep)
+[03:44:23] *** Joins: llh (~llh@user/llh)
+[03:52:55] *** Quits: TweetiePooh (~richard@cpc75386-sotn16-2-0-cust456.15-1.cable.virginm.net) (Quit: Konversation terminated!)
+[03:52:58] *** Joins: BSaboia (~bsaboia@177.37.198.107)
+[03:54:02] *** Quits: patterner_ (sid212303@ilkley.irccloud.com) (Ping timeout: 240 seconds)
+[03:54:02] *** Quits: Exodist (sid433366@hampstead.irccloud.com) (Ping timeout: 240 seconds)
+[03:54:32] *** Quits: pwillard (sid136981@hampstead.irccloud.com) (Ping timeout: 240 seconds)
+[03:55:16] *** Joins: pwillard (sid136981@id-136981.hampstead.irccloud.com)
+[03:55:32] *** Quits: kiwiroy (sid374179@lymington.irccloud.com) (Ping timeout: 240 seconds)
+[03:56:02] *** Quits: timeless (sid4015@ilkley.irccloud.com) (Ping timeout: 240 seconds)
+[03:56:32] *** Quits: TBSliver (sid321952@hampstead.irccloud.com) (Ping timeout: 240 seconds)
+[03:56:32] *** Quits: mruszczyk (sid160336@tinside.irccloud.com) (Ping timeout: 240 seconds)
+[03:56:57] *** Joins: mruszczyk (sid160336@id-160336.tinside.irccloud.com)
+[03:57:01] *** Joins: timeless (sid4015@id-4015.ilkley.irccloud.com)
+[03:57:03] *** Joins: kiwiroy (sid374179@id-374179.lymington.irccloud.com)
+[03:57:06] *** Joins: Exodist (sid433366@id-433366.hampstead.irccloud.com)
+[03:57:17] *** Quits: celphi_ (sid97751@user/celphi) (Ping timeout: 250 seconds)
+[03:57:48] *** Joins: patterner_ (sid212303@id-212303.ilkley.irccloud.com)
+[03:58:45] *** Joins: celphi_ (sid97751@helmsley.irccloud.com)
+[04:00:04] *** Joins: salparadise (~salparadi@129.146.17.140)
+[04:00:44] *** Joins: TBSliver (sid321952@id-321952.hampstead.irccloud.com)
+[04:01:36] *** Quits: Yaakov (sid19863@user/Yaakov) (Ping timeout: 245 seconds)
+[04:02:02] *** Quits: tag (sid271787@lymington.irccloud.com) (Ping timeout: 240 seconds)
+[04:03:16] *** Quits: pjlsergeant (sid143467@hampstead.irccloud.com) (Ping timeout: 245 seconds)
+[04:03:21] *** Joins: Yaakov (sid19863@user/Yaakov)
+[04:04:07] *** Joins: tag (sid271787@id-271787.lymington.irccloud.com)
+[04:04:30] *** Joins: pjlsergeant (sid143467@id-143467.hampstead.irccloud.com)
+[04:04:36] *** Joins: rgrinberg (~textual@201.198.177.243)
+[04:06:09] *** Quits: celphi_ (sid97751@helmsley.irccloud.com) (Ping timeout: 268 seconds)
+[04:08:57] *** Joins: celphi_ (sid97751@helmsley.irccloud.com)
+[04:12:38] *** Quits: celphi_ (sid97751@helmsley.irccloud.com) (Changing host)
+[04:12:38] *** Joins: celphi_ (sid97751@user/celphi)
+[04:40:28] *** Quits: pj (~pj@ghettoforge/pj) (Ping timeout: 265 seconds)
+[04:51:53] *** Quits: Michelle (~michelle@2407:8800:bc20:200a:bce1:cf4b:b4d2:b872) (Ping timeout: 250 seconds)
+[04:51:53] *** Joins: Shells (~michelle@2407:8800:bc20:200a:4865:cf2d:d977:d9f6)
+[04:53:12] *** Joins: pj (~pj@ghettoforge/pj)
+[05:03:41] *** Quits: Su-Shee (~Susanne@p508943f5.dip0.t-ipconnect.de) (Ping timeout: 245 seconds)
+[05:05:35] *** Joins: Su-Shee (~Susanne@p4ff4908c.dip0.t-ipconnect.de)
+[05:07:18] *** Quits: TonyStone (~TonyStone@2603-7080-8607-c36a-9cdb-69bc-753b-1e50.res6.spectrum.com) (Remote host closed the connection)
+[05:07:21] *** Quits: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[05:18:26] *** Joins: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net)
+[05:56:55] *** Quits: Su-Shee (~Susanne@p4ff4908c.dip0.t-ipconnect.de) (Ping timeout: 260 seconds)
+[05:58:27] *** Joins: Su-Shee (~Susanne@p50894c9a.dip0.t-ipconnect.de)
+[06:01:00] *** Joins: bn_work (uid268505@id-268505.uxbridge.irccloud.com)
+[06:03:52] *** Quits: dextercd (~dexter@2a02-a450-f25d-1-76d4-35ff-fefe-34c.fixed6.kpn.net) (Quit: WeeChat 3.3)
+[06:09:38] *** Quits: leitz (~LeamHall@cpe-173-172-58-72.tx.res.rr.com) (Quit: nappy time)
+[06:12:41] *** Joins: jellyknight (~gelignite@55d49b41.access.ecotel.net)
+[06:15:41] *** Quits: geli (~gelignite@55d411d7.access.ecotel.net) (Ping timeout: 265 seconds)
+[06:17:06] *** Quits: BSaboia (~bsaboia@177.37.198.107) (Quit: This computer has gone to sleep)
+[06:18:20] *** Joins: Guest145 (~Guest145@58.red-79-152-232.dynamicip.rima-tde.net)
+[06:18:58] *** Joins: blo_ (~blo@ipv6.blo.ski)
+[06:19:35] *** Quits: blo (~blo@user/blo) (Ping timeout: 264 seconds)
+[06:37:45] *** Quits: rgrinberg (~textual@201.198.177.243) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[06:38:51] *** Joins: zgu|skaro (~zgu@12.71.142.2)
+[06:38:55] <pragma-> https://github.com/cooper/juno/blob/master/doc/history.md is an amusing read
+[06:38:55] <Paperbot> Link title(s): [ juno/history.md at master · cooper/juno · GitHub ]
+[06:39:47] <Grinnz> heh
+[06:44:22] *** Joins: zgu|skar0 (~zgu@12.71.142.2)
+[06:44:24] *** Joins: rgrinberg (~textual@201.198.177.243)
+[06:46:55] *** Quits: zgu|skaro (~zgu@12.71.142.2) (Ping timeout: 250 seconds)
+[06:47:50] *** Quits: jellyknight (~gelignite@55d49b41.access.ecotel.net) (Quit: Stay safe!)
+[06:48:14] *** Joins: TonyStone (~TonyStone@2603-7080-8607-c36a-9971-ce5a-c805-3e08.res6.spectrum.com)
+[07:08:05] *** Joins: R2robot_ (~R2robot@user/r2robot)
+[07:09:30] *** Quits: R2robot (~R2robot@user/r2robot) (Ping timeout: 260 seconds)
+[07:15:32] *** Quits: zgu|skar0 (~zgu@12.71.142.2) (Ping timeout: 240 seconds)
+[07:27:50] *** Quits: whynot (~whynot@37.73.152.16) (Quit: leaving)
+[07:42:43] *** Joins: Martchus_ (~martchus@2a01:c23:b877:c100:d250:99ff:fe49:3cce)
+[07:42:51] *** Quits: Martchus (~martchus@dynamic-077-007-042-234.77.7.pool.telefonica.de) (Ping timeout: 245 seconds)
+[07:45:20] <Grinnz> i like how it's completely impossible to find this post on google https://www.nntp.perl.org/group/perl.perl5.porters/2017/11/msg247237.html
+[07:45:21] <Paperbot> Link title(s): [ square signatures -  nntp.perl.org ]
+[07:57:53] <Grinnz> someone should really make that p5p list search interface
+[08:12:27] <xenu> it isn't just this post
+[08:12:32] <xenu> the majority of that site isn't indexed
+[08:13:04] <xenu> markmail is probably the best option if you want to search p5p
+[08:13:49] *** Joins: dsrt^ (~dsrt@68.101.58.90)
+[08:14:08] *** Quits: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net) (Quit: Textual IRC Client: www.textualapp.com)
+[08:18:11] *** Joins: rindolf (~shlomif@2a0d:6fc2:4bb1:500:6b1e:2524:3d70:36ec)
+[08:25:05] *** Quits: slowButPresent (~slowButPr@user/slowbutpresent) (Quit: leaving)
+[08:31:28] *** Quits: gko (~user@user/gko) (Remote host closed the connection)
+[08:32:58] *** Joins: deadmarshal (~deadmarsh@95.38.228.146)
+[08:45:23] *** Joins: XV8 (~XV8@199.192.138.251)
+[08:46:35] *** Quits: Sleepy63 (~Sleepy63@user/sleepy63) (Read error: Connection reset by peer)
+[08:49:29] *** Quits: XV8 (~XV8@199.192.138.251) (Client Quit)
+[09:04:59] *** Quits: Guest145 (~Guest145@58.red-79-152-232.dynamicip.rima-tde.net) (Quit: Client closed)
+[09:10:33] *** Joins: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl)
+[09:15:06] *** Quits: deadmarshal (~deadmarsh@95.38.228.146) (Ping timeout: 268 seconds)
+[09:22:26] *** Joins: Sleepy63 (~Sleepy63@user/sleepy63)
+[09:22:44] *** Quits: Pali (~pali@user/pali) (Ping timeout: 260 seconds)
+[09:24:15] *** Joins: deadmarshal (~deadmarsh@95.38.228.146)
+[09:25:05] *** Quits: tbcr_ (~tbcr@107.13.189.161) (Quit: ZNC 1.8.2 - https://znc.in)
+[09:28:17] *** Joins: tbcr_ (~tbcr@107.13.189.161)
+[09:31:55] *** Joins: JoelJoel (~jjshoe@user/joel)
+[09:32:46] *** Quits: Joel (~jjshoe@user/joel) (Ping timeout: 256 seconds)
+[09:34:19] *** Joins: gko (~user@user/gko)
+[09:41:47] *** Quits: Tempesta (~Tempesta@user/tempesta) (Quit: See ya!)
+[09:48:03] *** Joins: Tempesta (~Tempesta@user/tempesta)
+[09:53:32] *** Quits: deadmarshal (~deadmarsh@95.38.228.146) (Ping timeout: 240 seconds)
+[09:53:52] *** Joins: voegelas (~voegelas@www.andreasvoegele.com)
+[09:55:12] *** Quits: jetchisel (jetchisel@user/jetchisel) (Ping timeout: 268 seconds)
+[09:57:26] *** Quits: willthechill (~willthech@2600:1700:8c61:3ed0:3057:7061:fe55:a451) (Ping timeout: 245 seconds)
+[09:58:25] *** Quits: rgrinberg (~textual@201.198.177.243) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[09:59:19] *** Joins: deadmarshal (~deadmarsh@95.38.228.146)
+[10:15:47] *** Joins: neocron (~NeoCron@p200300c4cf3f7e00320b69bf1a44e74d.dip0.t-ipconnect.de)
+[10:18:37] *** Quits: Doraemon (~NeoCron@p200300c4cf1c0a00df145b32079df496.dip0.t-ipconnect.de) (Ping timeout: 268 seconds)
+[10:24:56] *** Joins: EGD (~egd@user/egd)
+[11:02:26] *** Quits: deadmarshal (~deadmarsh@95.38.228.146) (Ping timeout: 245 seconds)
+[11:06:12] *** Quits: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl) (Read error: Connection reset by peer)
+[11:12:03] * GumbyPAN CPAN Upload: App-Easer-0.007-TRIAL by POLETTIX https://metacpan.org/release/POLETTIX/App-Easer-0.007-TRIAL
+[11:14:21] *** Quits: ircuser-1 (~Johnny@71.63.241.168) (Quit: because)
+[11:20:53] *** Joins: deadmarshal (~deadmarsh@95.38.228.146)
+[11:25:36] *** Joins: tobybl (~tobybl@213.31.134.21)
+[11:37:30] *** Quits: swaggboi (~swaggboi@slackware.uk/supporter/swaggboi) (Quit: C-x C-c)
+[11:42:02] *** Joins: mogad0n (~mogad0n@user/mogad0n)
+[11:43:38] *** Joins: X-Scale` (~ARM@25.55.43.5.rev.vodafone.pt)
+[11:43:44] *** Quits: X-Scale (~ARM@83.223.225.150) (Ping timeout: 268 seconds)
+[11:44:54] *** X-Scale` is now known as X-Scale
+[11:49:09] *** Joins: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl)
+[11:51:39] *** Joins: swaggboi (~swaggboi@slackware.uk/supporter/swaggboi)
+[12:05:15] *** Joins: ircuser-1 (~Johnny@71.63.241.168)
+[12:07:19] *** Joins: kevin-oculus (~tomys@c188-149-14-10.bredband.tele2.se)
+[12:09:42] *** Joins: Penguin666 (~Penguin66@217.138.205.135)
+[12:13:19] *** Quits: Penguin666x (~Penguin66@217.138.205.135) (Ping timeout: 268 seconds)
+[12:19:46] *** Joins: ghenry (~ghenry@ghenry.plus.com)
+[12:26:10] *** Quits: rindolf (~shlomif@2a0d:6fc2:4bb1:500:6b1e:2524:3d70:36ec) (Read error: Connection reset by peer)
+[12:43:53] *** Joins: rindolf (~shlomif@2a0d:6fc2:4bb1:500:6b1e:2524:3d70:36ec)
+[12:52:14] * GumbyPAN CPAN Upload: App-DBBrowser-2.289 by KUERBIS https://metacpan.org/release/KUERBIS/App-DBBrowser-2.289
+[12:52:24] *** Quits: Adura (~Adura@user/adura) (Quit: Quit)
+[13:01:47] <rindolf> Hi all! i have some spare time for reviewing code if anyone wants.
+[13:06:55] *** Quits: The_Blode (~Blode@user/the-blode/x-7164444) (Read error: Connection reset by peer)
+[13:12:16] * GumbyPAN CPAN Upload: MojoX-HTTP-Async-0.05 by CDN https://metacpan.org/release/CDN/MojoX-HTTP-Async-0.05
+[13:15:07] <rindolf> how to best test cmd line executables: https://metacpan.org/search?q=test+executable - nothing here\
+[13:15:09] <Paperbot> Link title(s): [ Search for "test executable" - metacpan.org ]
+[13:15:12] *** Joins: The_Blode (~Blode@user/the-blode/x-7164444)
+[13:26:18] * GumbyPAN CPAN Upload: Net-Pcap-0.19 by CORION https://metacpan.org/release/CORION/Net-Pcap-0.19
+[13:38:14] *** Quits: WinterStar (~IceLight@user/icelight) (Ping timeout: 260 seconds)
+[13:40:21] *** Joins: WinterStar (~IceLight@user/icelight)
+[13:40:38] *** Quits: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl) (Read error: Connection reset by peer)
+[13:59:49] *** Quits: Su-Shee (~Susanne@p50894c9a.dip0.t-ipconnect.de) (Ping timeout: 250 seconds)
+[14:01:32] *** Joins: Su-Shee (~Susanne@p4ff49ea0.dip0.t-ipconnect.de)
+[14:01:50] *** Quits: tobybl (~tobybl@213.31.134.21) (Remote host closed the connection)
+[14:07:37] *** Joins: Guest17 (~Guest17@eth-west-pareq2-46-193-4-100.wb.wifirst.net)
+[14:19:31] *** Quits: deadmarshal (~deadmarsh@95.38.228.146) (Ping timeout: 245 seconds)
+[14:22:26] *** Joins: choroba (~E_Choroba@89-101-243-80.cust.centrio.cz)
+[14:23:01] *** Joins: deadmarshal (~deadmarsh@95.38.228.146)
+[14:30:17] *** Quits: csrf (~csrf@user/csrf) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[14:31:02] *** Joins: csrf (~csrf@user/csrf)
+[14:31:33] *** Quits: rindolf (~shlomif@2a0d:6fc2:4bb1:500:6b1e:2524:3d70:36ec) (Quit: Shlomi Fish ("Rindolf") has left the server. “Chuck Norris was challenged to fight the world, and accepted. He bet on himself, won, and collected the bet money.”)
+[14:40:23] *** Joins: rindolf (~shlomif@2a0d:6fc2:4bb1:500:6b1e:2524:3d70:36ec)
+[14:43:20] *** Joins: zer0bitz (~zer0bitz@2001:2003:f6bc:f00:9d34:9ef:e98a:2cbe)
+[15:04:23] *** Quits: jlenz__ (~jlenz@c-73-204-107-230.hsd1.fl.comcast.net) (Ping timeout: 250 seconds)
+[15:06:01] *** Joins: jlenz (~jlenz@c-73-204-107-230.hsd1.fl.comcast.net)
+[15:21:33] * GumbyPAN CPAN Upload: MojoX-HTTP-Async-0.06 by CDN https://metacpan.org/release/CDN/MojoX-HTTP-Async-0.06
+[15:23:23] *** Joins: zyweo (~Svew@user/zyweo)
+[15:26:33] * GumbyPAN CPAN Upload: ExtUtils-MakeMaker-7.63_07 by BINGOS https://metacpan.org/release/BINGOS/ExtUtils-MakeMaker-7.63_07
+[15:41:14] *** Quits: jlenz (~jlenz@c-73-204-107-230.hsd1.fl.comcast.net) (Remote host closed the connection)
+[15:45:02] *** Quits: X-Scale (~ARM@25.55.43.5.rev.vodafone.pt) (Ping timeout: 240 seconds)
+[15:45:42] *** Joins: X-Scale` (~ARM@92.250.96.158)
+[15:46:44] *** X-Scale` is now known as X-Scale
+[16:00:45] *** Joins: jetchisel (jetchisel@user/jetchisel)
+[16:05:29] *** Quits: diskin (~diskin@ec2-18-158-74-148.eu-central-1.compute.amazonaws.com) (Read error: Connection reset by peer)
+[16:06:59] *** Joins: diskin (~diskin@185.49.242.49)
+[16:10:01] *** Joins: BSaboia (~bsaboia@177.37.198.107)
+[16:13:20] *** Joins: tobybl (~tobybl@213.31.134.21)
+[16:18:46] *** Joins: Adura (~Adura@user/adura)
+[16:22:24] *** Joins: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net)
+[16:27:45] *** Quits: Guest17 (~Guest17@eth-west-pareq2-46-193-4-100.wb.wifirst.net) (Quit: Client closed)
+[16:28:55] *** Joins: Guest17 (~Guest17@eth-west-pareq2-46-193-4-100.wb.wifirst.net)
+[16:29:35] *** Quits: Guest17 (~Guest17@eth-west-pareq2-46-193-4-100.wb.wifirst.net) (Client Quit)
+[16:46:01] *** Quits: tobybl (~tobybl@213.31.134.21) (Remote host closed the connection)
+[16:47:58] *** Quits: jetchisel (jetchisel@user/jetchisel) (Quit: Unfortunately time is always against us -- [Morpheus])
+[16:54:48] *** Joins: martinus__ (~martin@96.19.201.77.rev.sfr.net)
+[17:04:04] *** Joins: slowButPresent (~slowButPr@user/slowbutpresent)
+[17:05:59] *** Joins: kensanata (~user@user/kensanata)
+[17:08:16] *** Quits: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net) (Ping timeout: 245 seconds)
+[17:10:42] *** Joins: monkey_ (~user@190.104.116.153)
+[17:16:58] *** Joins: Pali (~pali@user/pali)
+[17:19:58] *** Joins: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl)
+[17:22:20] *** Joins: magla (~gelignite@55d49b41.access.ecotel.net)
+[17:31:47] *** Joins: leitz (~LeamHall@cpe-173-172-58-72.tx.res.rr.com)
+[17:34:29] *** Quits: BSaboia (~bsaboia@177.37.198.107) (Quit: This computer has gone to sleep)
+[17:34:35] <simcop2387> might have to do a reboot for a small kernel update/change.  adding drivers for fan control to the VM host so i can make it quieter
+[17:41:06] *** Joins: jlenz (~jlenz@c-73-204-107-230.hsd1.fl.comcast.net)
+[17:43:28] *** Quits: dsrt^ (~dsrt@68.101.58.90) (Ping timeout: 260 seconds)
+[17:46:46] *** Joins: tobybl (~tobybl@213.31.134.21)
+[17:47:29] *** Quits: tobybl (~tobybl@213.31.134.21) (Remote host closed the connection)
+[17:47:37] * buZz likes that his VM host is completely fanless :)
+[17:51:34] *** Joins: BSaboia (~bsaboia@177.37.198.107)
+[17:53:32] <simcop2387> sweet, didn't have to do a reboot
+[17:53:56] <simcop2387> buZz: hard to do that with two GPUs, giant cpu, 12 hdds, some ssds, an hba card, etc.
+[17:54:23] <simcop2387> but in my last maintenance i added a corsair commander pro and a bunch of noctua high quality fans
+[17:55:45] <buZz> hehe yeah
+[17:56:15] <simcop2387> i'm now finally getting a real setup to control them so that it's another step quieter
+[17:57:39] *** Joins: dsrt^ (~dsrt@68.101.58.90)
+[18:03:39] *** Quits: BSaboia (~bsaboia@177.37.198.107) (Quit: This computer has gone to sleep)
+[18:09:34] *** Quits: deadmarshal (~deadmarsh@95.38.228.146) (Ping timeout: 256 seconds)
+[18:12:32] <rindolf> simcop2387: nice
+[18:12:50] <rindolf> perlbot: sweval: [4*6]
+[18:12:51] <perlbot> rindolf: [24]
+[18:22:21] *** Joins: Darkcoal (~user@143.92.183.8)
+[18:23:59] <simcop2387> dang it i forgot to write down what all the fans are connected to.  i'll have to open the case again.  do that later
+[18:26:50] *** Joins: dextercd (~dexter@2a02-a450-f25d-1-76d4-35ff-fefe-34c.fixed6.kpn.net)
+[18:31:54] * GumbyPAN CPAN Upload: File-Syslogger-0.0.1 by VVELOX https://metacpan.org/release/VVELOX/File-Syslogger-0.0.1
+[18:35:46] *** Joins: deadmarshal (~deadmarsh@95.38.228.146)
+[18:38:05] *** Joins: BSaboia (~bsaboia@177.37.198.107)
+[18:41:55] * GumbyPAN CPAN Upload: File-Syslogger-0.0.2 by VVELOX https://metacpan.org/release/VVELOX/File-Syslogger-0.0.2
+[18:51:23] *** Quits: Bluewind (~Bluewind@user/bluewind) (Ping timeout: 264 seconds)
+[18:51:41] *** Joins: Bluewind (~Bluewind@user/bluewind)
+[18:54:31] *** Quits: deadmarshal (~deadmarsh@95.38.228.146) (Ping timeout: 245 seconds)
+[18:58:20] *** Quits: BSaboia (~bsaboia@177.37.198.107) (Quit: This computer has gone to sleep)
+[18:58:54] *** Joins: Atomic_pi12l (~atomic@gl111-42.master.pl)
+[19:00:21] *** Joins: rgrinberg (~textual@201.198.177.243)
+[19:00:53] *** Joins: BSaboia (~bsaboia@177.37.198.107)
+[19:02:01] *** Quits: choroba (~E_Choroba@89-101-243-80.cust.centrio.cz) (Ping timeout: 245 seconds)
+[19:02:46] *** Quits: BSaboia (~bsaboia@177.37.198.107) (Client Quit)
+[19:10:27] *** Joins: BSaboia (~bsaboia@177.37.198.107)
+[19:16:37] *** Joins: deadmarshal (~deadmarsh@95.38.228.146)
+[19:23:48] *** Joins: willthechill (~willthech@2600:1700:8c61:3ed0:8995:e642:1d93:f3c2)
+[19:27:08] *** Quits: BSaboia (~bsaboia@177.37.198.107) (Quit: This computer has gone to sleep)
+[19:29:20] *** Joins: BSaboia (~bsaboia@177.37.198.107)
+[19:31:36] *** Quits: Sleepy63 (~Sleepy63@user/sleepy63) (Remote host closed the connection)
+[19:36:26] <gordonfish> Curious:
+[19:36:28] <gordonfish> sweval: use Object::Pad; use IO::Async::Loop; class Foo { has $z :reader param = 5; ADJUST { say "[$z]"; } } Foo->new;
+[19:36:29] <perlbot> gordonfish: [5] 
+[19:36:39] <gordonfish> sweval: use Object::Pad; Foo->new; class Foo { has $z :reader param = 5; ADJUST { say "[$z]"; } }
+[19:36:40] <perlbot> gordonfish: Use of uninitialized value $z in concatenation (.) or string at (IRC) line 1. [] 
+[19:37:00] * GumbyPAN CPAN Upload: Google-RestApi-0.9.1 by MVSJES https://metacpan.org/release/MVSJES/Google-RestApi-0.9.1
+[19:37:37] <gordonfish> Looks like you can't just put a helper class at the end of a script and instanciate it earlier in the file.
+[19:37:38] <Grinnz> always put inline package definitions in BEGIN 
+[19:37:46] <gordonfish> Ah
+[19:38:43] <gordonfish> sweval: use Object::Pad; Foo->new; BEGIN { class Foo { has $z :reader param = 5; ADJUST { say "[$z]"; } } }
+[19:38:44] <perlbot> gordonfish: [5] 
+[19:38:45] <gordonfish> Woohoo
+[19:39:06] <gordonfish> Grinnz: Thanks, shoulda thought of that TBH
+[19:39:22] <Grinnz> yeah, it's not specific to Object::Pad or even the end of the file
+[19:39:43] <Grinnz> we're used to things happening in BEGIN via using other files, which don't happen that way in the same file
+[19:40:32] <gordonfish> Right
+[19:42:30] *** Joins: wootehfoot (~wootehfoo@user/wootehfoot)
+[19:44:41] *** Quits: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl) (Read error: Connection reset by peer)
+[19:49:34] *** Joins: Guest17 (~Guest17@eth-west-pareq2-46-193-4-100.wb.wifirst.net)
+[19:52:36] *** Quits: EvanCarroll (~ecarroll@68-78-105-35.lightspeed.hstntx.sbcglobal.net) (Remote host closed the connection)
+[20:08:14] *** Joins: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net)
+[20:11:47] *** Joins: jetchisel (~jetchisel@user/jetchisel)
+[20:15:10] *** Joins: tobybl (~tobybl@213.31.134.21)
+[20:18:49] *** Quits: tobybl (~tobybl@213.31.134.21) (Remote host closed the connection)
+[20:29:41] *** Joins: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl)
+[20:38:32] *** Quits: The_Blode (~Blode@user/the-blode/x-7164444) (Ping timeout: 240 seconds)
+[20:38:56] *** Joins: The_Blode_ (~Blode@user/the-blode/x-7164444)
+[20:48:32] *** Quits: The_Blode_ (~Blode@user/the-blode/x-7164444) (Ping timeout: 240 seconds)
+[20:50:35] *** Joins: The_Blode (~Blode@user/the-blode/x-7164444)
+[20:59:08] *** Joins: choroba (~E_Choroba@89-101-243-80.cust.centrio.cz)
+[21:07:09] * GumbyPAN CPAN Upload: ExtUtils-MakeMaker-7.63_08 by BINGOS https://metacpan.org/release/BINGOS/ExtUtils-MakeMaker-7.63_08
+[21:07:19] *** Quits: rgrinberg (~textual@201.198.177.243) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[21:08:45] *** Quits: slowButPresent (~slowButPr@user/slowbutpresent) (Quit: leaving)
+[21:17:01] *** Quits: pizdets (~pizdets@183.182.111.236) (Ping timeout: 245 seconds)
+[21:17:34] *** Joins: pizdets_ (~pizdets@183.182.110.72)
+[21:23:52] *** Joins: Sleepy63 (~Sleepy63@user/sleepy63)
+[21:27:06] *** R2robot_ is now known as R2robot
+[21:35:21] *** Quits: rindolf (~shlomif@2a0d:6fc2:4bb1:500:6b1e:2524:3d70:36ec) (Ping timeout: 245 seconds)
+[21:36:49] <aquanight> shouldn't that be :reader :param ?
+[21:37:26] <aquanight> sweval: use Object::Pad; Foo->new; class Foo { has $z :reader :param = 5; ADJUST { say "[$z]"; } }
+[21:37:27] <perlbot> aquanight: Use of uninitialized value $z in concatenation (.) or string at (IRC) line 1. [] 
+[21:41:58] *** Joins: kspalaiologos (~kspalaiol@user/kspalaiologos)
+[21:43:12] *** Quits: deadmarshal (~deadmarsh@95.38.228.146) (Ping timeout: 256 seconds)
+[21:46:14] *** Quits: BSaboia (~bsaboia@177.37.198.107) (Quit: This computer has gone to sleep)
+[21:49:48] *** Joins: gamo (~Thunderbi@cm-93-156-61-102.telecable.es)
+[21:53:01] *** Quits: kspalaiologos (~kspalaiol@user/kspalaiologos) (Quit: Leaving)
+[21:53:32] *** Joins: BSaboia (~bsaboia@177.37.198.107)
+[21:58:06] *** Quits: BSaboia (~bsaboia@177.37.198.107) (Client Quit)
+[22:07:01] *** Joins: deadmarshal (~deadmarsh@95.38.228.146)
+[22:12:16] * GumbyPAN CPAN Upload: Google-RestApi-1.0.0 by MVSJES https://metacpan.org/release/MVSJES/Google-RestApi-1.0.0
+[22:14:58] <gordonfish> aquanight: According to the docs, you only need the colon on the first one.
+[22:15:26] <gordonfish> (And you forgot the BEGIN wrapper)
+[22:15:34] <gordonfish> sweval: use Object::Pad; Foo->new; BEGIN{ class Foo { has $z :reader :param = 5; ADJUST { say "[$z]"; } } }
+[22:15:36] <perlbot> gordonfish: [5] 
+[22:16:38] <gordonfish> (Since Foo->new is before the class definition in that code.)
+[22:23:49] *** Quits: zer0bitz (~zer0bitz@2001:2003:f6bc:f00:9d34:9ef:e98a:2cbe) (Read error: Connection reset by peer)
+[22:26:36] *** Quits: G_SabinoMullane (~G_SabinoM@pool-72-94-251-236.phlapa.fios.verizon.net) (Ping timeout: 245 seconds)
+[22:28:09] *** Joins: zer0bitz (~zer0bitz@2001:2003:f6bc:f00:9d34:9ef:e98a:2cbe)
+[22:31:57] *** Quits: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl) (Read error: Connection reset by peer)
+[22:33:01] *** Quits: Figworm (FiggyWitIt@user/figworm) (Quit: Figworm)
+[22:41:54] *** Quits: monkey_ (~user@190.104.116.153) (Remote host closed the connection)
+[22:48:56] *** Quits: Atomic_pi12l (~atomic@gl111-42.master.pl) (Ping timeout: 256 seconds)
+[22:54:51] *** Joins: mmlj4 (~mmlj4@ip174-69-109-162.no.no.cox.net)
+[22:55:01] *** Quits: Sleepy63 (~Sleepy63@user/sleepy63) (Quit: Sleepy63)
+[22:55:49] <mmlj4> ingy: ping
+[22:57:10] <mmlj4> I needed to rescue a couple of old Kwiki sites, so I used Text::Tiki and a couple of band-aids, and came up with this: https://gitlab.com/mmlj4/jkwiki/
+[22:57:11] <Paperbot> Link title(s): [ Joey Kelly / JKWiki · GitLab ]
+[22:57:32] *** Quits: deadmarshal (~deadmarsh@95.38.228.146) (Ping timeout: 240 seconds)
+[23:00:37] *** Quits: X-Scale (~ARM@92.250.96.158) (Ping timeout: 250 seconds)
+[23:01:50] *** Joins: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl)
+[23:07:26] *** Quits: Guest17 (~Guest17@eth-west-pareq2-46-193-4-100.wb.wifirst.net) (Quit: Client closed)
+[23:09:32] <ingy> :)
+[23:10:08] <aquanight> gordonfish: I don't think I've ever seen multiple attributes done that way. I've always assumed you had to : each one.
+[23:11:28] <aquanight> sweval: use Object::Pad; Foo->new; class Foo { has $z :reader :param { 5 }; ADJUST { say "[$z]"; } }
+[23:11:30] <perlbot> aquanight: [5] 
+[23:11:34] <aquanight> also this way works too
+[23:13:53] <quesker> I am converting some perl5 regex to something dumber.  so things like \h and (?i) and (?: I can replace but is there something I can do with (?!\2)   I don't even really understand that one
+[23:14:35] *** Quits: leitz (~LeamHall@cpe-173-172-58-72.tx.res.rr.com) (Quit: nappy time)
+[23:20:31] <rewt> quesker, (?!\2) means: the following must not be the same as what was captured by the 2nd capture group
+[23:21:24] * GumbyPAN CPAN Upload: XML-Sig-0.52-TRIAL by TIMLEGGE https://metacpan.org/release/TIMLEGGE/XML-Sig-0.52-TRIAL
+[23:23:18] <quesker> ok.  doesn't sound easy to programmatically replace
+[23:28:48] *** Quits: emanuele6 (~emanuele6@user/emanuele6) (Ping timeout: 260 seconds)
+[23:40:42] *** Joins: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net)
+[23:44:59] *** Joins: Sleepy63 (~Sleepy63@user/sleepy63)
+[23:47:00] *** Quits: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl) (Read error: Connection reset by peer)

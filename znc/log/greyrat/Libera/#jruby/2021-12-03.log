@@ -1,0 +1,109 @@
+[01:24:09] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[01:30:15] <byteit101[m]> headius, enebo: should I say more? https://github.com/jruby/jruby/wiki/CallingJavaFromJRuby#subclassing-a-java-class
+[01:32:08] <enebo[m]> byteit101: The only one super is allowed in initialize is fine but split-point will not mean anything to anyone other than us
+[01:33:21] <enebo[m]> So perhaps 'Due to the complexity of deailing whth Java's ability to call super we have limited this feature to a single call. or something like that
+[01:39:11] <byteit101[m]> should I mention split-point in some other wiki page? I feel like it's an important architectural feature to mention for jruby hackers
+[01:45:32] <enebo[m]> well you can mention how it works but split point by itself is vague to me
+[01:45:48] <enebo[m]> I know what it means because I worked on it but I don't think anyone reading would understand that.
+[01:48:48] <byteit101[m]> * `super()` calls in the constructor (`initialize`, or whichever method is configured with `configure_java_class ctor_name: :your_custom_ctor_method_name`) must integrate with certain JVM features that are complex to expose to Ruby. As such, the Java restriction of exactly 0 or 1 `super` calls (with no conditional `super`s) applies at this time. Similarly, `self.to_java` is unusable before this super call. Ruby code before a super is valid,
+[01:48:48] <byteit101[m]> but not recommended.
+[01:51:41] <enebo[m]> byteit101: yeah that's a lot better
+[01:52:50] <enebo[m]> The basic issue with self.to_java is that it actually needs to access the constructed java object.  Anything which has that requirement cannot happen before the super
+[01:53:31] <enebo[m]> Anything that would require access to what we would refer to as 'this' is not allowed until after the super call
+[01:53:37] <byteit101[m]> yea, I figured I'd mention that here, even though it isn't directly related to the restrictions
+[01:53:48] <enebo[m]> 'refer to as 'this' in Java'
+[01:54:06] <byteit101[m]>                     if (superCall != null) throw getManager().getRuntime().newRuntimeError("Found multiple supers in Java-calling constructor. See https://github.com/jruby/jruby/wiki/CallingJavaFromJRuby#subclassing-a-java-class");
+[01:54:20] <enebo[m]> nice!
+[01:58:52] <byteit101[m]> https://github.com/jruby/jruby/pull/6957
+[01:59:43] *** Quits: sagax (~sagax_nb@user/sagax) (Ping timeout: 252 seconds)
+[01:59:52] <enebo[m]> merged...hopefully no syntax errors :)
+[02:00:21] <byteit101[m]> TBF I didn't even build or run it :-D
+[02:00:35] <enebo[m]> uh oh :)
+[02:01:37] <enebo[m]> It looks fine
+[02:01:58] <byteit101[m]> I think that was the fastest I've ever gotten a PR merged
+[02:02:57] <enebo[m]> haha
+[02:29:01] <headius> Bam
+[12:30:09] *** Quits: jswenson[m] (~jswensonm@2001:470:69fc:105::fd45) (Quit: You have been kicked for being idle)
+[17:53:48] <headius> Good morning
+[18:39:48] <headius> enebo: so we I guess we broke something
+[18:41:08] <enebo[m]> the new issue?
+[18:41:20] <headius> and by we I mean I
+[18:41:56] <headius> https://github.com/jruby/jruby/pull/6910
+[18:42:46] <enebo[m]> Let's just revert this and re-release now
+[18:43:08] <enebo[m]> Make a new issue to fix it properly for 9.3.3.0
+[18:43:13] <enebo[m]> err 9.3.4.0 :)
+[18:43:17] <headius> heh
+[18:43:45] <enebo[m]> I am willing to wait and do this for Monday in case we get another report I guess
+[18:43:55] <enebo[m]> I will just take tuesday -> tuesday off
+[18:44:23] <headius> yeah I'd be more comfortable giving it today and looking into the problem
+[18:44:47] <headius> it works fine for Set alone but I would guess it is not getting frame info to redispatch properly
+[18:44:53] <headius> so it keeps supering into Set from the subclass
+[18:45:19] <enebo[m]> ok.  I think we can revisit the risk cost of reverting vs pushing forward
+[18:45:34] <enebo[m]> based on how obvious the issue is
+[18:46:12] <enebo[m]> I have fixed so many printf issues that we have had forever in our printf implementation
+[18:46:32] <enebo[m]> It makes me think most features of printf are not actually used by any one
+[18:46:47] <headius> wouldn't surprise me
+[18:48:01] <enebo[m]> Also we use BigInteger and I would think we should match MRI but we seem to give perfect endless precision and MRI gives inexact results
+[18:48:28] <enebo[m]> So in those few cases I feel we give a better result :)  so I tagged those out
+[18:49:18] <enebo[m]> For floating point or something I can see this more but for integral values I don't really get it
+[18:53:02] <headius> no easy workaround for this
+[18:55:06] <headius> no easy fix for the original issue that doesn't have this problem either
+[18:55:36] <headius> moving initialize_dup/clone into Ruby would fix the super problem but then it needs to call into Java Set internals
+[18:55:58] <enebo[m]> Is this really also on jruby-9.2?
+[18:56:18] <headius> it would appear to be in 9.2.20 also
+[18:56:46] <headius> so it has been out there for a while now
+[19:01:51] <headius> class MySet < Set; end; class MySet2 < MySet; end; MySet2.new + MySet2.new
+[19:02:24] <enebo[m]> Is that what is happening?
+[19:02:25] <headius> MySet alone is not enough
+[19:02:51] <enebo[m]> oh wait I misread that
+[19:02:54] <headius> concurent-ruby's Set extends JRubySet (with Synchronized mixed in) which extends JRuby's Set
+[19:03:24] <headius> so my patch worked fine for the original report, which only had one descendant, but it overflows with two descendants
+[19:03:38] <headius> because it naively acquires the class
+[19:05:27] <headius> simplest fix is to just force a frame for these Set#initialize_dup/clone and use frame class again
+[19:05:29] <enebo[m]> so the super is actually two down but you pick the one immediately below and that causes it to find itself again?
+[19:05:33] <headius> yeah
+[19:05:55] <headius> this fix might actually be fine
+[19:05:56] <enebo[m]> This is because we do not push a frame so it sees current?
+[19:06:21] <headius> yeah I wanted to avoid the frame push for init_dup but it can't be avoided if there's deeper subclasses
+[19:06:21] <enebo[m]> If we push for these methods then we will see the right thing
+[19:06:29] <enebo[m]> ok
+[19:07:08] <headius> I should have a fix in a moment
+[19:16:01] <headius> longer term we can avoid framing for super if I push the target class and method name through invokers into the Java impl
+[19:16:13] <headius> but for now it will only work in cases where we know there aren't descendants
+[19:24:43] <headius> enebo: https://github.com/jruby/jruby/pull/6959
+[19:25:10] <headius> the frameless way to do this would be to always super from Set here, since we know this method is defined in Set, but we have not done that before
+[19:25:28] <headius> this is the traditional way we have been doing super from Java code
+[19:25:59] <enebo[m]> This solution makes sense to me even if it forces some extra overhead
+[19:26:12] <enebo[m]> What I am now thinking is how important this is
+[19:26:42] <enebo[m]> I don't like people not getting a fix but I am questioning whether we release this in a week in case we get some other problems
+[19:26:43] <headius> the main problem with always supering from Set is acquiring the Set class... we don't have an easy reference to it from here
+[19:26:59] <headius> I guess this is why we do security releases
+[19:27:02] <enebo[m]> It is clearly critical for the person who reported it but they are also seemingly using an earlier version
+[19:27:27] <headius> 9.2.20 is still affected in any case but nobody reported it there
+[19:27:35] <headius> so it has been in the wild for over a month
+[19:27:50] <headius> perhaps this means people are moving off of 9.2 😀
+[19:28:09] <enebo[m]> maybe.  I guess it also depends on how many people are using concurrent set
+[19:34:13] <headius> the alternative fix: https://gist.github.com/headius/fdf6010b0204d412386c327e55cfae8c
+[19:34:31] <headius> hash hit on Object to acquire Set class
+[19:34:38] <headius> but no frame
+[19:49:46] <headius> enebo: so it is up to you... this is a pretty standard way to do super dispatch, I was just overzealous in trying to optimize the frame away
+[19:50:02] <headius> it works in several other core classes... because many of them can't be extended
+[19:50:29] <headius> the long term right fix is to pass frame class and method name into the java method
+[19:50:53] <headius> I am annoyed by this as well but it looks like a showstopper for the reporter
+[19:52:21] <enebo[m]> yeah I don't really have an opinion on which fix
+[19:53:00] <enebo[m]> I am more concerned how when we push the fix
+[19:53:31] <headius> that's what I meant
+[19:54:27] <enebo[m]> oh maybe I will think about this differently in a couple of hours but I think there is some merit to seeing what else falls out over the next few days
+[19:54:30] <headius> yeah I agree
+[19:55:00] <headius> if we merge the fix and push some snapshots this guy could possibly use that but a release on Monday is pretty quick
+[19:55:03] <enebo[m]> So I think we plan on releasing a point for 9.2/9.3 when I get back from my week off
+[19:55:12] <enebo[m]> yeah that is a good idea
+[19:55:25] <enebo[m]> he has reported other problems in the last few months
+[19:55:35] <enebo[m]> If I remember he is the person who hit the gem push IOError roo
+[19:58:03] <headius> I commented on the issue
+[19:58:18] <enebo[m]> great
+[21:30:07] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Ping timeout: 252 seconds)
+[21:31:22] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[22:18:15] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Ping timeout: 256 seconds)
+[22:20:23] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[22:46:01] *** Joins: subbu (~subbu@user/subbu)

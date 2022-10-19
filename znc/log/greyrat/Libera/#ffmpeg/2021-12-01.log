@@ -1,0 +1,997 @@
+[00:02:20] <GuiToris> or does the whole thing depend on the media player itself?
+[00:04:05] <GuiToris> I read that every MDCT codec including AAC has encoder delay by design
+[00:04:12] <GuiToris> how does ffmpeg handle that?
+[00:05:24] *** softworkz is now known as Guest8059
+[00:05:24] *** Joins: softworkz_ (~softworkz@user/softworkz)
+[00:05:24] *** Quits: Guest8059 (~softworkz@user/softworkz) (Killed (osmium.libera.chat (Nickname regained by services)))
+[00:05:24] *** softworkz_ is now known as softworkz
+[00:12:46] *** Joins: Flabb (~Flabb@89.169.42.92)
+[00:13:57] *** Quits: Al2O3 (~Al2O3@user/al2o3) (Ping timeout: 268 seconds)
+[00:15:43] <yuri6037> strange thing is avio_w8 attempts to read address 0x18 like if avformat_alloc_output_context2 forgot to initialize a field of its struct
+[00:16:49] <BtbN> It's much more likely you provided some invalid input somewhere.
+[00:17:06] <BtbN> If avio and avformat was fundamentally broken like that, we'd have noticed a long time ago.
+[00:17:48] <yuri6037> is avformat_alloc_output_context2 able to deal with just one video stream in H264 and no audio stream when filename is set to a file ending in .mkv?
+[00:18:50] <BtbN> Not sure what exactly you're asking, but mkv supports the total lack of audio streams just fine.
+[00:20:14] <yuri6037> I'm thinking there might be something in the file that it doesn't like
+[00:20:39] <yuri6037> so I was asking maybe avformat cannot deal with no audio stream and segfault in that case
+[00:21:02] <BtbN> That's very unlikely. And even if, if that caused random segfaults, it'd be a serious bug.
+[00:21:17] <BtbN> Still a 99.9% chance you're just using the API wrong.
+[00:25:48] *** Joins: Al2O3 (~Al2O3@user/al2o3)
+[00:27:03] *** Quits: rainmanj_ (~rainmanja@216.161.85.62) (Quit: Leaving...)
+[00:29:12] <yuri6037> ok pretty sure there's a defect in avformat_alloc_output_context2: it probably forgets to call avio_open when filename is explicitly given as argument
+[00:29:17] *** Quits: Blacker47 (~Blacker47@user/blacker47) (Quit: Life is short. Get a V.90 modem fast!)
+[00:30:14] <BtbN> Where does anything ever claim that it does that?
+[00:30:39] <yuri6037> because it seem logic: I give it a filename it supposed to open it for writing it
+[00:31:03] <yuri6037> if it does not then it's very unexpected and the function shouldn't be named that way
+[00:31:26] <yuri6037> and also shouldn't take a filename
+[00:31:45] <BtbN> The function allocated an output context. It does not open it, and never claims it does.
+[00:31:59] *** Quits: Flabb (~Flabb@89.169.42.92) (Read error: Connection reset by peer)
+[00:31:59] *** Quits: arbitercoin (~Rheanna@218.78.109.69) (Remote host closed the connection)
+[00:32:09] <yuri6037> wow then it's what I said it's just stupid
+[00:32:27] <yuri6037> I give it a filename and then later it crashes because it's unable to open it
+[00:32:33] <yuri6037> amazing
+[00:32:47] *** Quits: durandal_1707 (~computer@95.168.121.19) (Read error: No route to host)
+[00:33:00] <BtbN> Nothing makes any claims anywhere that it opens the context.
+[00:33:15] <BtbN> It uses the filename for probing, as its doc says, and then writes it into the context it allocated.
+[00:33:26] *** Joins: durandal_1707 (~computer@95.168.121.19)
+[00:33:30] *** Joins: arbitercoin (~Rheanna@61.171.21.169)
+[00:33:55] <BtbN> You're just making weird assumptions about the API, without actually reading any docs, and then get upset about it. That's not how this works at all.
+[00:34:33] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Ping timeout: 256 seconds)
+[00:36:16] <BtbN> Did you read https://ffmpeg.org/doxygen/trunk/group__lavf__encoding.html#details at all?
+[00:37:55] <yuri6037> and even still if it absolutely needed to not open the file I give it it's still unexpected to have it segfault later instead of returning an error code
+[00:38:33] <furq> if it's segfaulting either you are doing something wrong or you've found a bug that you should report
+[00:38:51] <furq> if you think it's the latter then you should be very sure about it
+[00:39:27] <BtbN> Looking at the avformat_write_header, it _does_ check for a valid AVFormatContext->pb
+[00:39:55] <BtbN> So you're somehow setting it to an invalid value, which it then crashes on when trying to use it.
+[00:40:01] <yuri6037> interestingly on my computer it just segfaults when avio_open has not been called
+[00:40:48] <yuri6037> I've just added an avio_open right after creating the AVFormatContext and it no longer segfaults
+[00:41:07] <BtbN> Which is exactly what the docs say how you should do it, yes.
+[00:41:07] <yuri6037> maybe is it an ubuntu bug
+[00:41:17] <BtbN> How would it possibly be related to Ubuntu?
+[00:41:37] <yuri6037> because i'm using an ubuntu package for libavformat and libavcodec
+[00:41:41] <BtbN> Are you allocating AVFormatContext on the stack, and aren't properly zero-initializing it somehow?
+[00:42:02] <yuri6037> I'm not allocating it on the stack it's a pointer
+[00:43:34] <yuri6037> like I have a wrapper struct in C code which I allocate myself which contains a pointer to AVFormatContext as well as to all needed encoders and RGB buffer
+[00:44:12] <BtbN> Somehow that boguous value of 0x18 got in there. Which is enough to make the !pb checks pass, but is still clearly invalid
+[00:44:29] <yuri6037> yeah 0x18 is strange indeed
+[00:44:29] *** Joins: shibboleth (~shibbolet@user/shibboleth)
+[00:44:45] <yuri6037> it looks like the pb field is not auto set to 0x0
+[00:44:55] *** Quits: shibboleth (~shibbolet@user/shibboleth) (Remote host closed the connection)
+[00:44:57] <BtbN> ffmpeg zero-initializes everything it allocates
+[00:46:03] <yuri6037> ok let me print by printf the address of pb just in case creating a new stream somehow corrupts memory or even worse rust FFI corrupting memory
+[00:49:31] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[00:51:25] <yuri6037> ok that's bad there's a corruption happening after creating a new stream: the initial value after allocating the format context is 0x0 but later when stream is allocated addres is corrupted
+[00:53:16] <BtbN> Like, after calling some ffmpeg function, or somewhere in your code?
+[01:00:17] <yuri6037> that's very weird because when I av_log %p the pb field I get (nil) all the time even before avformat_write_header
+[01:00:46] *** Quits: Volgaar (~volgaar@193.137.116.78.rev.sfr.net) (Quit: WeeChat 3.3)
+[01:01:02] <yuri6037> which suggests there is no corruption but something bad happens inside avformat_write_header when avio_open has not been called
+[01:01:32] <BtbN> That's indeed very weird. If you can reproduce that in a minimal test case, feel free to open a bug on trac.
+[01:02:25] <yuri6037> minimal well not sure the amount of code needed to init avformat/avcodec is huge
+[01:02:50] <BtbN> That should only take 5 lines to reproduce
+[01:03:40] <yuri6037> well if you don't init a stream it doesn't crash it errors instead
+[01:04:13] <yuri6037> I've already tried that. the crash only happens if you've added a H264 stream then opened the codec and then you write header
+[01:05:15] <yuri6037> weird thing now is it segfault at a different place: sws_scale segfaults right before showing: Warning: data is not aligned! This can lead to a speed loss
+[01:06:23] *** Quits: Guest9482 (~Buster@buster-net.ru) (Ping timeout: 252 seconds)
+[01:14:56] *** Joins: realies (~realies@user/realies)
+[01:16:05] *** Joins: lavaball (felix@31.204.155.215)
+[01:22:30] *** Joins: shibboleth (~shibbolet@user/shibboleth)
+[01:28:18] <yuri6037> Is there something weird with AV_PIX_FMT_RGB24 format when given as srcformat? Does it need more bytes allocated than the size of the pixel array?
+[01:28:29] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Quit: taupiqueur)
+[01:32:04] <yuri6037> and what kind of alignment does this sws_scale need apparently 16 is not ok
+[01:32:10] <yuri6037> ?
+[01:36:27] *** Quits: lavaball (felix@31.204.155.215) (Remote host closed the connection)
+[01:36:30] *** Quits: durandal_1707 (~computer@95.168.121.19) (Read error: Connection reset by peer)
+[01:37:25] *** Joins: durandal_1707 (~computer@95.168.121.19)
+[01:46:12] <yuri6037> I've checked source code for sws_scale and what it does is corrupt the source buffer if the format is packed
+[01:47:21] <yuri6037> line 293-295 it assigs src[1] = src[2] = src[3] = src[0] if there's one plane the (RGB24 packed) then by definition it will overwrite stack memory
+[01:48:16] <yuri6037> because you only give it one plane not 3 planes so it will overwrite memory that is after the address of src[0]
+[01:50:01] <yuri6037> wtf is that backward broken sws_scale which does not even mention this VERY bad thing in the doc now I gotta find a hack to make it successfully overwrite stack without corrupting my data
+[01:52:59] <yuri6037> seriously why is sws_scale doing that?
+[01:53:14] <yuri6037> and this problem is not even documented
+[01:53:52] <yuri6037> is this source code https://ffmpeg.org/doxygen/trunk/swscale_8c_source.html#l00331 really up to date?
+[01:56:27] *** Quits: pit (~quassel@v22016102921539034.goodsrv.de) (Quit: https://quassel-irc.org - Komfortabler Chat. Überall.)
+[02:01:06] *** Joins: SamHenderson (~SamHender@209.226.83.233)
+[02:02:36] <SamHenderson> Hullo.  Are there any good tutorials / demonstrations of writing AVFrame video data to a modern OpenGL texture?
+[02:03:23] *** Quits: shibboleth (~shibbolet@user/shibboleth) (Quit: shibboleth)
+[02:05:01] *** Joins: pit (~quassel@v22016102921539034.goodsrv.de)
+[02:09:56] <yuri6037> anyone?
+[02:10:01] <BtbN> yuri6037, you're again not reading the documentation properly. And also not understanding what the functions is actually doing...
+[02:10:45] <BtbN> Also, the function you're referring to is not sws_scale, but an internal static one.
+[02:11:00] <yuri6037> by assigning src index 1-2-3 to 0 they assume src is some kind of 4 plane array which is wrong assumption
+[02:11:18] <BtbN> It's how its argument it defined.
+[02:11:39] <BtbN> It wants an array of 4 buffers. And for safety sake, with packed formats, it sets them all to the same, first, buffer.
+[02:11:42] <yuri6037> sws_scale is not taking arrays pointers according to CLion
+[02:11:59] <yuri6037> maybe CLion is broken
+[02:12:00] *** Quits: arbitercoin (~Rheanna@61.171.21.169) (Remote host closed the connection)
+[02:12:05] <BtbN> Well, good thing you're not looking at sws_scale. But at "static int swscale()"
+[02:12:33] <yuri6037> yeah I know i'm looking at swscale I found that in a forum which said that sws_scale is calling that internally
+[02:12:48] <yuri6037> maybe this is wrong
+[02:12:49] <BtbN> After a whole lot of other code.
+[02:14:23] *** Joins: arbitercoin (~Rheanna@218.78.104.50)
+[02:15:45] <yuri6037> even the sws_scale code also assumes packed RGB uses 4 planes which is wrong it only uses 1
+[02:15:59] <yuri6037> at least I can
+[02:16:17] <yuri6037> *can't give it 4 as I only have 1 generated from Rust
+[02:16:37] <BtbN> Where does it assume that?
+[02:17:21] <BtbN> Again: Those APIs are _very_ well tested. It's highly unlikely you just discovered after two decades that they are fundamentally broken.
+[02:17:24] *** Quits: durandal_1707 (~computer@95.168.121.19) (Read error: No route to host)
+[02:17:27] <BtbN> There's a MUCH higher chance you're using it wrong.
+[02:17:39] *** Joins: durandal_1707 (~computer@95.168.121.19)
+[02:17:56] <yuri6037> it copies srcStride 0-1-2-3 which is wrong if srcStride is just a pointer to  a single int which is the stride of the packed RGB plane
+[02:18:33] <yuri6037> Basically in my code I only generate 1 big RGB buffer nothing more
+[02:19:08] <yuri6037> this worked fine for decoding as in the code it doesn't assume this for dst it only seem to do this for src
+[02:19:11] <BtbN> If you're only passing it a pointer to a single buffer to srdSlice and dst, you're using it wrong.
+[02:19:16] <BtbN> It wants an array of 4 buffers.
+[02:19:38] <yuri6037> here is the problem: I don't have 4 buffers because it is a packed RGB
+[02:19:49] <BtbN> Each buffer corresponding to one plane. In the case of packed formats, all but the first one are NULL
+[02:20:05] <yuri6037> and where do you see this in doc?
+[02:20:13] <BtbN> https://ffmpeg.org/doxygen/trunk/group__libsws.html#gae531c9754c9205d90ad6800015046d74
+[02:20:37] <BtbN> It wants a uint8_t *srcSlice[]
+[02:21:06] <yuri6037> it doesn't tell you exactly that it wants 4 plane and also doesn't tell you to put it at the end
+[02:21:28] <yuri6037> of course I can read the code but ideally they should consider writing proper docs
+[02:21:51] <BtbN> It's always 4 planes. There's an FFmpeg wide define for that.
+[02:23:57] <BtbN> Feel free to submit patches for better docs if you think it sucks so bad.
+[02:24:13] <BtbN> All the info is there, it's not a "how to do exactly what I have in mind"-Tutorial
+[02:25:27] <yuri6037> it doesn't clearly says what it expects
+[02:25:40] <yuri6037> at least not in the function doc itself
+[02:27:02] *** Quits: Atsuko (~x@45.63.115.64) (Remote host closed the connection)
+[02:27:43] <yuri6037> anyway thanks for your help
+[02:35:00] *** Joins: Atsuko (~x@94.242.250.86)
+[02:36:46] <Manouchehri> 11:13:19 AM <another|> you might want to use `-c copy` instead. covers everything
+[02:36:46] <Manouchehri> but I need `-c:v prores_ks`
+[02:37:38] <another|> `-c copy` before `-c:v prores_ks`
+[02:39:20] <Manouchehri> Multiple -c, -codec, -acodec, -vcodec, -scodec or -dcodec options specified for stream 0, only the last option '-c:v prores_ks' will be used.
+[02:39:38] <furq> that's fine
+[02:39:42] <Manouchehri> really?
+[02:40:55] <Manouchehri> https://gist.github.com/Manouchehri/6ef3bf2d97c341717820a4355773a465
+[02:41:59] <BtbN> Isn't that exactly what you want?
+[02:42:36] <Manouchehri> I think so, but is this actually doing like -dcodec copy?
+[02:42:47] <BtbN> what?
+[02:43:17] <Manouchehri> -c copy -c:v prores_ks # feels wrong?
+[02:53:51] *** Quits: nate_ (~natethegr@99-63-46-85.lightspeed.iplsin.sbcglobal.net) (Ping timeout: 264 seconds)
+[02:53:55] <BtbN> Why?
+[02:54:13] <Manouchehri> well because of the warning message saying -c copy will be ignored.
+[02:54:20] <BtbN> You set a wide default, and then override it with a more specific one for video.
+[02:54:36] <Manouchehri> ahh
+[02:54:49] <furq> it says it'll be ignored for stream 0
+[02:54:56] <furq> which is what you want
+[03:00:22] *** Joins: phinxy (~phinxy@78-71-229-90-no500.tbcn.telia.com)
+[03:01:41] <phinxy> Is there a way to encode mjpeg to something thats only compressing it, without sacrificing more quality?
+[03:01:41] *** Quits: foonix (1004@ip-86-49-65-192.net.upcbroadband.cz) (Ping timeout: 268 seconds)
+[03:02:26] *** Quits: arbitercoin (~Rheanna@218.78.104.50) (Remote host closed the connection)
+[03:03:09] *** Quits: palasso (~palasso@user/palasso) (Remote host closed the connection)
+[03:03:40] *** Joins: arbitercoin (~Rheanna@61.171.38.68)
+[03:04:28] *** Quits: cosimone (~user@93-47-231-3.ip115.fastwebnet.it) (Ping timeout: 264 seconds)
+[03:08:10] *** Joins: foonix (1004@ip-86-49-65-192.net.upcbroadband.cz)
+[03:09:29] <phinxy> To put it in other words.  What's a good way to compress mjpeg video?
+[03:12:41] *** Quits: GuiToris (~GuiToris@user/guitoris) (Quit: Sieben Acht Gute Nacht!)
+[03:16:29] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 268 seconds)
+[03:17:25] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[03:30:03] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (*.net *.split)
+[03:30:03] *** Quits: pit (~quassel@v22016102921539034.goodsrv.de) (*.net *.split)
+[03:30:03] *** Quits: realies (~realies@user/realies) (*.net *.split)
+[03:30:03] *** Quits: Al2O3 (~Al2O3@user/al2o3) (*.net *.split)
+[03:30:03] *** Quits: upekkha (~Advanced@2a01:4f8:1c0c:49df::1) (*.net *.split)
+[03:30:03] *** Quits: auth (~auth@user/auth) (*.net *.split)
+[03:30:03] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (*.net *.split)
+[03:30:03] *** Quits: ocrete (~ocrete@gyros.collabora.co.uk) (*.net *.split)
+[03:30:03] *** Quits: woky_ (~woky@li1651-31.members.linode.com) (*.net *.split)
+[03:30:03] *** Quits: jarainf- (~jarainf@2a01:4f8:191:512c::2) (*.net *.split)
+[03:30:03] *** Quits: jarthur (~jarthur@2603-8080-1540-002d-2958-7b1f-8e17-11c9.res6.spectrum.com) (*.net *.split)
+[03:30:03] *** Quits: arcatech (~arcatech@user/arcatech) (*.net *.split)
+[03:30:03] *** Quits: TheSash__ (~TheSashmo@174.119.184.190) (*.net *.split)
+[03:30:03] *** Quits: zsoltiv_ (~zsoltiv@fibhost-67-12-35.fibernet.hu) (*.net *.split)
+[03:30:03] *** Quits: cmp (~cmp@lputeaux-658-1-177-87.w92-154.abo.wanadoo.fr) (*.net *.split)
+[03:30:03] *** Quits: dbal_ (~dbal@2603:300c:b04:b100:5c08:75bc:d08:cf41) (*.net *.split)
+[03:30:03] *** Quits: nillyhan (~00000000@user/nillyhan) (*.net *.split)
+[03:30:03] *** Quits: Lazenca (~lazenca@user/lazenca) (*.net *.split)
+[03:30:03] *** Quits: Seirdy (~Seirdy@sourcehut/user/seirdy) (*.net *.split)
+[03:30:03] *** Quits: jafa (~jafa@ip70-162-106-203.ph.ph.cox.net) (*.net *.split)
+[03:30:03] *** Quits: bpmedley_ (~bpmedley@2600:1700:e2c:8410:48d8:bca6:b317:876) (*.net *.split)
+[03:30:03] *** Quits: AMM (~AMM@user/amm) (*.net *.split)
+[03:30:03] *** Quits: CounterPillow (~Pillow@overviewer/CounterPillow) (*.net *.split)
+[03:30:03] *** Quits: intrac (~intracube@user/intracube) (*.net *.split)
+[03:30:03] *** Quits: mateo` (~mateo@ffmpeg/developer/mateo) (*.net *.split)
+[03:30:03] *** Quits: zmt00 (~zmt00@user/zmt00) (*.net *.split)
+[03:30:04] *** Quits: someuser (~user@197.54.97.208) (*.net *.split)
+[03:30:04] *** Quits: kpuc (1011@46-97-229-216.sr2.pon.net) (*.net *.split)
+[03:30:04] *** Quits: user282069 (user@2a01:7e00::f03c:92ff:fe7f:456d) (*.net *.split)
+[03:30:04] *** Quits: KyleSiefring (~quassel@ec2-35-174-255-234.compute-1.amazonaws.com) (*.net *.split)
+[03:30:04] *** Quits: edenist (~edenist@rdns.robotprofessor.net) (*.net *.split)
+[03:30:11] *** Joins: jarainf (~jarainf@2a01:4f8:191:512c::2)
+[03:30:23] *** Joins: upekkha (~Advanced@2a01:4f8:1c0c:49df::1)
+[03:30:26] *** Joins: someuser (~user@45.130.86.11)
+[03:30:38] *** Joins: mateo` (~mateo@lputeaux-656-1-153-220.w217-128.abo.wanadoo.fr)
+[03:30:40] *** Joins: dbal (~dbal@2603:300c:b04:b100:1199:f38e:f932:ca76)
+[03:30:42] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[03:30:45] *** Joins: CounterPillow (~Pillow@overviewer/CounterPillow)
+[03:30:48] *** Joins: user282069 (user@2a01:7e00::f03c:92ff:fe7f:456d)
+[03:30:50] *** Joins: edenist (edenist@rdns.robotprofessor.net)
+[03:30:50] *** Joins: KyleSiefring (~quassel@ec2-35-174-255-234.compute-1.amazonaws.com)
+[03:30:53] *** Quits: Colt (~Colt@user/colt) (Remote host closed the connection)
+[03:30:54] *** Joins: TheSashm_ (~TheSashmo@174.119.184.190)
+[03:31:01] *** Quits: mateo` (~mateo@lputeaux-656-1-153-220.w217-128.abo.wanadoo.fr) (Signing in (mateo`))
+[03:31:01] *** Joins: mateo` (~mateo@ffmpeg/developer/mateo)
+[03:31:04] *** Joins: Seirdy (~Seirdy@76-247-182-44.lightspeed.sjcpca.sbcglobal.net)
+[03:31:57] *** Joins: intrac (~intracube@user/intracube)
+[03:31:58] *** Joins: auth (~auth@user/auth)
+[03:32:02] *** Joins: pit (~quassel@v22016102921539034.goodsrv.de)
+[03:32:05] *** Joins: Lazenca (Lazenca@user/lazenca)
+[03:32:13] *** Joins: woky (~woky@li1651-31.members.linode.com)
+[03:32:14] *** Joins: zsoltiv_ (~zsoltiv@fibhost-67-12-35.fibernet.hu)
+[03:32:14] *** Joins: Colt (~Colt@user/colt)
+[03:32:43] *** Joins: AMM (~AMM@user/amm)
+[03:34:11] *** Quits: foonix (1004@ip-86-49-65-192.net.upcbroadband.cz) (Ping timeout: 256 seconds)
+[03:34:18] *** Joins: kpuc (1011@46-97-229-216.sr2.pon.net)
+[03:35:04] *** Joins: jafa (~jafa@ip70-162-106-203.ph.ph.cox.net)
+[03:35:22] <BtbN> phinxy, you can't (re-)compress without quality loss
+[03:35:36] <BtbN> only thing you can do is compress losslessly, and it's very unlikely it'll end up smaller than jpeg
+[03:35:40] *** Joins: foonix (1004@ip-86-49-65-192.net.upcbroadband.cz)
+[03:35:49] *** Joins: arcatech (~arcatech@user/arcatech)
+[03:36:09] <phinxy> Sounds right
+[03:37:01] <phinxy> Is there a faster alternative to h264 preset ultrafast?  Maybe divx?
+[03:37:26] <BtbN> h264 with a hardware encoder
+[03:37:32] <BtbN> I doubt you want to douch divx in 2021.
+[03:37:56] <BtbN> Quality will be bad though with both ultrafast and a fast hwenc
+[03:42:57] *** Joins: jarthur_ (~jarthur@cpe-70-114-198-37.austin.res.rr.com)
+[03:50:02] <tar_xvf> yeah. Depending on what you're using for you can jack up the bitrate though to make it a bit better
+[03:50:25] *** Joins: realies (~realies@user/realies)
+[03:52:22] *** Quits: arbitercoin (~Rheanna@61.171.38.68) (Remote host closed the connection)
+[03:52:37] <BtbN> I doubt making it bigger is the goal?
+[03:52:45] <BtbN> Might as well keep mjpeg then.
+[03:54:37] *** Joins: arbitercoin (~Rheanna@218.78.79.129)
+[04:03:30] *** justache is now known as totallynotjustac
+[04:03:44] <furq> x264 ultrafast will probably be faster than xvid/divx/mpeg4 anyway
+[04:04:10] *** totallynotjustac is now known as justache
+[04:15:55] *** Quits: realies (~realies@user/realies) (Quit: ~)
+[04:16:18] *** Joins: realies (~realies@user/realies)
+[04:19:41] *** Quits: Seirdy (~Seirdy@76-247-182-44.lightspeed.sjcpca.sbcglobal.net) (Quit: exiting 3.3)
+[04:20:15] *** Joins: Seirdy (~Seirdy@sourcehut/user/seirdy)
+[04:24:03] *** Joins: bpmedley (~bpmedley@2600:1700:e2c:8410:7c85:8272:3c4d:abee)
+[04:27:10] *** justache is now known as zoite
+[04:29:11] *** zoite is now known as z0ite
+[04:36:31] *** Quits: Seirdy (~Seirdy@sourcehut/user/seirdy) (Quit: exiting 3.3)
+[04:41:22] *** Joins: Seirdy (~Seirdy@sourcehut/user/seirdy)
+[04:42:07] *** Quits: KyleSiefring (~quassel@ec2-35-174-255-234.compute-1.amazonaws.com) (Quit: http://quassel-irc.org - Chat comfortably. Anywhere.)
+[04:42:07] *** Quits: arbitercoin (~Rheanna@218.78.79.129) (Remote host closed the connection)
+[04:42:48] *** Joins: KyleSiefring (~quassel@ec2-35-174-255-234.compute-1.amazonaws.com)
+[04:43:23] *** Joins: arbitercoin (~Rheanna@218.78.104.50)
+[04:50:18] *** Joins: lucaswang (~lucaswang@58.246.19.98)
+[04:52:37] *** Quits: Keshl_ (~Purple@idlerpg/player/Keshl) (Quit: Konversation terminated!)
+[04:53:15] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[05:10:32] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Quit: WeeChat 3.3)
+[05:12:23] *** Joins: feiw (~Fei.Wang@192.55.46.52)
+[05:30:24] *** Quits: vlm (~vlm@user/vlm) (Quit: "")
+[05:32:10] *** Quits: arbitercoin (~Rheanna@218.78.104.50) (Remote host closed the connection)
+[05:32:49] *** Joins: arbitercoin (~Rheanna@218.78.94.61)
+[05:54:12] *** Quits: keypusher (keypusher@user/keypusher) (Ping timeout: 256 seconds)
+[05:54:15] *** Quits: tar_xvf (~tar_xvf@ec2-3-136-243-174.us-east-2.compute.amazonaws.com) (Quit: ZNC 1.7.5+deb4 - https://znc.in)
+[05:56:05] *** Joins: tar_xvf (~tar_xvf@ec2-3-136-243-174.us-east-2.compute.amazonaws.com)
+[05:57:47] *** Joins: keypusher (keypusher@user/keypusher)
+[05:59:51] *** Joins: Al2O3 (~Al2O3@user/al2o3)
+[06:03:12] *** Joins: Retr0id2 (~Retr0id@user/retr0id)
+[06:03:29] *** Quits: Retr0id (~Retr0id@user/retr0id) (Read error: Connection reset by peer)
+[06:03:30] *** Retr0id2 is now known as Retr0id
+[06:17:57] *** Quits: darkapex_ (~darkapex@user/darkapex) (Ping timeout: 256 seconds)
+[06:18:11] *** Joins: darkapex (~darkapex@user/darkapex)
+[06:30:12] *** Quits: jerome- (~jerome@78.193.84.130) (Remote host closed the connection)
+[06:31:54] *** Joins: jerome- (~jerome@78.193.84.130)
+[06:35:13] *** Joins: zk (~zk@120.216.241.235)
+[06:40:17] *** Quits: zk (~zk@120.216.241.235) (Quit: Connection closed)
+[06:48:34] *** Joins: Muimi_ (~Muimi@140.82.21.73)
+[06:49:31] *** Quits: Muimi_ (~Muimi@140.82.21.73) (Read error: Connection reset by peer)
+[06:50:31] *** Joins: Muimi_ (Muimi@113.235.1.217)
+[06:52:39] *** Joins: ezzieyguywuf (~Unknown@user/ezzieyguywuf)
+[06:54:16] <ezzieyguywuf> I'm pretty new to ffmpeg - I'm trying to set it up to do some screen capture. This seems to be working well with `ffmpeg -f x11grab -framerate 10 -i 0:0 myFile.mp4`, however now I'm trying to optimize on filesize. I noticed that in the output, the bitrate is listed as 480 kbits/s
+[06:54:37] <ezzieyguywuf> is there a way to adjust this bitrate? is this already a 'low' number? is it possible to encode the video using a variable bitrate?
+[06:55:03] <ezzieyguywuf> I'm familiar with the concept of constant vs variable bitrate from audio, not so much with video but I assume it's a similar concept
+[07:00:31] *** Joins: KombuchaKip (~kip@192.252.230.5)
+[07:07:49] *** Quits: jos1 (~jos3@dyndsl-178-142-066-218.ewe-ip-backbone.de) (Ping timeout: 256 seconds)
+[07:10:35] <KombuchaKip> I am having a memory leak problem with ffmpeg, or more precisely a "space leak". Memory is being released correctly on my application's exit, but during its run, the more music it decodes, the more memory it seems to use. I've spent a few days profiling, and now with the tcmalloc library. If I'm reading its report correctly, it looks like the majority of the memory was allocated by av_buffer_realloc / av_malloc in this decoder loop. Can
+[07:10:39] <KombuchaKip> anyone see what I'm doing wrong? The decode works fine, but obviously something isn't being released when it should: https://pastebin.com/YDdUU0wT
+[07:12:21] *** Quits: c7s (~c7s@user/c7s) (Ping timeout: 256 seconds)
+[07:12:21] *** Quits: arbitercoin (~Rheanna@218.78.94.61) (Remote host closed the connection)
+[07:14:14] *** Joins: arbitercoin (~Rheanna@218.78.79.129)
+[07:17:21] *** Quits: auth (~auth@user/auth) (Quit: Leaving)
+[07:20:31] *** Joins: jos1 (~jos3@dyndsl-091-248-052-174.ewe-ip-backbone.de)
+[07:24:52] *** Quits: jarthur_ (~jarthur@cpe-70-114-198-37.austin.res.rr.com) (Ping timeout: 256 seconds)
+[07:26:47] *** Joins: jarthur (~jarthur@2603-8080-1540-002d-f5ee-2791-688d-e316.res6.spectrum.com)
+[07:30:01] *** Quits: haasn (~nand@haasn.dev) (Quit: ZNC 1.7.5+deb4 - https://znc.in)
+[07:31:21] *** Joins: haasn (~nand@haasn.dev)
+[07:50:56] *** Quits: SamHenderson (~SamHender@209.226.83.233) (Ping timeout: 256 seconds)
+[08:00:16] *** Joins: auth (~auth@user/auth)
+[08:06:10] *** Quits: sagax (~sagax_nb@user/sagax) (Quit: Konversation terminated!)
+[08:33:33] *** z0ite is now known as justache
+[08:34:00] *** Quits: s55 (~s55@user/s55) (Ping timeout: 256 seconds)
+[08:35:16] *** Joins: tuxd3v (~tuxd3v@93.102.33.166.rev.optimus.pt)
+[08:43:17] *** Joins: s55 (~s55@user/s55)
+[08:58:13] *** Quits: tuxd3v (~tuxd3v@93.102.33.166.rev.optimus.pt) (Remote host closed the connection)
+[08:59:04] *** Joins: tuxd3v (~tuxd3v@93.102.33.166.rev.optimus.pt)
+[09:02:02] *** Joins: AbleBacon (~AbleBacon@user/AbleBacon)
+[09:02:31] *** Joins: arcatech_ (~arcatech@user/arcatech)
+[09:04:31] *** Quits: arcatech (~arcatech@user/arcatech) (Ping timeout: 245 seconds)
+[09:06:13] *** Quits: arcatech_ (~arcatech@user/arcatech) (Client Quit)
+[09:10:01] *** Quits: Xaldafax (~xaldafax@cpe-198-72-160-101.socal.res.rr.com) (Quit: Bye...)
+[09:34:30] *** Quits: aphysically (~aphysical@user/aphysically) (Ping timeout: 268 seconds)
+[09:35:20] *** Joins: aphysically (~aphysical@user/aphysically)
+[09:43:52] *** Joins: anotheruser (~user@197.54.97.208)
+[09:47:40] *** Quits: someuser (~user@45.130.86.11) (Ping timeout: 256 seconds)
+[10:01:08] *** Quits: Muimi_ (Muimi@113.235.1.217) (Quit: Going offline, see ya! (www.adiirc.com))
+[10:11:31] *** Joins: Atsuko_ (~x@94.242.250.86)
+[10:13:10] *** Quits: Atsuko (~x@94.242.250.86) (Ping timeout: 256 seconds)
+[10:31:39] *** Joins: dreamon (~dreamon@pd95039d2.dip0.t-ipconnect.de)
+[10:32:16] *** Quits: arbitercoin (~Rheanna@218.78.79.129) (Remote host closed the connection)
+[10:34:05] *** Joins: arbitercoin (~Rheanna@218.78.53.13)
+[10:36:08] *** Quits: rpthms (~rpthms@user/rpthms) (Remote host closed the connection)
+[10:36:55] *** Quits: dreamon (~dreamon@pd95039d2.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[10:42:42] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[10:46:25] *** Joins: rpthms (~rpthms@user/rpthms)
+[11:09:54] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Ping timeout: 260 seconds)
+[11:11:20] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[11:12:41] *** Joins: palasso (~palasso@user/palasso)
+[11:16:36] *** Quits: phinxy (~phinxy@78-71-229-90-no500.tbcn.telia.com) (Ping timeout: 256 seconds)
+[11:19:38] *** Joins: fkaa (~fkaa@81-226-20-99-no256.tbcn.telia.com)
+[11:21:59] *** Quits: arbitercoin (~Rheanna@218.78.53.13) (Remote host closed the connection)
+[11:23:21] *** Joins: arbitercoin (~Rheanna@218.78.67.149)
+[11:24:01] *** Joins: dreamon (~dreamon@ppp-88-217-67-53.dynamic.mnet-online.de)
+[11:38:14] *** Joins: lavaball (felix@31.204.155.215)
+[12:00:28] *** Joins: cmp (~cmp@lputeaux-658-1-177-87.w92-154.abo.wanadoo.fr)
+[12:01:38] *** Joins: Volgaar (~volgaar@nat-wifi-eduroam.reseau.univ-paris13.fr)
+[12:04:13] *** Quits: hendry (~hendry@210.23.22.8) (Ping timeout: 250 seconds)
+[12:06:33] *** Joins: hendry (~hendry@210.23.22.2)
+[12:12:37] *** Quits: arbitercoin (~Rheanna@218.78.67.149) (Remote host closed the connection)
+[12:14:38] *** Joins: arbitercoin (~Rheanna@61.171.21.169)
+[12:28:16] *** Quits: nitroxis (n@nxs.re) (Quit: nitroxis)
+[12:36:50] *** Joins: Muimi_ (~Muimi@140.82.21.73)
+[12:37:55] *** Joins: luni-4 (uid453292@id-453292.ilkley.irccloud.com)
+[12:39:01] *** Quits: Muimi_ (~Muimi@140.82.21.73) (Read error: Connection reset by peer)
+[12:40:59] *** Joins: Muimi_ (~Muimi@140.82.21.73)
+[12:52:43] *** Quits: durandal_1707 (~computer@95.168.121.19) (Read error: Connection reset by peer)
+[12:54:58] *** Joins: durandal_1707 (~computer@95.168.121.19)
+[12:57:13] *** Joins: Muimi__ (Muimi@113.235.1.217)
+[13:00:51] *** Quits: Muimi_ (~Muimi@140.82.21.73) (Ping timeout: 256 seconds)
+[13:00:55] *** Muimi__ is now known as Muimi_
+[13:02:01] *** Quits: arbitercoin (~Rheanna@61.171.21.169) (Remote host closed the connection)
+[13:03:49] *** Joins: arbitercoin (~Rheanna@101.91.232.166)
+[13:13:43] *** softworkz is now known as Guest2392
+[13:13:50] *** Joins: softworkz (~softworkz@user/softworkz)
+[13:16:14] *** Quits: Guest2392 (~softworkz@user/softworkz) (Ping timeout: 252 seconds)
+[13:26:55] *** Quits: pit (~quassel@v22016102921539034.goodsrv.de) (Ping timeout: 256 seconds)
+[13:27:41] *** Joins: xkuru (~xkuru@user/xkuru)
+[13:30:30] *** Joins: Blacker47 (~Blacker47@user/blacker47)
+[13:41:59] *** Joins: Vonter (~Vonter@user/vonter)
+[13:49:55] <yuri6037> Hi I've finally got the encoding to work but there's one problem: the video is AMAZINGLY slow to play
+[13:50:07] *** Joins: asdf__ (~asdf@87-92-77-166.bb.dnainternet.fi)
+[13:50:33] *** Joins: pit (~quassel@v22016102921539034.goodsrv.de)
+[13:50:35] *** Joins: asdf_ (~asdf@87-92-77-166.bb.dnainternet.fi)
+[13:51:59] *** Quits: arbitercoin (~Rheanna@101.91.232.166) (Remote host closed the connection)
+[13:52:17] <asdf_> Is there a way other than SIGKILL to make ffmpeg not output the file when it's killed? A cli option maybe?
+[13:53:18] *** Quits: lucaswang (~lucaswang@58.246.19.98) (Quit: Connection closed)
+[13:53:44] *** Joins: arbitercoin (~Rheanna@218.78.109.69)
+[13:53:53] *** Joins: minimal (~minimal@user/minimal)
+[13:54:05] <yuri6037> seems like libx264 is dropping a huge lot of frames
+[13:56:49] <yuri6037> there's worse libx264 is writing the video as 1:07 which is FAR FAR MORE than what the original video was: 00:05 according to VLC
+[13:57:12] <JEEB> any encoder does not drop frames
+[13:57:17] <JEEB> esp. not x264
+[13:57:32] <JEEB> theora was the last thing to actually drop frames when rate control cannot hit your requirements
+[13:57:37] <JEEB> as far as I know :P
+[13:58:02] <JEEB> slow stuff sounds like you're missing timestamp adjustments like time bases
+[13:58:05] <yuri6037> but the matter is the video is not smooth at all you need to wait more than 1 second in order to just see one frame
+[13:58:25] <yuri6037> I'm setting the exact time_base and exact frame_rate from original video
+[13:58:37] <JEEB> yes but are your timestamps the same across? :P
+[13:58:42] <yuri6037> and timestamps are also the ones from the original video
+[13:58:45] <JEEB> as in, adjusted for time ase
+[13:58:47] <JEEB> *base
+[13:59:24] <yuri6037> what do you mean adjusted. I just copy the int64_t from the source video and re-use them as is in the new video
+[13:59:40] <JEEB> demux gives you AVPackets on AVStream's time base, you then create a decoder instance which has its own time base, and you have to rescale the timestamps there (there's a helper for that for AVPackets)
+[13:59:49] <JEEB> then after you decode you get back AVFrames on the decoder instance's time base
+[14:00:01] <JEEB> then filter inputs and outputs have time bases if you have filtering
+[14:00:10] <JEEB> then encoder instance has its own time base
+[14:00:23] <JEEB> and finally, the muxer's AVStream time base
+[14:00:28] <yuri6037> the encoder time_base is set to the one from the decoder
+[14:01:07] <JEEB> there's even a nice function to print the time as a string with time base adjusted, just utilize that for debugging in each state with the appropriate time base
+[14:01:10] <yuri6037> I'm transfering a lot of parameters from the decoder to the encoder like time_base, frame_rate, has_b_frames, etc
+[14:01:30] <JEEB> if your timestamps are wonky, this is the number one issue
+[14:01:37] <JEEB> so just start debugging that :P
+[14:01:45] <yuri6037> But as I said the time base of the encoder is set to the one of the decoder
+[14:01:59] <JEEB> that doesn't mean anything since you clearly are getting not those timestamps you want
+[14:02:09] <JEEB> and I cannot see your code with a magical 8ball
+[14:02:11] <JEEB> please understand
+[14:02:45] <yuri6037> what you say doesn't make sense because I've saved the exact time_base as 2 32 bits ints (num and den)
+[14:03:28] <JEEB> sure, I am incorrect then - but at least print out the values with the appropriate time bases then to verify
+[14:03:33] <yuri6037> and I save all frame timestamps in the order the decoder gives me the frames and then I reencode them using the same timestamps and give it the same order of frames as the decoder gave me
+[14:04:02] <JEEB> order isn't the thing I'm talking about
+[14:04:06] <JEEB> you specifically complained about duration
+[14:04:14] <yuri6037> yeah duration is wrong
+[14:04:18] <JEEB> that is most often a timestamp issue
+[14:04:27] <JEEB> you have forgotten some step or so
+[14:04:32] <yuri6037> what could it be if not a timestamp issue?
+[14:05:09] <yuri6037> it's very unlikely to be a timestamp issue as I'm reusing the exact timestamps the decoder gave me or the decoder gives me garbage
+[14:05:45] <JEEB> it could be your player interpreting the timestamps wrong, you can easily verify the timestamps that FFmpeg would read from your output file
+[14:06:02] <JEEB> `ffprobe -of json -show_packets -show_streams -i your_output_file`
+[14:06:24] <JEEB> that dumps all packets' parsed timestamps from your generated file into JSON
+[14:06:36] <JEEB> which you can then parse with python or just inspect the first X packets :P
+[14:07:14] <JEEB> or -show_frames for decoded frames from those packets
+[14:07:25] <JEEB> so you get constantly rising PTS in case of b-frames
+[14:07:40] *** Quits: durandal_1707 (~computer@95.168.121.19) (Read error: Connection reset by peer)
+[14:07:57] <JEEB> and if those timestamps in your output file are weird, then unfortunately the nr1 culprit is your code :P
+[14:09:08] <JEEB> which is why I recommend just logging the timestamps for each step if possible. pts divided by the relevant time base (demuxer AVStream, decoder, filter in/out, encoder, muxer AVStream)
+[14:09:19] <JEEB> whichever is appropriate for your code base
+[14:12:09] <yuri6037> I'm currently running the decoder with prinint all timestamps so I can compare if by any chance saving int64_t somehow corrupted them
+[14:14:02] <yuri6037> the intersting part is if I on purpose corrupt the timestamps x264 always generates 0 bytes file
+[14:14:58] <yuri6037> and the output video is just a blank file. If I use the timestamps I've saved then I get a video which VLC can play but as I said it looks like a lot of frames are dropped and duration is completely wrong
+[14:16:42] <yuri6037> no the timestamps are definatly correct no saving corruption
+[14:17:08] <yuri6037> diff says no difference between outut of encoder and decoder regarding frame indices associated to frame timestamps
+[14:18:26] <yuri6037> also the generated file is FAR larger
+[14:18:43] <yuri6037> 7.3 MB instead of 557kb
+[14:20:28] <yuri6037> wow that's strange I just found something weird in VLC codec information of the generated file
+[14:20:46] <yuri6037> I get proper H264 but VLC cannot find out the number of FPS
+[14:21:07] <yuri6037> even though I've set it when initializing the encoder
+[14:21:27] <yuri6037> Is that normal VLC doesn't show any FPS count?
+[14:23:01] <JEEB> just look at the output of ffprobe -show_frame for a file
+[14:23:04] <JEEB> *frames
+[14:23:08] <yuri6037> Here are all the parameters that I set in the codec context from the file: https://pastebin.com/xYfbX1kX
+[14:23:37] <JEEB> that will dump the PTS of each encoded frame in that file as readable seconds float for example :P
+[14:23:45] <JEEB> if the timestamps look weird, you will see it immediately'ish
+[14:23:57] <JEEB> anyways, afk
+[14:25:04] *** Quits: asdf_ (~asdf@87-92-77-166.bb.dnainternet.fi) (Quit: Lost terminal)
+[14:25:04] *** Quits: asdf__ (~asdf@87-92-77-166.bb.dnainternet.fi) (Quit: Lost terminal)
+[14:55:33] <yuri6037> ok as I said here is the problem: x264 did drop frames: [matroska,webm @ 0x55706e42bb40] File ended prematurely
+[14:56:09] <yuri6037> libavcodec/libavformat truncates files
+[14:56:35] <yuri6037> exactly 3 frames droped
+[14:56:47] <yuri6037> 130 frames on 133 frames needed
+[14:57:56] <yuri6037> so the question now is why is the C API truncating files it's supposed to generate?
+[14:58:37] <BtbN> Is that output from avformat reading your input, or is that ffmpeg reading the output your code generated?
+[14:58:43] <BtbN> Did you forget to write the trailer?
+[14:59:00] <BtbN> And did you properly flush the entire chain? Demuxer, decoder, everything.
+[15:00:56] <yuri6037> ffprobe -show_frames on output file
+[15:01:15] <yuri6037> ffprobe -show_frames on source video gives proper 133 frames
+[15:01:56] <yuri6037> however ffprove -show_frames on output file gives "File ended prematurely" and only shows up to 130 frames
+[15:02:02] <yuri6037> so 3 frames are dropped
+[15:02:18] <yuri6037> and it's not decoding, decoding gives 133 frames
+[15:02:27] <yuri6037> it's only when encoding
+[15:05:39] <yuri6037> do you have any idea why it's truncating the file?
+[15:11:00] <BtbN> Well, it saying "file ended prematurely" is a good indicator that you messed up writing the file, and didn't write the trailer or something.
+[15:11:33] <yuri6037> well it's clear that it's missing 3 frames because ffprove only shows up to 130 so it's clear that avformat/avcodec dropped 3 frames but why
+[15:12:52] <yuri6037> I've ran the encoder again to see if theres any error but there's no error except a bunch of info starting with "[libx264 @ 0x563455ca4280]"
+[15:14:51] <yuri6037> Here is what it says: https://pastebin.com/nDQf8TB4 is this normal?
+[15:15:24] <BtbN> That's just normal stats
+[15:15:42] <BtbN> But, again: It says your file is damaged, so you did not write it properly. Most likely missing the trailer.
+[15:16:08] <BtbN> And missing frames are usually caused by not properly flushing the chain on input EOF
+[15:16:08] <yuri6037> what's the trailer?
+[15:16:18] <BtbN> The opposite of the header.
+[15:16:38] <yuri6037> well I know the definition of a trailer but I have no idea how to write that
+[15:16:52] <BtbN> The same way you write the header, just that it's called trailer.
+[15:16:53] <yuri6037> and I'm flushing
+[15:17:05] <BtbN> I literally linked you to the part of the docs that explains the process yesterday.
+[15:18:12] <BtbN> https://ffmpeg.org/doxygen/trunk/group__lavf__encoding.html
+[15:18:16] <yuri6037> there is no such function named "avformat_write_trailer"
+[15:18:21] <BtbN> "Once all the data has been written, the caller must call av_write_trailer() to flush any buffered packets and finalize the output file"
+[15:18:55] <yuri6037> of course it's not named following the same convention
+[15:19:16] <BtbN> Mostly history reasons, and changing it now would be a pointless API break
+[15:19:21] <BtbN> *historic
+[15:21:21] <yuri6037> ok I've added the trailer now
+[15:21:38] *** Quits: softworkz (~softworkz@user/softworkz) (Ping timeout: 252 seconds)
+[15:22:13] <yuri6037> ah now there's 133 frames that's better
+[15:22:27] <yuri6037> and there's no more truncation error in ffprove
+[15:22:39] *** Quits: lavaball (felix@31.204.155.215) (Remote host closed the connection)
+[15:23:20] <yuri6037> but video is still broken on VLC and VLC still doesn't find the frame rate
+[15:23:37] <yuri6037> seems like avformat forgets to write the stream framerate
+[15:23:49] <yuri6037> even though I set it in AVCodecContext
+[15:26:28] <BtbN> avformat is pretty unfazed by what you tell to avcodec
+[15:26:39] <BtbN> And, again, the timestamps govern the framerate.
+[15:26:45] <yuri6037> and there's another problem the decoder sends incorrect pts
+[15:27:16] <yuri6037> according to ffprobe there should 2 times pts=0 however in the encoded file the first is 0 but the second is 512 not 0
+[15:27:38] <BtbN> The decoder does not normally send any pts at all. It just passes through the ones from the packets.
+[15:28:00] <yuri6037> but I'm reading pts value in AVFrame
+[15:28:15] <BtbN> ... Which is just what was on the packet.
+[15:28:15] <yuri6037> so do you mean it doesn't set it properly?
+[15:28:27] <BtbN> It does not modify them other than re-ordering
+[15:28:33] <yuri6037> what pts does ffprobe get then
+[15:28:46] <BtbN> ?
+[15:28:57] <yuri6037> I need to get the decoder give me exactly what ffprobe gives me
+[15:29:16] <BtbN> The decoder just gives you what it itself got as input.
+[15:29:41] <yuri6037> however it does not it breaks the order and misses 1 pts value
+[15:29:57] <BtbN> That's practically impossible.
+[15:30:04] *** Joins: MG2021 (~MG2021@65.49.2.96)
+[15:30:08] <MG2021> hi
+[15:30:16] <yuri6037> but I'm just telling you what ffprobe gives me
+[15:31:24] <yuri6037> according to ffprobe the first 2 AVFrame should have pts=0 however the C API gives me 0 then 512 not 0 then 0
+[15:31:57] <MG2021> May I ask why ffmpeg does not yet support bink 2 format?
+[15:31:58] *** Quits: arbitercoin (~Rheanna@218.78.109.69) (Remote host closed the connection)
+[15:32:22] <yuri6037> and the order in which frames are found by ffprobe is completely different from the order the C api gives me
+[15:33:05] *** Joins: arbitercoin (~Rheanna@61.171.69.141)
+[15:33:48] <MG2021> also, please add Voukoder and Autokroma Influx to the list of software (plugins for adobe cc) that uses ffmpeg
+[15:33:49] <yuri6037> Also how does ffprove get pkt_pts_time I don't have this in AVFrame?
+[15:37:39] <yuri6037> how do I make the C API give correct ordering?
+[15:40:23] <yuri6037> why are there so many issues with the FFMPEG C API
+[15:40:25] <yuri6037> ?
+[15:41:22] *** Quits: MG2021 (~MG2021@65.49.2.96) (Quit: Client closed)
+[15:42:00] *** Joins: MG2021 (~MG2021@74.82.60.67)
+[15:42:11] <MG2021> yuri6037 Are we talking to ourselves?
+[15:42:54] <yuri6037> BtbN was helping me a bit
+[15:44:06] <BtbN> yuri6037, as the name might suggests, it's on the packet, not the frame.
+[15:44:24] <BtbN> avcodec passes it through to the frames it outputs, after re-ordering.
+[15:45:11] <yuri6037> then it means when re-encoding frames are not re-ordered properly
+[15:46:00] <yuri6037> and that still doesn't answer the question why in the source video there's twice pkt_pts = 0 whereas in my decoded video I only see it once
+[15:47:06] <yuri6037> I thought it would be enough to save the timestamps but apparently it's far from enough
+[15:47:31] <yuri6037> the timestamps don't match what ffprobe finds and I have no idea why
+[15:51:03] <yuri6037> in what order does ffprobe -show_frames give frames? Is it in order of display or in another order?
+[15:52:03] <JEEB> it is in the coded image order after b-frame etc reordering
+[15:54:23] <yuri6037> is there any way to make the C api give exact same ordering?
+[15:54:47] <JEEB> yes, after decoding you get exactly that
+[15:54:52] <MG2021> Friends, if you replay, please reply again. I was disconnected
+[15:55:04] <JEEB> since ffprobe is a very very shallow wrapper around the basic APIs
+[15:55:30] <MG2021> May I ask why ffmpeg does not yet support bink 2 format?
+[15:55:33] <yuri6037> no I don't ffprobe gives me 2 times 0 in pkt_pts whereas AVFrame pts is broken
+[15:55:47] <another|> MG2021: because nobody implemented it
+[15:55:53] <yuri6037> and gives me 0 then 512
+[15:55:54] <JEEB> show_frames = AVFrame
+[15:55:59] *** Quits: Lazenca (Lazenca@user/lazenca) (Remote host closed the connection)
+[15:56:19] <JEEB> MG2021: there is a partial implementation work-in-progress, if you help the author to finish it it'd get in quicker :P
+[15:56:27] <yuri6037> but then there is a big problem with my Ubuntu version of it because it doesn't give that at all
+[15:56:39] *** Quits: anotheruser (~user@197.54.97.208) (Ping timeout: 252 seconds)
+[15:56:56] <yuri6037> it gives me 0 then 512 in AVFrame->pts whereas ffprobe starts wih 0 then 0
+[15:57:40] <yuri6037> so either ffprobe is broken or AVFrame->pts is broken. considering the input video plays fine I guess AVFrame->pts is broken
+[15:57:44] <MG2021> JEEB realllyyy!? finally, after 6 years
+[15:59:20] <MG2021> JEEB is it too hard to reverse the http://www.radgametools.com/down/Bink/RADTools.7z
+[15:59:45] <MG2021>  password: RAD
+[16:00:36] <MG2021> a technical question: why ffmpeg does not fully support windows media formats
+[16:00:58] *** Quits: MG2021 (~MG2021@74.82.60.67) (Quit: Client closed)
+[16:03:23] <yuri6037> it's getting worse more memory corruptions apparently after sws_scale for decoding YUV to RGB we get corrupted timestamps
+[16:04:00] <yuri6037> why is sws_scale corrupting frames
+[16:04:10] *** Joins: MG2021 (~MG2021@74.82.60.42)
+[16:04:14] <MG2021> JEEB Are you an official ffmpeg developer?
+[16:04:27] <MG2021> guys did you reply to me
+[16:04:38] <MG2021> i was disced
+[16:04:51] <MG2021> (disconnected)
+[16:05:23] <MG2021> could you guys please create a discord server too
+[16:05:36] <MG2021> this irc is killing me
+[16:07:07] <galad> MG2021: I'm not a ffmpeg developer, but I guess is because no one cares enough to implement it. Open source projects are mainly driver by what their developers need and use or are interested it
+[16:07:19] <yuri6037> actually it seems that show_frames shows a lot more frames than I expected
+[16:07:36] <yuri6037> is show_frames also showing audio?
+[16:07:45] *** Joins: Keshl (~Purple@idlerpg/player/Keshl)
+[16:11:23] <MG2021> bink video is the most popular video format in video game industry and lots of youtubers need this format to convert and upload it to youtube
+[16:12:01] <another|> feel free to implement it
+[16:12:03] <MG2021> with ffmpeg support, i can play bink video 1 on mpc-hc using lavfilters (that is based on ffmpeg)
+[16:12:27] <MG2021> i know nothing about RE
+[16:12:38] <MG2021> im not an dev
+[16:12:54] <MG2021> its not like buying an lays!
+[16:12:55] *** Joins: darkapex_ (~darkapex@user/darkapex)
+[16:13:08] <MG2021> a dev*
+[16:13:11] <yuri6037> maybe both audio and video streams are required for the timestamps to be correct
+[16:13:20] *** Quits: darkapex (~darkapex@user/darkapex) (Ping timeout: 252 seconds)
+[16:16:02] *** Joins: MG202122 (~MG2021@74.82.60.42)
+[16:16:15] <MG202122> guys did you reply me to
+[16:16:38] <MG202122> i was disconnected again!
+[16:19:52] <MG202122> hello
+[16:20:20] *** Quits: MG2021 (~MG2021@74.82.60.42) (Ping timeout: 256 seconds)
+[16:20:48] <MG202122> ...
+[16:24:43] <MG202122> do you get my messages
+[16:25:59] *** Quits: pntaylor (~quassel@101.113.78.148) (Ping timeout: 252 seconds)
+[16:28:22] <MG202122> what is the latest official stable version of ffmpeg
+[16:29:35] *** Joins: pntaylor (~quassel@101.112.93.231)
+[16:30:43] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[16:31:04] <BtbN> generally, latest master
+[16:32:38] *** Joins: xkuru (~xkuru@user/xkuru)
+[16:35:50] *** Joins: nate_ (~natethegr@2600:1700:8c28:28c0:e8e5:a13b:e300:9e1c)
+[16:46:17] <MG202122> official ffmpeg site: 4.4
+[16:46:23] <MG202122> softpedia: 4.4.1
+[16:47:53] *** Joins: nitroxis (n@nxs.re)
+[16:49:51] <another|> https://ffmpeg.org/download.html
+[16:49:56] <another|> latest tag is 4.4.1
+[16:50:48] <BtbN> The versions are just to make distros happy. Can just use latest master.
+[16:54:45] <MG202122> Is there any problem using the latest version of Master?
+[16:54:58] <MG202122> are those master really stable
+[16:54:59] <MG202122> also
+[16:55:09] <BtbN> We don't generally commit broken stuff.
+[16:55:19] <MG202122> please support CorePNG export (encoder) to ffmpeg
+[16:55:30] <BtbN> Patches welcome
+[16:55:57] <BtbN> It's how this works really. Someone who wants some format hard enough submits a patch that adds it.
+[16:55:58] <yuri6037> How do I transfer a stream from a decoder to an encoder, I've tried allocating the new stream and then just copying parameters but I get an error when writing header: [matroska @ 0x55cae00d7780] Tag sowt incompatible with output codec id '65536' ([1][0][0][0])
+[16:56:02] <yuri6037> ?
+[16:56:05] <MG202122> official source code is available here
+[16:56:05] <MG202122> https://github.com/qyot27/CorePNG
+[16:56:26] <BtbN> That does not look very official or maintained oO
+[16:56:39] <MG202122> why
+[16:56:46] <BtbN> last commit from _2003_
+[16:56:47] <BtbN> no README
+[16:56:54] <BtbN> a custom, non-GPL-compatible license, ...
+[16:57:33] <BtbN> Anyone who looks at that code can't contribute a codec to ffmpeg.
+[16:58:05] <MG202122> yes this format is old AF
+[16:59:40] <MG202122> here is the latest code: 2008
+[16:59:41] <MG202122> https://www.free-codecs.com/download/corepng.htm
+[16:59:54] <yuri6037> I've tried calling avcodec_parameters_copy(out_stream->codecpar, in_stream->codecpar) which works but then later avformat_write_header fails with this matroska log
+[17:00:18] <MG202122> yuri6037 what os are you using
+[17:00:25] <yuri6037> linux
+[17:00:47] <MG202122> sorry i cant help you
+[17:00:57] <yuri6037> to be more specific: Pop OS 21.04
+[17:01:27] <MG202122> what hardware specs
+[17:01:29] <yuri6037> btw this is not an OS issue it's a C API issue
+[17:01:48] <MG202122> if you switch to windows
+[17:01:56] <MG202122> i can help you fix it
+[17:02:03] <MG202122> by using myffmpeg
+[17:02:27] <another|> this is low quality bait m8. i r8 0/8
+[17:02:56] <yuri6037> no you don't understand I'm not trying to use myffmpeg I'm using the C API
+[17:03:12] <MG202122> or adobe media encoder and plugins like: (voukoder = enocoder and autokroma influx = importer)
+[17:03:20] <MG202122> both plugins are ffmpeg based
+[17:03:40] <yuri6037> BtbN: do you know what's this error?
+[17:05:29] <MG202122> yuri what about WinFF
+[17:06:06] *** Joins: sagax (~sagax_nb@user/sagax)
+[17:09:19] <yuri6037> what's WinFF
+[17:09:25] <yuri6037> As I said I
+[17:09:34] <yuri6037> *I need to use the C API
+[17:10:03] <MG202122> you can try it
+[17:10:26] <MG202122> test if it fixes the bugs
+[17:10:29] <yuri6037> what I need is a lot more complicated: I need to decode a video to individual PNG files, then I need to run some processing on the individual images and then rencode the video in H264 using the exact same audio as in the source.
+[17:10:44] <another|> yuri6037: trolls gonna troll. ignore and carry on
+[17:11:22] <MG202122> Winff is a frontend for FFMPEG that runs on Windows XP to Windows 10 and Linux. It will convert most any video file that FFmpeg will convert.
+[17:11:51] <yuri6037> I've tried to use mov instead of MKV, apparently the header is accepted if mov is chosen not MKV however mov fails later with: Application provided invalid, non monotonically increasing dts to muxer in stream 0: 87040 >=
+[17:11:53] *** Quits: arbitercoin (~Rheanna@61.171.69.141) (Remote host closed the connection)
+[17:12:23] <MG202122> sorry yuri i cant help you
+[17:12:39] <yuri6037> I know you can't
+[17:13:01] <yuri6037> I'm asking any other who knows the C API of FFMPEG
+[17:13:14] <MG202122> yuri, you're using cmd right?
+[17:13:26] *** Joins: arbitercoin (~Rheanna@61.171.21.169)
+[17:13:41] <yuri6037> MG202122: how many times will I have to tell you: I'M USING THE C API
+[17:16:54] <yuri6037> Wait a minute I have an idea but I need clarification: does avformat support re-ordering when packets are sent in wrong order? What I mean is does avformat correctly re-orders the packets when I'm giving it all audio packets followed by all video packets?
+[17:17:47] <yuri6037> Or do I must send it video and audio packets in the same order as the decoder gave them?
+[17:19:03] <MG202122> ok sorry yuri
+[17:23:34] <znf> BtbN, in the ffmpeg builds git, in the workflows -- when it says: Create Artifact Container failed: Artifact storage quota has been hit. Unable to upload any new artifacts
+[17:23:34] <znf>  -- what are the artifacts in this case?
+[17:23:44] <znf> the daily archives/builds?
+[17:23:50] *** Quits: auth (~auth@user/auth) (Ping timeout: 256 seconds)
+[17:25:06] <yuri6037> anyone?
+[17:25:52] <BtbN> znf, where do you see that?
+[17:26:01] <BtbN> My latest build seems to have passed just fine 2h ago
+[17:26:15] <znf> BtbN, my copy of your build :)
+[17:26:25] <BtbN> The artifacts are what each build step uploads
+[17:26:31] <znf> Interesting
+[17:26:35] <BtbN> and then the release step downloads the artifact bundle, and releases it
+[17:26:46] <znf> Wonder why I suddenly hit the limit
+[17:27:02] <BtbN> It has a 2GB size limit iirc, which is why I'm so anti-trigger-happy with spamming more variants
+[17:27:17] <znf> I did get a warning this morning from github
+[17:27:18] <znf> Storage used
+[17:27:18] <znf> 1,369MB of 512MB included
+[17:27:34] <BtbN> Is that a private repo?
+[17:27:39] <znf> Ye
+[17:27:43] <BtbN> There's your reason then
+[17:27:49] <BtbN> private repos got to pay for that stuff
+[17:28:02] <znf> Oh, I see
+[17:28:30] <znf> When I set it up initially, I was getting the warning every start of the month, but never more than 90%
+[17:28:36] <znf> Now suddenly I went over double the space
+[17:29:14] <znf> I'll just switch to a weekly build, I don't really need a daily one
+[17:29:15] <znf> Thanks :)
+[17:29:23] <yuri6037> I think I just found a bug in matroska encoder
+[17:29:48] <yuri6037> the matroska encoder cannot deal with timestamps correctly whereas the mov encoder can
+[17:30:26] <yuri6037> is this normal?
+[17:30:48] <another|> something, something timebase?
+[17:31:42] <yuri6037> time_base is set to the time_base of the source mov video
+[17:31:53] <yuri6037> timestamps are just copied from source video
+[17:32:13] <yuri6037> maybe is matroska unable to correctly use time_base of mov videos
+[17:32:18] <kepstin> mkv doesn't support arbitrary timebases - the muxer will after initialization update the context with the real timebase
+[17:32:23] <kepstin> you need to rescale timestamps
+[17:32:31] <yuri6037> ah
+[17:32:34] <yuri6037> oh
+[17:32:36] <yuri6037> i see
+[17:32:40] <kepstin> (this is something you have to do in general with all muxers for correctness)
+[17:32:57] <yuri6037> and how do I rescale the timestamps?
+[17:33:07] <yuri6037> is there a function for that?
+[17:33:46] <yuri6037> of course if MKV doesn't support arbitary time bases it won't work. I thought MKV supported anything you threw at it
+[17:34:26] <kepstin> indeed, it even has "rescale" in the name :) https://www.ffmpeg.org/doxygen/trunk/group__lavu__math.html
+[17:34:51] <kepstin> (for timebase conversion specifically, i think you want av_rescale_q)
+[17:35:12] <kepstin> no, mkv (the format) only supports timebases that are powers of 10
+[17:35:24] <kepstin> and i believe the ffmpeg muxer only does 1/1000
+[17:36:25] <yuri6037> what about my other question about audio?
+[17:36:49] <yuri6037> does avformat correctly re-orders the packets when I'm giving it all audio packets followed by all video packets?
+[17:37:08] <kepstin> er, you mean interleave packets?
+[17:37:23] <kepstin> i'm... not sure
+[17:37:36] <kepstin> even if it does that would require buffering an entire stream in memory which would not be good
+[17:38:11] <kepstin> the exact behaviour likely depends on the specific format, but i wouldn't be surprised if you end up filling a buffer somewhere and dropping packets
+[17:38:21] <yuri6037> well the source video has audio packets in the middle of video when I'm re-encoding the video I don't have any of the audio packet I just send them first
+[17:38:28] *** Joins: cosimone (~user@2001:b07:ae5:db26:a7aa:8027:6b4e:2fb3)
+[17:38:40] <yuri6037> When I tried that I got a weird error
+[17:38:54] <yuri6037> Application provided invalid, non monotonically increasing dts to muxer in stream 0: 87040 >=
+[17:39:30] <kepstin> well, that means that your timestamps within a single stream are bad, has nothing to do with multiple different streams
+[17:40:18] <yuri6037> the timestamps of the audio stream are not changed
+[17:41:29] <yuri6037> so I give it basically all audio packets in whatever order they come and then I give it all my video frames which go through first RGB to YUV re-encoding and then to write_interleaved_frame
+[17:41:30] <galad> Are you muxing video and audio to the same track?
+[17:41:42] <yuri6037> no I make 2 streams
+[17:41:51] <yuri6037> 1 for audio and 1 for video
+[17:42:02] <galad> Make sure they are going to the right stream
+[17:42:33] <yuri6037> is there any way to detect the stream index of the AVFormatContext?
+[17:42:37] <galad> And you really should interleave them before
+[17:44:06] <yuri6037> I know I should but nobody told me that I should do this before meaning that now to do this I'd need to change completely the decoding process and that would also require give read access to the AVFrame buffer to Rust for rust to write but I have no idea how AVFrame buffer works
+[17:45:24] <yuri6037> and considering the alignment issues it's most likely impossible to write it in my database BPX as it only accepts contiguous u8 buffer with total size given
+[17:47:55] <MG202122> manx
+[17:47:55] <MG202122> ePirat: as far as i know, ffmpeg opus encoder does not support silk, which makes it inferior for certain use cases (my information might be outdated). ffmpeg itself recommends not using their own vorbis encoder (https://trac.ffmpeg.org/wiki/TheoraVorbisEncodingGuide).
+[17:48:07] <kepstin> yuri6037: the stream indexes will be the order that you created the streams on the format context, starting at 0
+[17:48:19] <yuri6037> kepstin: how do I get the time_base that ffmpeg uses for the H264 encoder?
+[17:48:33] <yuri6037> when I create it for MKV
+[17:49:16] <kepstin> you should already know the timebase of the frames you sent to the encoder (and you've also set that in the codec context)
+[17:49:39] <kepstin> so you have to rescale from that to the timebase of the stream in the output format
+[17:50:05] <yuri6037> yes and that's the problem how do I know the timebase that FFMPEG chooses for MKV?
+[17:50:24] <kepstin> it updates the stream structure during initialization
+[17:50:37] <another|> doesn't matroska only support 1/1000 ?
+[17:50:38] <kepstin> ah, right, the method you actually want to rescale packet timestamps is https://www.ffmpeg.org/doxygen/trunk/group__lavc__packet.html#gae5c86e4d93f6e7aa62ef2c60763ea67e
+[17:50:54] <kepstin> matroska (the format) supports various powers of 10.
+[17:51:06] <kepstin> matroska (the ffmpeg muxer) only supports 1/1000 as far as i know
+[17:51:06] <another|> ah, sorry. just read it in the backlog
+[17:51:36] <yuri6037> can I hardcode this 1/1000 or is there some define for me to use?
+[17:51:50] *** Joins: lavaball (felix@31.204.155.215)
+[17:52:05] <kepstin> yuri6037: get it from the place where the muxer set it during init
+[17:52:30] <kepstin> it updates the AVStream structure with the real timebase it's using
+[17:53:32] <kepstin> you need to rescale the packet timestamps from the AVCodecContext->time_base to the AVStream->time_base using the av_packet_rescale_ts function.
+[17:54:19] <yuri6037> thanks a lot
+[17:55:34] <kepstin> (might i suggest reading the example programs in the ffmpeg source? this is in muxing.c; i also recommend reading transcoding.c
+[17:55:56] <yuri6037> kepstin: also another question, what's the best way to transfer audio from a MOV stream to a MKV stream, doing it with just copying parameters causes invalid sowt tag?
+[17:56:45] <kepstin> what codec?
+[17:58:08] <kepstin> and it's helpful if you copy/paste exact log output instead of paraphrasing.
+[18:00:37] *** Joins: c7s (~c7s@user/c7s)
+[18:00:54] <yuri6037> I've already given the exact log, here it is again: [matroska @ 0x55cae00d7780] Tag sowt incompatible with output codec id '65536' ([1][0][0][0])
+[18:01:54] <galad> sowt should be pcm
+[18:01:54] *** Quits: arbitercoin (~Rheanna@61.171.21.169) (Remote host closed the connection)
+[18:02:48] <galad> Anyway, each container has got it own way of describing each format, copying the same settings from a different container won’t always work
+[18:03:23] *** Joins: arbitercoin (~Rheanna@218.78.94.61)
+[18:03:41] <kepstin> ah, mkv's support for pcm audio is kind of annoyingly limited.
+[18:04:23] <yuri6037> then maybe I shouldn't use mkv at all
+[18:04:49] <yuri6037> maybe keeping the same container as source might the best
+[18:07:49] *** Joins: ocrete (~ocrete@gyros.collabora.co.uk)
+[18:12:44] <kepstin> i think this pcm audio thing might actually be a limitation of ffmpeg's muxer, since matroska in theory does define some generic pcm audio formats and also a mapping for some quicktime audio formats :/
+[18:13:07] *** Joins: Xaldafax (~xaldafax@cpe-198-72-160-101.socal.res.rr.com)
+[18:13:59] *** Joins: luc4 (~luc4@151.34.208.73)
+[18:16:42] *** Quits: nate_ (~natethegr@2600:1700:8c28:28c0:e8e5:a13b:e300:9e1c) (Quit: Leaving)
+[18:17:34] <yuri6037> well given the fact that my project only requires to be able to recompose a video from individual RGB, timestamps and orinal source video any container format is fine as long as the frame data is replaced by the input RGB and that video is H264
+[18:19:07] <kepstin> but i think ffmpeg ends up using the microsoft 'audio codec manager' mapping in those cases, which limits you to approximately "whatever could be stored in avi"
+[18:22:19] <yuri6037> i'm not using windows I'm using Linux or Pop OS 21.04
+[18:22:41] <yuri6037> with a non-nvenc/nvdec build of FFMPEG full cpu
+[18:25:50] <yuri6037> anyway thanks a lot I got my thing working
+[18:28:25] <pagios> hello, how can i transmux an rtmp (audio/video aac/mp4) and extract from it aac and put it in hls ?
+[18:28:32] <pagios> i dont wantthe video part
+[18:30:30] <pagios> kepstin: hi, can i do ./ffmpeg -listen 1 -i rtmp://martin-riedl.de/stream01   -f hls -hls_time 4 -hls_playlist_type event stream.m3u8 ?
+[18:31:31] <kepstin> you can use the "-vn" to drop video, or "-map" option to select specific streams
+[18:31:55] <kepstin> (you should also set codec options on the output, right now it's transcoding to something random)
+[18:32:58] <pagios>  -i rtmp://martin-riedl.de/stream01  -vn   -f hls -hls_time 4 -hls_playlist_type event stream.m3u8
+[18:33:08] <pagios> codec on output why ? i am not transcoding its only transmuxing
+[18:33:14] <pagios> the encoding is not touched
+[18:35:42] <pagios> kepstin: am i making sense ? :
+[18:37:42] <DHE> if you don't specify a codec, ffmpeg uses a default codec and transcodes. if you want remuxing only, you want to add -c copy
+[18:38:04] <pagios> i see!
+[18:38:16] <pagios> -i rtmp://martin-riedl.de/stream01  -vn  -c copy audio  -f hls -hls_time 4 -hls_playlist_type event stream.m3u8
+[18:38:31] <DHE> "audio" does not belong
+[18:38:35] *** Quits: justache (~justache@user/justache) (Ping timeout: 256 seconds)
+[18:39:07] <pagios> -i rtmp://martin-riedl.de/stream01  -vn  -c:a  -f hls -hls_time 4 -hls_playlist_type event stream.m3u8
+[18:39:15] <pagios> right?
+[18:39:35] <DHE> well now you left out "copy"
+[18:39:49] <pagios> lol
+[18:40:07] <pagios> -i rtmp://martin-riedl.de/stream01  -vn  -c:a  copy -f hls -hls_time 4 -hls_playlist_type event stream.m3u8
+[18:42:13] <pagios> DHE:  the source is live, running this ^ just hangs does nothing no output
+[18:42:21] <pagios> should i specify -re or something ?
+[18:43:13] <DHE> no, -re is for making a fast source (eg: disk) act like a realtime source
+[18:43:26] <DHE> this looks like it should work
+[18:46:41] *** Joins: Manni__ (~Flole@ip4d1694f0.dynamic.kabel-deutschland.de)
+[18:49:02] *** Quits: luc4 (~luc4@151.34.208.73) (Read error: Connection reset by peer)
+[18:49:55] *** Quits: Flole_ (~Flole@94.31.101.37) (Ping timeout: 256 seconds)
+[18:50:06] *** Joins: luc4 (~luc4@151.34.203.63)
+[18:50:24] <pagios> DHE:   -vn  -c:a  copy -f hls -hls_time 4  index.m3u8 <-- works, should i specify the hls_type to live too ?
+[18:50:37] <pagios> hls_playlist_Type
+[18:51:21] <pagios> i am getting Undefined constant or missing '(' in 'LIVE'
+[18:51:52] <pagios> i did set it to evnet
+[18:51:54] <pagios> no t sure
+[18:51:57] *** Quits: arbitercoin (~Rheanna@218.78.94.61) (Remote host closed the connection)
+[18:53:45] *** Joins: arbitercoin (~Rheanna@218.78.99.237)
+[18:59:21] *** Joins: justache (~justache@user/justache)
+[19:11:51] *** Quits: justache (~justache@user/justache) (Read error: Connection reset by peer)
+[19:13:02] *** Joins: justache (~justache@user/justache)
+[19:22:30] *** Joins: GuiToris (~GuiToris@user/guitoris)
+[19:23:01] <GuiToris> hello, I'm kind of confused, how can I specify this? colorspace bt470bg ?
+[19:23:12] <GuiToris> is this a video filter?
+[19:23:28] <GuiToris> I mean ffmpeg -i video -vf colorspace=bt470bg ?
+[19:23:58] <JEEB> that would switch whatever your current one is to that, but if you just want it being flagged then there is a metadata changing video filter
+[19:24:28] <JEEB> color space matches the matrix from H.273
+[19:24:53] <JEEB> primaries and transfer are other two values from there, which are named much more similarly :)
+[19:25:16] <JEEB> matrix being called the color space probably comes from hysterical raisins
+[19:27:26] <pagios> "-segment_time","3","-hls_start_number_source","epoch","-hls_flags","delete_segments","-segment_wrap","10","-hls_list_size","10" <---- i am having. a looooooong hls list, how can i limit the hls segments and roce overwirte
+[19:27:43] *** Quits: Volgaar (~volgaar@nat-wifi-eduroam.reseau.univ-paris13.fr) (Quit: WeeChat 3.3)
+[19:30:15] <GuiToris> JEEB, I needed to edit one of the videos and there were no matching profile so Adobe changed YUV 4:2:2 BT.470 System B/G to RGB, and if I transcode it into mp4 I'll get High 4:4:4 Predictive CABAC
+[19:30:52] *** Joins: AbleBacon (~AbleBacon@user/AbleBacon)
+[19:32:34] *** justache is now known as justSleigh
+[19:33:28] *** Quits: Al2O3 (~Al2O3@user/al2o3) (Remote host closed the connection)
+[19:33:40] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[19:33:48] *** Joins: Al2O3 (~Al2O3@user/al2o3)
+[19:35:07] <GuiToris> JEEB, I hope this is the right syntax, this does something -colorspace bt470bg
+[19:35:54] <another|> "historical raisins". onomnom
+[19:39:18] *** Quits: Muimi_ (Muimi@113.235.1.217) (Remote host closed the connection)
+[19:39:48] *** Quits: MG202122 (~MG2021@74.82.60.42) (Ping timeout: 256 seconds)
+[19:40:53] *** Joins: MG2021 (~MG2021@74.82.60.46)
+[19:41:54] <pagios> guys i am having a weird problem! "-vn","-c:a","copy","-f","hls","-hls_time","3","-hls_playlist_type","event","-segment_list_flags","+live","-segment_time","3","-hls_start_number_source","epoch","-hls_flags","delete_segments","-segment_wrap","10","-hls_list_size","10"     <--- works on safari on mac but does not play on iphone i get disabled play button why?
+[19:41:56] *** Quits: arbitercoin (~Rheanna@218.78.99.237) (Remote host closed the connection)
+[19:42:11] <pagios> DHE: JEEB kepstin calling all the experts
+[19:43:57] <DHE> the experts are busy can I take a message?
+[19:44:10] *** Joins: arbitercoin (~Rheanna@218.78.109.69)
+[19:45:34] <pagios> DHE, on mac safari it works if i point to https://.../index.m3u8 , on iphones it does not it gives me that play with the disabled
+[19:45:58] <pagios> fixed
+[19:46:02] <pagios> it was the surround thing
+[19:46:37] <pagios> DHE: is this a good config for live audio ?
+[19:46:41] <pagios> ^
+[19:47:20] <DHE> ah you had 5.1 audio in the aac file?
+[19:47:27] <pagios> yes :)
+[19:48:37] <pagios> DHE:  i am tying to fine tune the above , what can i do
+[19:49:02] <yuri6037> I'm not finished I have another problem: my local system is visibly more up to date than the remote machine: the remote machine only has libavcodec/format 57 not 58
+[19:57:31] *** Joins: rsx (~dummy@ppp-188-174-159-13.dynamic.mnet-online.de)
+[20:08:29] <yuri6037> nice flatpak could have worked but they decided they didn't want libx264 well then too bad flatpak is crappy then I'm gonna try appimage
+[20:09:10] <yuri6037> why are they so many tools refusing this libx264 there's also the same annoying drama with opencv python package
+[20:09:13] <yuri6037> ?
+[20:09:55] <yuri6037> sounds like they're always searching to make things worse and more annoying to the end user
+[20:11:26] *** Quits: MG2021 (~MG2021@74.82.60.46) (Quit: Client closed)
+[20:15:31] *** Quits: arbitercoin (~Rheanna@218.78.109.69) (Ping timeout: 252 seconds)
+[20:15:53] *** Quits: dreamon (~dreamon@ppp-88-217-67-53.dynamic.mnet-online.de) (Ping timeout: 252 seconds)
+[20:18:53] <furq> i've never heard of anything having issues with libx264 before
+[20:19:31] <yuri6037> well opencv python does not distribute any H264 encoders because they claim "incompatible license"
+[20:19:50] <yuri6037> and for flatpak apparently it's "non free"
+[20:19:59] <yuri6037> they refuse to included non free codecs
+[20:20:19] <furq> oh right they're idiots then
+[20:20:23] <furq> no surprises there
+[20:20:46] <yuri6037> in other words because of their annoying ideology they prefer to annoy users and loose users
+[20:22:18] <furq> that's just lazy from opencv if they can't figure out how to include gplv3 stuff
+[20:22:34] <furq> and the flatpak thing is just stupid
+[20:22:36] <yuri6037> opencv python opencv does work
+[20:22:49] <yuri6037> only the python binding decided no
+[20:23:08] <yuri6037> except for windows it appears they care more about windows users than linux users
+[20:23:52] <yuri6037> on windows you can just drop OpenH264.dll in the app dir alongside your python script and it will use it
+[20:24:37] <yuri6037> on linux they tell you more or less f*** y** and go build ffmpeg yourself
+[20:25:11] <yuri6037> at least on Pop OS installing ffmpeg installs all codecs even the x264 codec
+[20:26:00] <furq> yeah it does that more or less everywhere
+[20:26:01] <yuri6037> which is very nice from System76 unfortunatly my research machine is not running Pop OS but an old Ubuntu which of course doesn't have proper lib versions
+[20:26:05] <furq> even suse figured that out by now i think
+[20:26:48] <galad> then install your own copies of the libs
+[20:27:16] <yuri6037> yeah that's what I tried but libavcodec depends on a hundred of other libs
+[20:27:42] <yuri6037> and libavformat is not better in addition my version depends on /usr/cuda/libOpenCL.so
+[20:28:21] <yuri6037> which I'm not sure exists on the remote machine considering it has an older CUDA not CUDA 11
+[20:28:58] *** Joins: arbitercoin (~Rheanna@218.78.109.69)
+[20:39:05] <BtbN> That's not how shared libs work
+[20:39:12] *** Quits: luc4 (~luc4@151.34.203.63) (Quit: luc4)
+[20:39:18] <BtbN> it'll just depend on -lOpenCL, and OpenCL hasn't changed ABI in a long time
+[20:41:48] <yuri6037> well it's never gonna work the 58 version requires libc libm libpthread and pretty much requires a completely different system
+[20:42:11] <BtbN> A binary built against a different soname and thus ABI is not gonna work on the other system, no
+[20:42:16] <BtbN> you need to compile one that fits to it
+[20:42:55] <yuri6037> well that depends rust binaries usually work on any linux system
+[20:43:20] <yuri6037> if you build for rust on a glibc system it usually works on every glibcsystem
+[20:44:05] <kepstin> well, libc, libm, libpthread area all just glibc
+[20:44:24] <kepstin> so that's not the problem (although ffmpeg built against a newer glibc might not work with an older one)
+[20:44:29] <BtbN> If you build against a certain version of glibc, it will work on any system with a glibc >= that version
+[20:44:47] <yuri6037> yeah the problem is that rust is able to use older version of glibc whereas ffmpeg refuses older version and absolutely wants very high version
+[20:45:15] <kepstin> well, then build ffmpeg against an older glibc
+[20:45:19] <yuri6037> it wants GLIBC 2.29 my remote machine does not
+[20:45:31] <BtbN> Build it on the older one of the two
+[20:46:10] <BtbN> Or grab https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2021-12-01-12-23/ffmpeg-N-104708-g8a18db3ec6-linux64-gpl-shared.tar.xz and just use those libs
+[20:46:14] <kepstin> the rust compiler probably has some specific workarounds in its linking to either pull in unversioned or specific versions of symbols to make the binaries more portable :/
+[20:46:34] <BtbN> The rust compiler primarily does not compile C, but rust
+[20:46:40] <BtbN> so the use of a libc is rather limited
+[20:46:52] <kepstin> rust compiler still links to and uses libc tho
+[20:47:02] <BtbN> The little bit of libc stuff it uses it just dlopens by name
+[20:47:06] <yuri6037> rust does actually use libc and links to it dynamically you can check this with ldd
+[20:47:47] <BtbN> If you want to compile C code that works on an older version of glibc, the only sane way to do that is to actually use that old glibc to build it.
+[20:48:22] <BtbN> The binaries my scripts output right now target Ubuntu >=16.04
+[20:48:46] *** Joins: dreamon (~dreamon@pd95039d2.dip0.t-ipconnect.de)
+[20:48:58] <kepstin> (rust also has an option to staticly link musl if you really want portable binaries, heh)
+[20:49:09] <yuri6037> yeah but I don't have a build machine to rebuild all these libs. Do you have a prebuilt version?
+[20:49:23] <BtbN> I literally just linked it...
+[20:50:28] <yuri6037> you don't have 58
+[20:50:34] <yuri6037> only 59 and 57
+[20:50:42] <BtbN> So?
+[20:50:57] <yuri6037> I need avcodec avformat and swscale 58 otherwise it will tell me that the libs are missing
+[20:51:04] <BtbN> What's "it"?
+[20:51:11] <yuri6037> ldd
+[20:51:21] <BtbN> Recompile against latest master then.
+[20:52:07] <BtbN> And just ship the ffmpeg libs along your stuff
+[20:52:31] <yuri6037> again as I said I don't have a build machine to build the huge code base of ffmpeg
+[20:52:44] <BtbN> And again: I just linked you to a build...
+[20:53:04] <yuri6037> but I just told you that your build is not the one I need
+[20:53:12] <BtbN> You're not making sense.
+[20:53:15] <yuri6037> I need the .so.58 version
+[20:53:23] <yuri6037> you provide the .so.57
+[20:53:27] <yuri6037> and .so.59
+[20:53:29] <BtbN> Just re-compile and re-link your stuff, the archive has all the neccesary files for that.
+[20:53:50] <BtbN> And then ship the libraries alongside your binary
+[20:53:56] <yuri6037> the thing is don't control the link part cmake controls it
+[20:54:02] <kepstin> rebuild your code to use BtbN's libraries instead of the ones provided by your distro
+[20:54:13] <yuri6037> find_library(AVCODEC_LIB avcodec)
+[20:54:29] <BtbN> Tell cmake to use my libs then, and not the system ones
+[20:54:31] <yuri6037> yes but as I said cmake controls the build so it's not possible to make it use this libs
+[20:54:39] <BtbN> Of course it's possible
+[20:55:01] <yuri6037> you need to provide a .cmake for your package
+[20:55:34] <yuri6037> and there's no libx264
+[20:55:45] <BtbN> libx264 is statically linked into it
+[20:55:51] <yuri6037> oh ok
+[20:55:52] <BtbN> as is a whole ton of other libs
+[20:56:05] <BtbN> https://cmake.org/cmake/help/latest/variable/CMAKE_LIBRARY_PATH.html#variable:CMAKE_LIBRARY_PATH
+[20:56:18] <BtbN> find_library does not look for any .cmake files
+[20:56:24] <BtbN> it just does a dumb search for an .so file
+[20:56:57] <BtbN> https://cmake.org/cmake/help/latest/variable/CMAKE_INCLUDE_PATH.html same for the include path
+[20:58:10] <kepstin> BtbN: have you looked into providing pc files in your shared build? (I'm not sure if it's possible to make relocatable pc files tho, not that familiar with the format)
+[20:58:46] <BtbN> How would I sensibly do that? They hardcode absolute paths
+[20:58:59] <BtbN> I could ship .pc.in files and a simple Makefile or something I guess.
+[20:59:30] <BtbN> But if that cmake script just does "find_library(AVCODEC_LIB avcodec)", it won't care about .pc files anyway
+[20:59:37] <kepstin> hmm. i wonder if the pkg-config "uninstalled" stuff supports relative paths.
+[21:00:09] <BtbN> I don't think so
+[21:00:16] <BtbN> seems to be pretty dead set on absolute paths
+[21:01:48] <kepstin> ah, that's annoying :/ would be nice if it could be done to make it easier to use your builds with stuff that does use pkg-config to find ffmpeg, but I guess i most cases there's some way to manually add include and linking flags anyways.
+[21:02:54] <yuri6037> well I've tried it it doesn't work: gmake[3]: *** No rule to make target '/usr/lib/x86_64-linux-gnu/libavcodec.so', needed by 'libCInterface.so'.  Stop.
+[21:04:11] <kepstin> oh, interesting, you can use "${pcfiledir}" as a variable in pc files (the directory the pc file is in) and then build paths relative to that
+[21:04:36] *** Joins: emcodem (uid483343@id-483343.helmsley.irccloud.com)
+[21:05:22] <emcodem> good evening ladies and gentlemen!
+[21:05:23] <yuri6037> I guess I'm gonna have to ditch completely the find_library and use direct absolute path to libs
+[21:05:43] <emcodem> this is not 100% ffmpeg related but i try to read from stdout output of ffmpeg in a C++ program ("my program spawned ffmpeg commandline")
+[21:05:46] <kepstin> BtbN: so (assuming the pc files are in .../lib/pkgconfig/) you could do prefix=${pcfiledir}/../.. then the rest of the file as normal.
+[21:05:54] <emcodem> looks like no matter which buffer size i set to read from stdout, i will usually only get a maximum of 65536 per read cycle
+[21:06:32] <emcodem> anyone accidently knows if this "pipe limit" for stdout piping can be influenced?
+[21:06:44] <kepstin> emcodem: there's limits on the pipe buffer (in the kernel) between applications. This limit can usually be adjusted. But i would have though the default is larger than 54k, hmm.
+[21:06:45] <emcodem> on windows
+[21:06:47] <kepstin> 64k*
+[21:06:55] <kepstin> oh, no idea on windows.
+[21:07:10] <emcodem> yeeah on linux i found how it's done already
+[21:07:12] <emcodem> hehe
+[21:07:15] <BtbN> yuri6037, no you don't. I linked you to the env vars you have to set and point at my build.
+[21:07:49] <yuri6037> I just tried it doesn't work I'll go and hardcode the path with CMAKE_CURRENT_SOURCE_DIR
+[21:08:03] <BtbN> I can assure you, it works fine.
+[21:08:10] <BtbN> Done that plenty of times
+[21:12:08] <yuri6037> ok I've just hardcoded the paths and now it build and links
+[21:14:20] <yuri6037> ok now I'm attempting to test your build on my old remote machine
+[21:19:15] *** Joins: Volgaar (~volgaar@193.137.116.78.rev.sfr.net)
+[21:21:59] *** Quits: rsx (~dummy@ppp-188-174-159-13.dynamic.mnet-online.de) (Quit: rsx)
+[21:21:59] *** Quits: arbitercoin (~Rheanna@218.78.109.69) (Remote host closed the connection)
+[21:22:35] <yuri6037> well it's worse rustc apparently stopped using older version of glibc and now requires too high as well it used to work a few months ago
+[21:23:31] *** Joins: pit_ (~quassel@v22016102921539034.goodsrv.de)
+[21:23:46] *** Joins: arbitercoin (~Rheanna@218.78.105.67)
+[21:24:36] <kepstin> if you build on a system with an older glibc it should still work
+[21:25:33] *** Quits: pit (~quassel@v22016102921539034.goodsrv.de) (Ping timeout: 252 seconds)
+[21:27:50] <yuri6037> I built on the same laptop (oryp7) and a few months ago it worked not it no longer
+[21:28:04] <yuri6037> *now
+[21:32:33] *** Quits: GuiToris (~GuiToris@user/guitoris) (Quit: Sieben Acht Gute Nacht!)
+[21:36:29] *** Joins: MG2021 (~MG2021@65.49.68.25)
+[21:44:48] *** Joins: MG202157 (MG2021@gateway/vpn/protonvpn/mg2021)
+[21:49:00] *** Quits: MG2021 (~MG2021@65.49.68.25) (Ping timeout: 256 seconds)
+[21:54:03] *** Quits: Vonter (~Vonter@user/vonter) (Quit: WeeChat 3.3)
+[21:56:52] <yuri6037> Ok I got it to work finally now copying the final generated mov from remote machine to local machine
+[21:57:20] <MG202157> hi again yuri
+[21:57:48] <MG202157> Problem solved?
+[21:58:45] <yuri6037> we'll see once it finished downloading the actual video is much larger than my local tests because the true one has upscaled frames
+[22:00:01] <yuri6037> I think it's indeed good it seem more in sync than the very first attempt with opencv and 4 passes
+[22:00:08] *** fling is now known as ciphersalad
+[22:01:21] *** Quits: michaelni (~michael@213-47-68-29.cable.dynamic.surfer.at) (Ping timeout: 250 seconds)
+[22:02:25] <yuri6037> that was a huge pain to get working
+[22:03:18] <yuri6037> anyway thanks to all for helping me getting this tool working
+[22:06:44] *** ciphersalad is now known as fling
+[22:06:57] *** Quits: cosimone (~user@2001:b07:ae5:db26:a7aa:8027:6b4e:2fb3) (Remote host closed the connection)
+[22:07:02] *** Joins: michaelni (~michael@213-47-68-29.cable.dynamic.surfer.at)
+[22:07:10] *** Joins: cosimone (~user@2001:b07:ae5:db26:a7aa:8027:6b4e:2fb3)
+[22:11:23] *** Quits: michaelni (~michael@213-47-68-29.cable.dynamic.surfer.at) (Ping timeout: 252 seconds)
+[22:12:14] *** Joins: michaelni (~michael@213-47-68-29.cable.dynamic.surfer.at)
+[22:12:14] *** Quits: arbitercoin (~Rheanna@218.78.105.67) (Remote host closed the connection)
+[22:13:44] *** Joins: arbitercoin (~Rheanna@218.78.104.50)
+[22:17:24] *** Joins: SamHenderson (~SamHender@209.226.83.233)
+[22:18:06] *** Joins: MrZeus (~MrZeus@2a02:c7f:a0aa:4400:8484:944:a324:5c92)
+[22:21:32] *** Joins: Guest9482 (~Buster@46.160.36.66)
+[22:22:06] *** Quits: cosimone (~user@2001:b07:ae5:db26:a7aa:8027:6b4e:2fb3) (Read error: Connection reset by peer)
+[22:28:15] *** Quits: minimal (~minimal@user/minimal) (Remote host closed the connection)
+[22:28:34] *** Joins: minimal (~minimal@user/minimal)
+[22:28:56] <SamHenderson> Hi everyone.   Is there an easy way to rotate a video 90 degrees clockwise with the ffmpeg libraries?
+[22:30:29] <BtbN> vf_transpose
+[22:34:10] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[22:37:56] <MG202157> you guys are cmd nerds!
+[22:50:31] <furq> ok
+[22:52:11] *** Quits: l4yer (~l4yer@2a07-a880-3101-1052-a135-751a-e6a7-8249.pool6.ovpn.com) (Remote host closed the connection)
+[22:54:10] <emcodem> sorry to repeat my question but you know... so is there anyone aware about an option in windows to configure the stdout buffer size when programming with c++? it seems to be limited to 64kb buffer
+[22:56:17] *** Joins: l4yer (~l4yer@2a07-a880-3101-1022-506c-3672-1aff-71b6.pool6.ovpn.com)
+[23:03:35] *** Joins: Atsuko (~x@94.242.254.66)
+[23:07:14] *** Quits: Atsuko_ (~x@94.242.250.86) (Ping timeout: 256 seconds)
+[23:16:02] *** Quits: l4yer (~l4yer@2a07-a880-3101-1022-506c-3672-1aff-71b6.pool6.ovpn.com) (Quit: Leaving)
+[23:25:02] *** Quits: teebz (~tcb@66.51.154.90) (Quit: Ping timeout (120 seconds))
+[23:25:17] *** Joins: teebz (~tcb@66.51.154.90)
+[23:29:01] *** Quits: noarb- (~noarb@user/noarb) (Read error: Connection reset by peer)
+[23:36:28] *** Joins: noarb (~noarb@user/noarb)
+[23:37:42] *** Quits: luni-4 (uid453292@id-453292.ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[23:39:55] *** Joins: fructose (~fructose@user/fructose)
+[23:44:54] *** Quits: bencc1 (~bencc1@2a00:a040:197:3af:a6cd:c5de:d137:861e) (Ping timeout: 268 seconds)
+[23:56:18] *** Joins: cosimone (~user@2001:b07:ae5:db26:a7aa:8027:6b4e:2fb3)
+[23:57:36] *** Joins: bencc1 (~bencc1@5.29.18.40)

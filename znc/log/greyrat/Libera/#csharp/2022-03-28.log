@@ -1,0 +1,851 @@
+[00:05:55] *** Joins: Xenoprimate (Xenoprimat@gateway/vpn/protonvpn/xenoprimate)
+[00:55:39] *** Joins: AbleBacon (~AbleBacon@user/AbleBacon)
+[01:32:05] *** Quits: Ducki (~ducki@user/ducki) (Quit: ZNC 1.8.2+deb2 - https://znc.in)
+[01:57:37] *** Joins: bomb (~bomb@user/bomb)
+[02:09:27] *** Joins: CodePoint (~CodePoint@107-208-128-79.lightspeed.tukrga.sbcglobal.net)
+[02:17:10] *** Quits: bomb (~bomb@user/bomb) (Quit: ‎)
+[02:30:59] *** blezz is now known as blez
+[02:39:30] <Ameisen> I decided to do a non-scientific benchmark against new[], GC.AllocateUninitializedArray, and GC.AllocateArray.
+[02:39:34] <Ameisen> https://pastebin.com/pDFxQji7
+[02:39:45] <Ameisen> I was kinda expecting AllocateUninitializedArray to be more performance at some point.
+[02:44:35] *** Joins: Forgetwrk_Lion (~Foli@167-179-177-237.a7b3b1.bne.nbn.aussiebb.net)
+[02:48:38] <Suchiman> Ameisen: well, it's complicated xD
+[02:49:08] <Suchiman> Ameisen: first of, for reference types and small arrays, this does not apply, https://source.dot.net/#System.Private.CoreLib/src/System/GC.cs,652
+[02:52:06] <Nasp> This tracing library really sucks
+[02:52:20] <Nasp> If there's no existing parent trace, then it just doesn't even start one
+[02:52:21] <Nasp> wth
+[02:56:28] *** Quits: Klinda (~superleag@user/klinda) (Quit: Konversation terminated!)
+[02:57:39] <Suchiman> Ameisen: second, for GC heap allocations there's a so called "allocation context" (per thread), it's a region of pre-zeroed memory in which pointer bump allocation via handwritten asm is performed. If the current allocation request exceeds the allocation context available space, the slow path is triggered, which will, depending on a complex state machine of choices, for example, search for a contiguous region of free memory on the heap >= the
+[02:57:39] <Suchiman> allocation request and zero that memory to be used as the new allocation context. So the zeroing overhead is not incurred when calling `new T[]`, unless that allocation request is big enough to exceed the allocation context. If you call, AllocateUninitializedArray, it will first attempt to satisfy the allocation request from the allocation context (which is already pre zeroed so you'd receive zeroed memory even if you specified that it's okay
+[02:57:39] <Suchiman> not to), otherwise if you've asked for more than the allocation context, then you'll actually receive (at least partially) uninitialized memory
+[02:59:53] *** Quits: CodePoint (~CodePoint@107-208-128-79.lightspeed.tukrga.sbcglobal.net) (Quit: CodePoint struts into the sunset on the beach.)
+[03:00:59] *** Quits: Guest87 (~Guest87@2a02:c7f:582d:5100:d4a1:15ae:ddf7:f2f6) (Quit: Client closed)
+[03:02:37] <Nasp> Suchiman:  When you log to seq, what do you use as servicename?
+[03:13:25] <Suchiman> Nasp: ?
+[03:13:44] <Nasp> When you log to Seq, don't you use a name to identitfy what service wrote that log?
+[03:13:48] <Nasp> Or was it splunk you used?
+[03:14:40] <Suchiman> Nasp: yeah, each service gets their own api key, on the api key there are 2 properties defined, App and System, System is like Staging or Prod, App is the name of the app
+[03:15:15] <Nasp> Just system?
+[03:15:19] <Nasp> Or did you only have one service
+[03:15:27] <Suchiman> Nasp: App and System
+[03:15:30] <Suchiman> counting helps :P
+[03:15:36] <Suchiman> and reading
+[03:16:10] <Nasp> Hmm ok so they are defined by the api key
+[03:16:34] <Nasp> We ususally use the process name
+[03:16:38] <Nasp> But we also have a bit more
+[03:16:39] <Suchiman> yeah and the api keys are automatically generated and assigned by the release pipeline before running the ARM template that sets that api key into the app settings
+[03:18:19] <Suchiman> Nasp: so the name for the app is manually chosen as part of the release pipeline creation
+[03:18:45] <Nasp> Ahh
+[03:18:51] <Suchiman> and the system name is automatically derived from the release stage name
+[03:19:02] <Nasp> Ours is basically just the namespace
+[03:19:33] <Suchiman> Nasp: ah, yeah, our names are simple, like Account for the SSO service or Pdf for the pdf document generation service or Ocr for the Ocr service :P xD
+[03:20:19] * Suchiman had pdf.azurewebsites.de back in azure germany
+[03:23:40] <Suchiman> Nasp: did i mention that my release pipeline is amazingly automated :P ? you go to a release definition, create a stage and give it a stage name like ImportantTest, then it will generate an seq api key for App = Account; System = ImportantTest, feed that with a few other settings into the ARM template which then creates all app services, databases, storage accounts, dns, and putting the RUN_FROM_PACKAGE setting with the release url in
+[03:23:56] <Suchiman> and then creating the user accounts in the database for the app to use :P
+[03:24:57] <Nasp> I just push a branch
+[03:24:58] <Nasp> Done
+[03:25:06] <Nasp> :D
+[03:25:22] <Nasp> Is it RUN FROM PACKAGe thaths the ziup thingy
+[03:25:27] <Suchiman> yes
+[03:25:27] <Nasp> Which avoids the Azure bug
+[03:25:33] <Suchiman> which bug?
+[03:26:08] <Suchiman> Nasp: well... yeah, i could do that :P xD create a stage that deploys any branch, using the branch name as the system name
+[03:28:01] <Nasp> There was a bug in web app that crashed all application pools if you did or didnt use that run from package
+[03:28:12] <Nasp> Accoding to azure it was a feature
+[03:28:25] <Suchiman> lol
+[03:29:06] <Suchiman> i use this feature mainly because it's very convenient, it means i can do the entire deployment in a single ARM template, one ARM template that does infrastructure deployment, code deployment and slot swapping in one go
+[03:31:32] <Nasp> It was a bug they fixed once and then introduced
+[03:31:40] <Nasp> If you send 250 chars or osmething in the url
+[03:31:48] <Nasp> Then it would jsuyt recycle ALL servers in your app service
+[03:31:56] <Nasp> And it was related to RUN From PACKAGe
+[03:32:03] <Suchiman> Nasp: ah yeah i remember you complaining about that and warning me about that but i couldn't repro it
+[03:32:11] <Nasp> yeah
+[03:32:21] <Nasp> Just need to move sql server and docker
+[03:32:23] <Nasp> Then Azure is bye bye
+[03:32:29] <Nasp> Only taken 3 or so years now :D
+[03:49:35] *** Quits: shailangsa (~shailangs@host86-162-150-212.range86-162.btcentralplus.com) ()
+[04:32:44] <llanhmod> Do I need more than MongoDB.Driver and MongoDB.Bson from NuGet to connect to a MongoDB atlas cluster?  I am currently seeing `Unhandled exception. System.ArgumentOutOfRangeException: List of configured name servers must not be empty. (Parameter 'servers')`  when trying to connect to my remote db.  code: https://bpa.st/FFJA
+[04:33:33] <llanhmod> of course lines 7 and 9 are custom to my needs...just example but actual code still applies.
+[04:35:29] *** Quits: Tazy (~Tazmainia@2001:1c02:170a:4000::100a) (Quit: Leaving)
+[04:36:42] <Ameisen> Suchiman: so, at a base level, if the array is for reference types, or it is likely to be 'small', I should just use new[]?
+[04:37:14] <Suchiman> Ameisen: yeah, as you can see in the source code, if the array size is less than 2kb, it will do that for you automatically
+[04:37:18] <Ameisen> For a large array, primitive array, I'm unsure if there's any downside to using AllocateUninitializedArray. It doesn't seem any _slower_. There's a function call involved, but that seems to be basically negligible.
+[04:37:45] <Suchiman> Ameisen: yeah large primitives arrays is where AllocateUninitializedArray can show improvements
+[04:38:03] <Ameisen> if the size is unknown, might make sense to also call it, since it will revert to new[] anyways.
+[04:38:33] <Ameisen> for my use case, about half of my arrays are < 2KiB, and the other half are larger (usually around 12KiB or larger), and that's pretty predictable.
+[04:38:40] <Ameisen> inputs are tiny, outputs are big
+[04:38:52] <Ameisen> They're also usually containing structs, so value types
+[04:39:19] <Suchiman> Ameisen: that works, as long as the structs do not contain any reference types
+[04:39:25] <Suchiman> like strings or such
+[04:39:33] <Ameisen> They're wrappers around `uint` and `ulong` (color8 and color16)
+[04:39:41] <Suchiman> that should work
+[04:40:35] <Suchiman> llanhmod: looks about right
+[04:42:22] <llanhmod> Suchiman: okay, why the exception? docs say likely developer error but I'm not sure what else I need to do.
+[04:42:55] * llanhmod perhaps should take the mongodb .NET develper course...but I don't have 6 hours to find the issue...this isn't that serious.
+[04:43:18] <Suchiman> llanhmod: are you using the most recent package version?
+[04:44:18] <llanhmod> Suchiman: I believe so, `dotnet list package` says 2.15.0 for both.
+[04:46:01] <llanhmod> I would like to know wher this 'List of configured name servers' is located
+[04:46:20] <Suchiman> llanhmod: yeah, i'm trying to locate that string inside https://github.com/mongodb/mongo-csharp-driver but no hit
+[04:48:15] <Suchiman> llanhmod: https://github.com/mongodb/mongo-csharp-driver/blob/cb4dc265225461649627434fbd0fbac8e209df1e/src/MongoDB.Driver/MongoClientSettings.cs#L658 this kinda looks like the thing
+[04:48:16] * llanhmod checks if needs more params for the uri
+[04:49:57] <llanhmod> okay...I add something to the <summary> ?
+[04:50:10] <Suchiman> llanhmod: uh, no
+[04:50:25] <llanhmod> good..cause I have no idea where that file is
+[04:51:08] <llanhmod> oh..lol that "no" right
+[04:52:30] <Suchiman> llanhmod: it was the "that question was so stupid, i don't even know where to begin to explain" kind of no lol xD
+[04:53:52] <llanhmod> Suchiman: yeah, I'm like on day 2 of learning C# and .NET . I didn't realize that was how you add a comment? I guess.
+[04:54:33] <Suchiman> llanhmod: ah yeah that explains it heh, um, you're using visual studio, right, if you type something then visual studio will show how the method looks like and also show a description about it
+[04:55:03] <llanhmod> Suchiman: not for this no, VSCode...and I actually run it from the .NET CLI
+[04:56:13] *** Quits: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 240 seconds)
+[04:56:20] <Suchiman> hmm, well, the three slash /// kind of comments are called documentation comments, they use a form of xml to describe the method, it's parameters and it's return values which the compiler turns into an xml file that can be used by an IDE to provide information about the API you're looking at
+[04:56:54] <Suchiman> llanhmod: what i meant with that line is, that the description of that property below the documentation comment looks like the thing it complains about you've not speciied
+[04:57:11] <llanhmod> so like...annotation?
+[04:57:47] <Suchiman> llanhmod: depends on your definition of an annotation, if it's the english kind of annotation, then yes, if it's the java kind of annotation, then no
+[04:58:16] <llanhmod> yeah I'm thinking just English
+[04:58:49] *** Joins: shailangsa (~shailangs@host86-162-150-212.range86-162.btcentralplus.com)
+[05:01:02] <llanhmod> Suchiman: thanks. I'm gonna examine the course to see if I'm missing something.
+[05:01:38] <llanhmod> maybe I'll get the shiny certificate even...
+[05:03:30] <llanhmod> ah ha..they have .zip file I might need as it says 'to run properly' .
+[05:06:18] *** Joins: vim_fans (~pi@user/vim-fans/x-3284168)
+[05:08:14] *** Quits: Carko (~Darko@84-255-241-35.static.t-2.net) (Read error: Connection reset by peer)
+[05:30:21] <bpmedley> Just got my MAUI app working in macOS and iOS!  It has SQLIte, EF Core, Rudimentary/Custom Migrations, and Dependency Injection.
+[05:30:38] <bpmedley> DbUp was not supported on iOS in MAUI, so that took a bit of finagling..
+[05:31:30] <bpmedley> Also, I could not use the "ef migrations" tool
+[05:32:22] <bpmedley> dotnet publish makes an ipa file
+[05:39:11] <Suchiman> bpmedley: pfft who needs ef migrations, just use context.Database.Migrate();
+[05:39:12] <Suchiman> ;)
+[05:40:11] <Suchiman> or, given that sqlite basically doesn't support migrations anyway, just context.Database.EnsureDeleted(); context.Database.EnsureCreated(); xD
+[05:44:36] *** Quits: vim_fans (~pi@user/vim-fans/x-3284168) (Ping timeout: 252 seconds)
+[05:45:34] <Nasp> Suchiman:  This is how Datadog report names https://github.com/DataDog/dd-trace-dotnet/issues/1935
+[05:45:36] <Nasp> For tracing
+[05:45:44] <Nasp> So for each service it thinks you have a separate database
+[05:45:52] <Nasp> It looks rather insane when you have a big amount of services
+[05:49:57] <bpmedley> Suchiman : Doesn't context.Database.Migrate() need migrations created from "ef migrations add" ?
+[05:50:17] <bpmedley> Suchiman : Also, when you say that SQLite does not support migrations, are you saying there are a few features unsupported or no migrations at all?
+[05:50:21] <Nasp> I've never found a good way to apply migrations during deployment
+[05:50:33] <bpmedley> Nasp : Don't you have like hundreds of services?
+[05:50:37] <Nasp> Yes
+[05:50:45] <bpmedley> So, Datadog is a  huge list?
+[05:50:46] <Suchiman> bpmedley: yeah, they need to be added first
+[05:50:55] <Nasp> bpmedley:  Yes times 4 or so
+[05:51:03] <Nasp> Because it can't identify that it's the same rabbitmq, or the same elasticsearch
+[05:51:10] <bpmedley> Suchiman : Sure, however, "ef migrations add" does not work in my MAUI project..
+[05:51:21] <Suchiman> bpmedley: sqlite supports only a pathetic subset of alter table xD
+[05:51:23] <Nasp> But i fixed that, i just wonder why they didnt do that in their library
+[05:51:35] <bpmedley> Omg, sounds insane.  Is it usable, Nasp ?
+[05:51:44] <Nasp> It is more usable now
+[05:51:48] <Nasp> But still a bit dissapointed
+[05:51:52] <Nasp> Also their onboarding team is useless
+[05:51:56] <Nasp> "Ohh no i can'øt answer that either"
+[05:52:11] <Nasp> What's the point of having an onboarding technician on company slack when he can't answer any questions
+[05:52:12] <bpmedley> Cool, sounds like you're on a datadog intrepid adventure..
+[05:52:15] <Nasp> Also he was hired like 3 months ago
+[05:52:22] <Nasp> It's a shitshow to be honest
+[05:52:37] <Nasp> I am really waiting for that first bill
+[05:52:42] <Nasp> It will bel iked 10-15k euro
+[05:52:44] <bpmedley> Nasp : The technician calls you back on three-way and says.. hey.. this is app expert that knows your product..
+[05:53:09] <bpmedley> Suchiman : True, alter table is odd, but migrations are supported as a subset..
+[05:53:34] <bpmedley> Also, I had to add "SQLitePCLRaw.bundle_sqlite3" directly for the library on iOS
+[05:53:56] <Suchiman> bpmedley: huh, since when does it support drop column xD https://www.sqlite.org/lang_altertable.html
+[05:54:41] <bpmedley> Suchiman : I thought I had used ef migrations with SQLite.  Perhaps I am confused and I've only used DbUp and EnsureCreated.
+[05:55:40] <Suchiman> bpmedley: nono, migrations are supported in EF and sqlite but they are limited by the capabilites of alter table
+[05:55:48] <bpmedley> Suchiman : Sounds like we agree
+[05:57:17] <bpmedley> Also, I had to add a reference to System.DateOnly or it was linked away via DynamicallyAccessedMembers
+[05:58:01] *** Joins: vim_fans (~pi@user/vim-fans/x-3284168)
+[05:58:53] <bpmedley>     <PropertyGroup Condition="$(TargetFramework.Contains('-ios'))"> <RuntimeIdentifier>ios-arm64</RuntimeIdentifier> </PropertyGroup>
+[05:58:57] <bpmedley> That was required for publishing
+[05:59:12] <bpmedley> dotnet publish -f net6.0-ios
+[05:59:29] <Nasp> bpmedley:  Well i'm just rather dissapointed
+[06:00:09] <bpmedley> With Datadog or migrations or ?.
+[06:01:10] <bpmedley> Is it the interface or the entire experience with Datadog?
+[06:01:40] <Nasp> Also we were supposed to have gotten a onboard technician but he was overboooked
+[06:02:05] <bpmedley> Hrmm.. sounds like they are experiencing growing pains and you are caught in the zipper
+[06:03:52] *** Quits: csrf (~csrf@user/csrf) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[06:04:22] <Nasp> they are, they are seeking like 100 new employees
+[06:04:41] *** Joins: csrf (~csrf@user/csrf)
+[06:04:49] <bpmedley> Does Datadog work at all, like you want, Nasp ?  As in, is it a 90% ideal solution or is it much less?
+[06:06:12] <Nasp> 80% maybe
+[06:06:23] <Nasp> I think we have only enabled like 20% yet
+[06:06:23] <bpmedley> Sounds like it's a the cusp of being amazing useful..
+[06:06:29] <Nasp> Seems like a lot that's missing
+[06:06:45] <Nasp> All just because we wanted to replace elasticsearch :D
+[06:06:58] <Nasp> And it was like all of the sudden
+[06:06:59] <bpmedley> So many solutions in IT are like that.  And then we re-invent new wheels..
+[06:07:17] <bpmedley> And, then, we're like look.. it's just a file..
+[06:07:20] <Nasp> I'm just mostly annoyed that this project has highest priority all of the sudden
+[06:07:26] <Nasp> Higher than issues in production or collegues who needs help
+[06:07:32] <Nasp> Which i have a hard time grasping
+[06:07:41] <Nasp> So i need to be a deuce for all my collegues
+[06:09:49] <Nasp> douche*
+[06:09:53] <Nasp> I think the other is a card
+[06:20:34] *** Quits: Roughy (~mdaw45ns@user/roughy) (Quit: Meadow Fresh milk)
+[06:22:02] *** Joins: vim_fans_ (~pi@user/vim-fans/x-3284168)
+[06:23:07] <irwiss> https://www.reddit.com/r/funny/comments/tpup2e/smooth_criminal_without_words/
+[06:23:45] *** Quits: vim_fans (~pi@user/vim-fans/x-3284168) (Ping timeout: 256 seconds)
+[06:41:28] *** Joins: Carbonflux (~Carbonflu@c-66-235-54-179.sea.wa.customer.broadstripe.net)
+[06:43:52] *** Quits: Dean (~Dean@user/De4n-Whit3/x-9385125) (Read error: Connection reset by peer)
+[06:51:42] <bpmedley> ideviceinstaller is neat command-line utility that can uninstall and install iOS aps
+[06:51:44] <bpmedley> *apps
+[07:09:24] *** Quits: Xenoprimate (Xenoprimat@gateway/vpn/protonvpn/xenoprimate) (Ping timeout: 240 seconds)
+[07:18:32] *** Joins: teegee1 (~teegee@203-91-233-64.sta.wbroadband.net.au)
+[07:18:38] *** Quits: teegee (~teegee@203-91-233-64.sta.wbroadband.net.au) (Quit: Ping timeout (120 seconds))
+[07:18:38] *** teegee1 is now known as teegee
+[07:19:05] <teegee> rrr
+[07:23:15] *** Quits: llanhmod (~developer@user/domhnall/x-2887755) (Ping timeout: 256 seconds)
+[07:30:31] *** Quits: Kalroth (~Kalroth@knas.io) (Quit: Nooo...)
+[07:44:29] *** Quits: bin101 (~bin101@user/bin101) (Ping timeout: 252 seconds)
+[07:47:48] *** Joins: bin101 (~bin101@user/bin101)
+[07:50:00] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[07:50:37] *** Quits: bpmedley (~bpmedley@2600:1700:e2c:8410:c93e:f33d:df5:a660) (Ping timeout: 240 seconds)
+[08:02:58] *** Joins: Kalroth (~Kalroth@knas.io)
+[08:35:19] *** Quits: Eiler (~Eiler@c83-253-82-254.bredband.tele2.se) (Ping timeout: 260 seconds)
+[08:38:07] *** Quits: Slade (uid128877@user/slade) (Quit: Connection closed for inactivity)
+[08:48:52] *** Joins: Slade (uid128877@user/slade)
+[08:49:37] <entropygain> do you guys think it is ok to build and run kestrel from within a host? meaning have a cli app which takes various commands and a default start command which will do the whole app build and configure dance then an app.Run();
+[08:50:33] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[08:51:09] *** Joins: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[08:55:30] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 272 seconds)
+[09:05:45] *** Quits: opello (~opello@about/csharp/opello) (*.net *.split)
+[09:05:45] *** Quits: stw (~stwalkers@wikimedia/stwalkerster) (*.net *.split)
+[09:05:49] *** Quits: destroycomputers (~destroyco@5.188.41.98) (*.net *.split)
+[09:05:49] *** Quits: smitty (~smitty@050-090-221-062.res.spectrum.com) (*.net *.split)
+[09:05:49] *** Quits: robopat (patrick@triton.blinkenshell.org) (*.net *.split)
+[09:05:51] *** Joins: opello (~opello@about/csharp/opello)
+[09:05:52] *** ChanServ sets mode: +v opello
+[09:05:56] *** Joins: robopat (~user@triton.blinkenshell.org)
+[09:06:05] *** Joins: stw (stwalkerst@wikimedia/stwalkerster)
+[09:06:22] *** Joins: smitty (~smitty@050-090-221-062.res.spectrum.com)
+[09:06:26] *** Joins: destroycomputers (~destroyco@5.188.41.98)
+[09:25:09] *** Quits: Jong (~Jong@184-99-74-148.boid.qwest.net) (Ping timeout: 252 seconds)
+[09:30:45] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[09:33:11] *** Quits: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 260 seconds)
+[09:34:38] *** Joins: Assault (~Assault@87-95-118-97.bb.dnainternet.fi)
+[09:35:02] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 252 seconds)
+[09:35:27] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[09:38:23] *** Joins: svm_invictvs (~svm_invic@user/svm-invictvs/x-6696469)
+[09:42:15] *** Joins: llanhmod (~developer@user/domhnall/x-2887755)
+[09:44:00] <JakeSays> just watched gaming wall street on hbo. very educational
+[09:44:05] *** Joins: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[09:44:51] *** Quits: vim_fans_ (~pi@user/vim-fans/x-3284168) (Ping timeout: 260 seconds)
+[09:44:54] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 272 seconds)
+[09:47:07] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[09:51:14] *** Quits: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 272 seconds)
+[09:51:25] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 240 seconds)
+[09:51:37] *** Joins: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[09:53:18] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[09:54:11] *** Quits: DoofusCanadensis (~DoofusCan@2604:3d09:47c:f970::23f5) (Quit: So as you can see from this flowchSQUIRREL!!)
+[09:55:46] *** Quits: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 245 seconds)
+[09:56:44] *** Joins: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[09:57:25] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 240 seconds)
+[10:09:03] *** Joins: vim_fans_ (~pi@user/vim-fans/x-3284168)
+[10:17:09] *** Joins: PeterR`` (~chillisau@88.103.230.136)
+[10:19:08] *** Quits: llanhmod (~developer@user/domhnall/x-2887755) (Quit: leaving)
+[10:30:00] *** Joins: Jong (~Jong@2620:10d:c090:400::5:bdbd)
+[10:41:45] <Nasp> entropygain:  build and run on the deployed server?
+[10:43:55] <Nasp> Damn will Smith just smacked Chris Rock in the face at the Oscars
+[10:45:12] <ap5> I can't determine if it is acting, or ... Wills reaction when he sits down is either really good acting or a real reaction ...
+[10:53:45] <Nasp> Also the reaction seems quite delayed
+[10:54:08] <Nasp> Oh well it's not nice to make a joke on somebodys illness
+[11:00:44] <ap5> Nope
+[11:21:14] <blez> Nasp that hit looked very pro, tbh
+[11:33:50] *** Quits: Forgetwrk_Lion (~Foli@167-179-177-237.a7b3b1.bne.nbn.aussiebb.net) (Ping timeout: 272 seconds)
+[11:36:34] *** Joins: Ducki (~ducki@p200300f39f094b00ff0582b47140b128.dip0.t-ipconnect.de)
+[11:37:00] *** Quits: Ducki (~ducki@p200300f39f094b00ff0582b47140b128.dip0.t-ipconnect.de) (Changing host)
+[11:37:00] *** Joins: Ducki (~ducki@user/ducki)
+[11:40:31] *** Quits: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Remote host closed the connection)
+[11:42:02] *** Joins: interop_madness (~interop_m@user/interop-madness/x-0950004)
+[11:43:19] *** Joins: llanhmod (~developer@user/domhnall/x-2887755)
+[11:44:18] *** Joins: __gandhibobandhi (~gandhibob@2a02:8109:86c0:4a40::1584)
+[11:45:29] *** Joins: exvicesindaco (~exvicio@user/exvicesindaco)
+[11:49:46] *** Quits: WillPittenger (~willpitte@2001:470:69fc:105::1bf) (Quit: Bridge terminating on SIGTERM)
+[11:49:46] *** Quits: hussam (~hussam@user/hussam) (Quit: Bridge terminating on SIGTERM)
+[11:49:48] *** Quits: dan01[m] (~dan01@2001:470:69fc:105::1:2640) (Quit: Bridge terminating on SIGTERM)
+[11:49:52] *** Quits: DoofusCan (~tang^@2001:470:69fc:105::cc6) (Quit: Bridge terminating on SIGTERM)
+[11:49:53] *** Quits: qazo[m] (~qazomatri@2001:470:69fc:105::1:e344) (Quit: Bridge terminating on SIGTERM)
+[11:49:54] *** Quits: ki9d (~ckchatcar@2001:470:69fc:105::4897) (Quit: Bridge terminating on SIGTERM)
+[11:50:05] *** Joins: alguien (~alguien@user/alguien)
+[11:50:59] *** Joins: Assault_ (~Assault@87-95-118-97.bb.dnainternet.fi)
+[11:53:00] <MatthiasVance> Ducki: Might want to fix your auth to SASL if you don't want to share your hostname :)
+[11:53:36] *** Quits: jinsun (~jinsun@user/jinsun) ()
+[11:53:42] *** Joins: hussam (~hussam@user/hussam)
+[11:54:44] *** Quits: Assault (~Assault@87-95-118-97.bb.dnainternet.fi) (Ping timeout: 272 seconds)
+[11:57:47] *** Joins: jinsun (~jinsun@user/jinsun)
+[12:01:02] *** Joins: WillPittenger (~willpitte@2001:470:69fc:105::1bf)
+[12:01:02] *** Joins: dan01[m] (~dan01@2001:470:69fc:105::1:2640)
+[12:01:02] *** Joins: DoofusCan (~tang^@2001:470:69fc:105::cc6)
+[12:01:14] *** Joins: ki9d (~ckchatcar@2001:470:69fc:105::4897)
+[12:01:14] *** Joins: qazo[m] (~qazomatri@2001:470:69fc:105::1:e344)
+[12:04:51] *** Joins: kenantu (~kenanmara@user/kenanmarasli)
+[12:13:06] *** Quits: llanhmod (~developer@user/domhnall/x-2887755) (Quit: leaving)
+[12:18:57] <Kim^J> entropygain: So embeddded Kestrel... Well, that's the way it's meant to be run so...
+[12:25:12] *** Joins: bpmedley (~bpmedley@2600:1700:e2c:8410:1861:afad:270:b1c5)
+[13:05:22] *** Joins: Babbage (~Babbage@94.11.27.96)
+[13:11:30] <Babbage> hey
+[13:12:01] <alguien> hola
+[13:12:35] <JakeSays> Suchiman: hey do you know where the Decimal tests are in the dotnet repos?
+[13:14:45] <Suchiman> JakeSays: how about https://github.com/dotnet/runtime/blob/main/src/libraries/System.Runtime/tests/System/DecimalTests.cs
+[13:14:58] <JakeSays> Suchiman: ah. thanks!
+[13:15:23] <JakeSays> Suchiman: i finished porting that dec64 lib
+[13:15:37] <Suchiman> JakeSays: now to iron out the kinks
+[13:15:47] <JakeSays> definitely.
+[13:18:58] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Quit: Konversation terminated!)
+[13:19:19] <JakeSays> wish c# had user definable suffix operators
+[13:19:41] <JakeSays> like c++'s operator""
+[13:24:41] <alguien> the what now?
+[13:24:45] <JakeSays> wow. looks like ms might be taking maui in the right direction
+[13:24:57] <MatthiasVance> What makes you say that JakeSays ?
+[13:25:00] <alguien> JakeSays, don't let them fool you! ;)
+[13:25:13] <JakeSays> MatthiasVance: https://github.com/dotnet/Microsoft.Maui.Graphics.Controls
+[13:25:45] <MatthiasVance> Hm why are cross-platform non-native controls good?
+[13:26:09] <JakeSays> MatthiasVance: linux man. linux.
+[13:26:18] <JakeSays> on linux everything is native looking
+[13:26:30] <JakeSays> they're taking the same strategy as flutter
+[13:26:32] <alguien> Ay, dark "theme"
+[13:26:36] <MatthiasVance> ahh
+[13:26:53] <Suchiman> JakeSays: you could also argue that nothing is native looking :P
+[13:27:00] <Suchiman> linux has no native look
+[13:27:14] <alguien> I'm sorry, MatthiasVance what am I supposed to be looking for on that page?
+[13:27:16] <JakeSays> Suchiman: i prefer my argument, tyvm :p
+[13:27:22] <Suchiman> JakeSays: except for the terminal i guess xD
+[13:27:22] <MatthiasVance> alguien: Heh?
+[13:27:36] <JakeSays> Suchiman: LOL yeah that's definitely the native look
+[13:27:42] *** Quits: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 252 seconds)
+[13:27:43] <alguien> MatthiasVance, no really, what's the right direction you're seeing? Just the fact that it'll work on GNU?
+[13:27:53] *** Joins: Eiler (~Eiler@c83-253-82-254.bredband.tele2.se)
+[13:28:05] <MatthiasVance> alguien: No I mean "Heh? I didn't post anything
+[13:28:20] <JakeSays> alguien: i'm the one who thinks it's the right direction
+[13:28:33] <MatthiasVance> He's the one!
+[13:28:41] * JakeSays waves
+[13:29:02] *** Joins: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[13:29:26] <JakeSays> MatthiasVance: this is part of it: https://github.com/dotnet/Microsoft.Maui.Graphics
+[13:29:31] <alguien> oops JakeSays
+[13:29:51] <alguien> Apologies to Both MatthiasSays and JakeVance
+[13:30:17] * JakeSays is highly offended to be confused with some euro punk
+[13:31:04] * alguien has a thought to make an accquantances CRM again
+[13:31:22] <alguien> JakeSays, so what's the right direction, my man?
+[13:32:02] <JakeSays> alguien: a ui framework that draws its own controls instead of relying on native platform gui frameworks (like xamarain)
+[13:32:51] <alguien> oof
+[13:33:44] <alguien> Idk, maybe you turn out to be right
+[13:33:50] <alguien> But that was Xamarin's main selling point
+[13:33:54] <JakeSays> i know
+[13:34:02] <alguien> Now it's competing with Flutter
+[13:34:18] <JakeSays> but just because a framework renders its own controls doesn't mean they dont look/act native
+[13:34:19] <alguien> I mean, assuming this takes off. "There is no official support. Use at your own Risk."
+[13:34:27] <alguien> JakeSays, ayayay
+[13:34:30] <JakeSays> take for instance wpf - it renders 100% of everything
+[13:35:06] <alguien> I'm only familiar with UWP
+[13:35:22] <JakeSays> i'm pretty sure uwp does as well
+[13:35:27] <blez> the only thing that uses custom render and looks native is Qt
+[13:35:37] <JakeSays> blez: and flutter
+[13:35:44] <blez> flutter on OSX?
+[13:35:55] <JakeSays> flutter on ios/android
+[13:36:11] <JakeSays> flutter on osux probably looks like ios
+[13:36:20] <blez> so, only qt then :)
+[13:36:30] <JakeSays> no, not only qt
+[13:36:39] <JakeSays> you didn't specify every platform :p
+[13:40:25] <blez> I'd rather use C# instead of Dart
+[13:59:30] *** Joins: Klinda (~superleag@user/klinda)
+[14:10:16] *** Quits: vim_fans_ (~pi@user/vim-fans/x-3284168) (Ping timeout: 272 seconds)
+[14:11:32] *** Quits: Eiler (~Eiler@c83-253-82-254.bredband.tele2.se) (Ping timeout: 272 seconds)
+[14:11:57] *** Joins: vim_fans_ (~pi@user/vim-fans/x-3284168)
+[14:30:38] *** Quits: kenantu (~kenanmara@user/kenanmarasli) (Quit: Leaving)
+[14:53:47] *** Quits: alguien (~alguien@user/alguien) (Ping timeout: 260 seconds)
+[14:54:36] *** Quits: Carbonflux (~Carbonflu@c-66-235-54-179.sea.wa.customer.broadstripe.net) (Quit: When all you have are solutions, everything is a problem.)
+[14:59:08] *** Quits: CoderGuy (~CoderGuy@user/coderguy) (Quit: Leaving)
+[15:05:51] *** Joins: alguien (~alguien@user/alguien)
+[15:29:59] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[15:30:17] *** Quits: csrf (~csrf@user/csrf) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[15:31:06] *** Joins: csrf (~csrf@user/csrf)
+[15:31:08] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[15:35:08] *** Quits: WillPittenger (~willpitte@2001:470:69fc:105::1bf) (Quit: User was banned)
+[15:35:11] *** Quits: hussam (~hussam@user/hussam) (Quit: User was banned)
+[15:35:34] *** Quits: DoofusCan (~tang^@2001:470:69fc:105::cc6) (Quit: User was banned)
+[15:35:34] *** Quits: dan01[m] (~dan01@2001:470:69fc:105::1:2640) (Quit: User was banned)
+[15:36:46] *** Quits: ki9d (~ckchatcar@2001:470:69fc:105::4897) (Quit: User was banned)
+[15:36:46] *** Quits: qazo[m] (~qazomatri@2001:470:69fc:105::1:e344) (Quit: User was banned)
+[15:38:22] *** Joins: Guest87 (~Guest87@2a02:c7f:582d:5100:89f5:734c:d97c:eaaf)
+[15:59:14] *** Joins: Tazy (~Tazmainia@2001:1c02:170a:4000::100a)
+[16:01:05] *** Joins: Roughy (~mdaw45ns@user/roughy)
+[16:07:33] *** Joins: Eiler (~Eiler@c83-253-82-254.bredband.tele2.se)
+[16:08:22] <smallville7123> ok so the touch tracking works as it is i expect android's version to work o.o    https://gist.github.com/mgood7123/4c48c07303846c16a75a3d948272114a
+[16:08:42] *** Joins: Carko (~Darko@84-255-241-35.static.t-2.net)
+[16:15:40] *** Joins: Tazmainian (~Tazmainia@2001:1c02:170a:4000::100f)
+[16:16:01] *** Joins: vim_fans (~pi@user/vim-fans/x-3284168)
+[16:17:19] *** Quits: vim_fans_ (~pi@user/vim-fans/x-3284168) (Ping timeout: 260 seconds)
+[16:19:22] *** Quits: Tazy (~Tazmainia@2001:1c02:170a:4000::100a) (Ping timeout: 260 seconds)
+[16:19:36] <JakeSays> that's a messed up naming scheme you have there
+[16:20:59] <JakeSays> smallville7123: why are you using KeyValuePair here?  List<KeyValuePair<View, Touch>> trackedViews = new();
+[16:22:16] <Guest87> smallville7123: for the love of all that is good in the world, please return early
+[16:22:29] <JakeSays> Guest87: ugh. i totally agree
+[16:23:42] <Guest87> The vast majority of that function is nested inside two ifs for no reason
+[16:23:43] <JakeSays> Guest87: continue early as well
+[16:23:48] <JakeSays> yup
+[16:24:31] <smallville7123> oof
+[16:24:48] <Guest87> (Well, the one function I happened to look at anyway)
+[16:25:10] <smallville7123> JakeSays: cus there no Pair<>
+[16:25:12] *** Joins: Booster2ooo (~Booster2o@user/booster2ooo)
+[16:25:39] <JakeSays> smallville7123: (View View, Touch Touch)
+[16:26:02] <Suchiman> smallville7123: List<(View View, Touch Touch)> trackedViews = new();
+[16:26:05] <JakeSays> then you can do (var view, var touch) = list[0];
+[16:26:38] <JakeSays> heh. (array[i], array[j]) = (array[j], array[i]);
+[16:29:26] *** Tazmainian is now known as Tazy
+[16:31:34] <smallville7123> :)
+[16:34:26] <canton7> JakeSays, to be fair, you can do var (view, touch) = list[0] when it's a List<KeyValuePair, Vew, Touch>> as well
+[16:34:41] <JakeSays> canton7: yeah i know
+[16:41:04] *** Quits: vim_fans (~pi@user/vim-fans/x-3284168) (Ping timeout: 246 seconds)
+[16:41:26] *** Joins: vim_fans (~pi@user/vim-fans/x-3284168)
+[16:57:35] <Suchiman> *blinks*
+[16:57:57] <Suchiman> hmmm my WebAPI projects serializes null properties to json on my local machine but not on the testsystem
+[16:57:59] <Suchiman> whut
+[17:00:23] <blez> https://media-exp1.licdn.com/dms/image/C5622AQH8RHvEDMq5sw/feedshare-shrink_800/0/16484[…]04000&v=beta&t=XyzxclYpFmLtjWaPN-nWaY6u5Nidb6ZbMeWmILo7lbw
+[17:00:48] <blez> I mean this: https://media-exp1.licdn.com/dms/image/C5622AQH8RHvEDMq5sw/feedshare-shrink_800/0/1648440601527?e=1651104000&v=beta&t=XyzxclYpFmLtjWaPN-nWaY6u5Nidb6ZbMeWmILo7lbw
+[17:02:47] *** Quits: yano (~yano@ircpuzzles/staff/yano) (Quit: WeeChat, the better IRC client, https://weechat.org/)
+[17:05:15] *** Joins: yano (~yano@ircpuzzles/staff/yano)
+[17:08:31] *** Joins: nwulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[17:12:02] *** Quits: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 272 seconds)
+[17:14:17] <Suchiman> Nasp: have you seen dis kind of thing :P ?
+[17:18:58] *** Joins: hussam (~hussam@user/hussam)
+[17:20:48] *** Joins: AbleBacon (~AbleBacon@user/AbleBacon)
+[17:27:16] *** Joins: WillPittenger (~willpitte@2001:470:69fc:105::1bf)
+[17:27:16] *** Joins: dan01[m] (~dan01@2001:470:69fc:105::1:2640)
+[17:27:16] *** Joins: DoofusCan (~tang^@2001:470:69fc:105::cc6)
+[17:27:28] *** Joins: ki9d (~ckchatcar@2001:470:69fc:105::4897)
+[17:27:29] *** Joins: qazo[m] (~qazomatri@2001:470:69fc:105::1:e344)
+[17:44:36] <JakeSays> *farts*
+[17:44:40] *** Quits: Babbage (~Babbage@94.11.27.96) (Remote host closed the connection)
+[17:46:45] <jmer> JakeSays: how does it feel to have such bad bodily odour that farting actually improves how you smell?
+[17:50:57] *** Joins: Xenoprimate (Xenoprimat@gateway/vpn/protonvpn/xenoprimate)
+[17:51:56] <JakeSays> jmer: i have no clue.
+[17:52:20] <JakeSays> jmer: sounds like a european ailment
+[17:52:28] <jmer> Oh damn.. And here I thought you were a subject matter expert
+[17:54:03] <Suchiman> JakeSays: how does it feel to be as old as the country you're living in?
+[17:54:38] <JakeSays> Suchiman: awww i love you too!
+[17:54:57] <Suchiman> JakeSays: cool, can you tell me now why my WebAPI is being weird? xD
+[17:55:20] <JakeSays> Suchiman: it's on line 71
+[17:55:47] <Suchiman> JakeSays: line 71 says "// Note: JakeSays was here"
+[17:55:53] <JakeSays> lol
+[17:55:56] <JakeSays> that's the one
+[17:56:15] *** Quits: Assault_ (~Assault@87-95-118-97.bb.dnainternet.fi) (Ping timeout: 260 seconds)
+[18:02:38] <smallville7123> jmer: how does it feel to have such bad bodily odour that <INSERT_ANYTHING_HERE> actually improves how you smell?
+[18:02:56] <smallville7123> :P
+[18:03:12] <jmer> smallville7123: I wouldn't know, sounds like it's something local to the inhabitants of Smallville
+[18:03:17] * Suchiman slaps smallville7123 around a bit with a large leopard danio
+[18:03:23] <smallville7123> lmao
+[18:04:17] <jmer> hmm that's a relatively cheap fish
+[18:12:41] *** Quits: supajerm (~supajerm@gateway/vpn/pia/supajerm) (Remote host closed the connection)
+[18:13:00] *** Joins: supajerm (~supajerm@gateway/vpn/pia/supajerm)
+[18:20:10] <smallville7123> heh
+[18:20:26] <smallville7123> i sold it to him for 50 cents
+[18:53:04] <Nasp> Suchiman:  Hmm it doesn't ring  a bell
+[18:54:23] <JakeSays> where the fak's my coffee!
+[18:54:25] <Suchiman> Nasp: i have no idea what to check lol, it doesn't make a difference if i run in debug or release, with or without debugger attached, on localhost it reliably serializes SomeProp: null while on any azure system it's absent, except for the asp.net core testsystem where it also serializes SomeProp: null into the json
+[18:57:11] <Guest87> Suchiman: it's not based on environment, is it?
+[18:57:14] <JakeSays> this blockless namespace syntax is gonna take some getting used to
+[18:57:37] <Guest87> Development vs Production etc.
+[18:57:55] <Suchiman> Guest87: i mean it kind of is but especially in ASP.NET WebAPI 2 there's no such concept of Development vs. Production
+[18:58:17] <Guest87> Oh, WebAPI2, gotcha
+[19:01:52] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Read error: Connection reset by peer)
+[19:04:34] *** Quits: vim_fans (~pi@user/vim-fans/x-3284168) (Ping timeout: 246 seconds)
+[19:09:37] <Nasp> JakeSays: i haven't tried it yet but it looks nice
+[19:09:43] <Nasp> I want the same for classes
+[19:15:18] <JakeSays> Nasp: i like it too but just getting used to the indentation change
+[19:15:27] <JakeSays> Nasp: for classes? wtf
+[19:17:17] <Suchiman> Nasp: dude no, C++ already kinda did this and it's horrible
+[19:19:23] <Suchiman> Nasp: (in the sense that you write `void SomeClass::ThatMethod() { }` in the implementation file; and the `public:` thing)
+[19:19:41] <JakeSays> Suchiman: c++ did nothing like that
+[19:19:57] <JakeSays> also i much prefer c++'s method of accessiblity :p
+[19:20:07] <JakeSays> hate having to put it on everything
+[19:21:33] <Nasp> Suchiman:  I was more thinking it could be class Foo;
+[19:21:40] <Nasp> Is that sk bad
+[19:21:49] <Nasp> So*
+[19:22:07] <JakeSays> yes. it is bad.
+[19:22:46] <Nasp> Why
+[19:23:10] <JakeSays> because the braces provide a nice organization
+[19:23:49] <JakeSays> and for you multi-type-per-file wankers, it'd be insane
+[19:24:33] <Nasp> I don't feel like it would
+[19:24:44] <Nasp> I hate all the ways horizontal screen space
+[19:25:19] <JakeSays> i dont.  horizontal space makes shit easier to read
+[19:26:34] <Nasp> I find the opposite
+[19:26:40] <JakeSays> you are weird
+[19:26:44] <Nasp> O also remove like number and light bulb margin
+[19:27:04] <Nasp> It takes up so much space for nothing
+[19:27:29] <Nasp> Regarding separation, couldn't your ide help with that
+[19:27:37] <Nasp> Mark it out with some colors ir the likes
+[19:27:59] <JakeSays> you need a larger monitor
+[19:28:35] *** Quits: interop_madness (~interop_m@user/interop-madness/x-0950004) (Quit: Leaving)
+[19:28:43] <Nasp> It's 27"
+[19:28:56] <Nasp> Although I've considered an ultrawide
+[19:31:00] <Nasp> JakeSays: what do you use
+[19:32:49] *** Joins: bomb (~bomb@user/bomb)
+[19:34:59] <MichaelLong> also would like a new monitor, but it is hard to find one that fits most of my spec requirements
+[19:35:40] <bomb> then let's find a new YOU with easier spec requirements :P
+[19:36:32] *** Quits: alguien (~alguien@user/alguien) (Ping timeout: 260 seconds)
+[19:38:17] <JakeSays> Nasp: 27"
+[19:38:40] <lz_> so i have a neighbor harassing me again; he was already doing it 7 years ago. I'll just have to wait and gather enough material to press charges, but the trick is I have to refrain from punching him in the head if I catch him red handed. This is going to be very difficult
+[19:39:04] <jonp> how are they harassing you?
+[19:39:11] <lz_> he's messing with my mailb ox
+[19:39:20] <jonp> isn't that a federal crime?
+[19:39:20] <Nasp> MichaelLong: took me long enough to get this one, most wides seems curved
+[19:39:25] <lz_> on the other hand, if the charges don't lead to anything, then I'll happily punch him in the face
+[19:39:26] <Nasp> And I don't think I like that
+[19:40:32] <bomb> blow his head off
+[19:41:11] <Nasp> Do you live in a stand your ground state?
+[19:41:20] <lz_> no
+[19:41:49] <JakeSays> wtf is a stand your ground state
+[19:41:59] <MichaelLong> heh
+[19:42:01] <lz_> I don't know if a judge would agree that qualifies as harassing; if so he faces up fines to 15000eur and 1 year in prison
+[19:42:13] <lz_> it certainly has an impact on my mental health
+[19:42:53] <MichaelLong> I'm also not sure if I'm ok with a curved monitor, though I'd like to test it out.
+[19:43:01] <Nasp> JakeSays: i thought you knew better than me
+[19:43:35] <JakeSays> Nasp: sounds trumpish
+[19:43:38] <Nasp> MichaelLong: also I don't want one of those 49 wide, just one that's wide enough so I can have 3 classes open
+[19:43:41] <lz_> MichaelLong: for monitors, I know I couldn't work with a curved ones; I need straight lines to be straight (for computer graphics etc)
+[19:44:06] <lz_> not to mention real time 3d stuff projections assume a flat monitor
+[19:44:18] <Nasp> Wow almost messed up in the bud, they moved the travelers card around so I checked out instead of in
+[19:44:25] <Nasp> Bus*
+[19:46:46] <lz_> butt*
+[19:51:17] *** Joins: kenantu (~kenanmara@user/kenanmarasli)
+[19:58:40] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[20:02:26] *** Quits: bomb (~bomb@user/bomb) (Remote host closed the connection)
+[20:02:38] *** Joins: bomb_ (~bomb@user/bomb)
+[20:03:57] *** bomb_ is now known as bomb
+[20:08:25] *** Joins: DoofusCanadensis (~DoofusCan@207.229.38.10)
+[20:08:34] <MatthiasVance> Interesting.. never knew the Netgear firmware is actually open source
+[20:09:47] <MichaelLong> "the netgear firmware" - sounds very general. Highly doubt that it applies to all netgear hardware with firmware.
+[20:16:53] *** Mapianka is now known as MapMan
+[20:17:00] *** Quits: MapMan (mapman@rick.hlds.pl) (Changing host)
+[20:17:00] *** Joins: MapMan (mapman@user/mapman)
+[20:18:20] <MatthiasVance> MichaelLong: There are plenty of those here: https://kb.netgear.com/2649/NETGEAR-Open-Source-Code-for-Programmers-GPL
+[20:18:30] <MatthiasVance> Only model numbers though so no clue what those are
+[20:20:10] <MichaelLong> interesting, quite a lot
+[20:23:06] <MatthiasVance> lz_: What are they doing to your mailbox?
+[20:29:58] *** Joins: RangerBobVA (~bmaddox@user/rangerbobva)
+[20:40:31] *** Quits: __gandhibobandhi (~gandhibob@2a02:8109:86c0:4a40::1584) (Ping timeout: 260 seconds)
+[20:45:45] <ern> MatthiasVance: GPL is a virus so if you use GPL in your source you must make it open source somehow
+[20:46:24] <jonp> within process boundaries
+[20:46:24] <ern> not saying it's bad, but it's a fact of life.
+[20:48:14] <ern> You mean libraries?
+[20:48:31] <jonp> i mean 'exe's
+[20:48:50] <jonp> if you use GPL, everything in that process is "viral"
+[20:48:59] <jonp> if you can keep it in a separate process, you have more flexibility
+[20:49:12] <jonp> reducing what you may need to make available under the GPL
+[20:49:36] <ern> yes, but firmware kind of makes it... difficult
+[20:50:13] <ern> I have contributed to some GPL project where i have no commercial interest, I dont really care too much. But for commercial I avoid GPL in my executables.
+[20:59:28] *** Quits: ben (ben@libera/staff/ben) (Quit: i'll probably be back soon)
+[20:59:35] *** Joins: ben (ben@libera/staff/ben)
+[20:59:35] *** ChanServ sets mode: +v ben
+[21:01:23] <irwiss> MatthiasVance: iirc it's only technically open source, it's basically outdated bullshit that may or may not compile
+[21:01:46] <MatthiasVance> irwiss: These are current firmware versions
+[21:01:55] <MatthiasVance> (at least for my device)
+[21:02:10] <bomb> corporateware
+[21:05:10] <bomb> https://killedbygoogle.com/
+[21:05:55] <redoc> now we need a killedbymicrosoft
+[21:07:08] *** Joins: Assault_ (~Assault@87-95-118-97.bb.dnainternet.fi)
+[21:07:46] <bomb> there is one
+[21:08:04] <bomb> doesn't cover the frameworks and such, so, boring
+[21:10:46] <MatthiasVance> What about all the stuff that bomb worked on
+[21:11:01] <redoc> does it cover all the gaming studios? :x
+[21:12:17] <bomb> watch this
+[21:12:18] <bomb> https://www.youtube.com/watch?v=m6W1iuD7tiY
+[21:34:06] <MichaelLong> redoc, you mean this: https://killedbymicrosoft.info ? but most is more superseded by microsoft
+[21:36:03] <bomb> redoc not MS but https://i.imgur.com/duXvROc.png
+[21:36:31] *** Joins: Hanii (~textual@2a00:23c5:c583:a300:5072:fc3b:dee6:b175)
+[21:38:29] <DevJohnC> when implicitly converting a DateTime to a DateTimeOffset what does .NET assume the timezone to be? local or UTC?
+[21:38:54] <Suchiman> DevJohnC: well it evaluates DateTime.Kind
+[21:39:21] <Suchiman> DevJohnC: https://source.dot.net/#System.Private.CoreLib/DateTimeOffset.cs,799efb65ff67135d
+[21:40:01] <DevJohnC> I had no idea that was even a thing!
+[21:40:14] <Suchiman> DevJohnC: what was a thing?
+[21:40:24] <DevJohnC> DateTimeKind
+[21:40:28] <Suchiman> ah
+[21:42:23] *** Joins: alguien (~alguien@user/alguien)
+[21:51:59] <redoc> victims of EA lol
+[21:52:05] <redoc> how come my picture isnt up there?
+[21:52:40] <bomb> heh
+[21:56:18] *** Joins: Tobbi (~Tobbi@2a02:8108:1240:48ec:d73:e6b7:30e6:fe45)
+[22:04:47] *** Quits: Tobbi (~Tobbi@2a02:8108:1240:48ec:d73:e6b7:30e6:fe45) (Ping timeout: 250 seconds)
+[22:06:56] <redoc> so whats the "new" UI format? what is best that people are using now? I only know WinForms but want to step it up a notch
+[22:07:17] <bomb> Windows-only or xplat?
+[22:07:49] <redoc> probably mostly windows only
+[22:08:14] <bomb> WinForms and WPF are still the kings
+[22:08:32] *** Joins: Tobbi (~Tobbi@2a02:8108:1240:48ec:cf7:8430:63f0:eabe)
+[22:08:39] <DevJohnC> WinUI3 is the new hotness though
+[22:08:54] <bomb> no
+[22:08:58] <redoc> lol
+[22:09:46] <DevJohnC> winui3 runs on a more restricted .net platform, iirc but it's the way to get the newer UI components in Windows without buying a Telerik license to emulate those features
+[22:09:51] <bomb> I think it's Microsoft's marketing team who produces new GUI frameworks in the last 5 years
+[22:10:00] <bomb> nobody noticed they don't exist, because nobody tried them
+[22:10:14] <bomb> industry is still on WinForms + WPF
+[22:10:43] <redoc> so no shame still building winforms apps? :)
+[22:10:51] <bomb> not at all
+[22:12:12] <Guest87> Telerik can eat my ass
+[22:12:52] <bomb> get a nick you turd
+[22:13:32] <DoofusCanadensis> oh oh... try to register that nick ;-)
+[22:14:43] <MichaelLong> I'm just trying to get into WFP more for internal tools. I already gave up on keeping up with MS .NET-based UI-frameworks
+[22:14:48] <Guest87> What, 'you turd'?
+[22:19:01] <DevJohnC> Suchiman, so when are you getting GPU accelerated RAID?
+[22:19:26] <Suchiman> DevJohnC: when you can actually buy a GPU, duh :P xD
+[22:19:41] <DevJohnC> prices are fairly reasonable right now
+[22:19:48] <DevJohnC> or so I hear
+[22:20:09] <redoc> just wait
+[22:20:13] <redoc> they are dropping even more
+[22:20:33] <bomb> what the heck is GPU accelerated RAID??
+[22:20:44] <redoc> bomb: never heard of it
+[22:20:49] <DevJohnC> it's exactly what it sounds like
+[22:20:49] <redoc> must be some sort of cache?
+[22:20:59] <Suchiman> DevJohnC: WinUI3 runs on standard coreclr
+[22:21:08] <DevJohnC> nvidia have a RAID driver thing that uses a nvidia GPU to run RAID parity calculations and shiz
+[22:21:22] <redoc> DevJohnC: i never knew that...
+[22:21:27] <DevJohnC> Suchiman, neat
+[22:21:31] <bomb> cute. Nvidia does everything to penetrate into server market
+[22:21:32] <Suchiman> DevJohnC: i thought that was a third party who created that
+[22:21:34] <redoc> i use LSI MegaRaid cards
+[22:21:38] <Suchiman> DevJohnC: and just stuck a nvidia card in there xD
+[22:21:52] <DevJohnC> I want GPU accelerated zfs though
+[22:22:12] <redoc> zfs for life
+[22:22:19] <DevJohnC> Suchiman, I only half paid attention to the video but since it was locked to a specific card I feel nvidia fingerprints on it
+[22:38:35] <redoc> which UI is best for cross platform? WPF? WinUI3 ?
+[22:38:41] <jonp> MAUI
+[22:39:10] <redoc> oh got i tried MAUI like a year ago
+[22:39:17] <jonp> it was early preview a year ago
+[22:39:21] <jonp> now it's nearing RC
+[22:39:27] <redoc> there was no stackoverflow to copy/paste at that time
+[22:39:38] <jonp> there likely still isn't much to copy/paste then. :-(
+[22:39:42] <redoc> lol
+[22:43:08] <redoc> MAUI is what got me started in MVVM, I wanted to use MAUI but the lack of documentation made me move to Xamarin
+[22:44:00] <DevJohnC> fuck MAUI
+[22:44:10] <redoc> why? :(
+[22:44:23] <DevJohnC> because it's mobile only
+[22:44:45] <redoc> doesn't it do windows as well?
+[22:44:59] <DevJohnC> yeah, it runs on desktops, but it doesn't have any real APIs that facilitate building a good desktop targeted application
+[22:45:07] <redoc> ahh
+[22:45:13] *** Quits: Booster2ooo (~Booster2o@user/booster2ooo) (Quit: The Game)
+[22:45:34] <DevJohnC> macOS support is literally done using the Catalyst compatibility layer for iOS apps
+[22:46:44] *** Quits: RangerBobVA (~bmaddox@user/rangerbobva) (Quit: Leaving)
+[22:49:31] <redoc> I can't wait till I am done developing this Xamarin app so I can stop using MacOS
+[22:50:07] <MatthiasVance> redoc: Are you doing iOS development?
+[22:50:11] *** Joins: v4mp (~v4mp@user/v4mp)
+[22:50:16] <redoc> android/iOS
+[22:50:21] <MatthiasVance> redoc: If you feel VERY adventurous you could also hook up an iphone to a PC
+[22:50:30] <MatthiasVance> And use that instead of the simulator xD
+[22:50:38] <MatthiasVance> And do releases using App Center
+[22:50:44] <redoc> man i had a lot of issues with that and windows/xamarin
+[22:50:49] <MatthiasVance> oh!
+[22:51:06] <redoc> thats why i just bought a m1 mac mini, so I can do it all on there as everything runs fine
+[22:51:20] <redoc> that and i wanted to test out the badboy m1
+[22:51:48] <MatthiasVance> Yeah I am dying to replace my system with a m2 mac mini or something
+[22:51:58] <redoc> dude, it's soooo fast
+[22:52:06] <redoc> compiling is super fast
+[22:52:15] <MatthiasVance> :D
+[22:52:38] <redoc> intel is making a SoC, hopefully soon we will see it
+[22:52:44] <MichaelLong> MatthiasVance, MAC Studio with this M1 Pro Ultra or something
+[22:52:54] <MatthiasVance> No I want a small form factor
+[22:53:01] <MatthiasVance> Well the studio is pretty small of course
+[22:53:13] <MatthiasVance> If they break the 16 GB RAM limit
+[22:53:17] <redoc> mac mini is great... just wish i could upgrade the storage
+[22:53:50] <redoc> i went for the 16GB > storage
+[22:54:03] <MatthiasVance> ohh
+[22:54:10] <MatthiasVance> You went for less than 1 TB?
+[22:54:18] <MichaelLong> isn't this studio thing more or less the base of a mac mini, but just 3x as high?
+[22:54:19] <redoc> bro, im running 256
+[22:54:23] <MichaelLong> oof
+[22:54:29] <redoc> $$$$
+[22:54:46] <MatthiasVance> MichaelLong: You're right but probably also more expensive? xD
+[22:54:49] <MatthiasVance> And bigger!
+[22:54:54] <MichaelLong> but 256 GiB is really a bit 2012
+[22:55:12] <redoc> tell me about it
+[22:55:23] <redoc> i bought it just to develop this app
+[22:55:28] <redoc> but xcode takes a ton of space
+[22:55:29] <MichaelLong> MatthiasVance, sure. Please buy.
+[22:56:02] <MatthiasVance> MichaelLong: lol!
+[22:56:03] * MichaelLong owns a couple of shares (disclaimer)
+[23:00:04] <redoc> I need to stop buying comic books....
+[23:00:33] <redoc> whatnot is stealing all my monies
+[23:00:40] <JakeSays> wow. there's a company that produces a 100TB ssd
+[23:00:59] <redoc> JakeSays: sounds expensive and faulty...
+[23:01:21] <MichaelLong> Imagine two of those in raid0
+[23:01:41] <JakeSays> redoc: expensive yes, but faulty makes no sense whatsoever
+[23:02:16] <redoc> JakeSays: im banking on firmware failures
+[23:02:56] <redoc> oh snap, they are only 40k..
+[23:02:58] <JakeSays> that still makes no sense.
+[23:03:23] <JakeSays> LOL yeah so a decent raid system would be 200k'ish
+[23:04:08] <redoc> i need 4tb ssd's to get below $300 so I can start buying those
+[23:05:08] <JakeSays> i bought a new tablet that'll be arriving today
+[23:05:14] <irwiss> MichaelLong: imo with that much data you need zfs rather than just raid0 for scrubbin tbh
+[23:05:17] <irwiss> scrubbing*
+[23:06:00] <bomb> nobody gives shit about your opinion
+[23:06:05] <bomb> irwiss is right
+[23:06:21] <JakeSays> man the bomb is touchy today
+[23:06:26] <JakeSays> short fuse
+[23:06:29] * redoc pokes bomb
+[23:06:41] <bomb> me hubgry :9
+[23:07:37] <Guest87> I just ordered pizza
+[23:07:37] <redoc> 100k IOps and 500MBps on the 100TB SSD, decent.
+[23:08:07] <redoc> about to trade my car in for a down payment on one
+[23:11:35] <redoc> Guest87: you not going to tell us what type? Ham and Pineapple?
+[23:11:36] *** Quits: exvicesindaco (~exvicio@user/exvicesindaco) (Quit: Going offline, see ya! (www.adiirc.com))
+[23:12:40] *** Joins: Tobbi__ (~Tobbi@2a02:8108:1240:48ec:f0cf:f5b0:60ea:907f)
+[23:12:54] <JakeSays> gross
+[23:13:16] *** Quits: Tobbi (~Tobbi@2a02:8108:1240:48ec:cf7:8430:63f0:eabe) (Ping timeout: 245 seconds)
+[23:13:31] <Guest87> Goat's cheese, sweet caramelised onions and spinach combine with mozarella, tomato, garlic oil and red onions
+[23:13:41] <redoc> you are not american
+[23:13:42] <Guest87> Big on flavour and colour, with smoked chilli chicken, hot & sweet chilli, roasted peppers, mozzarella, tomato, garlic, Gran Milano cheese, parsley and chilli oil
+[23:13:52] <Guest87> The above two
+[23:17:31] <JakeSays> Guest87: that's not a pizza - it's  a salad
+[23:17:40] <Guest87> you're a salad
+[23:17:49] <JakeSays> you are a salad tosser
+[23:18:12] <MichaelLong> never really understood this filesystem scrubbing anyways, sounds like a design after thought. I only know btrfs does it.
+[23:18:24] <Guest87> takes one to know one
+[23:18:35] <JakeSays> MichaelLong: what does scrubbing do?
+[23:19:48] <MichaelLong> AFAIK it checks the checksum information in some kind of deferred way. e.g. you can start this process in idle time situations or over night. not sure if it can actually correct something or whether it is just to detect bitrot
+[23:20:18] <JakeSays> zfs has something similar. it's called re-silvering.
+[23:20:21] <irwiss> zfs scrubbing corrects the data
+[23:20:48] <MichaelLong> I know my NAS is doing it occasionally
+[23:21:05] <JakeSays> the idea is to read the data and write it to refresh the magneticy things
+[23:21:12] <MichaelLong> proabably I left one of the volumes on btrfs by accident
+[23:21:34] <MichaelLong> you mean to create unnecessary wear?
+[23:21:47] <JakeSays> no. to prevent bit rot
+[23:22:27] <irwiss> wear isn't really irrelevant on modern ssds, unless it's some weird super write-heavy scenario on almost filled drive
+[23:22:44] <JakeSays> it's only useful on magnetic media
+[23:22:46] <MichaelLong> I don't even know if bit rot is an actual thing. there're not very many reports in typical tech media about such kind of issue
+[23:22:58] <JakeSays> it's definitely a thing on magnetic
+[23:23:06] <irwiss> typical tech media doesn't deal with large volumes of data
+[23:24:39] <MatthiasVance> brianonymous: This was fixed in the latest VS 2022 version -> "Disable automatically opening the Stack Trace Explorer window on opening Visual Studio. This can still be enabled in options."
+[23:24:52] <MatthiasVance> brianonymous: Might be the issue that you had?
+[23:25:08] <brianonymous> MatthiasVance: the weird part was that it just popped up after being open for 2 days straight
+[23:25:27] <brianonymous> i mean, VS being open
+[23:25:46] <JakeSays> yermom being open
+[23:26:00] <brianonymous> yermom being a fart producing class
+[23:27:20] *** Quits: alguien (~alguien@user/alguien) (Remote host closed the connection)
+[23:27:33] <Guest87> oooooh
+[23:27:44] *** Joins: alguien (~alguien@user/alguien)
+[23:28:36] <JakeSays> i want my new tablet, dammit.
+[23:29:03] <Guest87> What is it? Ibuprofen?
+[23:29:44] <JakeSays> lol yeah thats it
+[23:29:55] <Guest87> Well I hope you get it and feel better soon
+[23:30:15] <JakeSays> it's a samsung s7 fe
+[23:30:27] <MatthiasVance> Tough to swallow
+[23:30:34] <bomb> lol
+[23:31:27] <JakeSays> MatthiasVance: lol
+[23:31:50] <JakeSays> the one i have now is too damn slow
+[23:32:25] <brianonymous> the FE part stands for Fart Emitter
+[23:32:40] <brianonymous> but in reality - i didnt know they made an s7 tablet
+[23:32:53] <JakeSays> they make an s8 now
+[23:33:02] <JakeSays> s7 is last year's model i think
+[23:33:13] <Guest87> Probably slow and pants now
+[23:33:14] <brianonymous> im out of touch with the latest tablet tech
+[23:33:24] <JakeSays> Guest87: pants?
+[23:33:48] <brianonymous> my daughter requested a new ipad for xmas to draw with.. i got her it and then kicked her out of the house
+[23:33:53] <MatthiasVance> JakeSays: How much did you pay for it?
+[23:34:07] <JakeSays> MatthiasVance: ~$600
+[23:34:17] <JakeSays> brianonymous: lol why'd you kick her out?
+[23:34:20] <brianonymous> cuz ipad
+[23:34:37] <JakeSays> i thought you were an apple fanboi
+[23:34:46] <brianonymous> she is an android girl tho, she only uses the ipad cuz it had better drawing software on it
+[23:34:55] <brianonymous> me? are you cray?
+[23:35:03] <redoc> yea, ipad is pretty good for artists
+[23:35:04] <JakeSays> yeah. don't you have an iphone?
+[23:35:33] <brianonymous> i have this tiny wee iphone for work that i only use to test player apps with.. but id rather it not be in my life. i have an s20+
+[23:35:50] <redoc> Galaxy fold 3 FTW
+[23:35:51] <brianonymous> basically, if i have an apple product here in my office, you can assume 'work issued'
+[23:35:55] <JakeSays> ah ok. well good. i was worried there fo ra minute
+[23:36:25] <brianonymous> i have this macbook pro for the vpn, but i feel like a total idiot (more so than usual) using it
+[23:36:30] <redoc> JakeSays: you use iPhone?
+[23:36:31] <brianonymous> like im typing with elbow knubs
+[23:36:39] <JakeSays> i'm not gonna return to samsung for phones until i can install my own os
+[23:36:49] <JakeSays> redoc: hell no. pixel 6 pro
+[23:37:02] <redoc> why can't you install your own OS on samsung phones?
+[23:37:15] <JakeSays> because they don't want you to
+[23:37:30] <redoc> im certain you can, you will just trip knox
+[23:37:50] <bomb> Samsung tablets with stylo are great for drawing
+[23:38:00] <JakeSays> i thought they made it next to impossible on newer models
+[23:38:23] <redoc> JakeSays: idk about that, i havent ran custom roms in years
+[23:38:35] <brianonymous> ive never tried, cuz i enjoy a working phone, lol
+[23:38:45] <redoc> i just know they made it impossible without tripping knox, which removes some features
+[23:38:56] <brianonymous> i did root a few of the early droids, like my motorolas
+[23:38:57] <JakeSays> i went with the pixel because they're easy to flash
+[23:39:26] <redoc> i went with the fold because tablet in pocket is awesome
+[23:39:31] <JakeSays> i have a note 1 running JakeDroid
+[23:39:44] <redoc> note 1...
+[23:39:50] <blez> redoc what's knox?
+[23:39:53] <JakeSays> yeah. it's 10years old
+[23:40:02] <JakeSays> blez: samsung's security shit
+[23:40:06] *** Quits: v4mp (~v4mp@user/v4mp) ()
+[23:40:13] <redoc> blez: their security built in, its mainly for coporations/security
+[23:40:38] <JakeSays> it also allows carriers to be dickhead
+[23:40:39] <JakeSays> s
+[23:40:48] <redoc> yea
+[23:41:01] *** Quits: svm_invictvs (~svm_invic@user/svm-invictvs/x-6696469) (Remote host closed the connection)
+[23:41:06] <brianonymous> JakeSays: oh dude, part of my office rearrange is, im going to setup an electronics lab, legit style.. like i had 25 years ago
+[23:41:06] <redoc> no one is worse than t-mobile reading your texts and deciding to send it through or not if it finds 'misinformation'
+[23:41:18] <JakeSays> brianonymous: cool!
+[23:41:27] <brianonymous> JakeSays: ive dedicated a full spare desk to it
+[23:41:28] <JakeSays> redoc: wtf.. what?
+[23:41:45] <JakeSays> brianonymous: what ya gonna build?
+[23:42:05] <blez> I got my dad A52s 5G. Great phone for 300 eur. I was impressed
+[23:42:07] <brianonymous> JakeSays: first project attempt, i bought some 8086 cpus
+[23:42:09] <redoc> JakeSays: tmobile was screening texts for covid 'misinformation'
+[23:42:19] <JakeSays> brianonymous: LOL really?
+[23:42:24] *** Tobbi__ is now known as Tobbi
+[23:42:28] <JakeSays> redoc: that's seriously fucked up
+[23:42:40] <brianonymous> JakeSays: yeah.. i also want to buy some 6502/6510, but goddamn, they arent cheap these days
+[23:42:45] <redoc> JakeSays: https://www.freedomsphoenix.com/News/321489-2022-03-03-t-mobile-just-admitted-they-are-openly-censoring-conservatives-text.htm
+[23:43:15] <JakeSays> that's just wrong. texts are private communication
+[23:43:19] <redoc> talk about invading privacy
+[23:43:29] <redoc> boycot tmobile
+[23:43:44] <JakeSays> next they'll be interrupting phone calls with "the caller just give you fake news"
+[23:43:56] <redoc> I wonder if they can intercept iMessage's ?
+[23:44:09] <brianonymous> at this point, Orwell is a prophet
+[23:44:11] <JakeSays> brianonymous: what are ya gonna build with the 8086's?
+[23:44:36] <brianonymous> JakeSays: i just want to see if i can make a functional computer with it
+[23:44:48] <bomb> blez "cheap chinese" products are getting better and better. I noticed that with electirc guitars
+[23:45:07] *** Quits: Haxxa (~Haxxa@202-130-210-100.ip4.superloop.com) (Quit: Haxxa flies away.)
+[23:45:12] <JakeSays> brianonymous: that'll be fun!
+[23:45:31] <brianonymous> JakeSays: i may regret it, i bought it before i looked at the spec sheet, and it makes the 6502's look like an abacus
+[23:45:39] *** Joins: Obsdark (~Obsdark@190.162.168.99)
+[23:45:39] *** Quits: Obsdark (~Obsdark@190.162.168.99) (Changing host)
+[23:45:39] *** Joins: Obsdark (~Obsdark@user/obsdark)
+[23:46:25] <JakeSays> yeah iirc memory access is a lot more complicated
+[23:46:48] <JakeSays> i'd love to get my hands on an 8008
+[23:46:54] <JakeSays> or 4004
+[23:46:59] <brianonymous> JakeSays: it seems to have a lot of what i interpret as "bus modes" and overly complex internal state/pin mapping
+[23:47:09] <JakeSays> right
+[23:47:10] *** Joins: Haxxa (~Haxxa@202-130-210-100.ip4.superloop.com)
+[23:47:18] <brianonymous> in fact, they recommend using their clock ICs
+[23:47:37] <brianonymous> and that makes me sad/scared. i just wanted a dumb cpu to make puter with
+[23:47:48] <JakeSays> z80
+[23:47:57] <JakeSays> those should still be available
+[23:48:07] <brianonymous> they are.. but if i switched, id wanna go 6502
+[23:48:21] <brianonymous> just cuz i know that system quite well
+[23:48:33] <JakeSays> right
+[23:48:42] <JakeSays> you could fpga one up
+[23:49:08] <brianonymous> https://www.electro-tech-online.com/datasheets/8086_intel.pdf
+[23:49:19] <brianonymous> fpga is cheating a smidge
+[23:49:30] <brianonymous> well, with the rules of my own game
+[23:49:34] <JakeSays> brianonymous: https://www.ebay.com/itm/113539165305
+[23:49:53] <brianonymous> yeah, saw those last night, but they come from china and i want stuff this weekend
+[23:49:59] * brianonymous is impatient
+[23:50:03] <JakeSays> LOL
+[23:50:04] <MatthiasVance> Buy a ticket to China, fixed
+[23:50:08] <brianonymous> good idea
+[23:50:08] *** Quits: destroycomputers (~destroyco@5.188.41.98) (Quit: farewell)
+[23:50:28] *** Quits: duds- (~duds-@user/duds) (Ping timeout: 260 seconds)
+[23:50:31] <brianonymous> but im still behind the curve, i need to order a GOOD bench power supply and a real good scope
+[23:50:47] <brianonymous> my wife made me purge my old school techtronics
+[23:51:09] <brianonymous> it was kinda dying anyways
+[23:51:30] <redoc> enemy of the state
+[23:51:31] <brianonymous> im not gonna play around, this lab will be delicious
+[23:54:39] <JakeSays> brianonymous: https://www.jameco.com/z/6502-Major-Brands-6502-Microprocessor-8-bit-1-MHz-DIP-40_43191.html?CID=MERCH
+[23:55:06] <brianonymous> now thats not bad
+[23:55:27] <JakeSays> LOL this would be fun https://monster6502.com/
+[23:55:58] <brianonymous> it has the internal clock tho, and that makes me a wee bit sad
+[23:55:59] <JakeSays> i always wanted to do that with an 8080
+[23:56:11] <JakeSays> brianonymous: why sad?
+[23:56:57] <brianonymous> well, lets say i wanted to do something really weird, like see if i can build my own breadboarded c64.. id need full control of the clocks
+[23:57:34] <brianonymous> oh, it looks like i can externally drive it
+[23:57:38] <brianonymous> buyin'
+[23:57:40] <JakeSays> ya picky bastard
+[23:58:23] <JakeSays> woo 1 mhz. it's a screamer!
+[23:58:41] <brianonymous> lol
+[23:58:56] <brianonymous> at first ill be running it at button press mhz
+[23:59:17] <JakeSays> LOL
+[23:59:21] <brianonymous> oh snap, looks like i already had a Jameco account

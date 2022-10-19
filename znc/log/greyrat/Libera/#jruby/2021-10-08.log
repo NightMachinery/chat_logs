@@ -1,0 +1,280 @@
+[00:10:06] <headius> enebo: do you have Windows handy to test https://github.com/jruby/jruby/issues/5534
+[00:11:42] <headius> no updates on this issue for 1.5 years
+[00:12:18] <headius> I thought we'd have heard more noise if IRB was that broken on Windows
+[00:12:57] <headius> six issues marked for 9.3.1 are all about IRB and Readline... I punted one because it appears to be working with new IRB and Reline on the 3.0 branch
+[00:27:27] <byteit101[m]> I haven't had time to reduce the issue on some super JI calls failing yet, but i'm hoping to do so and file an issue this week
+[00:35:50] <headius> byteit101: yeah cool, whatever reduction you can provide I will jump in and help
+[00:36:11] <headius> we don't have to feel pressure to fix stuff in 9.3.1 if we can keep up a good pace of updates
+[00:37:25] <byteit101[m]> Cool, I know you will be much more efficient at solving it than I, as I saw with the last super issue :-)
+[00:50:34] <headius> hah no worries
+[00:55:14] *** Quits: fidothe (sid1130@id-1130.uxbridge.irccloud.com) (Ping timeout: 260 seconds)
+[00:57:02] *** Joins: fidothe (sid1130@uxbridge.irccloud.com)
+[01:04:13] <ahorek[m]> hey @headius https://github.com/jruby/jruby/issues/5534 I can confirm that the new reline in 9.4 fixes the problem with arrows
+[01:08:14] <ahorek[m]> but there's a new error
+[01:08:14] <ahorek[m]> NoMethodError: undefined method `token' for #<Ripper::Lexer:0x31f5b923>
+[01:08:14] <ahorek[m]>                        on_error1 at lib/ruby/stdlib/ripper/lexer.rb:195
+[01:08:14] <ahorek[m]>                            parse at org/jruby/ext/ripper/RubyRipper.java:342
+[01:08:26] <ahorek[m]>  * but there's a new error... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/92040f8ad343da1173a33dad0c8d2e2efc54bce7)
+[01:08:56] <headius> aha this is probably ripper stdlib updates I did not copy right, or else missing ripper features at the parser level
+[01:17:00] <headius> hmm my stdlib copier might not be working right
+[01:24:25] <ahorek[m]> https://github.com/ruby/ruby/commit/c40003da25543b0f828911af56108ee16af35236 experimental :)
+[01:52:31] <headius> oh, figures
+[01:52:44] <headius> and of course they use it in IRB
+[01:53:01] <headius> ahorek: shouldn't be hard to add but seriously, what's a standard
+[01:56:54] <headius> my copy works fine, we just have some minor diffs in this code
+[01:58:43] <ahorek[m]> does rubygems work on 9.4?
+[01:59:08] <headius> yes it does, if you are switching from 9.3 you will want to git clean -dxf lib/ruby/stdlib and clean package
+[01:59:22] <headius> I'm getting you are seeing frozen array errors?
+[01:59:46] <ahorek[m]> nope, it's just missing on a clean build
+[02:00:04] <headius> oh hmm... it should install during the build
+[02:00:27] <headius> ok weird, it is not there
+[02:01:01] <headius> let me try merging 9.3 and see if that fixes it... the logic to install RG might have come after the 9.4 branch
+[02:07:18] <headius> confirmed still not installing the files, hmm
+[02:11:28] <headius> yeah this is strange
+[02:11:31] <headius> every other gem is fine
+[02:17:11] <headius> gah, the gem seems to be empty?
+[02:20:10] <headius> ahorek: hmm I have no explanation... will keep poking at it
+[02:24:49] <headius> this is weird, something seems wrong with the 3.2.22 rubygems-update
+[02:25:35] * headius sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/ada1968daf6cab6ec7e197e73ed23793bc23bd1d
+[02:25:42] <headius> oooops
+[02:25:47] <ahorek[m]> require paths
+[02:25:47] <ahorek[m]> 9.3 /jruby/lib/target/rubygems/gems/rubygems-update-3.2.14*/lib/*
+[02:25:47] <ahorek[m]> 9.4 /jrubyish/lib/target/rubygems/gems/rubygems-update-3.2.22*/hide_lib_for_update/*
+[02:25:52] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[02:25:53] <headius> somethign odd is happening
+[02:25:59] <headius> oh wow
+[02:26:08] <headius> ok yeah
+[02:27:30] <headius> this is weird... I install rubygems-update 3.2.22 and it doesn't seem to install right even on 9.3
+[02:28:05] <headius> woah somehow I got a bad gem_home
+[02:28:07] <headius> GEM_HOME
+[02:29:16] <headius> so are they not including lib in require paths now?
+[02:29:24] <ahorek[m]> aha
+[02:29:29] <headius> that would be the simple explanation... we only look at the spec for those paths to copy
+[02:29:41] <headius> we'd have to special case rubygems-update
+[02:30:18] <headius> yup that's it 🤦‍♂️
+[02:30:22] <ahorek[m]> wehttps://github.com/jruby/jruby/blob/master/lib/pom.rb#L219
+[02:30:24] <headius> I will fix this
+[02:30:38] <headius> have to add another option to the gem copier to override require paths
+[02:30:52] <headius> whew... at least it is not some weird bug of ours... they are literally hiding lib
+[02:31:04] <ahorek[m]> we do load the actual spec now, it was hardcoded to "lib" before your fix
+[02:31:21] <headius> so I broke it by unhardcoding it
+[02:31:23] <headius> yay
+[02:31:43] <ahorek[m]> https://github.com/rubygems/rubygems/blob/master/rubygems-update.gemspec#L21
+[02:31:55] <ahorek[m]> https://github.com/rubygems/rubygems/blob/master/hide_lib_for_update/note.txt
+[02:32:27] <headius> I did see that note.txt and thought I did something odd to produce it
+[02:35:48] <headius> I have a fix, testing it now
+[02:37:12] <headius> ok, it installs now but there's that frozen error I mentioned on boot
+[02:37:24] <headius> etc
+[02:37:24] <headius> $ gem install benchmark-ips... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/6501551fc1ed44ede544e2207fdc9428f3dc8d02)
+[02:37:32] <headius> I will push this change and look into that
+[02:39:06] <headius> pushed
+[02:40:47] <ahorek[m]> nice thanks
+[02:43:07] <headius> yeah this is wierd
+[02:43:10] <headius> I trace the code back and it does seem to be modifying a frozen array
+[02:44:36] <headius> oh heck
+[02:44:41] <headius> I broke this I bet
+[02:44:55] <headius> I probably mucked up Array#dup while removing tainting
+[02:45:01] <headius> we need to get this branch on CI
+[02:45:03] <headius> fixing
+[02:46:03] <headius> that's what I get for working late
+[02:46:17] <headius> I replaced "dup.flags |= flags & TAINTED_F" with "dup.flags = flase"
+[02:46:20] <headius> flags
+[02:46:33] <headius> curse you bitwise math!
+[02:49:39] <headius> found another one
+[02:51:15] <headius> so basically I broke two things that hid each other
+[02:51:31] <headius> the taint breakage prevents RG from loading, but the lib/pom.rb prevents RG from even trying to load
+[02:52:50] * headius sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/d7dd25520e1e8b7f3e4b03ef0d65cc457e72a3a9
+[02:54:10] <headius> ahorek: pushed all fixes
+[03:00:36] <headius> sorry about that 🙈
+[03:04:49] <ahorek[m]> it's ok :) thanks, but maybe there's something more? this is weird - java.lang.AssertionError: CR_7BIT = 16 but should be 8
+[03:05:11] <headius> ah, could be more flag problems
+[03:05:15] <headius> when do you see that
+[03:05:23] <ahorek[m]> https://github.com/enebo/jrubyish/runs/3833148182
+[03:05:47] <headius> wow ok
+[03:06:43] <headius> yup this is due to taint flag going away and the check not being updated
+[03:07:03] <headius> I didn't realize enebo had these running in GHA... I will mop up my mess
+[03:08:40] <headius> down side of my oh-so-clever flag allocator perhaps
+[03:11:23] <headius> ahorek: pushed fix, gem install runs with -J-ea now
+[03:17:39] <headius> tests seem to be running correctly now
+[03:17:52] <headius> "square root of 9.0 is 3.0"
+[03:18:39] <headius> enebo: this warning is weird:
+[03:18:39] <headius> lib/ruby/stdlib/rubygems/core_ext/kernel_require.rb:85: warning: parentheses after method name is interpreted as an argument list, not a decomposed argument
+[03:18:58] <headius> 85 is just `return gem_original_require(path)`
+[03:33:41] <headius> enebo: I'm tagging these Enumerator::Lazy specs that blow up memory for now
+[03:49:01] *** Joins: subbu (~subbu@user/subbu)
+[04:05:05] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[07:20:34] <headius> ahorek: so if I'm getting these PRs right you have some to add more syslog platforms and this other one to move the constants to jnr-constants?
+[07:20:48] <headius> so if we moved them to jnr-constants we don't need the ones that add to JRuby
+[07:20:58] <headius> the socket constants are ok to merge though, yeah?
+[07:21:12] <headius> jnr-socket probably should be a thing some day 🤔
+[14:51:38] <ahorek[m]> hey, these two PRs together https://github.com/jruby/jruby/pull/6843 and https://github.com/jnr/jnr-constants/pull/99
+[14:54:16] <ahorek[m]> or perhaps move it to https://github.com/ruby/syslog ?
+[16:50:05] *** Quits: nilsding (~nilsding@user/nilsding) (Remote host closed the connection)
+[16:50:06] *** Quits: subbu[m] (~subbu@user/subbu) (Remote host closed the connection)
+[16:50:06] *** Quits: Bi[m] (~bimatrixo@2001:470:69fc:105::109a) (Write error: Connection reset by peer)
+[16:50:06] *** Quits: MatrixTravelerb4 (~voyagert2@2001:470:69fc:105::22) (Write error: Connection reset by peer)
+[16:50:06] *** Quits: johnphillips3141 (~johnphill@2001:470:69fc:105::1:d36) (Read error: Connection reset by peer)
+[16:50:06] *** Quits: TimGitter[m]1 (~gittertir@2001:470:69fc:105::314f) (Remote host closed the connection)
+[16:50:06] *** Quits: MarcinMielyskiGi (~gitterlop@2001:470:69fc:105::3134) (Read error: Connection reset by peer)
+[16:50:06] *** Quits: XavierNoriaGitte (~gitterfxn@2001:470:69fc:105::3111) (Read error: Connection reset by peer)
+[16:50:06] *** Quits: AnilJaiswal[m] (~aniljaisw@2001:470:69fc:105::1:aa) (Remote host closed the connection)
+[16:50:06] *** Quits: kares[m] (~karesmatr@2001:470:69fc:105::30d1) (Remote host closed the connection)
+[16:50:06] *** Quits: ahorek[m] (~ahorekmat@2001:470:69fc:105::30e2) (Read error: Connection reset by peer)
+[16:50:07] *** Quits: fzakaria[m] (~fzakariam@2001:470:69fc:105::30f6) (Read error: Connection reset by peer)
+[16:50:07] *** Quits: UweKuboschGitter (~gitterdon@2001:470:69fc:105::3100) (Remote host closed the connection)
+[16:50:07] *** Quits: headius (~headius@2001:470:69fc:105::3027) (Remote host closed the connection)
+[16:50:07] *** Quits: shibz[m]1 (~shibzmatr@2001:470:69fc:105::1:8be) (Read error: Connection reset by peer)
+[16:50:07] *** Quits: rebelwarrior[m] (~rebelwarr@2001:470:69fc:105::beba) (Remote host closed the connection)
+[16:50:08] *** Quits: CharlesOliverNut (~gitterhea@2001:470:69fc:105::311e) (Read error: Connection reset by peer)
+[16:50:09] *** Quits: JulesIvanicGitte (~gittergui@2001:470:69fc:105::3118) (Remote host closed the connection)
+[16:50:09] *** Quits: MattPattersonGit (~gitterfid@2001:470:69fc:105::3105) (Remote host closed the connection)
+[16:50:09] *** Quits: klobuczek[m] (~klobuczek@2001:470:69fc:105::1:24c) (Read error: Connection reset by peer)
+[16:50:09] *** Quits: ChrisSeatonGitte (~gitterchr@2001:470:69fc:105::30fb) (Read error: Connection reset by peer)
+[16:50:09] *** Quits: enebo[m]1 (~enebo@2001:470:69fc:105::e6) (Write error: Connection reset by peer)
+[16:50:10] *** Quits: jswenson[m] (~jswensonm@2001:470:69fc:105::fd45) (Write error: Connection reset by peer)
+[16:50:10] *** Quits: RomainManni-Buca (~gitterrma@2001:470:69fc:105::3146) (Write error: Connection reset by peer)
+[16:50:10] *** Quits: JesseChavezGitte (~gitterjes@2001:470:69fc:105::3122) (Write error: Connection reset by peer)
+[16:50:10] *** Quits: basshelal[m] (~basshelal@2001:470:69fc:105::30e7) (Remote host closed the connection)
+[16:50:10] *** Quits: JasonvanZyl[m] (~jasonvanz@2001:470:69fc:105::dbb4) (Write error: Connection reset by peer)
+[16:50:10] *** Quits: TimGitter[m] (~gittertim@2001:470:69fc:105::314b) (Remote host closed the connection)
+[16:50:10] *** Quits: liamwhiteGitter[ (~gitterlia@2001:470:69fc:105::312d) (Remote host closed the connection)
+[16:50:10] *** Quits: mattpatt[m] (~mattpattm@2001:470:69fc:105::315d) (Read error: Connection reset by peer)
+[16:50:11] *** Quits: FlorianDoubletGi (~gitterflo@2001:470:69fc:105::310c) (Remote host closed the connection)
+[16:50:11] *** Quits: NoraHoward[m] (~baroquebo@2001:470:69fc:105::f6ff) (Write error: Connection reset by peer)
+[16:50:11] *** Quits: demon36[m] (~demon36ma@2001:470:69fc:105::dc32) (Remote host closed the connection)
+[16:50:11] *** Quits: CrisShupp[m] (~cshupp1ma@2001:470:69fc:105::1:374) (Remote host closed the connection)
+[16:50:11] *** Quits: Leonardomejiabus (~thebiglor@2001:470:69fc:105::1:3a2) (Remote host closed the connection)
+[16:50:11] *** Quits: OlleJonssonGitte (~gitteroll@2001:470:69fc:105::313b) (Remote host closed the connection)
+[16:50:12] *** Quits: BlaneDabneyGitte (~gitterrae@2001:470:69fc:105::3140) (Remote host closed the connection)
+[16:50:12] *** Quits: byteit101[m] (~byteit101@2001:470:69fc:105::30ec) (Remote host closed the connection)
+[16:50:12] *** Quits: kai[m] (~kaikdeorg@2001:470:69fc:105::c43) (Remote host closed the connection)
+[16:50:12] *** Quits: KarolBucekGitter (~gitterkar@2001:470:69fc:105::3127) (Remote host closed the connection)
+[16:50:12] *** Quits: lopex[m]1 (~lopexm]@2001:470:69fc:105::3158) (Remote host closed the connection)
+[16:51:53] *** Joins: Bi[m] (~bimatrixo@2001:470:69fc:105::109a)
+[16:52:26] *** Joins: ahorek[m] (~ahorekmat@2001:470:69fc:105::30e2)
+[17:03:07] *** Joins: enebo[m] (~enebo@2001:470:69fc:105::e6)
+[17:03:08] *** Joins: kai[m] (~kaikdeorg@2001:470:69fc:105::c43)
+[17:03:08] *** Joins: MatrixTravelerbo (~voyagert2@2001:470:69fc:105::22)
+[17:03:08] *** Joins: lopex[m] (~lopexm]@2001:470:69fc:105::3158)
+[17:03:08] *** Joins: subbu[m] (~subbu@user/subbu)
+[17:03:08] *** Joins: nilsding (~nilsding@user/nilsding)
+[17:03:08] *** Joins: JasonvanZyl[m] (~jasonvanz@2001:470:69fc:105::dbb4)
+[17:03:19] *** Joins: JulesIvanicGitte (~gittergui@2001:470:69fc:105::3118)
+[17:03:19] *** Joins: fzakaria[m] (~fzakariam@2001:470:69fc:105::30f6)
+[17:03:19] *** Joins: UweKuboschGitter (~gitterdon@2001:470:69fc:105::3100)
+[17:03:19] *** Joins: KarolBucekGitter (~gitterkar@2001:470:69fc:105::3127)
+[17:03:19] *** Joins: byteit101[m] (~byteit101@2001:470:69fc:105::30ec)
+[17:03:19] *** Joins: MarcinMielyskiGi (~gitterlop@2001:470:69fc:105::3134)
+[17:03:19] *** Joins: JesseChavezGitte (~gitterjes@2001:470:69fc:105::3122)
+[17:03:19] *** Joins: liamwhiteGitter[ (~gitterlia@2001:470:69fc:105::312d)
+[17:03:19] *** Joins: CharlesOliverNut (~gitterhea@2001:470:69fc:105::311e)
+[17:03:19] *** Joins: XavierNoriaGitte (~gitterfxn@2001:470:69fc:105::3111)
+[17:03:19] *** Joins: OlleJonssonGitte (~gitteroll@2001:470:69fc:105::313b)
+[17:03:19] *** Joins: ChrisSeatonGitte (~gitterchr@2001:470:69fc:105::30fb)
+[17:03:19] *** Joins: FlorianDoubletGi (~gitterflo@2001:470:69fc:105::310c)
+[17:03:19] *** Joins: basshelal[m] (~basshelal@2001:470:69fc:105::30e7)
+[17:03:19] *** Joins: MattPattersonGit (~gitterfid@2001:470:69fc:105::3105)
+[17:03:20] *** Joins: RomainManni-Buca (~gitterrma@2001:470:69fc:105::3146)
+[17:03:20] *** Joins: AnilJaiswal[m] (~aniljaisw@2001:470:69fc:105::1:aa)
+[17:03:20] *** Joins: klobuczek[m] (~klobuczek@2001:470:69fc:105::1:24c)
+[17:03:20] *** Joins: shibz[m] (~shibzmatr@2001:470:69fc:105::1:8be)
+[17:03:20] *** Joins: demon36[m] (~demon36ma@2001:470:69fc:105::dc32)
+[17:03:20] *** Joins: jswenson[m] (~jswensonm@2001:470:69fc:105::fd45)
+[17:03:20] *** Joins: kares[m] (~karesmatr@2001:470:69fc:105::30d1)
+[17:03:20] *** Joins: CrisShupp[m] (~cshupp1ma@2001:470:69fc:105::1:374)
+[17:03:20] *** Joins: NoraHoward[m] (~baroquebo@2001:470:69fc:105::f6ff)
+[17:03:20] *** Joins: TimGitter[m] (~gittertir@2001:470:69fc:105::314f)
+[17:03:20] *** Joins: Leonardomejiabus (~thebiglor@2001:470:69fc:105::1:3a2)
+[17:03:20] *** Joins: TimGitter[m]1 (~gittertim@2001:470:69fc:105::314b)
+[17:03:20] *** Joins: mattpatt[m] (~mattpattm@2001:470:69fc:105::315d)
+[17:03:21] *** Joins: johnphillips3141 (~johnphill@2001:470:69fc:105::1:d36)
+[17:03:21] *** Joins: BlaneDabneyGitte (~gitterrae@2001:470:69fc:105::3140)
+[17:03:21] *** Joins: rebelwarrior[m] (~rebelwarr@2001:470:69fc:105::beba)
+[17:03:22] *** Joins: headius (~headius@2001:470:69fc:105::3027)
+[17:09:13] <headius> Moving to the gem will need to happen sooner or later
+[18:11:51] *** Joins: subbu (~subbu@user/subbu)
+[18:22:34] <headius> good morning!
+[18:22:53] <headius> ahorek: yeah the more I think about it we should just start the process of moving this into the gem
+[18:23:10] <headius> since it is FFI it should be easier, like io/console
+[18:25:04] <headius> enebo: coordinating work leading up to 9.3.1.0... 
+[18:25:29] <headius> I will finish looking over the many things we marked (mostly my fault) for 9.3.1 and punt or merge/fix the easier ones
+[18:26:01] <headius> all the reline/irb stuff has been punted to 9.4 since that's the level where we move to new IRB and reline
+[18:28:56] <headius> module stuff will be punted because those changes need a major
+[18:29:05] <enebo[m]> I will do the windows test you asked about yesterday
+[18:29:12] <headius> and I'm still waiting on 11.0.13 to fix a bug I found in javac
+[18:29:39] <headius> enebo: I think ahorek did and it does work with new irb
+[18:29:47] <enebo[m]> ok great
+[18:29:58] <headius> so new irb+reline may end up fixing a lot of stuff
+[18:30:30] <headius> it does depend on FFI transitively through irb => reline => io/console so there's no non-native option without current jline readline
+[18:32:39] <headius> we can probably figure out how to spin jruby-readline off as a standalone gem and make it an option
+[18:33:17] <headius> ahorek: I think we should merge your additional syslog platforms for 9.3.1.0 and then start moving it all out to the syslog gem for 9.4
+[18:33:40] <headius> and I don't see a reason not to merge the socket constants PRs also
+[18:33:51] <headius> unless enebo has any concerns there
+[18:34:07] <headius> https://github.com/jruby/jruby/pull/6839 and https://github.com/jruby/jruby/pull/6840
+[18:34:07] <enebo[m]> I don't
+[18:34:20] <headius> ok
+[18:34:28] <headius> so I will push these through
+[18:35:00] <headius> I merged in my small change that allows aliasing from one frame-aware method name to another frame-aware method name but it doesn't really change much
+[18:35:54] <headius> ahorek makes a good point on one of those PRs... if we define constants we did not before, code that checks defined? might start trying to use them
+[18:36:07] <headius> so if we can't support them it it might not be a good idea to define them
+[18:38:14] <enebo[m]> https://github.com/jruby/jruby/issues/5617
+[18:39:41] <headius> not surprised using native stat makes this work bette
+[18:39:48] <headius> what do you want to do with this?
+[18:40:03] <enebo[m]> I want it fixed but it is kind of icky
+[18:40:09] <headius> it may not be possible to detect the conditions for EACCES using JDK APIs
+[18:41:12] <enebo[m]> so here is part of the main problem.  the unlink is returning the wrong errno due to the logic of trying to see if we are traversing a back symlink
+[18:41:21] <headius> right
+[18:41:23] <enebo[m]> So the errno itself is bogus
+[18:41:39] <headius> and it is trying to guess what errno to use
+[18:42:52] <headius> so you have a fix that works with native stat?
+[18:43:28] <enebo[m]> no
+[18:43:51] <enebo[m]> I looked at it 15 days ago and only remembered yesterday this should be fixed
+[18:44:13] <enebo[m]> This is hit by 2 or more parties so it feels like we should do something
+[18:45:14] <enebo[m]> JRubyFile.exists() should more or less work for unreadble yet existing files but it may be that we are broken when native is disabled and then it will return the wrong errno in that case
+[18:45:23] <enebo[m]> but I feel that is the worst-case solution
+[18:45:43] <enebo[m]> as a solution I would prefer it over nothing since almost no one runs jruby with native disabled
+[18:46:04] <enebo[m]> but it would be cool to somehow make this work with Java APIs
+[18:46:31] <enebo[m]> afk for a while so chew on that and maybe you will think of another idea
+[18:57:16] <headius> I had two minor 3.0 fixes in flight so finishing that quick
+[19:15:59] <headius> enebo: so what is your stat change to fix this ENOENT thing
+[19:16:23] <headius> looking at unlink it seems like we should just remove the checks and let the errno tell the stroy
+[19:16:24] <headius> story
+[19:17:30] <headius> yeah that works
+[19:17:49] <headius> that path is only followed for native anyway so I'm not sure why we would need our artificial checks
+[19:25:39] <headius> enebo: I will push this as a PR and we can see how it behaves, but it passes the unllink specs and MRI test_file
+[19:38:41] <headius> enebo: perhaps I should fix this on 9.2 branch and we can merge it in for 9.3.1
+[19:42:24] <headius> https://github.com/jruby/jruby/pull/6883
+[20:10:28] <enebo[m]> I marked it against 9.2.20.0 initially which was why it took me a while to find it
+[20:10:39] <enebo[m]> headius: I asked a question on that PR
+[20:11:05] <enebo[m]> If the symlink_p should still be called the variable and isTrue should get removed with a comment
+[21:20:36] <headius> good point
+[21:22:33] <headius> I will check the C code
+[21:24:11] <headius> they literally just coerce and call unlink
+[21:25:06] <headius> ok maybe more than that
+[21:25:13] <headius> apply2files has a lot of code
+[21:25:30] <headius> no symlink call though
+[21:25:33] <headius> I will remove it
+[21:26:27] <headius> pretty sure our call was only in service of those pre-checks
+[21:27:06] <headius> enebo: repushed
+[21:30:25] <enebo[m]> headius: cool
+[21:37:01] <headius> enebo: should I punt these tracer/coverage issues to 9.4?
+[21:37:15] <headius> they are not very high priority but we are falling further behind with each release
+[21:37:19] <enebo[m]> yeah I think so
+[21:37:25] <enebo[m]> Bigger fish
+[21:37:57] <enebo[m]> someone can light a fire under us if they really want to and we will do it at that point
+[21:40:33] <headius> yeah ok
+[22:36:36] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[22:53:27] <headius> enebo: I attempted to improve the utility of the base jar by copying some of these extension-loading stub files into the jar root
+[22:53:30] <headius> https://github.com/jruby/jruby/pull/6884
+[22:54:00] <headius> but there are problems that may doom this approach... we may want to instead move the built-in extensions out of the jar and make the base jar only contain things that are not stdlib
+[22:54:32] <headius> we have this weird hybrid builtin set-up where some stdlib are half in lib/ruby/stdlib and half in a Java extension in the jar
+[22:54:46] <headius> it basically means the jruby-base jar is partially broken if run without the stdlib files
+[22:55:06] <headius> and of course we also use FFI internally which is really problematic without the filesystem
+[22:55:40] <headius> this is an experiment anyway and it allows most of the built-in extensions to work from just the jar
+[22:55:51] <enebo[m]> yeah I am not sure what the best route is (ignoring the FFI issue which is maybe a tangential issue to bundling)
+[22:56:23] <headius> if we were to set this up more like CRuby we would have a .jar for each extension and they'd load from that
+[22:56:34] <headius> but that would mean none of them are available at all in the base jar... which might be fine
+[22:56:43] <headius> we serve two masters here
+[22:58:01] <headius> .jar for each will also tie into modules later on... each JRuby ext will have a JVM module and be loaded that way
+[22:58:03] <headius> trying to mesh the two layouts will be interesting
+[23:54:16] *** Joins: subbu (~subbu@user/subbu)

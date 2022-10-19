@@ -1,0 +1,672 @@
+[00:08:27] <hayley> https://www.youtube.com/watch?v=ietkuUZwjpU
+[00:10:29] <hayley> clothespin_: When it comes to natural languages, people usually learn them to avoid them going extinct. Funny to see "DON'T LEARN THESE 4 LANGUAGES" in the thumbnail in comparison.
+[00:12:20] *** White__Flame is now known as White_Flame
+[00:13:29] <epony> "a decent synthetic person knows all languages and protocols" --C3PiOH aka Yell-0'Cepes
+[00:26:29] * hayley uploaded an image: (71KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/zdCiBhgAeDcSoVOwkzZlSiuf/pike-vm.jpeg >
+[00:33:33] <gilberth> hayley: Did you do an exclamation mark count on that README which dreamt of O(nm)?
+[00:34:24] <hayley> One second...
+[00:34:36] <hayley> Zero.
+[00:34:58] <gilberth> Surprising.
+[00:35:18] <hayley> Still, /me wonders how to provoke O(2^n) out of a Pike regex VM. Should theoretically be possible.
+[00:35:27] <hayley> We need to convince the VM to fork on every character.
+[00:36:09] <hayley> (a*)*?
+[00:36:55] <hayley> But if the frontend spots it and simplifies, we won't see any lossage. (a*a)* should thwart AST analysis.
+[00:38:45] <gilberth> Wait a second. The size of an NFA is linear in the size of the RE.
+[00:39:44] <hayley> Right.
+[00:40:21] <gilberth> It's only the DFA which can in size explode to O(2^n). One bit for each NFA-state.
+[00:42:12] <hayley> Right, I am trying to get O(2^n) execution time out of a Pike VM, not a O(2^n) size NFA.
+[00:44:34] <hayley> Backtracking more or less does a depth-first search, whereas Pike does a breadth-first search. Still O(2^n) to walk. 
+[00:44:41] <gilberth> Which you don't have. For each of the up to n states, you're in you compute the following state.
+[00:44:56] <gilberth> Things change however for a Mealy machine.
+[00:45:32] *** Joins: moon-child (~moon-chil@cardinal.elronnd.net)
+[00:45:54] <hayley> Yes, I don't have any non-determinism. But the Pike VM has a SPLIT instruction which basically fork()s the machine and runs all options in a NFA.
+[00:46:15] <gilberth> As you need to record all the output from all the transitions you have taken. And that's O(2^n). Is there even sth like a non-determistic Mealy machine? Nah, you can define one, if you wish.
+[00:47:21] <gilberth> hayley: It fork()s? Ok. That'll be O(exp) again. I am would need to read up about the Pike VM to say. I don't remember everything.
+[00:47:50] <hayley> The thing I am concerned about is that it does breadth-first search, rather than depth-first.
+[00:48:22] <gilberth> Depth-first would be PCRE and won't help with POSIX at all.
+[00:48:46] <hayley> I am not trying to implement anything, I'm just trying to show the obvious, that a Pike VM is still O(2^n).
+[00:49:41] <gilberth> Nah, I am just saying. I have the hunch that PCRE semantics are an accident.
+[00:50:47] <hayley> Thoughts on Russ Cox's claim that "The POSIX committee decided that Perl's rules for resolving submatch ambiguity were too hard to explain, so they chose new rules that are easier to state but turn out to be harder to implement. (The rules also make it essentially impossible to define non-greedy operators and are incompatible with pre-existing regular expression implementations, so almost nobody uses them.) Needless to say, POSIX's rules haven't
+[00:50:48] <hayley> caught on. "
+[00:50:59] <hayley> I found them quite easy to implement.
+[00:51:17] <gilberth> And I don't like (foo|foobar) on "foobar" matching just "foo". Makes no sense to me.
+[00:52:59] <hayley> Hm, I have a BFS regex engine in Haskell, which I've gotten O(2^n) runtime out of before. But it doesn't have an optimiser to save its ass on the obviously exponential expressions.
+[00:53:12] <gilberth> I mean this is nuts. And actually I find PCRE harder to implement. I tried not too hard, but realized that you need to turn the RE inside-out while deriving. Hairy.
+[00:54:41] <gilberth> hayley: Who says that this optimizer could do away with O(exp) always? Usually, you can't an the O(exp) is inherit. Just like DFA are O(2^n) in size, yet most practical ones are far smaller.
+[00:55:05] <hayley> I know, what I mean is that the optimiser makes it harder to find O(exp) cases. 
+[00:55:55] <gilberth> And as this is equivalent: Brzozowski doesn't have the optimizations that Owens has.
+[00:56:30] <gilberth> Implement Brzozoski by the paper and you face O(2^n) for about anything.
+[00:56:52] <gilberth> Use Owens and you're fine.
+[00:57:16] <gilberth> hayley: You're a CS student, you find a proof, if you wish.
+[00:57:45] <hayley> All examples of blowing out NFA implementations describe backtracking engines.
+[01:03:26] <gilberth> hayley: First figure out, if that guy does submatch addressing at all.
+[01:03:37] *** Quits: lagash (lagash@lagash.shelltalk.net) (Ping timeout: 240 seconds)
+[01:03:38] <hayley> He does.
+[01:05:03] <gilberth> Ok. Does it accept a pattern as an POSIX RE and an input and yield the submatch addresses? Could I subject that to the AT&T test suite?
+[01:05:43] <hayley> I would guess it does PCRE.
+[01:05:58] <gilberth> This changes things.
+[01:07:51] *** Joins: phantomics (~phantomic@71-218-243-149.hlrn.qwest.net)
+[01:07:58] <gilberth> Because once you're in a branch of an alternative with PCRE, that branch "latches" and won't yield to a different branch, which may match a longer input. Thus "foo|foobar" on "foobar" matches "foo" only.
+[01:10:13] *** Quits: mrmr (~mrmr@user/mrmr) (Ping timeout: 240 seconds)
+[01:11:05] <gilberth> PCRE doesn't even try to find a longest match. This btw makes it completely useless for a scanner.
+[01:15:48] <gilberth> It only appears so, as (a*) would match not just \eps, but the longest run of 'a's. That is a* = a^∞ + ... + a^1 + a^0 with PCRE.
+[01:16:13] <gilberth> This is what makes PCRE hard to understand. And for me hard to implement.
+[01:16:50] <gilberth> And a pain to work with, btw.
+[01:17:13] * hayley just looking for O(exp), not anything useful.
+[01:17:48] <gilberth> Which again gets me to the theory, that people want PCRE syntactic sugar, but not necessarily its silly semantics.
+[01:19:00] <gilberth> And perhaps those backreferences, which just can't be matched with an DFA. Regular expressions with backreferences are no regular expressions, they don't describe a regular language.
+[01:27:37] * hayley runs RE1 on (a*)* and gets a segfault. Nice.
+[01:28:08] <hayley> Aha, the recursive engine blows the stack.
+[01:28:13] <gilberth> lol, that olde trick?
+[01:28:44] <gilberth> This is perhaps the reason why a** is UB. But (a*)* is not. Figure.
+[01:28:51] <hayley> Removing the recursive engines, I get "fatal error: backtrack overflow"
+[01:29:12] <hayley> gilberth: I think RE1 is more of an educational model, but still.
+[01:29:34] <hayley> I only really want to ruin the Pike engine, so I disabled the rest.
+[01:29:53] <gilberth> Have fun!
+[01:30:21] <hayley> To get AFL to fuzz it, I just need to read the RE from a file.
+[01:30:46] <gilberth> AFL is your fuzzing tool?
+[01:31:13] <hayley> Yes.
+[01:32:30] <hayley> (a*)* has every thread fork() on every character, which is a good start.
+[01:33:15] <gilberth> I won't call that a good start. It's a classic rather.
+[01:33:31] <hayley> It's good for me.
+[01:34:52] <gilberth> [= =] and [. .], when?
+[01:40:20] <hayley> I found some crashes apparently. Hooray.
+[01:40:33] <hayley> Now (c*(a*c*(c*(a*c*(a*))*(c*(a*c*(a*)).).(.).(a*)).). is just an evil RE, but it doesn't crash. lol
+[01:41:15] <hayley> ((D(D*)??)((D(D*)??)??(a*)*a!)**(a**a!)??(a*)*a!)**(a/*a!)**
+[01:42:23] <hayley> "malloc(): corrupted top size" Interesting.
+[01:44:39] *** v3ga1 is now known as v3gajerusalem
+[01:45:19] <hayley> "==1410647==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x60f0000003b8 at pc 0x55d31ff952ae bp 0x7fff57a547c0 sp 0x7fff57a547b0" Lovely, an out of bounds write.
+[01:45:21] <gilberth> When I add missing ")", I get 1045 states for the first example.
+[01:46:48] <gilberth> Are these examples what the fuzzer came up with?
+[01:47:06] <hayley> Yes.
+[01:47:10] <hayley> Terrifying, no?
+[01:48:36] <gilberth> No, the D(D*)??... thing is just 45 states.
+[01:50:22] * hayley adds if (i >= s->nsub) abort()
+[01:51:00] *** Joins: lagash (lagash@lagash.shelltalk.net)
+[01:51:00] <gilberth> Not easy to find a string that matches.
+[01:52:47] <hayley> There is a "save 21" instruction in the VM instruction code, yet apparently we cannot fit a write to register #20. Hm.
+[01:58:33] <gilberth> Are you bored, hayley?
+[01:58:55] <hayley> Yes. And IIRC I was trying to find somewhere where the Pike VM went horrendously slow, not crashing, but I have to fix the other bugs first.
+[02:06:40] <hayley> Oh, for fuck's sake, someone seriously decided that there should be exactly 20 registers in each RE, even if we parse more or less?
+[02:08:42] *** Quits: lagash (lagash@lagash.shelltalk.net) (Ping timeout: 250 seconds)
+[02:09:00] *** Quits: random-nick (~random-ni@87.116.181.150) (Ping timeout: 256 seconds)
+[02:09:29] *** Joins: dec0d3r (~dec0d3r@2001:8003:480a:e00:e07:e7c3:7efc:ed0f)
+[02:12:27] <hayley> No crashes yet. Maybe I should feed it a longer haystack, just to be sure that it's going to barf.
+[02:13:01] <gilberth> "20 registers should be enough for everyone."
+[02:16:16] *** Joins: mrmr (~mrmr@user/mrmr)
+[02:16:59] <hayley> It only took 4 minutes, but AFL found another crash. Hooray.
+[02:17:26] <hayley> (a*((a*)*?(aa*)((a*)9(aa*)(a*)9a*)(a9a*).*).a(aa*a*)((a*)9(aa(aa*)((a*)9a(aa*)Ka*)9(aa*)(9a*).(a*h*)9a*)(a9a*).(a*((a*)5?(aa*)((a*)9(aa*)((a*).9a*).*).*)8d9a*).*).9a*).
+[02:18:55] <hayley> God dammit, I set the limit to 100 registers, so AFL just creates more registers again.
+[02:19:03] <hayley> Fine, I'll walk the RE to get the actual count.
+[02:19:06] <gilberth> Your line bad? I get a lot of random noise.
+[02:19:23] <hayley> That's why it's a fuzzer.
+[02:20:00] <gilberth> hayley: Why not just set it to 1M or so and trust on the OS to have one zero-page only?
+[02:20:21] <hayley> Why not have the parser return this information somehow? /me scratches head.
+[02:21:00] <gilberth> Just count the parens, or won't that do?
+[02:21:30] <hayley> That'll do. But the parser already keeps a paren count, so I should just expose that.
+[02:36:40] <hayley> Seems I fixed it now.
+[02:36:49] <copec> clever: https://youtu.be/nDhOGsBj1fA
+[02:48:57] <hayley> Still nothing after pi * 1e6 regexens. Damn.
+[02:50:31] <gilberth> copec: Run in reverse?
+[02:54:56] <hayley> Huh, this VM only allocates a thread array with as many threads as bytecode instructions. That can't be right.
+[02:55:33] <hayley> ...I guess we can only have one thread in a given state at a time? idk
+[02:57:13] <hayley> So the complexity would be O(mn) which is surely wrong.
+[03:00:54] <hayley> "For example, if you do a Thompson NFA simulation (or, more practically, a Pike VM), then the time complexity is going to be O(mn), where m ~ len(regex) and n ~ len(input), regardless of capturing groups." Hyeh, burntsushi says it too?
+[03:03:00] *** Joins: lagash (lagash@lagash.shelltalk.net)
+[03:07:30] *** Joins: kevingal (~quassel@2a02:8084:4140:f300:704f:b8f4:696c:16cc)
+[03:07:49] <hayley> gilberth: What's the trick with Thompson then? Matching is O(mn), constructing a NFA is O(m)?
+[03:09:14] <hayley> I was thinking eps-closures, but that's also bounded in O(m). Logs say "Even the traditional Thompson method with subset construction is O(exp). You can't escape that. And, yes, in practice this is of no concern."
+[03:09:16] <gilberth> Which trick?
+[03:09:28] <hayley> How there is seemingly no O(exp).
+[03:10:20] <gilberth> Well, you get O(exp) DFA states.
+[03:11:25] <hayley> There's no DFA here though. Just a NFA where each state can be active or not.
+[03:12:52] <gilberth> Yep. What about your registers?
+[03:13:57] *** Quits: pritambaral (~pritam@user/pritambaral) (Ping timeout: 240 seconds)
+[03:14:13] <hayley> One register bank per state. Not sure if that works, really.
+[03:14:42] <hayley> But even without submatching, where the hell did O(exp) go?
+[03:17:12] <gilberth> Yes, sure you're right. w/o there is no O(exp) in there. But that is not interesting, as we know since ages how to do that with a DFA, and that's even a very quick conversion process.
+[03:19:32] <hayley> It's definitely wrong in the presence of submatching though. (aa|a)* even doesn't work.
+[03:21:17] *** Joins: ixelp (~ixelp@p5b157756.dip0.t-ipconnect.de)
+[03:21:18] *** ChanServ sets mode: +o ixelp
+[03:21:26] <Alfr> mfiano, what are conformally displaced arrays?
+[03:22:03] <gilberth> hayley: Yes, sth that Laurikari didn't realize. Or perhaps he did and was silent about it.
+[03:22:14] <mfiano> Conformal displacement is something Lisp Machines did.
+[03:22:41] <mfiano> There was a decent video about it, but I'm not sure I can find it, and I certainly can't explain it very well at this hour :/
+[03:23:09] <hayley> Conformal displacement means that we displace the actual array indices, rather than the row-major index.
+[03:23:41] <hayley> i.e. (aref a 1 2) where A is displaced by (1 1) references (2 3) in the backing array.
+[03:24:26] <Alfr> Hm ... each dimension could then be displaced by some chosen offset?
+[03:24:44] <hayley> gilberth: Hm, but Rust does the same thing, and I swear that worked for (aa|a)*. [Yes, it's backwards to make PCRE happy.] 
+[03:24:47] <hayley> Right.
+[03:25:04] <Alfr> hayley, thanks for the short answer. :)
+[03:25:50] <gilberth> hayley: It does use a Laurikari inspired method? The Haskell folks figured a way to do that, yes.
+[03:26:23] <hayley> No, rather using the Pike VM and only having one register bank for a state.
+[03:26:49] <gilberth> With assignments on the transitions?
+[03:27:22] * hayley reads
+[03:29:53] <hayley> Looks like it.
+[03:30:02] * gilberth points to section 6.1 in his draft.
+[03:31:25] <hayley> Seen it, yes.
+[03:31:50] <gilberth> I mean, what happens if two transitions are taken at the same time leading to the same state. Like Q1 -> Q2, and Q3 -> Q2. Now suppose the two transitions have a disagreement on tag assignments. What happens then?
+[03:31:57] <hayley> But there are no tag priorities, either. Just "whichever state gets here first gets dibs on registers".
+[03:32:17] <gilberth> So it's random?
+[03:32:35] <hayley> Seemingly, but it's not wrong.
+[03:32:44] <gilberth> I even showed that there is no order on the tags, which could work for my example, even.
+[03:33:00] <hayley> But I am writing (aa|a)* rather than (a|aa)*.
+[03:33:28] <hayley> RE1 gets both wrong, whereas Rust only gets the latter wrong.
+[03:33:37] <gilberth> hayley: Verify against a conforming implementation. I would be very surprised, if you don't find flaws.
+[03:34:08] <hayley> Conforming implementation of what? Rust regex does not advertise conforming to anything, nonetheless.
+[03:34:51] * hayley decided to add the note in the README "While the syntax is admittedly wonky (<excuse>), one-more-re-nightmare makes its best effort to implement POSIX semantics for matching (<cite>). Any behaviour contrary to POSIX is a bug."
+[03:36:05] <gilberth> So that other is useless? You get random solutions? Depending on what? The phase of the moon? My wife's mood?
+[03:36:08] <hayley> But I guess I just described how it works - for (aa|a)* we presumably pick the "even" state first, and get the right registers.
+[03:36:38] <hayley> Rust produces (p - 1, p) for (a|aa)* and RE1 produces (p - 1, p) for both.
+[03:37:20] <gilberth> PCRE and shortest match?
+[03:37:38] <hayley> I assume so.
+[03:38:03] <gilberth> Have you seen dave0? I need coffee.
+[03:39:34] <hayley> https://twitter.com/maddiemonad/status/1481356652645339140 "but the fact that it runs on software means there is a large divide between people who can make software do what they want, and people who can't"
+[03:39:47] <hayley> Correction - there's a divide between "people who can make software not do what they don't want", and people who can't.
+[03:40:31] <hayley> I should not have to mention that early DAO in Ethereum which was broken, and required rolling back the blockchain because it was so disastrous.
+[03:41:54] <hayley> If "no code" means we teach people to use theorem provers, then I'm on board. Else not.
+[03:46:42] <hayley> Oh, RE1 is correct, I wrote (a|aa)* by mistake. Dammit!
+[03:50:30] <hayley> But POSIX cannot be implemented by the Pike VM, right.
+[03:50:38] *** ryanbw1 is now known as ryanbw
+[03:54:20] *** Quits: selwyn (~selwyn@user/selwyn) (Quit: WeeChat 3.3)
+[03:54:36] *** Joins: selwyn (~selwyn@user/selwyn)
+[04:07:03] *** Quits: kevingal (~quassel@2a02:8084:4140:f300:704f:b8f4:696c:16cc) (Remote host closed the connection)
+[04:08:58] <hayley> gilberth: So that other library was O(mn)?
+[04:14:30] <gilberth> You mean One(more nightmare)?
+[04:14:53] <hayley> No, I mean it ran in O(m*n) time. one-more-re-nightmare is O(n).
+[04:15:25] * gilberth tried to be funny and failed.
+[04:16:19] <gilberth> Could well be, if they pick registers at random. However, the Haskell folks know a few tricks.
+[04:25:05] <hayley> I suspect, as PCRE is shortest match first, picking registers from the first time a state is traversed in breadth first search works.
+[04:33:00] <gilberth> Dammit, I hate this landline.
+[04:34:56] <gilberth> hayley: That might well be.
+[04:34:58] <hayley> https://www.youtube.com/watch?v=Wsni1xUVdXs
+[04:34:58] -ixelp- Pink Floyd - On the Run - Analog synthesizer cover - YouTube
+[04:36:02] <gilberth> Wat? My laptop is connection both over WiFi and USB to my phone for internet?
+[04:36:46] * gilberth wants a clever router with automatic fall-over to LTE.
+[04:37:20] <gilberth> hayley: I not sure about PCRE here at all. I never really care, because I don't want to those semantics.
+[04:37:50] <hayley> I just wanted to know if the O(m*n) claim was reasonable, since neither of us really thought it was at first.
+[04:38:24] <gilberth> I can't see how that would work for POSIX. And wasn't the claim that it does POSIX.
+[04:38:39] <hayley> Right, it'll work for PCRE but not POSIX.
+[04:38:50] <hayley> Oh! Right.
+[04:39:04] <hayley> "Ergex supports (almost) POSIX-compatible matching, including POSIX-compatible submatch extraction." Hm, no.
+[04:40:08] <hayley> RE1 matches everything into \1 with (a*)(a*)
+[04:41:01] <gilberth> Or to state it otherwise: When it can do O(nm) with an NFA, it can do O(n) with a DFA. And that is what I was seeking some ten years ago. Did my homework, read about all approaches, none worked, and came up with using the derivative. So it would surprise me, if that would work. Even, if it would, Thompson cannot do the Boolean operations.
+[04:47:17] <gilberth> hayley: Both POSIX and PCRE do match everything into \1 with (a*)(a*).
+[04:47:27] <hayley> Okay then.
+[04:51:55] <gilberth> That's the tricky part. PCRE at a first glance seems to do the same as POSIX, but it bites you later on.
+[04:53:56] * gilberth adds more test cases to the test suite
+[04:54:32] * hayley contemplates JIT and derivatives of context-free grammars for her next trick.
+[04:55:57] <hayley> If the paper is "yacc is dead", then the library shall be "yacc-lugosi's-dead"?
+[04:57:19] <gilberth> You want to gcfgp?
+[04:57:51] <gilberth> hayley: BTW are you aware where the name "grep" comes from?
+[05:05:23] <hayley> g/re/p in ed?
+[05:05:50] <gilberth> Yep. Old time ed(1) user?
+[05:06:05] <hayley> No, I just read the Wikipedia page before.
+[05:06:37] <gilberth> Heh.
+[05:11:29] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4)
+[05:14:03] <aeth> but if it comes from ed, then why do we need it as a separate program when we can just run ed?
+[05:19:11] <hayley> https://www.youtube.com/watch?v=Fqy-fCf6Ymg
+[05:19:12] -ixelp- Bela Lugosi's Dead (Official Version) - YouTube
+[05:19:50] <gilberth> aeth: Perhaps because ed(1) would read the file into core first? Would it? I guess so. It's not MULTICS after all.
+[05:21:05] <hayley> IIRC Matt Might mentions somewhere the importance of simplifying derivatives of CFGs (which are infinite, but often "similar" enough that this helps). Might as well JIT then.
+[05:21:53] <hayley> https://matt.might.net/papers/might2011derivatives.pdf section 8. "Compaction"
+[05:25:33] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[05:30:36] <drakonis> named-readtables = v. good
+[05:30:54] <drakonis> if there was a new standard, this should be added to it
+[05:37:00] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Ping timeout: 276 seconds)
+[05:37:30] <hayley> https://www.youtube.com/watch?v=c9qmhzdf38g
+[05:37:31] -ixelp- MELODITON sound demo - YouTube
+[05:45:55] * gilberth tried to make sense of V6's ed(1) and found <http://clim.rocks/gilbert/getpid.c> ;Hilarious and sure portable.
+[05:50:47] <robin> lol
+[05:55:53] <hayley> I also have to wonder how they handle "backtracking" when e.g. (ab)* matches abaa. Then the next search should start from the second a, though we already consumed it.
+[05:56:00] *** Quits: lagash (lagash@lagash.shelltalk.net) (Remote host closed the connection)
+[05:56:33] <hayley> n.b. they stream, rather than have the haystack in a buffer.
+[05:57:39] * hayley wonders if the ole grep machine can be improved upon, to avoid even that.
+[06:02:27] *** Joins: lagash (lagash@lagash.shelltalk.net)
+[06:02:33] * hayley still .oO(https://youtu.be/TQwGjhwPEik?t=31)
+[06:08:59] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4)
+[06:13:57] * hayley has Netfarm syndrome for regex engines now.
+[06:14:22] <gilberth> What's the Netfarm syndrome?
+[06:14:54] <hayley> When you're pissed someone else got more reception than you, after you wasted a fair amount of time on something better.
+[06:15:28] <gilberth> You hired a PR guy already.
+[06:16:19] <hayley> No, I haven't gotten the bottle of orange juice, since I haven't sold to AMD yet.
+[06:17:13] <gilberth> You could order a bottle with Amazon and pretend you sold yet. Just don't tell anyone.
+[06:18:09] <hayley> "Dear Mr AMD I have regex engine, I'll sell it for one Threadripper 3900WX system and a bottle of orange juice"
+[06:19:25] <gilberth> It's Mrs AMD. Her name is Lisa.
+[06:19:32] * hayley reads ways of making faster DFAs
+[06:19:36] <hayley> "Saturate RAM bandwidth by using SSE cmpistri/cmpestri instructions" lol, not going to work.
+[06:40:22] <gilberth> I could find a Threadripper CPU, but still no boards. And then I don't know what I would need that many cores for.
+[06:44:16] <White_Flame> the mobos are quite expensive, too
+[06:47:30] <White_Flame> this is also why a lot of people go for prebuilts nowadays, they actually can get all the parts
+[06:51:22] <White_Flame> hmm, newegg actually has stock of both threadripper and sp3 mobos, wasn't the case last time I looked
+[06:51:57] <gilberth> SP3 is EPYC, isn't it?
+[06:52:06] <White_Flame> oh wait, right
+[06:52:30] * White_Flame is doing his occasional EPYC window shopping
+[06:53:14] <White_Flame> dual-socket 64-core with mobo & CPUs for $13,700.  I don't think that's gone up
+[06:54:20] <gilberth> I wonder if this server stuff is worth its money.
+[06:54:55] <White_Flame> RAM is a bit more expensive now, though
+[06:55:10] <White_Flame> we're still using our 1950x 16-cores as servers for VMs and such
+[06:55:15] <White_Flame> 1st gen threadripper
+[06:55:41] <gilberth> Wow. 70 years old? Impressive.
+[06:55:56] <White_Flame> but basically, you pay if you want more memory than desktop, or more I/O lanes
+[06:56:15] <White_Flame> I think the CPU core count isn't actually going to be that much higher than desktop for now
+[06:57:45] <gilberth> Hmm, I don't see how I would need that many cores. But I want a bit of RAM and ECC is a must. I have no idea if this server branded stuff is somehow more reliable.
+[06:58:05] <White_Flame> AMD's supported ECC on desktop for a while now
+[06:58:16] *** Quits: euandreh (~euandreh@2804:14c:33:9fe5:567f:a71e:f346:c5f0) (Ping timeout: 245 seconds)
+[06:58:17] <White_Flame> intel keeps it more to servers
+[06:58:24] <gilberth> I figured that.
+[06:59:12] <White_Flame> how much RAM would you want?
+[06:59:48] <gilberth> 128GB should be plenty.
+[07:00:00] <White_Flame> that's probably desktoppable today
+[07:00:12] <aeth> things I expected by now: mainstream ECC; mainstream SSDs larger than 2 TB
+[07:00:29] <aeth> SSDs in particular stalled for a few years
+[07:00:44] <White_Flame> yep
+[07:01:12] <gilberth> I have to see what 1GB costs. I won't mind 256GB. A machines lasts at least five years with me. I don't always need the greatest and newest.
+[07:01:14] *** Quits: Catie (~user@user/catie) (Quit: Going home)
+[07:01:33] <aeth> oh, yeah, that's another thing
+[07:01:45] <aeth> I think I got this current desktop in 2019 and I would've assumed that I'd be tempted to upgrade by now
+[07:01:59] <aeth> I mean, obviously I wouldn't, but I expected to be tempted
+[07:02:07] <gilberth> I still like rotating disks. Just give me more RAM for cache :-)
+[07:02:34] <White_Flame> ryzen desktop is max 128GB
+[07:02:35] <aeth> I can't handle any application that's on a HDD. Sure, storage or video or whatever is fine
+[07:02:46] <aeth> but you can notice the start time
+[07:02:56] <aeth> at least, the first time you launch it
+[07:02:58] <gilberth> Well, my current dated machine is suffice, but sits at my evil house some 100km away. I want a nice machine here.
+[07:04:10] <gilberth> aeth: My needs are very modest. I won't run applications like a web browser, or some office suite on that machine.
+[07:04:41] <aeth> yeah, but an SSD is still the most noticeable thing in any machine
+[07:04:45] <aeth> instant boot, instant app startup
+[07:05:22] <gilberth> I only boot when I physically move the machine.
+[07:05:57] <hayley> gilberth needs more threads to test more regular expressions against the POSIX spec.
+[07:06:58] <gilberth> hayley: Yes, that would be handy. I once used every CPU at our place to test REs for days or weeks.
+[07:08:42] <hayley> "After trying to convince borrow checker to borrow 4 bits out of 32 bit register I conclude that it still needs some work in the matter." Okay, how the hell do you expect to have a 4 bit atomic write?
+[07:08:45] <gilberth> aeth: But you are right. My current desktop is a poor olde i5 MacMini with a HDD. 16GB RAM though, but still pretty unresponsive.
+[07:08:58] <aeth> most noticeable thing: SSD
+[07:09:07] <aeth> least noticeable thing: probably the GPU unless you want to play a game you can't run
+[07:09:17] <aeth> maybe the sound card, though. Nobody cares about those these days
+[07:09:42] <aeth> RAM? People usually buy too much for whatever they're doing unless it's a budget prebuilt
+[07:09:55] * hayley needs more RAM to make GC faster than stack allocation
+[07:09:57] <aeth> erring on the side of caution and all of that... better to use 55% than 110%
+[07:10:07] <gilberth> aeth: Well, I was not used to have no SSD in my desktop. All the other MacMinis have SSDs. The other I have here is dead though :-( So this machine needs to do for now.
+[07:10:22] <hayley> And if you are going to blow your money on a Threadripper, well...
+[07:10:48] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[07:11:35] <gilberth> aeth: I certainly could use more RAM with my desktop. I mean, if the machine is paging, it has too little.
+[07:11:36] <hayley> Oh boy, we are fucked. https://www.coronavirus.vic.gov.au/victorian-coronavirus-covid-19-data
+[07:12:35] <hayley> 112k COVID cases, of a state with 6M people.
+[07:18:37] <gilberth> hayley: Yes. You sound surprised.
+[07:18:56] <hayley> It wasn't like that 3 months ago™.
+[07:19:31] <gilberth> Three month ago it was delta not omicron.
+[07:19:55] <aeth> gilberth: yes, old or very low end machines might run into RAM issues
+[07:20:06] <aeth> but 16-32 GB is usually good enough for anyone
+[07:20:13] <aeth> maaaaaaaaybe if you have too many Electron apps open at once
+[07:21:41] <gilberth> Well, as long as you reboot Firefox once in a while. I always wonder what it does with all that memory.
+[07:22:30] <hayley> Not GCing, cause that'd be slow.
+[07:22:52] <gilberth> Yeah, paging is faster!
+[07:23:19] <gilberth> Why GC, when you can swap?
+[07:23:50] <hayley> Why page when you can just compress the garbage?
+[07:24:17] <gilberth> Do you pay per volume?
+[07:24:42] <hayley> https://www.youtube.com/watch?v=8K9EOeoHo_Y ← Look, a real life compacting GC.
+[07:24:42] -ixelp- Why Melbourne’s Bins are Solar Powered #shorts - YouTube
+[07:26:12] <gilberth> Right.
+[07:29:02] <gilberth> Just occurs to me, a two space copying collector also is a real thing. When I face some closet or the like with lots of stuff, that could be thrown away because it was just sitting there for years, one good method is to pull everything out and then put all you need back there. What is left over, is garbage.
+[07:31:18] <gilberth> In general it's funny how algorithms or techniques apply to real time. Sorting for instance. Need to sort a few hundred things? Think first. You could also view your short-term memory, your scratch paper, your books at the desk, your bookshelf, the other bookshelf down-stairs, and the local library as a kind of cache-hierarchy.
+[07:32:45] <Alfr> gilberth, what are your roots? And do you have of the things you like to keep two intermediately?
+[07:33:08] <gilberth> Or: My wife and I used to do puzzles. We finished a few 2,000 piece puzzles and got an 5,000 piece puzzle. Question: When you need one week for 2,000 pieces, how long will it take for 5,000 pieces?
+[07:34:17] <gilberth> Alfr: Roots are in the vague future.
+[07:35:07] <Alfr> gilberth, about 25/4 weeks?
+[07:35:43] <gilberth> Correct. My wife was surprised that I "guessed" that correctly.
+[07:37:05] <gilberth> As well as Corona numbers as the pandemic started. She thought I would be paranoid or sth when I told her the numbers for the then next week and the following and the then following.
+[07:37:27] <gilberth> Two weeks later: "How did you know? You were right about those numbers."
+[07:39:22] <gilberth> About Corona, it looks really bad right now.
+[07:41:56] <hayley> https://www.youtube.com/watch?v=MeUC-wo7LxI
+[07:41:57] -ixelp- Beat The Clock - YouTube
+[07:42:12] *** Joins: euandreh (~euandreh@2804:14c:33:9fe5:b997:c1f9:27c:1247)
+[07:43:16] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 245 seconds)
+[07:45:25] <gilberth> What surprises me with Omicron though is that regions doing well with pre-Omicron Corona now seem to do worse. Like Danmark and therefore North Germany. We used to have a relatively low infection count, but with Omicron that changed.
+[07:56:39] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Ping timeout: 250 seconds)
+[08:31:32] *** Quits: semz_ (~none@user/semz) (Ping timeout: 240 seconds)
+[08:43:52] *** Joins: semz_ (~none@user/semz)
+[08:46:01] *** Joins: dave0 (~davezero@069.d.003.ncl.iprimus.net.au)
+[08:47:05] <dave0> maw
+[09:11:32] <hayley> maw
+[09:12:34] *** hugo- is now known as hugo
+[09:13:09] <dave0> hi hayley 
+[09:13:14] <dave0> how are you?
+[09:15:33] <gilberth> Are there digits with a radix different from 10. I mean in wide use? Wide use meaning here: You find that in a newspaper?
+[09:18:23] <dave0> does roman numerals count?
+[09:18:37] <Alfr> I, V, L, C, D, M
+[09:19:00] <Alfr> dave0, I know those had a name. :D
+[09:19:03] <Alfr> *knew
+[09:19:40] <dave0> they are important so we know which year movies were copyrighted :-)
+[09:20:35] <Alfr> gilberth, also does k (SI) count?
+[09:20:48] <dave0> ah nice one
+[09:21:06] <dave0> and temperature
+[09:21:11] <dave0> in the weather report
+[09:21:15] <gilberth> BTW I recently watched a documentary which explained, where radix 12 and 60 comes from. You would count like this: Start with the left hand closed, it will count the multiples of twelve. Have the right hand open. Place the thumb against between first knuckles on the index finger. That's 1, move the thumb 2, move, that's 3, move thumb to ring finger, 4, and so on. up until the last between-knuckles on the index finger: 12.
+[09:21:38] <gilberth> Use the left hand to count the multiples of 12. When all is "full" you reached 60.
+[09:22:09] <gilberth> Alfr: I was talking about a radix.
+[09:22:53] <Alfr> base 1000, what's wrong with that?
+[09:23:03] <gilberth> That is a positional number system where a number is written as a sum of base^place * digit. Not something weird like the Romans and no exponential notation.
+[09:23:10] <Alfr> (Okay, we don't have the alphabet worked out.)
+[09:23:27] <gilberth> Alfr: You have 1000 different digit characters?
+[09:23:48] <dave0> there's time in the newspaper.. seconds and minutes like you already said base 60
+[09:24:21] <gilberth> I was just curious. Because DIGIT-CHAR-P takes a radix and the default is 10, not "just default". I could have imagined that base 12 might have survived with some natural language.
+[09:24:38] <Alfr> I guess in formal solutions to certain puzzles, if ever published, you could find base 2.
+[09:24:39] <gilberth> dave0: That is still written base 10.
+[09:25:17] <dave0> gilberth: it's an interesting thing to think about because when i read the newspaper i'm not conscious of those things
+[09:26:30] <gilberth> Alfr: But a newspaper will never say we have 11011100001011110 new Covid infections. For your puzzle the 0 or 1 would have context.
+[09:26:45] <Alfr> gilberth, how about base 36, if there's a photo of a serial number?
+[09:27:01] <gilberth> I meant a character meaning "11" in base 12. Supposing that there is a base-12 system in daily use.
+[09:27:03] <Alfr> s/of/containing a object with a/
+[09:27:52] <dave0> if you consider the games in the newspaper...
+[09:28:00] <dave0> the puzzles
+[09:28:13] <Alfr> gilberth, months.
+[09:28:15] <gilberth> Alfr: You will also never read there were 2EZI new infection.
+[09:28:32] *** Joins: malaclyps (~mala@user/malaclyps)
+[09:28:35] *** Quits: mala (~mala@user/malaclyps) (Read error: Connection reset by peer)
+[09:28:40] <gilberth> Then you will have context and pass that radix to DIGIT-CHAR-P or PARSE-INTEGER.
+[09:29:24] <gilberth> I meant a land/language/culture which would in day-to-day use with its local script for usual numbers a base /= 10.
+[09:29:49] <Alfr> The French maybe?
+[09:30:04] <gilberth> Alfr: Month are written base 10. French uses base 10.
+[09:31:32] <dave0> gilberth: i think the answer to your question is `no unusual digits`
+[09:32:00] <gilberth> There is no character for the French or Danish, which is more weird, numbers. There also is no digit for twelfe in English. And you don't say in English fourtwelv and five. for 53. Either. Nor do you write <character-for-5><character-for-3>
+[09:32:53] <gilberth> Put otherwise: Is there a script for which :RADIX 10 is the wrong default for PARSE-INTEGER.
+[09:34:08] <hayley> dave0: Fine, thanks. You?
+[09:34:22] <gilberth> I was just curious, if there is such a thing. Or if all the world is using decimal these days.
+[09:35:25] <gilberth> Rather <char-for-4><char-for-5> for 53.
+[09:37:00] <gilberth> Anyhow, I came to this as [:digit:] which is iswdigit or isdigit, depending on the mood of the programmer, differs widely between systems. Worse: Unlike C, iswdigit doesn't return a weight.
+[09:37:49] <hayley> https://www.youtube.com/watch?v=AB9uSoH_rLI
+[09:37:50] -ixelp- The Decline and Fall of Me - YouTube
+[09:37:52] <gilberth> And I really don't like these function being interpreted towards i18n these days.
+[09:38:17] <hayley> .oO(Calling it a11y must be so accessible.
+[09:38:30] <hayley> )
+[09:38:53] <dave0> hayley: i'm okay.. i spent some money today :-)
+[09:38:58] <gilberth> At least not for isdigit, isxdigit. Actually I believe having [:ctype:] be the ascii meaning is safest.
+[09:39:36] <hayley> Also, someone mentioned using hardware for cracking "secure" boot keys, rather than Bitcoin mining. Won't work; the former demands like 2^256 tests for a 256-bit key.
+[09:39:38] <gilberth> dave0: Cool, would you teach me how to spend money?
+[09:39:50] <hayley> I wonder if people can imagine the difference between 2^64 and 2^256.
+[09:40:05] <dave0> gilberth: you have lots of money!
+[09:40:35] <gilberth> I won't call it lots.
+[09:41:15] <gilberth> hayley: They can't. They can't even tell 2*x from x^2 or 2^x.
+[09:41:19] <dave0> you have money for tailor made suits !
+[09:42:05] <gilberth> That is a pure necessity, as no off the shelf suit fits me.
+[09:43:10] <dave0> lol
+[09:43:33] <gilberth> And I am not fashionable, so I perhaps spend less on cloths than the average.
+[09:44:03] <hayley> Well, it appears that one expects to do about 1e23 hashes to mine a Bitcoin block these days. Compare to 1e77 derivations for brute forcing 2^256 keys. Oops.
+[09:44:16] <gilberth> dave0: That is not funny. I can't buy a shirt, a suit, or a sweater in a conventional store.
+[09:44:41] <hayley> Only about 1e80 atoms in the universe, too. Shall we work out how to get a key from every 1e3 atoms then? Yeah, no.
+[09:45:10] <gilberth> dave0: And for blue jeans I turn to uni-sex brand and buy sizes perhaps meant for women.
+[09:46:15] <Alfr> gilberth, that's hard, especially for x=2 ...
+[09:46:25] <dave0> gilberth: i'm definately not fashionable.. i buy clothes for utility and comfort
+[09:46:48] <dave0> let the young people wear fancy stuff
+[09:47:13] * hayley doesn't wear fancy stuff.
+[09:47:18] <gilberth> dave0: I prefer clothes to last and have some style. That out-rules fashion.
+[09:47:35] <gilberth> Fancy /= fashion.
+[09:48:05] <gilberth> Fashion is needing new stuff each month because one has no own taste and thus must buy one.
+[09:50:06] <gilberth> Would I be fashionable I would use Rust this year and Foolang next year.
+[09:50:27] <hayley> .oO(Apparently one-more-re-nightmare used to be only 3x as fast as cl-ppcre. Scary.)
+[09:50:35] <dave0> language du jour
+[09:50:51] <gilberth> dave0: Yep.
+[09:52:04] <gilberth> hayley: Try real work, not grepping. You'd be yet faster.
+[09:52:43] <hayley> Real work like lexing?
+[09:53:07] <gilberth> E.g. Try matching an CSS1 rgb(...) colour value and extract the components.
+[09:53:11] *** Quits: hugo (znc@verdigris.lysator.liu.se) (Quit: ZNC 1.8.2 - https://znc.in)
+[09:54:19] <hayley> "CSS Colors Level 4 adds support for space-separated values in the functional notation." Has anyone asked _why_ it's necessary to have rgb(R, G, B) and rgb(R G B)?
+[09:54:23] <gilberth> The day-to-day tedious work that people like to do with throwing an RE after.
+[09:54:37] <Alfr> gilberth, base 1? Thus simply counting the number of marks?
+[09:54:57] <gilberth> hayley: Can you tell me, why "rgb (r,g,b)" is not ok?
+[09:55:11] <hayley> Nope.
+[09:55:15] *** Joins: hugo (znc@verdigris.lysator.liu.se)
+[09:55:20] <gilberth> Alfr: Also not used.
+[09:55:57] <gilberth> And it is no positional base-n system.
+[09:57:00] <gilberth> hayley: These blanks are news to me, but those affine transformations also have them like "scale(1 2)"
+[09:57:26] <gilberth> .oO(They should have just used s-expressions.)
+[09:57:31] *** Joins: notzmv (~zmv@user/notzmv)
+[09:57:45] <hayley> .oO(They should just have used a binary format.)
+[09:58:01] <gilberth> .oO(Then I could write a parse now, which also works in 10 years, or 20, or 30, or whatever.)
+[09:58:22] <gilberth> hayley: Binary? Are you nuts?
+[09:58:33] <hayley> Yes, and I like canonical forms.
+[09:59:16] <gilberth> You like that hex-mode with Emacs. How do you stick comments in there?
+[10:00:20] <gilberth> Nah, I like textual external representations. What I don't like is having a different syntax for each and every attribute.
+[10:00:23] <hayley> That's the neat part, ya don't.
+[10:01:01] <gilberth> What then? Use a structural editor? Interlisp?
+[10:01:31] <hayley> Something else to generate the binary format, idk.
+[10:03:34] <gilberth> Too troublesome. People will still get up with a gazillion different formats. Or do all existing binary formats share a structure? Is there a universal editor for PNG, GIF, ZIP, MPEG, WAV, PCX, ELF, a.out, .REL and what not?
+[10:05:41] * hayley managed to screw up parens in AND, leading the compiler to mis-handle ISUMs which just have one element. Whoops.
+[10:06:14] * hayley needs a test suite.
+[10:06:17] <gilberth> And binary formats tend to have a fixed width for integers.
+[10:07:13] <Alfr> gilberth, why isn't it positional? I^n simply is \sum_{i=1}^n{I*1^i}, here the capital i denotes one in unary.
+[10:09:07] <gilberth> Ok. Why did the Romans then came up with shorthands? It's not practical at all.
+[10:09:57] <hayley> About 10x as fast as cl-ppcre scanning for a rgb(bla,bla,bla) in p { color: rgb(1,2,3) }
+[10:10:37] <gilberth> See.
+[10:11:14] <Alfr> Certainly impractical for large numbers, but I think when counting things people sometimes will use some kind tally marks.
+[10:11:30] <hayley> Is it cheating to make Rust regex do submatches?
+[10:12:01] <gilberth> Alfr: Ok, is there a TALLY MARK character in Unicode which can be used when the user is prompted to enter a number?
+[10:12:34] <gilberth> hayley: No. You what to extract the R, G, B field, don't you?
+[10:13:36] <hayley> As a general principle, not for ad-hoc parsing.
+[10:14:00] <semz_> Of course there is! https://unicode-table.com/en/1D377/
+[10:14:00] -ixelp- 𝍷 - Tally Mark One: U+1D377 - Unicode Character Table
+[10:14:05] *** semz_ is now known as semz
+[10:15:54] <gilberth> hayley: Yes, and ad-hoc parsing is my application as well as scanning.
+[10:16:49] <gilberth> semz_: Would you expect that (+ :tally mark one: 4) yiels 5?
+[10:23:30] <semz> no, it should be https://unicode-table.com/en/1D378/
+[10:23:31] -ixelp- 𝍸 - Tally Mark Five: U+1D378 - Unicode Character Table
+[10:24:02] <gilberth> That is "V". All boxes with hex-numbers to me.
+[10:24:15] <hayley> Hm, Rust takes 170ns compared to my 67ns.
+[10:24:25] <hayley> Though my haystack is tiny.
+[10:24:46] <hayley> IIRC the joke is that you start making false positives for prefix scanning, and every "fast" engine keels over.
+[10:25:04] <gilberth> Your haystack should be empty. Or do you parse "foo blah funny rgb(100,200,200)" as a colour value?
+[10:25:21] <hayley> I scanned over "p { color: rgb(1,2,3) }"
+[10:27:20] <hayley> Down to 107ns if the entire haystack is a match, and I anchor with ^...$
+[10:27:31] <gilberth> You wrote a parser?
+[10:27:35] <hayley> .oO(Why am I that slow?)
+[10:27:49] <hayley> If rgb\([0-9]+,[0-9]+,[0-9]+\) is a parser.
+[10:28:18] <gilberth> You said "I scanned _over_". :-)
+[10:28:26] <hayley> If I use DO-MATCHES rather than FIRST-MATCH, I take 32ns rather than 60ns.
+[10:28:57] <gilberth> What's the difference?
+[10:29:46] <hayley> Good question. One inlines some more of the machinery to call the DFA function, I guess. But it can't just be that.
+[10:30:11] <gilberth> Do you still cons vectors?
+[10:30:36] <hayley> Yes. /me about to make stack allocation work.
+[10:33:54] <hayley> 20ns now.
+[10:39:54] <gilberth> Throw [ ]+|[ ]*,[ ]* as a separator into the mix. What happens?
+[10:53:04] <sm2n> Anyone here familiar with JS performance? I just allocated on the order of ~15k promises, and it's basically dead and unresponsive
+[10:53:40] <sm2n> they're all polling a message queue with exponential backoff
+[10:53:43] <sm2n> I want mailboxes!
+[10:54:06] <sm2n> Give me actors or give me death
+[10:56:09] <sm2n> I thought async javascript was supposed to be webscale
+[10:56:18] <hayley> 512ns for CL-PPCRE, 21.5ns for OMRN.
+[10:56:28] <hayley> sm2n: webscale means you have to buy more AWS stuffs.
+[10:57:10] <sm2n> hayley: Thanks, I hate it
+[10:57:32] <sm2n> To be fair I'm pretty sure the code I'm using sucks
+[10:57:36] <hayley> Rust still takes about 100ns.
+[10:59:12] <gilberth> So you're 24 times faster than CL-PPCRE. You haven't optimized yet.
+[11:00:27] <Alfr> gilberth, found this one: 𝍩
+[11:00:38] <Alfr> gilberth, there seems to be others as well.
+[11:02:16] <gilberth> Who uses it in day to day use?
+[11:04:14] <Alfr> I won't satisfy this customer, I guess.
+[11:04:31] <gilberth> I mean you find all kind of symbols in Unicode. There also are things circled numbers.
+[11:05:43] * hayley approaches 9Gchar/s for SIMD-nukable REs with submatches.
+[11:05:45] <gilberth> Alfr: I should have phrased my question more precise. As is there any set of characters considered as a digit (perhaps by Unicode itself, or others), for which the default :RADIX 10 would be just plain wrong.
+[11:06:27] <gilberth> And in actual use to write general purpose numbers.
+[11:11:27] <hayley> "Execution of a form compiled with errors. Form: (ONE-MORE-RE-NIGHTMARE:DO-MATCHES ((A B C D E) "a" "a")) Compile-time error: This regular expression only produces five registers, but two registers are specified."
+[11:12:06] <hayley> Great fun to be able to parse the RE at compile time, and give all sorts of warnings and errors if you make an error.
+[11:13:00] <hayley> Though, SBCL would still do type inference and figure that it can't AREF the result vector. I wonder how Rust regex fares, when they can't even parse the RE at compile-time, let alone all the other linting.
+[11:13:43] <gilberth> It doesn't? Don't they have macros?
+[11:14:04] <hayley> They do, but not compiler macros.
+[11:14:35] <hayley> And as they don't eagerly create a DFA, anyway, they couldn't catch e.g. some submatch being dead.
+[11:40:38] <gilberth> hayley: For another example look at ^(([^:/?#]+):)?(//([^/?#]*))?([^?#]*)(\?([^#]*))?(#(.*))?
+[11:41:10] <gilberth> [RFC 3986, page 50]
+[11:42:40] * hayley needs a POSIX parser already.
+[11:43:06] <gilberth> You have one.
+[11:43:32] <hayley> I probably do, yes.
+[11:44:21] <hayley> https://www.quaxio.com/regexp_lint/ is hilarious, because it thinks any submatch not used for backreferencing is dead apparently.
+[11:44:21] -ixelp- RegexpLint
+[11:46:53] <gilberth> Here is the SRE: <https://termbin.com/ldr3t>
+[11:56:31] *** Joins: random-nick (~random-ni@87.116.167.125)
+[11:58:38] <hayley> Yes, I do need a SRE parser too. sigh
+[12:03:27] * hayley sees someone not unexperienced write Lisp with dangling parens, and now needs eye bleach.
+[12:13:29] *** Quits: scymtym (~user@ip-94-114-248-79.unity-media.net) (Ping timeout: 256 seconds)
+[12:28:43] <hayley> gilberth: Do you think (do-matches ((start end non-existent-register-1 non-existent-register-2) "blah" ...) ...) should produce a compile-time warning, or a compile-time error?
+[12:29:02] <hayley> Currently I produce an error, but it is more common for static analysis in Common Lisp systems to produce warnings.
+[12:30:44] <gilberth> A warning.
+[12:32:14] <hayley> Very well.
+[12:32:45] <hayley> Guess I should insert a (ASSERT (>= (LENGTH ...) PARAMETER-COUNT)) so that I get a nice error. 
+[12:33:32] <gilberth> Do you have to do that? Would you crash down below otherwise?
+[12:35:00] <selwyn> gilberth: perhaps the languages of babylon used base 60 in their script
+[12:36:29] <hayley> I'd get an error like "2 is an invalid index for a (SIMPLE-VECTOR 2)", and the user shouldn't know that we use a vector to pass registers.
+[12:36:37] <gilberth> The language died. But I would guess they did. It is interesting that we still have an extra word for a "dozen".
+[12:37:06] <gilberth> hayley: You still stash registers in a vector?
+[12:37:14] <hayley> Yes.
+[12:38:10] <selwyn> they used internal decimal to represent the digits
+[12:38:20] <gilberth> Then make the vector large enough or don't generate AREF with an invalid index or stop using a vector altogether.
+[12:38:22] <selwyn> but the digit system itself is clearly base 60
+[12:39:19] <hayley> 1. Not in the mood for "20 registers are enough for everyone" 2. Okay, I'll just solve the halting problem 3. Still thinking about how to make the interface "polymorphic" over sizes, without having to MULTIPLE-VALUE-LIST or do some other consing.
+[12:39:26] <selwyn> in turkish there is a special system for counting unordered pairs of numbers from (1,1) up to (6,6)
+[12:39:29] <selwyn> used in dice games
+[12:40:00] <selwyn> some of the european sheep counting systems are probably not in base 10
+[12:40:03] <selwyn> but again no digits
+[12:40:27] <gilberth> hayley: I told you already, CL is doing fine with both variadic functions and a variable number of return values.
+[12:40:29] <rogersm> selwyn: do you have more info about the Turkish system?
+[12:41:06] <gilberth> selwyn: So they have 60 different digits?
+[12:41:50] <rogersm> Danish numbering system gets pretty crazy
+[12:42:41] <rogersm> 50 to 70 is pure madness
+[12:42:52] <selwyn> rogersm: it is a kind of pidgin version of persian numbers mixed with turkish numbers, presumably in order to differentiate it from the standard number system
+[12:42:59] <rogersm> http://www.sf.airnet.ne.jp/~ts/language/number/danish.html
+[12:43:24] <selwyn> you use it to say the equivalent of 'three - five' or 'two sixes'
+[12:43:47] <rogersm> I'll check. I really like games but I had no idea about this
+[12:43:47] <selwyn> it is not standardised either
+[12:44:07] <selwyn> yeah its a cute system
+[12:44:50] <selwyn> gilberth: yes
+[12:45:16] <hayley> gilberth: &REST conses up a list, and grabbing variable return values also makes a list.
+[12:45:18] <selwyn> but the digits themselves can be seen to be written in base 10
+[12:45:44] <selwyn> which rather suggests that base 10 was in use either at the time or before cuneiform
+[12:48:16] <gilberth> hayley: Does ((lambda (x y z) ...) 1 2 3) cons? Does (multiple-value-bind (x y) (values 1 2) ...) cons?
+[12:48:53] <hayley> Those are not variadic.
+[12:49:49] <gilberth> Push the burden on the user of your API. If the user wants a list, fine. If he wants the values in lexicals, better.
+[12:50:53] <hayley> I guess, now that I have DO-MATCHES, I can do that. But in the case of FIRST-MATCH, which rather makes a vector...
+[12:51:26] <gilberth> Why does it make a vector? Because Edi was silly?
+[12:52:09] <hayley> More reasonable than a list to me.
+[12:52:14] <hayley> We don't have CDR coding anymore.
+[12:53:00] <gilberth> hayley: You know, that multiple values exist?
+[12:53:06] <hayley> Right, right, multiple values. But making a "generic" continuation function for FIRST-MATCH is still not easy with &REST and multiple values.
+[12:53:30] <hayley> i.e. (call-with-matches ... (lambda (&rest r) (values-list r))) conses up a list for no good reason.
+[12:54:00] *** Joins: scymtym (~user@2001:638:504:20e6:d2b:67db:8460:2e05)
+[12:56:48] <gilberth> Then cons, if you insist.
+[12:57:45] <gilberth> Why is that lambda not just #'values?
+[12:58:21] <hayley> Sure.
+[12:59:10] <gilberth> And don't you want a RETURN-FROM in there? Where do the values go otherwise?
+[12:59:55] <hayley> Right, yes, I have a RETURN-FROM.
+[13:01:17] <selwyn> rogersm: https://groups.google.com/g/rec.games.backgammon/c/9oot0DTSt74
+[13:01:18] -ixelp- Interesting study about Turkish/Persian dice roll names
+[13:01:28] <gilberth> And where is the problem here? I have a macro (with-match (pattern subject &key ...) ...) and it does not cons on its own.
+[13:02:10] <selwyn> it seems that firefox was broken for lots of other people as well lol
+[13:02:21] <hayley> Yep.
+[13:02:39] <gilberth> I call wading hay a scan, and an anchored match a match.
+[13:04:17] <gilberth> I could also do with MATCH function, but I like the WITH-FORM as I have named groups, not just numbered groups.
+[13:04:58] <gilberth> But a (multiple-value-bind (...) (match pattern subject) ...) would be if the compiler macro kicks in and open-codes MATCH, lead to no consing at all.
+[13:05:16] *** Joins: kevingal (~quassel@149.157.111.113)
+[13:09:58] *** Quits: kevingal (~quassel@149.157.111.113) (Ping timeout: 250 seconds)
+[13:10:09] <gilberth> And that was my whole aim for micro parsing. Just say (with-match ((and (= w "[0-9]+") "x" (= h "[0-9+]")) string) ...) and have as good and oftern better code than handwriting this decoding of a string coming from somewhere. It doesn't cons, if you don't.
+[13:10:22] *** Joins: kevingal (~quassel@2001:770:c0:401:7d0b:379:62a3:e7c4)
+[13:12:37] <gilberth> And if you address a group that is not there, you get a compiler warning about a free variable, when you don't use a group you get a warning about an unused lexical. I could still compile that. I don't like it when the compiler forces me to fix any error, before I could continue hacking. Doesn't fit my interactive programming style.
+[13:14:15] <hayley> I now just warn. 
+[13:14:54] <gilberth> You talked about an ASSERT there. So I can't run it.
+[13:15:55] <hayley> Yes, an ASSERT which is just before an SVREF which would fail too.
+[13:16:01] <gilberth> I mean (defun foo (x y) (if x y z)) can still be called. Maybe I am at testing the x /= NIL part and care about the Z later.
+[13:16:09] *** Joins: pritambaral (~pritam@user/pritambaral)
+[13:16:32] <gilberth> hayley: Ok then, don't you trust SVREF catching that?
+[13:16:57] <hayley> I do, but I would rather have the error "Your RE has too few groups" than "2 is an invalid index for a (SIMPLE-VECTOR 2)"
+[13:18:55] <gilberth> Fair enough. Why don't you say "Group 4 is undefined in RE"?
+[13:20:50] <hayley> I thought undefined would mean there's no match for that group.
+[13:21:28] <gilberth> That would be unbound.
+[13:22:03] <gilberth> Or here "not matched".
+[13:25:09] <hayley> Right.
+[13:26:47] <hayley> Well, JS uses undefined for unbound/unmatched groups :)
+[13:27:36] <hayley> And if you provide too many register variables, there's no way that they could be bound without a different RE, so it seems like more of a problem to me.
+[13:28:10] <gilberth> Are we JS hackers?
+[13:29:20] <gilberth> Apropos JS, what semantics does it use?
+[13:29:42] <hayley> JS is Lisp, right?
+[13:30:24] <gilberth> Well, we are Common Lisp hackers, we do fine with just one NIL. Scheme already as two. And JS has how many?
+[13:31:20] <shka> hayley: it would be better if it would be a lisp anyway
+[13:31:25] <gilberth> This is funny, we do with multiple name spaces for functions, variables, blocks, tags, types, classes, and what not. But have only one NIL. And an unbound, we can't get hold of.
+[13:31:27] <hayley> Bit olde, but at least https://www-archive.mozilla.org/js/language/js20-2002-04/formal/regexp-semantics
+[13:31:28] -ixelp- JavaScript 2.0 Regular Expression Semantics
+[13:31:47] <hayley> Might be something in the ES6 spec instead.
+[13:33:45] <gilberth> That won't be any more readable.
+[13:34:17] <gilberth> The ES standard always was horrible to read.
+[13:35:34] <gilberth> I now am supposed to read pseudo code and make my guesses? It however reads like backtracking of sorts.
+[13:36:09] * hayley reads some group uses WebAssembly for writing smart contracts across multiple cryptocurrencies. Uh-oh.
+[13:37:16] <hayley> Who's going to do stupid things on a blockchain? You're gonna do stupid things on a blockchain.
+[13:40:44] <hayley> I don't know what I'd do for a system where running a VM is not your bottleneck, and programs are mission-critical, but I would not have a portable assembler. Too expensive to lose due to unsafe code.
+[13:41:35] <hayley> On the website: "Program in Rust" Not sure if my point still stands or not.
+[13:42:32] <hayley> Really one wants a formally verified compiler, c.f. CakeML. Just my two cents though, I am not a cool web3 person.
+[14:15:51] <hayley> But the The DAO hack is an interesting tale of a re-entrancy bug in a distributed object system of sorts.
+[14:20:09] *** Quits: x88x88x (~x88x88x@2001:19f0:5:39a8:5400:3ff:feb6:73cb) (Remote host closed the connection)
+[14:21:05] *** Joins: x88x88x (~x88x88x@149.28.53.172)
+[14:24:47] <hayley> https://www.youtube.com/watch?v=wRfSCSFSH0k
+[14:24:47] -ixelp- Sauerkraut Sausage - YouTube
+[14:24:57] <hayley> gilberth: New sausage
+[14:37:04] *** pritambaral is now known as prite
+[14:37:26] <epony> does rust have standards?
+[14:37:39] * epony doubts Go has any either
+[14:40:45] <epony> maybe GitHub (GH) has some.. meh
+[14:41:04] <epony> GoTo (Go2) when?
+[14:50:13] <Gnuxie> wasn't there already a Goto language, Baker talks about it when saying some shit about immutable vs mutable cons 
+[14:52:02] <hayley> Eiichi Goto and HLISP?
+[15:07:51] *** Quits: prite (~pritam@user/pritambaral) (Remote host closed the connection)
+[15:08:18] *** Joins: prite (~pritam@user/pritambaral)
+[15:11:06] <epony> Goto seems like a Japanese family name indeed
+[15:41:10] <dave0> nite all
+[15:41:27] *** Quits: dave0 (~davezero@069.d.003.ncl.iprimus.net.au) (Quit: dave's not here)
+[16:29:56] *** Quits: kevingal (~quassel@2001:770:c0:401:7d0b:379:62a3:e7c4) (Ping timeout: 245 seconds)
+[16:36:35] *** Quits: phantomics (~phantomic@71-218-243-149.hlrn.qwest.net) (Ping timeout: 256 seconds)
+[17:53:36] *** Joins: kevingal (~quassel@149.157.111.113)
+[18:09:06] *** Joins: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4)
+[18:44:37] *** Quits: kevingal (~quassel@149.157.111.113) (Ping timeout: 240 seconds)
+[18:50:37] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Ping timeout: 240 seconds)
+[18:53:03] *** Joins: waleee (~waleee@h-98-128-229-110.NA.cust.bahnhof.se)
+[18:53:09] *** Quits: semz (~none@user/semz) (Quit: Leaving)
+[18:53:37] *** Joins: kevingal (~quassel@149.157.111.113)
+[19:02:47] *** Quits: kevingal (~quassel@149.157.111.113) (Ping timeout: 256 seconds)
+[19:03:15] *** Joins: kevingal (~quassel@2001:770:c0:401:d5d0:8a1c:2bda:4295)
+[19:09:59] <robin> gilberth, guile has three :) though one is intended solely for use as traditional cl/elisp/etc. NIL
+[19:11:55] <robin> hayley, i believe you're right, baker's reference is to "J. Terashima, M., and Goto, E. "Genetic Order and Compactifying Garbage Collectors". IPL 7,1 (Jan. 1978), 27-32"
+[19:14:11] <robin> (in "CONS Should not CONS its Arguments")
+[19:18:58] <robin> http://museum.ipsj.or.jp/en/pioneer/gotou.html 'A foreign researcher once asked: "I know three Japanese researchers whose names all coincide with Goto. One who invented the parametron, one who devised Goto Pair, and a last one who searched Magnetic Monople. Which Goto are you?" Goto answered, "I am all of them".'
+[19:18:59] -ixelp- Goto Eiichi-Computer Museum
+[19:37:56] <robin> which reminds me, i found a cache of scanned JP punchcards resembling a maclisp program; i wonder if there's some chance they're related to his work (given that he was at MIT in 1961...)
+[19:40:51] <robin> gls mentions him in the rrrs-authors list archive, tentatively crediting him with hash-consing (with a reference to the proceedings of the 1982 lisp conference)
+[20:03:06] *** Joins: ec (~ec@gateway/tor-sasl/ec)
+[20:07:57] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Client Quit)
+[20:08:18] *** Quits: Aurora_v_kosmose (~LispyLigh@user/lispylights) (Remote host closed the connection)
+[20:08:50] *** Joins: Aurora_v_kosmose (~LispyLigh@user/lispylights)
+[20:09:55] *** Joins: ec (~ec@gateway/tor-sasl/ec)
+[20:15:04] *** Quits: notzmv (~zmv@user/notzmv) (Ping timeout: 250 seconds)
+[20:52:31] *** Quits: kevingal (~quassel@2001:770:c0:401:d5d0:8a1c:2bda:4295) (Ping timeout: 250 seconds)
+[21:11:20] <moon-child> eh, bullshit
+[21:11:31] <moon-child> intel claims they disabled avx512 for cpus with separate power and efficiency cores
+[21:11:42] <moon-child> but https://ark.intel.com/content/www/us/en/ark/products/134586/intel-core-i512400-processor-18m-cache-up-to-4-40-ghz.html has no efficiency cores, and still no sanctioned avx512
+[21:11:42] -ixelp- Intel Core i512400 Processor 18M Cache up to 4.40 GHz Product Specifications
+[21:15:05] <White_Flame> they've been yanking it out of desktop processors in favor of xeons or something
+[21:15:27] <White_Flame> afaik, it has a lot of negative die size & heat consequences
+[21:15:37] <moon-child> it's still on the die
+[21:15:42] <moon-child> they're just softbricking it
+[21:15:46] <White_Flame> wow
+[21:16:38] <White_Flame> wait, the 12400, that's the lowest end model, right?  still 65W/117W
+[21:17:12] <White_Flame> oh, that's not idle power, nevermind
+[21:18:00] <White_Flame> intel is getting back into the swing of things, but I'm still more excited about amd
+[21:18:04] <moon-child> https://www.igorslab.de/en/intel-deactivated-avx-512-on-alder-lake-but-fully-questionable-interpretation-of-efficiency-news-editorial/
+[21:18:05] -ixelp- Intel completely disables AVX-512 on Alder Lake after all - Questionable interpretation of “efficiency” | News / Editori [...]
+[21:18:23] * moon-child eats threads
+[21:19:22] <White_Flame> I think they end up with a lot of software headaches around avx512 being optionally there, and just throw out the baby with the bathwater
+[21:20:07] <White_Flame> (and of course that all tracks back to my complaint about passing binary machine code blobs around, instead of compiling per installation)
+[21:20:32] <moon-child> yeah
+[21:26:08] *** Joins: Catie (~user@user/catie)
+[22:25:29] *** Joins: notzmv (~zmv@user/notzmv)
+[23:18:22] *** Quits: prite (~pritam@user/pritambaral) (Ping timeout: 250 seconds)
+[23:37:52] *** Quits: waleee (~waleee@h-98-128-229-110.NA.cust.bahnhof.se) (Ping timeout: 250 seconds)
+[23:55:30] <hayley> Someone told me that integer overflow was a serious and annoying thing when writing smart contracts, so I can't be too wrong in saying that we need platforms that are easier to analyse.
+[23:56:54] <hayley> "A carefully designed language could have avoided the The DAO hack." "How? It is a logical developer issue." "Developers develop programs, and the sorts of bugs they should check should be evident by looking at the program."
+[23:57:04] <SAL9000> ...they don't use bignums? :o
+[23:57:42] <hayley> https://twitter.com/drog_v/status/1481601977117253638
+[23:58:20] <hayley> Nope. Ethereum gives you 256-bit integers that crash on overflow. (To be fair, so does Netfarm, since I didn't know how to bill for larger integers.)
+[23:59:55] <SAL9000> > people get overflow checking [in solidity]

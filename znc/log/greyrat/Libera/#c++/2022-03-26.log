@@ -1,0 +1,894 @@
+[00:01:33] <danieldg> (but with the args swapped so it actually allocates)
+[00:03:15] *** Quits: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 252 seconds)
+[00:05:21] <anyone> so what do you want? a solution to the badly-implemented big_tree constructor?
+[00:06:29] <anyone> (I might add that big_tree::big_tree is no longer constexpr because of its allocation)
+[00:06:31] <danieldg> what I wanted and made was a "do not call destructors on this variable for me, I'll do it myself"
+[00:06:51] <danieldg> correct, it's not constexpr
+[00:07:30] <anyone> I only see placement new (unique_ptr, optional, etc.) as the way to eschew dtors.
+[00:07:55] <danieldg> ... std::optional or unions both do it
+[00:08:25] <anyone> IIRC, unions have implicit dtors (but deleted normally)
+[00:08:39] <anyone> trivial OR deleted.
+[00:08:42] <danieldg> right, you have to make it explicit in this case
+[00:08:52] <anyone> no I mean implicit in running.
+[00:09:09] <danieldg> Alipha showed how to make the union above
+[00:09:12] <hachikuji[m]> no destructor runs for an union, you have to call it
+[00:09:51] <danieldg> a union with non-pod fields needs an explicit destructor, and you have to call the field-you-use's destructor manually
+[00:09:57] <Alipha> { union U { U() : value() {} ~U() {} B value; } b; cout << " dtor: "; b.value.~B(); cout << " end main"; } using tracked::B;
+[00:09:58] <geordi> Same output.
+[00:11:25] <anyone> { union U { ~U() { cout << "a destructor runs for a union\n"; } int x; } u; }
+[00:11:26] <geordi> a destructor runs for a union
+[00:12:00] *** Quits: abode (~abode@2001:8f8:1263:f81:8230:49ff:fe6e:36b5) (Remote host closed the connection)
+[00:12:33] <danieldg> anyone: if you look at how std::optional is implemented, it has a union inside
+[00:12:55] <danieldg> (well, at least in most compilers, that's not mandatory)
+[00:13:08] <anyone> I was just trying to counter < hachikuji[m]> no destructor runs for an union, you have to call it
+[00:13:36] <furrymcgee> I dont understand "placement-new isn't ideal because the constructor"? You need the constructorr anyway
+[00:13:43] <danieldg> no destructor [for the contained fields] runs in a union
+[00:14:07] <danieldg> furrymcgee: I need to run the constructor once in this code (when I create the variable)
+[00:14:21] <furrymcgee> use placement new in the first place
+[00:14:22] <danieldg> furrymcgee: I don't want to run it twice (once on declare, once after the destructor)
+[00:14:52] <danieldg> placement new doesn't fix this problem directly as it needs a place
+[00:15:10] <anyone> danieldg: if I had the option of wrapping big_tree in a union or in an optional, I'd probably still pick the optional. People know optional and what it does and when it does it. A custom union they'd have to parse its source code first.
+[00:15:30] <danieldg> anyone: yes, optional is the best solution
+[00:16:06] <danieldg> (I'm only not using it because no C++17 support)
+[00:17:31] <danieldg> and since it's not part of the public API it could be fixed if the project suddenly gains C++17 support
+[00:20:01] <ville> danieldg: so the ctor does an allocation but you don't have exceptions?
+[00:21:29] <danieldg> correct, -fno-exceptions.  Yes, allocation failures make the whole thing crash.
+[00:22:17] <furrymcgee> so what are requirements for placement new?
+[00:22:29] <danieldg> like in general?
+[00:22:43] *** Joins: zeenk (~zeenk@2a02:2f04:a110:7d00:2011:cfed:bad7:3c94)
+[00:23:55] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[00:24:30] <Alipha> Placement new is a more verbose solution than the union solution
+[00:24:33] *** Joins: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[00:25:33] <PJBoy> you'd need to placement new the union anyway, right?
+[00:25:43] <danieldg> placement new solves the "compiler calls destructor when I don't want it" problem by giving it a new value to destruct
+[00:26:14] <danieldg> PJBoy: union constructors can build the value when the union is built, see the tracked:: example
+[00:26:38] <danieldg> but if you wanted a late construction of the union you would use placement new, yes
+[00:26:42] <PJBoy> but then to change active member you need to manually destroy and recreate it
+[00:26:47] <danieldg> right
+[00:26:53] <PJBoy> so that needs a placement new
+[00:26:56] <danieldg> correct
+[00:27:02] <Alipha> PJBoy: no, you can specify which member to construct in the union, so no placement new
+[00:27:09] <Alipha> PJBoy: per my example above
+[00:27:11] <PJBoy> so as far as I can tell, you don't save any effort with the union
+[00:27:24] <danieldg> if you never change the active member, then you don't need it
+[00:27:55] <Alipha> danieldg's union only has one member
+[00:28:03] <danieldg> the code here starts out constructing it with the member that will be used, destroys that member later, then that's it
+[00:28:06] <PJBoy> in Alipha's example, don't you need to placement new something back in?
+[00:28:13] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 240 seconds)
+[00:28:14] <danieldg> no
+[00:28:25] <ville> PJBoy: no auto dtor run with non-trivial unions
+[00:28:26] <PJBoy> oh because manually empty dtor
+[00:28:35] <PJBoy> neat
+[00:28:50] <danieldg> yep, unions don't auto-run the contained members' dtors
+[00:29:04] *** Quits: PlasmaHH (~PlasamaHH@user/plasmahh) (Ping timeout: 272 seconds)
+[00:29:18] <PJBoy> yeah ok you've won me over
+[00:29:37] <Alipha> { alignas(B) char buf[sizeof(B)]; B &b = *new (buf) B; cout << " dtor: "; b.value.~B(); cout << " end main"; } using tracked::B;
+[00:29:37] <geordi> error: 'struct tracked::B' has no member named 'value'
+[00:29:47] *** Quits: senoraraton (~senorarat@192-195-83-130.static.monkeybrains.net) (Ping timeout: 256 seconds)
+[00:29:51] <Alipha> { alignas(B) char buf[sizeof(B)]; B &b = *new (buf) B; cout << " dtor: "; b.~B(); cout << " end main"; } using tracked::B;
+[00:29:51] <geordi> B0*  dtor: B0~  end main
+[00:31:26] <Alipha> Maybe that's not terrible
+[00:32:37] *** Quits: Masklin (~joel@130.235.150.20) (Ping timeout: 240 seconds)
+[00:32:56] <danieldg> it's not, but you have a lot more mentions of B there that might get out of sync
+[00:33:34] <danieldg> (and no compiler error if you mess it up, unlike type mismatch errors if your union field is wrong)
+[00:33:38] <Alipha> If only std's aligned_storage wasn't garbage
+[00:34:19] <furrymcgee> does it have to be a union or just some kind of wrapper class?
+[00:34:58] <PJBoy> I don't trust that you don't need to add some std::launders to that placement new stuff
+[00:36:09] <PJBoy> although it does use the pointer returned by placement new
+[00:36:14] <PJBoy> :/
+[00:36:55] <danieldg> furrymcgee: a normal class or struct will do it, but you can wrap the union in a class if you like
+[00:37:10] <danieldg> +not
+[00:37:50] <danieldg> PJBoy: you only need to do things with std::construct_at if you want constexpr or similar
+[00:38:15] *** Quits: gproto23 (~gproto23@user/gproto23) (Quit: Leaving)
+[00:38:25] <furrymcgee> because the union prevents the destructor of members?
+[00:38:36] <danieldg> furrymcgee: yes
+[00:39:14] *** Quits: SGautam (uid286066@id-286066.ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[00:39:17] <danieldg> afaik that's the only way to both have a T and not destroy T when you are destroyed
+[00:39:43] <danieldg> although having a buffer the same size and alignment as T, with a T inside, also counts
+[00:41:07] *** Quits: rLapz (~rLapz@user/rLapz) (Ping timeout: 256 seconds)
+[00:42:02] *** Quits: on^ (~on@96-91-136-49-static.hfc.comcastbusiness.net) (Remote host closed the connection)
+[00:42:35] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[00:44:08] *** Joins: nicbk (~nicbk@user/nicbk)
+[00:44:56] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[00:45:08] *** Quits: N4buc0 (~N4buc0@2804:7f4:348b:29b4:28a2:5876:534d:1827) (Remote host closed the connection)
+[00:45:10] *** Joins: N4buc0_ (~N4buc0@189.115.86.130)
+[00:50:08] *** Joins: rgrinberg (~textual@fixed-186-96-26-198.totalplay.net)
+[00:56:39] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[00:56:51] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[00:57:25] *** Quits: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 240 seconds)
+[00:57:58] *** Joins: Pook (~Pook@2001:8a0:f996:1400:102d:1ec7:9019:dca9)
+[00:58:24] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[00:58:52] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Client Quit)
+[01:00:31] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[01:01:21] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[01:01:31] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[01:01:59] *** Joins: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[01:03:15] *** Quits: nicbk (~nicbk@user/nicbk) (Ping timeout: 240 seconds)
+[01:04:08] *** Quits: rgrinberg (~textual@fixed-186-96-26-198.totalplay.net) (Read error: Connection reset by peer)
+[01:06:03] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 256 seconds)
+[01:07:31] *** Quits: wakeup (~wakeup@user/wakeup) (Quit: Client closed)
+[01:08:43] <Alipha> danieldg: what i feel like aligned_storage *should* look like: https://godbolt.org/z/6xT6f8f3v
+[01:09:37] <danieldg> yeah
+[01:10:15] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[01:10:54] *** Quits: Donno (~donno@58.84.206.182) (Ping timeout: 252 seconds)
+[01:11:11] *** Joins: Donno (~donno@58.84.206.182)
+[01:11:16] *** Joins: Zogatribe (Zogatribe@user/zogatribe)
+[01:11:41] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[01:11:54] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Client Quit)
+[01:12:07] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[01:13:12] <Alipha> Maybe conditionally allow copy/op= if trivially copyable
+[01:13:53] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[01:14:47] *** Quits: sord937 (~sord937@gateway/tor-sasl/sord937) (Quit: sord937)
+[01:14:51] <danieldg> having ways to do that expicitly might be nicer so you don't do it by accident
+[01:15:53] <danieldg> and so you can do it on non-trivial-copy types with a "you keep both pieces" kind of guarantee
+[01:16:49] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[01:18:15] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[01:18:44] <PJBoy> [p1413]
+[01:18:44] <npaperbot> P1413R3: [Library Evolution, Library] Deprecate std::aligned_storage and std::aligned_union <https://wg21.link/p1413r3> (by CJ Johnson) (2021-11-22) (Related: https://wg21.link/p1413r3/github)
+[01:19:27] <PJBoy> oh that got merged already
+[01:19:42] <PJBoy> so yeah officially deprecated in C++23
+[01:21:52] <PJBoy> oh it even says on cppreference >_>
+[01:22:54] *** Joins: RoKenn (~RoKenn@2001:a61:35b1:ca01:67f6:dfde:1c47:996e)
+[01:22:55] *** Quits: RoKenn (~RoKenn@2001:a61:35b1:ca01:67f6:dfde:1c47:996e) (Changing host)
+[01:22:55] *** Joins: RoKenn (~RoKenn@user/rokenn)
+[01:22:55] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[01:24:29] *** Joins: geranim0 (~geranim0@modemcable242.171-178-173.mc.videotron.ca)
+[01:25:16] *** Quits: m_ben (~m_ben@user/m-ben/x-7429725) (Quit: WeeChat 3.4.1)
+[01:26:05] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[01:32:09] *** Quits: cosimone (~user@93-44-187-176.ip98.fastwebnet.it) (Remote host closed the connection)
+[01:32:49] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[01:33:27] *** Joins: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net)
+[01:33:57] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Ping timeout: 240 seconds)
+[01:34:35] *** Quits: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 260 seconds)
+[01:35:02] *** Joins: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[01:37:08] *** Joins: cosimone (~user@93-44-187-176.ip98.fastwebnet.it)
+[01:37:23] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 260 seconds)
+[01:37:43] *** Quits: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net) (Client Quit)
+[01:38:15] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[01:39:46] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[01:42:55] <rpav> "The easiest replacement for aligned_* is actually not a library feature. Instead, users should use a properly-aligned array of std::byte , potentially with a call to std::max(std::initializer_list<T>)."
+[01:43:15] <rpav> bah, std::initializer_list are harmful to codebases and ought to be deprecated / replaced
+[01:44:30] * anyone patiently waiting for "initializer_list<> is considered harmful considered harmful"
+[01:44:35] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[01:45:11] *** Joins: cube1 (~cube1@89-160-183-39.du.xdsl.is)
+[01:45:40] <rpav> it tried, but its type refused to be deduced
+[01:45:53] <cube1> So will people adopt modules or not? Will it happen?
+[01:46:11] <rpav> probably, but the standard is barely over a year old
+[01:51:05] *** Joins: senoraraton (~senorarat@192-195-83-130.static.monkeybrains.net)
+[01:53:04] <cube1> It looks like the design is still in flux / will need to be fixed: https://gitlab.kitware.com/cmake/cmake/-/issues/18355#note_1109192
+[01:54:17] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[01:54:31] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[01:59:28] <PJBoy> I'm using modules in my main project
+[02:00:06] <PJBoy> cmake just want some compiler support
+[02:00:11] <PJBoy> which they've gotten from VS
+[02:02:24] <BurumaSerafuku> initializer_list are harmful to codebases?!  WUT!!!
+[02:02:45] <BurumaSerafuku> I have a bad feeling this channel is turned into ##programming
+[02:03:00] <BurumaSerafuku> *is turning
+[02:05:09] *** Quits: ProperNoun (~holyShizn@user/propernoun) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[02:05:22] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[02:05:23] *** Quits: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 260 seconds)
+[02:05:29] *** Joins: ProperNoun (~holyShizn@user/propernoun)
+[02:05:56] <ville> yes std::initializer_list was a mistake
+[02:06:10] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[02:06:13] <PJBoy> I concur
+[02:06:48] *** Joins: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[02:08:25] *** Quits: PJBoy (~PJBoy@user/pjboy) (Killed (calcium.libera.chat (Nickname regained by services)))
+[02:08:26] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[02:10:39] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 256 seconds)
+[02:10:50] *** Quits: ckdCreations (~ckdCreati@147.55.133.142) (Read error: Connection reset by peer)
+[02:11:05] *** Joins: ckdCreations (~ckdCreati@c-73-140-151-116.hsd1.wa.comcast.net)
+[02:13:40] *** Quits: cube1 (~cube1@89-160-183-39.du.xdsl.is) (Quit: Leaving)
+[02:14:02] *** Quits: ckdCreations (~ckdCreati@c-73-140-151-116.hsd1.wa.comcast.net) (Read error: Connection reset by peer)
+[02:16:06] *** Quits: LuckyFire (~LuckyFire@46.217.32.109) (Ping timeout: 272 seconds)
+[02:16:29] *** Joins: LuckyFire (~LuckyFire@46.217.32.109)
+[02:17:41] *** Quits: vqueiroz (uid340368@id-340368.hampstead.irccloud.com) (Quit: Connection closed for inactivity)
+[02:18:56] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[02:19:12] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[02:19:35] *** Joins: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net)
+[02:20:41] *** Joins: rLapz (~rLapz@user/rLapz)
+[02:20:52] *** Quits: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp) (Remote host closed the connection)
+[02:21:36] *** Joins: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp)
+[02:21:37] *** Quits: rLapz (~rLapz@user/rLapz) (Client Quit)
+[02:23:26] *** Joins: hvitol (~hvitol@218-145-17-89.fiber.hringdu.is)
+[02:25:57] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[02:26:23] *** Quits: unknow (~i.am@user/marlboro) (Quit: melhor filme de cu é rola)
+[02:29:34] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[02:30:00] *** Quits: magla (~gelignite@d5367a39.access.ecotel.net) (Quit: Stay safe!)
+[02:30:46] *** Quits: moose (~moose@user/moose) (Quit: Leaving)
+[02:36:42] *** Joins: proller (~p@2a02:6b8:b081:b486::1:1a)
+[02:36:54] *** Quits: MasterK (~MK@86.127.26.176) (Remote host closed the connection)
+[02:37:19] *** Quits: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp) (Remote host closed the connection)
+[02:38:02] *** Joins: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp)
+[02:38:35] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[02:38:37] *** Quits: spaceangel (~spaceange@ip-78-102-216-202.net.upcbroadband.cz) (Remote host closed the connection)
+[02:38:58] *** Quits: Serpent7776 (~Serpent77@90-156-31-193.internetia.net.pl) (Quit: leaving)
+[02:39:27] *** Quits: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 260 seconds)
+[02:39:57] *** Joins: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[02:41:31] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[02:43:00] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 240 seconds)
+[02:44:25] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[02:44:33] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[02:44:33] *** ChanServ sets mode: +v npaperbot
+[02:44:36] *** Quits: cosimone (~user@93-44-187-176.ip98.fastwebnet.it) (Remote host closed the connection)
+[02:45:31] *** Quits: senoraraton (~senorarat@192-195-83-130.static.monkeybrains.net) (Ping timeout: 260 seconds)
+[02:46:57] *** Joins: Chargen (~chargen@D964062A.static.ziggozakelijk.nl)
+[02:49:58] *** Joins: ckdCreations (~ckdCreati@c-73-140-151-116.hsd1.wa.comcast.net)
+[02:51:13] *** Quits: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp) (Remote host closed the connection)
+[02:52:00] *** Joins: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp)
+[02:52:16] *** Joins: wakeup (~wakeup@user/wakeup)
+[02:54:38] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[02:54:53] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[02:57:16] *** Quits: ckdCreations (~ckdCreati@c-73-140-151-116.hsd1.wa.comcast.net) (Ping timeout: 272 seconds)
+[02:58:00] *** Joins: ckdCreations (~ckdCreati@147.55.133.131)
+[03:01:05] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[03:01:12] <anyone> but then, what's the proposed replacement for initializer_list?
+[03:06:55] *** Joins: hiroshi_ (~freedom@151.57.59.90)
+[03:12:24] *** Quits: qwedfg_ (~qwedfg@user/qwedfg) (Read error: Connection reset by peer)
+[03:13:15] *** Quits: Brainium (~brainium@user/brainium) (Quit: Konversation terminated!)
+[03:15:23] *** Quits: rendar (~rendar@user/rendar) (Quit: Leaving)
+[03:17:31] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 256 seconds)
+[03:17:56] *** Quits: g0se (~goose@111.199.80.15) (Ping timeout: 252 seconds)
+[03:18:16] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[03:18:58] *** Joins: qwedfg (~qwedfg@user/qwedfg)
+[03:22:19] *** Joins: nicbk (~nicbk@user/nicbk)
+[03:28:16] *** Quits: pulse (~pulse@user/pulse) (Quit: { https://indiedevs.net/ })
+[03:29:11] *** Quits: hiroshi_ (~freedom@151.57.59.90) (Quit: hiroshi_)
+[03:30:01] <hnOsmium0001[m]> there were some in the discussions, named along the lines of std::init_list or std::initailzier_list2
+[03:30:03] <hnOsmium0001[m]> they all got scraped due to one reason or another
+[03:31:34] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[03:31:50] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[03:32:01] <hnOsmium0001[m]> one option for replacement is to write a template parameter pack Ts, and then mandate that T's must be convertible to the same type. I believe doing this can also enable perfect forwarding
+[03:33:45] *** Joins: pizdets_ (~pizdets@183.182.111.232)
+[03:34:31] *** Quits: pizdets (~pizdets@183.182.111.82) (Ping timeout: 260 seconds)
+[03:36:47] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[03:38:33] *** Quits: meicceli (meicceli@kapsi.fi) (Ping timeout: 268 seconds)
+[03:39:05] *** Joins: pulse (~pulse@user/pulse)
+[03:41:40] *** Joins: meicceli (meicceli@kapsi.fi)
+[03:42:42] *** Quits: seninha (~seninha@user/seninha) (Quit: Leaving)
+[03:46:33] *** Quits: jsbach (~jsbach@2a01:c22:a5b8:7600:58d2:c69d:9e7e:7ca5) (Ping timeout: 252 seconds)
+[03:50:36] *** Quits: zeenk (~zeenk@2a02:2f04:a110:7d00:2011:cfed:bad7:3c94) (Quit: Konversation terminated!)
+[03:50:38] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[03:58:17] *** Joins: senoraraton (~senorarat@192-195-83-130.static.monkeybrains.net)
+[03:59:04] <toulene> Hello, i am trying to implement the identity function, does the following have any issues? `template <typename T> T identity(const T& a){return a;}`
+[03:59:15] *** Quits: sh00p (~z@89-253-71-70.customers.ownit.se) (Ping timeout: 260 seconds)
+[03:59:29] *** Quits: vicfred (~vicfred@user/vicfred) (Quit: Leaving)
+[03:59:49] <ville> creates a copy?
+[04:00:22] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[04:01:13] <toulene> how would i fix that issue?
+[04:05:44] <ville> it isn't an issue per se. unless you decide it's an issue
+[04:06:11] *** Joins: seninha (~seninha@user/seninha)
+[04:07:45] <toulene> lets say i have decided that is an issue, how can i write an identity function that does not copy?
+[04:07:46] <hnOsmium0001[m]> ^^^, and if you want to avoid the copy use `template <typename T> T identity(T&& t) { return std::forward<T>(t); }`
+[04:07:46] *** Quits: str0 (~str0@178.220.28.32) (Remote host closed the connection)
+[04:07:59] <toulene> thanks
+[04:08:19] <PJBoy> I would say `template<typename T> T identity(T t) { return t; }`
+[04:08:46] <PJBoy> then you get nRVO on the return
+[04:08:57] <bpalmer> auto identity(auto a) { return a; } ?
+[04:09:44] *** Quits: wakeup (~wakeup@user/wakeup) (Quit: Client closed)
+[04:10:01] *** Quits: RoKenn (~RoKenn@user/rokenn) (Quit: NSA proxy service interrupted)
+[04:14:28] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[04:18:10] *** Quits: hvitol (~hvitol@218-145-17-89.fiber.hringdu.is) (Quit: WeeChat 3.4)
+[04:18:19] *** Quits: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp) (Quit: ncwbqcfe)
+[04:18:53] *** Quits: LucaTM (~LucaTM@user/lucatm) (Quit: Textual IRC Client: www.textualapp.com)
+[04:18:53] *** Joins: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp)
+[04:19:22] *** Quits: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp) (Client Quit)
+[04:20:02] *** Joins: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp)
+[04:25:26] *** Joins: Masklin (~joel@130.235.150.20)
+[04:30:35] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[04:32:54] *** Quits: senoraraton (~senorarat@192-195-83-130.static.monkeybrains.net) (Ping timeout: 272 seconds)
+[04:35:29] *** Quits: Burgundy (~NA@5-12-91-184.residential.rdsnet.ro) (Ping timeout: 252 seconds)
+[04:43:10] *** Quits: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp) (Quit: ncwbqcfe)
+[04:47:33] *** Joins: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp)
+[04:48:51] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[04:49:04] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[04:52:36] *** Joins: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net)
+[04:54:45] *** Joins: rLapz (~rLapz@user/rLapz)
+[04:54:59] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[04:56:20] *** Quits: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 272 seconds)
+[04:56:42] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[05:02:43] *** Quits: mattallmill (~mattallmi@ip68-103-130-85.ks.ok.cox.net) (Ping timeout: 260 seconds)
+[05:12:15] *** Quits: nicbk (~nicbk@user/nicbk) (Ping timeout: 240 seconds)
+[05:12:33] *** Quits: crankslider (~slidercra@user/slidercrank) (Ping timeout: 256 seconds)
+[05:13:23] *** Quits: seninha (~seninha@user/seninha) (Quit: Leaving)
+[05:18:13] *** Quits: evangeline (~Eleanor@178.79.105.181) (Ping timeout: 256 seconds)
+[05:26:59] *** Joins: joomla9 (uid543104@id-543104.lymington.irccloud.com)
+[05:30:29] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[05:35:13] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[05:38:07] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[05:38:13] *** Quits: geranim0 (~geranim0@modemcable242.171-178-173.mc.videotron.ca) (Remote host closed the connection)
+[05:41:27] *** Quits: reset (~reset@user/reset) (Quit: reset)
+[05:44:38] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[06:01:44] *** Quits: rLapz (~rLapz@user/rLapz) (Quit: Client closed)
+[06:02:35] *** Joins: senoraraton (~senorarat@192-195-83-130.static.monkeybrains.net)
+[06:03:23] *** Quits: PJBoy (~PJBoy@user/pjboy) (Ping timeout: 260 seconds)
+[06:06:08] *** Joins: zer0x (~zer0x@1.55.210.186)
+[06:17:39] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 268 seconds)
+[06:24:43] <Alipha> template <typename T> T&& identity(T&& t) { return std::forward<T>(t); }
+[06:26:43] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 260 seconds)
+[06:27:01] *** Joins: Carbonflux (~Carbonflu@c-66-235-54-179.sea.wa.customer.broadstripe.net)
+[06:28:34] *** Parts: FAT1337 (~IceChat78@24.48.89.219) ()
+[06:30:27] *** Quits: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu) (Ping timeout: 260 seconds)
+[06:32:30] *** Quits: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net) (Quit: Ex-Chat)
+[06:32:33] *** Quits: pizdets_ (~pizdets@183.182.111.232) (Ping timeout: 265 seconds)
+[06:34:09] *** Quits: senoraraton (~senorarat@192-195-83-130.static.monkeybrains.net) (Ping timeout: 256 seconds)
+[06:38:49] *** Joins: chenqisu1 (~chenqisu1@183.217.201.88)
+[06:39:57] *** Joins: nicbk (~nicbk@user/nicbk)
+[06:43:16] *** Joins: Inline__ (~Inline@p200300cd472cf8009bb7e46c1da712cc.dip0.t-ipconnect.de)
+[06:43:30] *** Joins: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu)
+[06:44:26] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[06:44:34] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[06:44:34] *** ChanServ sets mode: +v npaperbot
+[06:44:45] *** Quits: Pook (~Pook@2001:8a0:f996:1400:102d:1ec7:9019:dca9) (Quit: Leaving)
+[06:45:33] *** Quits: Inline (~Inline@p200300cd472405000b711a3855c27fc9.dip0.t-ipconnect.de) (Ping timeout: 250 seconds)
+[06:49:24] *** Joins: LuksNuke (~LuksNuke@gateway/tor-sasl/luksnuke)
+[06:56:31] *** Quits: cbreak (~cbreak@77-58-201-132.dclient.hispeed.ch) (Read error: Connection reset by peer)
+[06:59:25] *** Joins: cbreak (~cbreak@77-58-201-132.dclient.hispeed.ch)
+[07:06:24] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[07:07:00] *** Quits: plastico (~plastico@neomutt/plastico) (Quit: WeeChat 3.4)
+[07:07:30] *** Joins: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[07:10:20] *** Joins: asocialblade (~quassel@static.16.62.161.5.clients.your-server.de)
+[07:10:59] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 256 seconds)
+[07:19:00] *** Quits: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu) (Ping timeout: 240 seconds)
+[07:19:01] *** Quits: KAHR-Alpha (~Alpha@2a01cb0d024a66000c62258d0beaecac.ipv6.abo.wanadoo.fr) (Ping timeout: 240 seconds)
+[07:19:55] *** Quits: nicbk (~nicbk@user/nicbk) (Ping timeout: 240 seconds)
+[07:22:40] *** Joins: Coldberg (~C-Man@78.31.190.82)
+[07:23:35] *** Joins: nicbk (~nicbk@user/nicbk)
+[07:25:31] *** Quits: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp) (Remote host closed the connection)
+[07:26:17] *** Joins: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp)
+[07:26:51] *** Quits: C-Man (~C-Man@static.88-198-34-209.clients.your-server.de) (Ping timeout: 256 seconds)
+[07:28:10] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Quit: WeeChat 3.4.1)
+[07:31:32] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[07:31:58] *** Joins: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu)
+[07:36:29] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[07:40:11] *** Quits: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp) (Remote host closed the connection)
+[07:40:56] *** Joins: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp)
+[07:52:35] *** Quits: LuksNuke (~LuksNuke@gateway/tor-sasl/luksnuke) (Ping timeout: 240 seconds)
+[07:55:01] *** Joins: Macbethwin (~chargen@8.21.8.240)
+[07:57:27] *** Quits: Chargen (~chargen@D964062A.static.ziggozakelijk.nl) (Ping timeout: 256 seconds)
+[08:01:57] *** Quits: millido (~millido@84.210.150.128) (Quit: ZNC 1.8.2 - https://znc.in)
+[08:04:16] *** Joins: Jck_true1 (~jcktrue@user/jck-true/x-0200799)
+[08:04:49] *** Quits: Jck_true (~jcktrue@user/jck-true/x-0200799) (Ping timeout: 256 seconds)
+[08:04:49] *** Jck_true1 is now known as Jck_true
+[08:06:42] *** Quits: joomla9 (uid543104@id-543104.lymington.irccloud.com) (Quit: Connection closed for inactivity)
+[08:08:46] *** Quits: Sadale (~Sadale@user/sadale) (Read error: Connection reset by peer)
+[08:09:04] *** Joins: Sadale (~Sadale@user/sadale)
+[08:11:22] *** Quits: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp) (Quit: ncwbqcfe)
+[08:13:35] *** Quits: AmR (~AmREiSa@156.199.157.142) (Quit: Konversation terminated!)
+[08:13:53] *** Quits: zer0x (~zer0x@1.55.210.186) (Ping timeout: 256 seconds)
+[08:15:55] *** Quits: Macbethwin (~chargen@8.21.8.240) (Ping timeout: 260 seconds)
+[08:17:54] *** Joins: millido (~millido@84.210.150.128)
+[08:38:06] *** Quits: c4017 (~c4017@2604:3d08:747f:7c90:6c75:c89d:916b:3b14) (Read error: Connection reset by peer)
+[08:46:45] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Ping timeout: 256 seconds)
+[08:46:53] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[08:46:53] *** ChanServ sets mode: +v npaperbot
+[08:48:58] *** Parts: dakship (~dakshipen@2001:470:69fc:105::1:9a18) ()
+[08:54:30] *** Quits: sobkas (~sobkas@95.175.17.217) (Quit: sobkas)
+[09:00:55] *** Quits: nicbk (~nicbk@user/nicbk) (Ping timeout: 240 seconds)
+[09:02:24] *** Quits: pulse (~pulse@user/pulse) (Quit: { https://indiedevs.net/ })
+[09:11:22] *** Joins: PJBoy (~PJBoy@2a00:23c7:8302:b301:d145:9f2c:2b67:d633)
+[09:11:23] *** Quits: PJBoy (~PJBoy@2a00:23c7:8302:b301:d145:9f2c:2b67:d633) (Changing host)
+[09:11:23] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[09:18:08] *** Joins: zer0x (~zer0x@1.55.210.186)
+[09:19:37] *** Quits: mrgz (~mrgz@201-42-0-191.dsl.telesp.net.br) (Ping timeout: 256 seconds)
+[09:20:45] *** Quits: sreve (~quassel@p4ff44d34.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[09:21:13] *** Joins: sreve (~quassel@p54a71d5a.dip0.t-ipconnect.de)
+[09:26:51] *** Quits: sonic (~sonic@user/sonic) (Ping timeout: 260 seconds)
+[09:29:30] *** Joins: c4017 (~c4017@2604:3d08:747f:7c90:308f:de35:e19:6888)
+[09:29:50] *** Quits: luizfrds (~Luiz@152.250.243.147) (Read error: Connection reset by peer)
+[09:32:17] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[09:37:11] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[09:41:10] *** Joins: sonic (~sonic@user/sonic)
+[09:42:41] *** Joins: Xardas (~Xardas@149.233.51.127)
+[09:42:52] <Xardas> const string& s1 // is this a top-level or low-level const ?
+[09:43:14] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[09:43:21] <bpalmer> what do you mean by top-level and low-level ?
+[09:44:44] <Xardas> const int* p; // this is a low level const because it's a pointer TO an int
+[09:44:45] <Xardas> int const* p; // this is a top level const because it's a CONST pointer to an int
+[09:45:00] <Xardas> But references are already const
+[09:45:49] <Xardas> I don't know if the const here const string& s1 is top or low level...
+[09:46:08] <bpalmer> Xardas: ok, that's not standard terminology, but const string& s1 = s2;  is "top-level", in your terms.   s1 = s3; subsequently will call string's operator=
+[09:46:52] <bpalmer> (That will presumably fail, because s1 is a const reference, so can't call a non-const operator= for the string it refers to)
+[09:48:24] <Eelis> Xardas: "const T &" means "(const T)&", so the const is non-toplevel
+[09:48:25] *** Quits: bitmask (~bitmask@c-73-215-237-27.hsd1.nj.comcast.net) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[09:48:46] <Xardas> That's what I thought
+[09:49:13] <Eelis> top-level const on references does not exist because references are not object types
+[09:49:30] <Eelis> and thus cannot be const-qualified
+[09:49:35] <Xardas> So references have inherently a top level const
+[09:49:54] <Eelis> only in a vague conceptual sense. in a concrete sense, const simply has no bearing on them because they are not objects and have no value
+[09:51:04] <Eelis> it's good to really internalize that references are not objects
+[09:51:26] <Xardas> Well, that what got me confused
+[09:51:29] <Xardas> that's*
+[09:52:14] <Eelis> in practice, references may sometimes end up being represented identically to pointers in the generated machine code, but at the C++ level, references are a very distinct abstraction
+[09:52:42] *** Quits: zmt00 (~zmt00@user/zmt00) (Quit: Leaving)
+[09:53:11] <Xardas> So it only makes sense that const string& s1; const here is low level because we are referring to a const string
+[09:53:17] <Xardas> alright.:)
+[09:53:22] <Eelis> yep
+[09:53:27] *** Quits: Zogatribe (Zogatribe@user/zogatribe) (Read error: Connection reset by peer)
+[09:53:43] <Xardas> Thank you Eelis bpalmer
+[09:53:57] <Eelis> << TYPE<remove_const_t<int const&>> // that's also why this doesn't remove the const
+[09:53:58] <geordi> const int&
+[09:54:20] <Eelis> because remove_const_t only removes toplevel const
+[09:54:35] <bpalmer> I wasn't paying enough attention to the top level and low level example;  const int* and int const* are the same.
+[09:54:53] <bpalmer> I misread that as int const*  and int * const
+[09:55:17] *** Joins: zmt00 (~zmt00@user/zmt00)
+[09:55:26] <Eelis> ah good point, when Xardas said "int const* p; // this is a top level const because it's a CONST pointer to an int", that was inaccurate
+[09:55:41] <Eelis> << TYPE_DESC<int const*>
+[09:55:41] <geordi> pointer to a constant integer
+[09:55:42] <Xardas> oh my bad
+[09:55:51] <Xardas> i meant int *const p
+[09:55:55] <Eelis> ah ok
+[10:02:41] *** Quits: peoliye (~peoliye@54-240-198-36.amazon.com) (Quit: Client closed)
+[10:08:25] *** PJBoy is now known as Guest6605
+[10:08:26] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[10:08:43] *** Joins: abode (~abode@2001:8f8:1263:f81:8230:49ff:fe6e:36b5)
+[10:11:11] *** Quits: Guest6605 (~PJBoy@user/pjboy) (Ping timeout: 260 seconds)
+[10:24:56] *** Joins: SGautam (uid286066@id-286066.ilkley.irccloud.com)
+[10:32:39] *** Joins: artok (~azo@mobile-access-bcee08-6.dhcp.inet.fi)
+[10:34:06] *** Quits: ProperNoun (~holyShizn@user/propernoun) (Ping timeout: 252 seconds)
+[10:35:55] *** Joins: drbeco (~beco@user/beco)
+[10:36:48] *** Quits: Xardas (~Xardas@149.233.51.127) (Quit: Client closed)
+[10:37:38] *** Quits: great_taste (~great_tas@user/great-taste/x-5798414) (Quit: Ping timeout (120 seconds))
+[10:37:41] *** Joins: artok_ (~azo@85.194.207.76)
+[10:37:49] *** Joins: lh_mouse (~lh_mouse@mingw-w64/developer/lhmouse)
+[10:38:20] *** Quits: artok (~azo@mobile-access-bcee08-6.dhcp.inet.fi) (Ping timeout: 272 seconds)
+[10:38:40] *** Joins: ProperNoun (~holyShizn@user/propernoun)
+[10:39:07] *** Quits: artok_ (~azo@85.194.207.76) (Client Quit)
+[10:39:24] *** Joins: artok (~azo@85.194.207.76)
+[10:41:45] *** Quits: artok (~azo@85.194.207.76) (Client Quit)
+[10:44:26] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[10:44:36] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[10:44:36] *** ChanServ sets mode: +v npaperbot
+[10:45:53] *** Joins: abode_ (~abode@94.59.225.33)
+[10:47:07] *** Quits: PJBoy (~PJBoy@user/pjboy) (Ping timeout: 260 seconds)
+[10:48:09] *** Quits: abode (~abode@2001:8f8:1263:f81:8230:49ff:fe6e:36b5) (Read error: Connection reset by peer)
+[10:52:27] *** Joins: g0se (~goose@111.199.80.15)
+[11:02:24] *** Quits: Enitin (~Enitin@82.102.22.86) (Ping timeout: 272 seconds)
+[11:03:28] *** Joins: Enitin (~Enitin@82.180.145.230)
+[11:05:38] *** Quits: very_sneaky (~very_snea@user/very-sneaky/x-7432109) (Ping timeout: 268 seconds)
+[11:07:00] *** Joins: very_sneaky (~very_snea@user/very-sneaky/x-7432109)
+[11:10:07] *** Quits: ckdCreations (~ckdCreati@147.55.133.131) (Ping timeout: 256 seconds)
+[11:10:24] *** Joins: ckdCreations (~ckdCreati@147.55.133.131)
+[11:11:16] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 272 seconds)
+[11:12:32] *** Quits: LuckyFire (~LuckyFire@46.217.32.109) (Ping timeout: 272 seconds)
+[11:12:42] *** Joins: LuckyFire (~LuckyFire@77.29.237.110)
+[11:26:31] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[11:28:37] *** Quits: emerent (~quassel@p200300cd5743c32bba27ebfffed28a59.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[11:29:01] *** Joins: emerent (~quassel@p200300cd5743c398ba27ebfffed28a59.dip0.t-ipconnect.de)
+[11:33:26] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[11:34:04] *** Quits: zer0x (~zer0x@1.55.210.186) (Ping timeout: 272 seconds)
+[11:34:41] *** Joins: nwulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[11:37:37] *** Quits: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 240 seconds)
+[11:37:53] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[11:56:33] *** Joins: evangeline (~Eleanor@178.79.105.181)
+[11:56:44] *** yosefweissmann[m is now known as yosef
+[11:58:19] *** Joins: Sazhen86 (~Sazhen86@125-236-239-93.adsl.xtra.co.nz)
+[11:58:37] *** Quits: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu) (Ping timeout: 240 seconds)
+[11:59:44] *** Quits: skapata (~Skapata@user/skapata) (Read error: Connection reset by peer)
+[12:06:34] *** yosef is now known as yosef36
+[12:10:47] *** Joins: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu)
+[12:16:24] *** Joins: sh00p (~z@89-253-71-70.customers.ownit.se)
+[12:19:27] *** Joins: Lazenca (~lazenca@user/lazenca)
+[12:28:16] *** Joins: irf21k (~irf21k@2401:4900:32a5:d337::1224:88ba)
+[12:29:35] *** Quits: Garbanzo__ (~Garbanzo@2602:304:6eac:dc10:fbf2:b01f:1d47:7542) (Ping timeout: 252 seconds)
+[12:29:44] *** anyone is now known as zz
+[12:35:33] *** Joins: the_lanetly_052 (~the_lanet@194.135.154.179)
+[12:49:26] *** Quits: the_lanetly_052 (~the_lanet@194.135.154.179) (Ping timeout: 272 seconds)
+[12:50:19] *** Quits: evangeline (~Eleanor@178.79.105.181) (Ping timeout: 260 seconds)
+[13:02:20] *** Joins: gentooclimax (~gentoocli@81-64-65-213.rev.numericable.fr)
+[13:03:06] *** Quits: gentooclimax (~gentoocli@81-64-65-213.rev.numericable.fr) (Client Quit)
+[13:03:28] *** Joins: gentooclimax (~gentoocli@81-64-65-213.rev.numericable.fr)
+[13:03:58] *** Quits: gentooclimax (~gentoocli@81-64-65-213.rev.numericable.fr) (Client Quit)
+[13:15:45] *** Quits: shailangsa (~shailangs@host165-120-169-51.range165-120.btcentralplus.com) (Ping timeout: 268 seconds)
+[13:19:41] *** Joins: namkeleser (~namkelese@101.175.155.55)
+[13:21:35] *** Quits: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 260 seconds)
+[13:22:52] *** Joins: bolovanos (~bolovanos@user/bolovanos)
+[13:23:05] *** Joins: shailangsa (~shailangs@host86-162-150-212.range86-162.btcentralplus.com)
+[13:23:46] *** Quits: letto (~letto@188.27.114.171) (Ping timeout: 268 seconds)
+[13:30:28] *** Quits: hasuke[m] (~hasukemat@2001:470:69fc:105::e3f4) (Quit: You have been kicked for being idle)
+[13:31:26] *** Joins: lxsameer (~lxsameer@user/lxsameer)
+[13:33:47] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[13:35:44] *** Quits: Sazhen86 (~Sazhen86@125-236-239-93.adsl.xtra.co.nz) (Quit: My computer has nodded off...)
+[13:39:09] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[13:41:54] *** Quits: chenqisu1 (~chenqisu1@183.217.201.88) (Quit: Leaving)
+[13:45:38] *** Joins: Serpent7776 (~Serpent77@90-156-31-193.internetia.net.pl)
+[13:46:25] *** Joins: gproto23 (~gproto23@user/gproto23)
+[13:47:32] *** Joins: reset (~reset@user/reset)
+[13:48:11] *** Quits: Coldberg (~C-Man@78.31.190.82) (Ping timeout: 260 seconds)
+[13:49:24] *** Quits: ville (~ville@user/ville) (Quit: ville)
+[13:49:42] *** Joins: LucaTM (~LucaTM@user/lucatm)
+[14:01:32] *** Joins: rg (~r-g@51-15-187-53.rev.poneytelecom.eu)
+[14:01:39] *** Joins: jsbach (~jsbach@2a01:c22:a804:4500:2594:22bb:73c1:4d9c)
+[14:10:39] *** Quits: bdt (~bdt@2a01:799:39c:7600:e65f:1ff:fe08:8a88) (Ping timeout: 256 seconds)
+[14:11:49] *** Joins: C-Man (~C-Man@78.31.190.82)
+[14:12:37] *** Joins: bdt (~bdt@155.51-174-24.customer.lyse.net)
+[14:15:33] *** Joins: zer0x (~zer0x@1.55.210.186)
+[14:17:25] *** Joins: ville (~ville@user/ville)
+[14:21:42] *** Quits: Lazenca (~lazenca@user/lazenca) (Remote host closed the connection)
+[14:26:39] *** Joins: LuksNuke (~LuksNuke@gateway/tor-sasl/luksnuke)
+[14:26:55] *** Quits: gdd (~gdd@129.199.146.230) (Ping timeout: 260 seconds)
+[14:34:34] *** Quits: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu) (Ping timeout: 272 seconds)
+[14:35:19] *** Joins: hvitol (~hvitol@218-145-17-89.fiber.hringdu.is)
+[14:37:34] *** Joins: m_ben (~m_ben@user/m-ben/x-7429725)
+[14:38:22] *** Quits: hvitol (~hvitol@218-145-17-89.fiber.hringdu.is) (Client Quit)
+[14:38:51] *** Quits: m_tadeu (~quassel@bl7-240-233.dsl.telepac.pt) (Ping timeout: 252 seconds)
+[14:41:25] *** Joins: sobkas (~sobkas@95.175.17.217)
+[14:44:09] *** Joins: pizdets (~pizdets@183.182.115.185)
+[14:44:27] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[14:44:35] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[14:44:35] *** ChanServ sets mode: +v npaperbot
+[14:45:30] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[14:46:18] *** Joins: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu)
+[14:46:57] *** Quits: Enitin (~Enitin@82.180.145.230) (Ping timeout: 240 seconds)
+[14:47:48] *** Joins: hvitol (~hvitol@218-145-17-89.fiber.hringdu.is)
+[14:48:02] *** Joins: Enitin (~Enitin@82.180.145.228)
+[14:48:05] *** Joins: Xardas (~Xardas@149.233.51.127)
+[14:49:51] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Ping timeout: 252 seconds)
+[14:50:07] *** Joins: savolla (~quassel@95.10.200.51)
+[14:51:33] *** Quits: ckdCreations (~ckdCreati@147.55.133.131) (Read error: Connection reset by peer)
+[14:51:52] *** Joins: ckdCreations (~ckdCreati@c-73-140-151-116.hsd1.wa.comcast.net)
+[14:52:51] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[14:56:13] *** Quits: ckdCreations (~ckdCreati@c-73-140-151-116.hsd1.wa.comcast.net) (Ping timeout: 256 seconds)
+[14:57:55] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[14:58:49] *** Joins: chris64 (~chris@user/chris64)
+[15:00:14] *** Quits: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu) (Quit: Leaving)
+[15:00:16] *** Quits: shailangsa (~shailangs@host86-162-150-212.range86-162.btcentralplus.com) ()
+[15:00:59] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[15:01:02] *** Joins: Vrganj (~Vrganj@93-142-89-137.adsl.net.t-com.hr)
+[15:01:02] *** Quits: abode_ (~abode@94.59.225.33) (Remote host closed the connection)
+[15:01:39] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Client Quit)
+[15:01:52] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[15:02:05] *** Quits: sobkas (~sobkas@95.175.17.217) (Remote host closed the connection)
+[15:02:19] *** Joins: TheHermann (~TheHerman@gateway/tor-sasl/thehermann)
+[15:02:42] *** Joins: sobkas (~sobkas@95.175.17.217)
+[15:06:11] *** Joins: shailangsa (~shailangs@host86-162-150-212.range86-162.btcentralplus.com)
+[15:06:26] *** Quits: sobkas (~sobkas@95.175.17.217) (Remote host closed the connection)
+[15:07:07] *** Joins: sobkas (~sobkas@95.175.17.217)
+[15:08:07] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[15:08:17] *** Inline__ is now known as Inline
+[15:08:48] *** Quits: Carbonflux (~Carbonflu@c-66-235-54-179.sea.wa.customer.broadstripe.net) (Quit: When all you have are solutions, everything is a problem.)
+[15:13:47] *** Quits: irf21k (~irf21k@2401:4900:32a5:d337::1224:88ba) (Remote host closed the connection)
+[15:13:55] *** Joins: irf21k (~irf21k@2401:4900:32a5:d337::1224:88ba)
+[15:14:49] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[15:15:12] <xisop> when are glvalue, xvalue, and prvalue useful concepts?
+[15:18:23] *** Joins: zen_coder (~zen_coder@2a02:8109:8c80:904:699f:6e20:195b:1ccd)
+[15:20:01] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[15:20:39] *** Quits: g0se (~goose@111.199.80.15) (Remote host closed the connection)
+[15:20:57] *** Joins: g0se (~goose@111.199.80.15)
+[15:21:16] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Quit: elastic_dog)
+[15:21:30] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[15:22:44] <hachikuji[m]> always
+[15:23:05] *** Joins: zeenk (~zeenk@2a02:2f04:a110:7d00:2011:cfed:bad7:3c94)
+[15:23:10] *** Joins: xkuru (~xkuru@user/xkuru)
+[15:23:17] <chris64> hachikuji[m]: compared to l-value and r-value?
+[15:24:06] *** Joins: rendar (~rendar@user/rendar)
+[15:24:09] <chris64> hachikuji[m]: in which cases is it useful be be able to distinguish between the subcategories?
+[15:26:07] * hachikuji[m] uploaded an image: (3KiB) < https://libera.ems.host/_matrix/media/r0/download/midov.pl/igXGRmCfKpMtdKNuMazCIGrN/vE3vT.png >
+[15:26:08] <hachikuji[m]> always?
+[15:29:23] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[15:29:40] *** Quits: hvitol (~hvitol@218-145-17-89.fiber.hringdu.is) (Ping timeout: 272 seconds)
+[15:29:42] *** Quits: SGautam (uid286066@id-286066.ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[15:30:35] <TinoDidriksen> Be careful with images and other Matrix/Element contents - it doesn't show great on IRC.
+[15:31:10] *** Joins: hvitol (~hvitol@218-145-17-89.fiber.hringdu.is)
+[15:31:35] *** Joins: m_tadeu (~quassel@bl7-240-233.dsl.telepac.pt)
+[15:31:55] *** Quits: karakedi (~eAC53C340@user/karakedi) (Ping timeout: 256 seconds)
+[15:32:57] <hachikuji[m]> well it's pretty much useless image anyway unless you already read about it
+[15:33:25] <chris64> https://stackoverflow.com/questions/3601602/what-are-rvalues-lvalues-xvalues-glvalues-and-prvalues
+[15:33:45] <chris64> not sure still in which cases I need to deal with xvalues specifically
+[15:33:52] <hachikuji[m]> these are fundamentals of C++, you won't get far without understanding
+[15:34:30] <TinoDidriksen> You almost never need glvalue, xvalue, prvalue as a coder.
+[15:34:38] <hachikuji[m]> you don't deal with xvalue, you make one when you need it
+[15:34:52] <TinoDidriksen> rvalue and lvalue absolutely, but the others you can ignore.
+[15:34:58] <chris64> so why bothering the xvalue category exists, if you just use it implicitly?
+[15:36:08] <hachikuji[m]> TinoDidriksen: right, you never need to move, you never use literals, and you never use any lvalues or xvalues, tell me about it...
+[15:36:25] <TinoDidriksen> You USE them, but you do not need to know what they are to the Standard.
+[15:37:02] <hachikuji[m]> that's why stack overflow is full of stupid questions about std::unique_pointer right?
+[15:37:33] <TinoDidriksen> It is NOT fundamental to understand the terms glvalue, xvalue, or prvalue. At all. You need rvalue and lvalue, but the rest are not something you need to have internalized.
+[15:38:09] <hachikuji[m]> expressions are a fundamental building block of any programming language known to man
+[15:38:24] <TinoDidriksen> But not what kind of expressions they are.
+[15:38:46] <hachikuji[m]> not sure why you think it's something complex or known only by geniuses, anyone can figure it out after reading cppreference page
+[15:39:14] <chris64> it was not the question whether it's complex or not but when this knowledge is relevant
+[15:39:16] <TinoDidriksen> There's a huge difference between knowing you need to move() something, and knowing whether move() causes a specific type of X-value to occur.
+[15:39:33] <TinoDidriksen> move() is important. Whether that's an hubba-value is not.
+[15:40:59] <hachikuji[m]> std::move() doesn't do anything
+[15:41:22] <TinoDidriksen> Mechanically true. Semantically it does something.
+[15:42:01] <hachikuji[m]> I don't know how much you need to be in denial to destroy your own argument about semantics not mattering
+[15:42:07] <hachikuji[m]> and not realize it
+[15:42:08] *** Joins: Burgundy (~NA@5-12-91-184.residential.rdsnet.ro)
+[15:42:15] *** Joins: gdd (~gdd@129.199.146.230)
+[15:42:31] <hachikuji[m]> but I don't want this good, have a nice day
+[15:43:18] <TinoDidriksen> Semantics matters a whole lot. But the specific value categories are minute details that 99% do not need to care about. Only rvalue and lvalue are important to regular coders.
+[15:43:56] *** Joins: adlternative (~adl@117.32.216.31)
+[15:45:02] *** Joins: crankslider (~slidercra@user/slidercrank)
+[15:47:03] *** Quits: adlternative (~adl@117.32.216.31) (Client Quit)
+[15:49:22] *** Quits: pottsy (~pottsy@2400:4050:b560:3700:fe0:b422:790d:35f6) (Ping timeout: 265 seconds)
+[15:52:36] *** Joins: unknow (~i.am@user/marlboro)
+[15:55:42] *** Joins: KAHR-Alpha_ (~Alpha@2a01cb0d024a6600d48336328e3776fd.ipv6.abo.wanadoo.fr)
+[15:57:21] *** Joins: KAHR-Alpha__ (~Alpha@2a01cb0d024a6600a538531178f2bd33.ipv6.abo.wanadoo.fr)
+[15:59:01] *** Joins: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp)
+[16:00:15] *** Quits: KAHR-Alpha_ (~Alpha@2a01cb0d024a6600d48336328e3776fd.ipv6.abo.wanadoo.fr) (Ping timeout: 252 seconds)
+[16:06:03] *** Joins: wakeup (~wakeup@user/wakeup)
+[16:06:12] *** Quits: proller (~p@2a02:6b8:b081:b486::1:1a) (Ping timeout: 240 seconds)
+[16:09:53] *** Quits: Enitin (~Enitin@82.180.145.228) (Ping timeout: 256 seconds)
+[16:12:21] *** Quits: jsbach (~jsbach@2a01:c22:a804:4500:2594:22bb:73c1:4d9c) (Ping timeout: 252 seconds)
+[16:14:04] *** Joins: lsdage (~lsdage@83-208-197-51.rcc.o2.cz)
+[16:15:52] *** Quits: chris64 (~chris@user/chris64) (Quit: leaving)
+[16:17:08] *** Quits: zer0x (~zer0x@1.55.210.186) (Remote host closed the connection)
+[16:23:17] *** Quits: Xardas (~Xardas@149.233.51.127) (Quit: Client closed)
+[16:24:19] *** Quits: wakeup (~wakeup@user/wakeup) (Quit: Client closed)
+[16:25:14] *** Joins: wakeup (~wakeup@user/wakeup)
+[16:26:03] *** Joins: mattallmill (~mattallmi@ip68-103-130-85.ks.ok.cox.net)
+[16:26:12] *** Joins: jsbach (~jsbach@2a01:c22:a804:4500:697c:84ba:4b7a:4aef)
+[16:29:29] *** Quits: c4017 (~c4017@2604:3d08:747f:7c90:308f:de35:e19:6888) (Quit: Leaving)
+[16:30:17] *** Quits: jsbach (~jsbach@2a01:c22:a804:4500:697c:84ba:4b7a:4aef) (Ping timeout: 240 seconds)
+[16:31:32] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[16:33:40] *** Joins: xkuru (~xkuru@user/xkuru)
+[16:36:38] *** Quits: gproto23 (~gproto23@user/gproto23) (Remote host closed the connection)
+[16:38:25] *** Joins: dr_traktor (~dr_trakto@178-164-174-139.pool.digikabel.hu)
+[16:39:55] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Ping timeout: 260 seconds)
+[16:40:06] <dr_traktor> Is there a pattern where I can express that I require a parameter with a type that inherits from two different classes? Where those two classes can be freely specified in the function argument type and I don't have to create a third class inheriting from those two and then forcing the parameter to inherit from that third class.
+[16:40:54] *** Quits: hvitol (~hvitol@218-145-17-89.fiber.hringdu.is) (Quit: WeeChat 3.4)
+[16:41:20] <ville> dr_traktor: templates?
+[16:43:39] *** Joins: jsbach (~jsbach@2a01:c22:a804:4500:ee5a:bf10:6848:8e48)
+[16:44:04] <dr_traktor> ville: I'm uneasy about it. And about where to draw a line between using interface classes and inheritance, or not using them at all and just make everything a template and use duck typing. But it's a valid idea.
+[16:46:42] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[16:46:55] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[16:46:58] *** Joins: MasterK (~MK@86.127.26.176)
+[16:47:10] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[16:47:34] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 272 seconds)
+[16:48:11] <ville> oh, i was asking if you were already using them
+[16:48:30] *** Quits: m_ben (~m_ben@user/m-ben/x-7429725) (Quit: WeeChat 3.4.1)
+[16:48:39] *** Quits: zen_coder (~zen_coder@2a02:8109:8c80:904:699f:6e20:195b:1ccd) (Ping timeout: 252 seconds)
+[16:50:05] <ville> if you are not then you really don't have lot of options as far as the language goes. a regular function wants some concrete type as the parameter type so that limits the options to basically what you said. make a third type that inherits from the first two
+[16:50:48] <ville> then your function can take a pointer or reference to the third type
+[16:51:15] *** Quits: savolla (~quassel@95.10.200.51) (Ping timeout: 256 seconds)
+[16:51:59] <dr_traktor> I guess one could make some template class like `InheritsFrom<T1, ...>` which just stores a reference and would have functions like `::as<T>()`. Is there something like that already in STL?
+[16:54:48] *** Quits: wakeup (~wakeup@user/wakeup) (Quit: Client closed)
+[16:55:24] *** Joins: savolla (~quassel@95.10.200.51)
+[16:55:54] *** Quits: jsbach (~jsbach@2a01:c22:a804:4500:ee5a:bf10:6848:8e48) (Ping timeout: 268 seconds)
+[16:57:21] *** Joins: jsbach (~jsbach@2a01:c22:a804:4500:8427:7ab8:4f84:a097)
+[17:01:00] *** Quits: unixpro1970 (~unixpro19@c-67-168-1-124.hsd1.wa.comcast.net) (Remote host closed the connection)
+[17:02:48] *** Quits: lsdage (~lsdage@83-208-197-51.rcc.o2.cz) (Quit: leaving)
+[17:04:17] *** Joins: sa02irc (~mbax@155-079-043-212.ip-addr.inexio.net)
+[17:08:13] *** Karyon_ is now known as Karyon
+[17:13:30] *** Joins: abode (~abode@2001:8f8:1263:f81:8230:49ff:fe6e:36b5)
+[17:13:34] *** Quits: heiner (~Thunderbi@2a00:6020:b006:a900:d250:99ff:fe34:8fd2) (Quit: heiner)
+[17:13:50] *** Joins: heiner (~Thunderbi@2a00:6020:b006:a900:d250:99ff:fe34:8fd2)
+[17:14:52] *** Joins: unixpro1970 (~unixpro19@c-67-168-1-124.hsd1.wa.comcast.net)
+[17:16:25] *** Joins: spaceangel (~spaceange@ip-78-102-216-202.net.upcbroadband.cz)
+[17:18:56] *** Joins: hesse (~TheHerman@gateway/tor-sasl/thehermann)
+[17:19:54] *** Joins: bolovanos_ (~bolovanos@user/bolovanos)
+[17:20:55] *** Quits: TheHermann (~TheHerman@gateway/tor-sasl/thehermann) (Ping timeout: 240 seconds)
+[17:21:14] *** Joins: the_lanetly_052 (~the_lanet@185.30.90.179)
+[17:22:29] *** Quits: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net) (Quit: Textual IRC Client: www.textualapp.com)
+[17:23:17] *** Joins: Enitin (~Enitin@82.102.22.85)
+[17:23:17] *** Quits: bolovanos (~bolovanos@user/bolovanos) (Ping timeout: 240 seconds)
+[17:23:54] *** Quits: fbiagent (~fbiagent@user/fbiagent) (Remote host closed the connection)
+[17:25:33] *** Joins: rajkosto (~rajkosto@93-86-136-147.dynamic.isp.telekom.rs)
+[17:25:51] *** Quits: jsbach (~jsbach@2a01:c22:a804:4500:8427:7ab8:4f84:a097) (Remote host closed the connection)
+[17:25:56] *** Joins: fbiagent (~fbiagent@user/fbiagent)
+[17:27:43] *** Joins: jsbach (~jsbach@2a01:c22:a804:4500:56b6:eaec:97d1:90e9)
+[17:30:19] *** Quits: Enitin (~Enitin@82.102.22.85) (Ping timeout: 260 seconds)
+[17:31:02] *** Joins: GreenResponse (~tomek@r-45-155-148-237.gpon.bialnet.pl)
+[17:32:46] *** Joins: Enitin (~Enitin@82.180.145.230)
+[17:34:03] *** Joins: plastico (~plastico@neomutt/plastico)
+[17:35:38] *** Quits: heiner (~Thunderbi@2a00:6020:b006:a900:d250:99ff:fe34:8fd2) (Quit: heiner)
+[17:37:19] *** Quits: Enitin (~Enitin@82.180.145.230) (Ping timeout: 260 seconds)
+[17:37:40] *** Joins: Enitin (~Enitin@82.102.22.85)
+[17:41:48] *** Quits: sh00p (~z@89-253-71-70.customers.ownit.se) (Ping timeout: 240 seconds)
+[17:42:39] *** Quits: nq_ (~nq@2a02:2f08:e015:a900:e603:7a30:2c23:12e) (Remote host closed the connection)
+[17:43:43] *** Joins: karakedi (~eAC53C340@user/karakedi)
+[17:46:08] *** Quits: NyB (~archon@2a02:169:1d9::1:0:0) (Remote host closed the connection)
+[17:47:53] *** Quits: namkeleser (~namkelese@101.175.155.55) (Quit: Client closed)
+[17:50:50] *** Joins: Cupecake (~Cupecake@2a01cb0087ee4d00cf011720c700a180.ipv6.abo.wanadoo.fr)
+[17:52:10] *** Quits: mattallmill (~mattallmi@ip68-103-130-85.ks.ok.cox.net) (Ping timeout: 272 seconds)
+[17:52:39] *** Joins: abode_ (~abode@94.59.225.33)
+[17:55:31] *** Quits: abode (~abode@2001:8f8:1263:f81:8230:49ff:fe6e:36b5) (Ping timeout: 260 seconds)
+[17:55:59] <Cupecake> Hi, I have question.I have a class "A" with functions registerCallback() and sendCommand() the objective of these class is to send a command, wait for the response and call the registered callbacks on response. But with the "cmmand" I want something like a "context class" that is not necessary known from A class. First option: Use void * pointers
+[17:56:00] <Cupecake> to carry this "context class", is there another solution ? Example create a pure virtual ResultContext class known from A but that can be reimpemented to use it ? (I'm not sure if this is possible) std::function<void(ResultContextBase, boolean)>;
+[17:56:00] *** Joins: mrgz (~mrgz@201-42-0-191.dsl.telesp.net.br)
+[18:00:00] <Cupecake> Usage example: A a = new A(); a.registerCallback(myFn); a.sendCommand(context, "my huge command");  When the command is executed myFn is called : myFn(context, status). The context is just transported. So "A" dont need to know it's content.
+[18:00:40] <Cupecake> What is the best option to do it ?
+[18:00:54] <Cupecake> Without using void * context.
+[18:02:40] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Remote host closed the connection)
+[18:02:40] *** Quits: LuksNuke (~LuksNuke@gateway/tor-sasl/luksnuke) (Remote host closed the connection)
+[18:02:40] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[18:02:40] *** Quits: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp) (Remote host closed the connection)
+[18:02:40] *** Quits: bindu (~bindu@user/bindu) (Remote host closed the connection)
+[18:02:52] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[18:03:01] *** Joins: bindu (~bindu@user/bindu)
+[18:03:02] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[18:03:03] *** Joins: LuksNuke (~LuksNuke@gateway/tor-sasl/luksnuke)
+[18:03:25] *** Joins: ncwbqcfe (~rvgzuuqp@gateway/tor-sasl/rvgzuuqp)
+[18:03:30] <danieldg> Cupecake: a parent class with a virtual run_callback(), and a child that is templated to accept the callback
+[18:04:53] <danieldg> Cupecake: or just look at the closure support which basically does that, but with virtual operator()
+[18:05:02] <Cupecake> Hum, I'm not sure to understand.
+[18:07:52] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[18:08:04] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[18:08:06] *** Joins: CaCode_ (~CaCode@user/cacode)
+[18:08:09] *** Quits: zeenk (~zeenk@2a02:2f04:a110:7d00:2011:cfed:bad7:3c94) (Quit: Konversation terminated!)
+[18:08:21] *** PJBoy is now known as Guest4132
+[18:08:21] *** Quits: Guest4132 (~PJBoy@user/pjboy) (Killed (zinc.libera.chat (Nickname regained by services)))
+[18:08:22] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[18:10:57] *** Quits: Sadale (~Sadale@user/sadale) (Ping timeout: 240 seconds)
+[18:13:59] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[18:14:01] *** Joins: Sadale (~Sadale@user/sadale)
+[18:16:43] *** Joins: wakeup (~wakeup@user/wakeup)
+[18:21:46] *** Joins: SGautam (uid286066@id-286066.ilkley.irccloud.com)
+[18:31:35] *** Quits: hesse (~TheHerman@gateway/tor-sasl/thehermann) (Ping timeout: 240 seconds)
+[18:33:35] *** Quits: LuksNuke (~LuksNuke@gateway/tor-sasl/luksnuke) (Ping timeout: 240 seconds)
+[18:37:38] *** Quits: Inline (~Inline@p200300cd472cf8009bb7e46c1da712cc.dip0.t-ipconnect.de) (Quit: Leaving)
+[18:44:28] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[18:44:36] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[18:44:36] *** ChanServ sets mode: +v npaperbot
+[18:45:49] *** Quits: wakeup (~wakeup@user/wakeup) (Quit: Client closed)
+[18:52:24] *** Quits: abode_ (~abode@94.59.225.33) (Remote host closed the connection)
+[18:59:01] *** Quits: CaCode_ (~CaCode@user/cacode) (Quit: Leaving)
+[18:59:50] *** Joins: jokoon (~eio@2a01:e0a:542:e160:d930:938f:f075:3f5a)
+[19:01:55] *** Joins: pulse (~pulse@user/pulse)
+[19:05:33] *** Quits: savolla (~quassel@95.10.200.51) (Ping timeout: 256 seconds)
+[19:07:19] *** Joins: great_taste (~great_tas@user/great-taste/x-5798414)
+[19:11:41] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[19:12:57] *** Joins: savolla (~quassel@95.10.200.51)
+[19:13:59] *** Joins: zmt01 (~zmt00@user/zmt00)
+[19:14:36] *** Quits: zmt00 (~zmt00@user/zmt00) (Ping timeout: 240 seconds)
+[19:16:19] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[19:17:27] *** Quits: C-Man (~C-Man@78.31.190.82) (Ping timeout: 256 seconds)
+[19:21:33] *** Quits: unknow (~i.am@user/marlboro) (Quit: a pentium 100 "running" windows 11 trying to play Last of Us II at ps4emu... that's my brain trying understand 0->R->R->R/2R->0)
+[19:23:58] *** Joins: bitmask (~bitmask@c-73-215-237-27.hsd1.nj.comcast.net)
+[19:27:02] *** Joins: madder_enz (~mad_enz@lnsm4-toronto12-50-101-118-206.internet.virginmobile.ca)
+[19:27:14] *** Quits: madder_enz (~mad_enz@lnsm4-toronto12-50-101-118-206.internet.virginmobile.ca) (Remote host closed the connection)
+[19:27:23] *** Quits: mad_enz (~mad_enz@lnsm4-toronto12-50-101-118-206.internet.virginmobile.ca) (Read error: Connection reset by peer)
+[19:28:23] *** Quits: rajkosto (~rajkosto@93-86-136-147.dynamic.isp.telekom.rs) (Ping timeout: 260 seconds)
+[19:33:22] *** Quits: Cupecake (~Cupecake@2a01cb0087ee4d00cf011720c700a180.ipv6.abo.wanadoo.fr) (Quit: Client closed)
+[19:35:20] *** Joins: hvitol (~hvitol@218-145-17-89.fiber.hringdu.is)
+[19:38:12] *** Joins: Zogatribe (Zogatribe@user/zogatribe)
+[19:39:20] *** Joins: m_ben (~m_ben@user/m-ben/x-7429725)
+[19:44:18] *** Joins: str0 (~str0@178.220.28.32)
+[19:48:55] *** Joins: Inline (~Inline@p200300cd472cf8009bb7e46c1da712cc.dip0.t-ipconnect.de)
+[19:56:09] *** Joins: wakeup (~wakeup@user/wakeup)
+[19:56:38] *** Joins: zer0x (~zer0x@1.55.210.186)
+[19:59:57] *** Joins: letto (~letto@188.27.114.171)
+[20:02:23] *** Joins: kek_ (~kek_@net-2001-067c-10ec-5747-8000-0000-0000-04f3.v6.ethz.ch)
+[20:03:14] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[20:05:48] *** Quits: zer0x (~zer0x@1.55.210.186) (Ping timeout: 272 seconds)
+[20:07:53] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[20:08:03] <kek_> I have 3 files: A, B, C. A and B have functions of the same name. Those functions might or might not be part of a class. Is there a way I can include both in file C and differentiate the functions from A and B without touching A and B? (I know, it sounds weird and probably is)
+[20:08:30] <TinoDidriksen> Same name, but also same parameters?
+[20:10:14] <kek_> TinoDidriksen, same signature yeah.
+[20:12:12] <zz> The class name (if any) is part of the name.
+[20:13:19] <zz> ... which means you pretty much have to do:  namespace urgh { #include "A" } namespace urgh2 { #include "B" } (or s/namespace/class/) to get something halfway usable.
+[20:15:59] *** Joins: rLapz (~rLapz@user/rLapz)
+[20:16:49] *** Joins: the_lanetly_052_ (~the_lanet@194.135.154.59)
+[20:16:55] <kek_> thanks for the input
+[20:18:02] *** Quits: michaelis (~michaelis@193.183.209.17) (Ping timeout: 240 seconds)
+[20:21:19] *** Joins: abode (~abode@2.48.235.88)
+[20:21:52] *** Quits: great_taste (~great_tas@user/great-taste/x-5798414) (Quit: Client closed)
+[20:22:53] *** Quits: sa02irc (~mbax@155-079-043-212.ip-addr.inexio.net) (Remote host closed the connection)
+[20:23:08] *** Joins: C-Man (~C-Man@78.31.190.82)
+[20:25:19] *** Quits: Burgundy (~NA@5-12-91-184.residential.rdsnet.ro) (Ping timeout: 260 seconds)
+[20:25:20] <Hello71> although it raises the question of how the linker will distinguish the functions
+[20:25:59] <Hello71> aka something something odr
+[20:27:49] <zz> well, A::foo isn't the same as B::foo, and A::foo(int) isn't the same as A::foo(long)
+[20:28:11] <zz> the linker is a rather simple entity in this game
+[20:28:49] <zz> the compiler has to generate appropriate symbols that include the names and parameter types at the least
+[20:30:10] *** Joins: rLapz33 (~rLapz@user/rLapz)
+[20:30:44] *** Quits: rLapz (~rLapz@user/rLapz) (Quit: Client closed)
+[20:32:26] *** Joins: mad_enz (~mad_enz@lnsm4-toronto12-50-101-118-206.internet.virginmobile.ca)
+[20:32:38] *** Quits: rLapz33 (~rLapz@user/rLapz) (Client Quit)
+[20:34:06] *** Joins: RangerBobVA (~bmaddox@user/rangerbobva)
+[20:34:27] *** Quits: dr_traktor (~dr_trakto@178-164-174-139.pool.digikabel.hu) (Quit: Client closed)
+[20:34:59] *** Joins: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net)
+[20:36:22] *** Joins: great_taste (~great_tas@user/great-taste/x-5798414)
+[20:39:58] *** Quits: savolla (~quassel@95.10.200.51) (Read error: Connection reset by peer)
+[20:40:18] <Alipha> kek_: zz: if there's corresponding cpp files, then that won't work because the symbols in the cpp would have to be in the same namespace as in the header
+[20:40:31] *** Joins: savolla (~quassel@95.10.200.51)
+[20:40:51] <Alipha> And if the header includes other headers (like std headers) then that won't work at all
+[20:41:57] <kek_> Alipha, those are pure header files but I guess I just try to convince my boss to let me rewrite it. Currently they solve it using a ython script adding suffixes to the functions (which is part of the build process)...
+[20:46:42] *** Quits: Jck_true (~jcktrue@user/jck-true/x-0200799) (Quit: The Lounge - https://thelounge.chat)
+[20:47:35] *** Joins: rLapz (~rLapz@user/rLapz)
+[20:47:49] *** Joins: Jck_true (~jcktrue@user/jck-true/x-0200799)
+[20:50:04] *** Quits: wakeup (~wakeup@user/wakeup) (Quit: Client closed)
+[20:51:43] *** Quits: Jck_true (~jcktrue@user/jck-true/x-0200799) (Client Quit)
+[20:52:03] *** Joins: Jck_true (~jcktrue@user/jck-true/x-0200799)
+[20:54:46] *** Quits: rLapz (~rLapz@user/rLapz) (Quit: Leaving)
+[20:54:56] *** Joins: rLapz (~rLapz@103.92.225.142)
+[20:54:57] *** Quits: rLapz (~rLapz@103.92.225.142) (Changing host)
+[20:54:57] *** Joins: rLapz (~rLapz@user/rLapz)
+[20:55:53] *** Quits: unlink2 (~unlink@p200300ebcf19f600f31648a859b660c5.dip0.t-ipconnect.de) (Remote host closed the connection)
+[21:01:38] *** Quits: savolla (~quassel@95.10.200.51) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[21:05:58] *** Joins: nicbk (~nicbk@user/nicbk)
+[21:09:58] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[21:13:55] *** Joins: rLapz666 (~rLapz@103.92.225.142)
+[21:14:32] *** Quits: rLapz666 (~rLapz@103.92.225.142) (Client Quit)
+[21:15:03] *** Quits: rLapz (~rLapz@user/rLapz) (Quit: Leaving)
+[21:15:13] *** Joins: rLapz (~rLapz@103.92.225.142)
+[21:15:14] *** Quits: rLapz (~rLapz@103.92.225.142) (Changing host)
+[21:15:14] *** Joins: rLapz (~rLapz@user/rLapz)
+[21:20:19] *** Joins: evangeline (~Eleanor@178.79.105.181)
+[21:21:10] *** Quits: LuckyFire (~LuckyFire@77.29.237.110) (Ping timeout: 272 seconds)
+[21:23:27] *** Quits: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net) (Quit: Ex-Chat)
+[21:24:05] *** Joins: nq_ (~nq@2a02:2f08:e015:a900:541c:4edd:d976:8aa)
+[21:24:44] *** Quits: svm_invictvs (~svm_invic@user/svm-invictvs/x-6696469) (Remote host closed the connection)
+[21:25:15] *** Quits: the_lanetly_052_ (~the_lanet@194.135.154.59) (Remote host closed the connection)
+[21:25:30] *** Quits: the_lanetly_052 (~the_lanet@185.30.90.179) (Remote host closed the connection)
+[21:25:30] *** Quits: asocialblade (~quassel@static.16.62.161.5.clients.your-server.de) (Changing host)
+[21:25:30] *** Joins: asocialblade (~quassel@user/asocialblade)
+[21:25:40] *** Joins: the_lanetly_052_ (~the_lanet@185.30.90.179)
+[21:25:55] *** Joins: the_lanetly_052 (~the_lanet@185.30.90.179)
+[21:26:07] *** Quits: CygniX (~CygniX@2a01:8740:1:727:4e:80:7f:2d) (Quit: ZNC 1.8.2+deb2+b1 - https://znc.in)
+[21:26:23] *** Joins: CygniX (~CygniX@2a01:8740:1:727:4e:80:7f:2d)
+[21:29:54] *** Quits: SGautam (uid286066@id-286066.ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[21:30:55] *** Quits: nicbk (~nicbk@user/nicbk) (Ping timeout: 240 seconds)
+[21:31:29] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[21:32:19] *** Joins: Burgundy (~NA@5-12-91-184.residential.rdsnet.ro)
+[21:33:19] *** Quits: lh_mouse (~lh_mouse@mingw-w64/developer/lhmouse) (Read error: Connection reset by peer)
+[21:36:07] *** Joins: kneegr (~brute@176.33.64.158)
+[21:39:13] *** Quits: mackal (~mackal@pool-96-237-249-63.bstnma.fios.verizon.net) (Quit: BE VIGILANT.)
+[21:42:43] *** Joins: mackal (~mackal@pool-96-237-249-63.bstnma.fios.verizon.net)
+[21:43:08] *** Quits: kneegr (~brute@176.33.64.158) (Quit: Leaving)
+[21:47:28] *** Quits: RangerBobVA (~bmaddox@user/rangerbobva) (Remote host closed the connection)
+[21:47:35] *** Quits: asocialblade (~quassel@user/asocialblade) ()
+[21:48:31] *** Joins: asocialblade (~qsl@static.16.62.161.5.clients.your-server.de)
+[21:48:31] *** Quits: asocialblade (~qsl@static.16.62.161.5.clients.your-server.de) (Changing host)
+[21:48:31] *** Joins: asocialblade (~qsl@user/asocialblade)
+[21:50:59] *** Quits: bebyx (~Thunderbi@user/bebyx) (Quit: bebyx)
+[21:52:25] *** Joins: rond_ (~rond_@90.254.208.190)
+[21:53:08] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[21:56:42] *** Quits: abode (~abode@2.48.235.88) (Remote host closed the connection)
+[22:12:43] *** Quits: drbeco (~beco@user/beco) (Quit: Leaving)
+[22:14:53] *** Joins: Sazhen86 (~Sazhen86@125-236-239-93.adsl.xtra.co.nz)
+[22:15:34] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[22:15:48] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[22:18:03] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Client Quit)
+[22:18:18] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[22:19:33] *** Joins: sa02irc (~mbax@155-079-043-212.ip-addr.inexio.net)
+[22:22:37] *** Joins: skapata (~Skapata@2804:14c:87b0:9d2e:3dfb:4d53:34e0:2a9e)
+[22:22:37] *** Quits: skapata (~Skapata@2804:14c:87b0:9d2e:3dfb:4d53:34e0:2a9e) (Changing host)
+[22:22:37] *** Joins: skapata (~Skapata@user/skapata)
+[22:23:53] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[22:27:59] *** Quits: crabbedhaloablut (~crabbedha@user/crabbedhaloablut) (Remote host closed the connection)
+[22:28:12] *** Joins: crabbedhaloablut (~crabbedha@user/crabbedhaloablut)
+[22:28:36] *** Joins: tradar (~tradar@user/tradar)
+[22:39:26] *** Quits: rond_ (~rond_@90.254.208.190) (Quit: Client closed)
+[22:41:17] *** Joins: fratello (caporegime@46.109.118.130)
+[22:44:28] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[22:44:36] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[22:44:36] *** ChanServ sets mode: +v npaperbot
+[22:49:24] *** Quits: kek_ (~kek_@net-2001-067c-10ec-5747-8000-0000-0000-04f3.v6.ethz.ch) (Quit: Leaving)
+[22:49:24] *** Quits: jokoon (~eio@2a01:e0a:542:e160:d930:938f:f075:3f5a) (Quit: Leaving)
+[22:52:01] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[22:55:39] *** Joins: useful_idiot (~useful_id@gateway/vpn/pia/usefulidiot/x-43226899)
+[22:56:43] *** Quits: tradar (~tradar@user/tradar) (Quit: tradar)
+[22:56:45] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[22:57:35] *** Quits: fratello (caporegime@46.109.118.130) (Remote host closed the connection)
+[22:58:20] *** Joins: rgrinberg (~textual@fixed-186-96-30-153.totalplay.net)
+[23:00:10] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[23:01:34] *** Joins: unlink2 (~unlink@p200300ebcf19f600f31648a859b660c5.dip0.t-ipconnect.de)
+[23:02:37] *** Quits: rgrinberg (~textual@fixed-186-96-30-153.totalplay.net) (Ping timeout: 240 seconds)
+[23:08:34] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[23:09:28] *** Quits: rLapz (~rLapz@user/rLapz) (Quit: Leaving)
+[23:10:59] *** Quits: lxsameer (~lxsameer@user/lxsameer) (Ping timeout: 260 seconds)
+[23:19:56] *** Quits: Sazhen86 (~Sazhen86@125-236-239-93.adsl.xtra.co.nz) (Quit: My computer has nodded off...)
+[23:21:46] *** Quits: great_taste (~great_tas@user/great-taste/x-5798414) (Quit: Client closed)
+[23:26:59] *** Joins: Sazhen86 (~Sazhen86@125-236-239-93.adsl.xtra.co.nz)
+[23:28:07] *** Joins: seninha (~seninha@user/seninha)
+[23:29:10] *** Quits: m_ben (~m_ben@user/m-ben/x-7429725) (Quit: WeeChat 3.4.1)
+[23:35:17] *** Joins: great_taste (~great_tas@user/great-taste/x-5798414)
+[23:37:55] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[23:38:35] *** Joins: savolla (~quassel@95.10.200.51)
+[23:39:02] *** Joins: scalablecory (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[23:42:39] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 256 seconds)
+[23:43:46] *** Quits: randm (~randm@mx.rayprimus.com) (Quit: Leaving.)
+[23:44:21] *** Joins: randm (~randm@2001:19f0:5:1de9:5400:3ff:fe98:1bdd)
+[23:46:17] *** Joins: rLapz (~rLapz@user/rLapz)
+[23:47:34] *** Joins: useful_idiot2 (~useful_id@gateway/vpn/pia/usefulidiot/x-43226899)
+[23:48:23] *** Quits: rLapz (~rLapz@user/rLapz) (Client Quit)
+[23:48:38] *** Joins: rLapz (~rLapz@user/rLapz)
+[23:48:45] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[23:49:31] *** Quits: useful_idiot (~useful_id@gateway/vpn/pia/usefulidiot/x-43226899) (Ping timeout: 250 seconds)
+[23:49:31] *** useful_idiot2 is now known as useful_idiot
+[23:50:21] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[23:50:58] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Client Quit)
+[23:52:39] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[23:54:37] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 240 seconds)
+[23:56:21] *** Quits: rendar (~rendar@user/rendar) (Quit: Leaving)

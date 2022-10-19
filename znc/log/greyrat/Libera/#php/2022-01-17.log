@@ -1,0 +1,638 @@
+[00:02:05] *** Quits: BadAdviceCat (~BadAdvice@user/badadvicecat) (Ping timeout: 256 seconds)
+[00:02:05] *** Quits: guido (~weechat@host-79-25-191-220.retail.telecomitalia.it) (Ping timeout: 256 seconds)
+[00:03:47] *** Joins: guido (~weechat@host-95-235-249-98.retail.telecomitalia.it)
+[00:06:31] <biberu> znf: curious that it increases like that, if anything i'd expect it to require *less* memory as you go, since it should be able to drop data from the buffer...
+[00:07:04] <znf> if I just SELECT id - it doesn't increase
+[00:07:12] <znf> if I SELECT id,bouquet - it does
+[00:07:26] <znf> even if I don't really use $row['bouquet'[
+[00:08:15] <biberu> does the memory usage drop when you select only id?
+[00:08:45] <znf> it stays stable at ~188MiB
+[00:09:03] <biberu> that's about the same as when bouquet is included?
+[00:09:24] <biberu> (what it starts at)
+[00:09:30] <znf> if I select only id:
+[00:09:31] <znf> Memory Usage (0):18852480
+[00:09:33] <znf> Memory Usage (369359):18852512
+[00:09:55] <znf> if I select id,bouquet:
+[00:09:55] <znf> Memory Usage (0):164666080
+[00:10:00] <znf> Memory Usage (369359):322587256
+[00:11:25] <Blondie101010> show that code please
+[00:11:44] <biberu> that's about 18 for only id
+[00:12:05] <biberu> and 164 with bouquet
+[00:12:45] <znf> https://pastie.dev/VfyQOn.php
+[00:12:52] *** Joins: BadAdviceCat (~BadAdvice@user/badadvicecat)
+[00:12:57] <biberu> so it seems to buffer a lot more up front when you include both columns
+[00:13:55] <Blondie101010> just use PDO
+[00:15:07] <da_wunder> and what happens if you do `unset($row);` ?
+[00:15:24] <Blondie101010> that can't matter
+[00:15:27] <da_wunder> in that foreach loop
+[00:15:37] <Blondie101010> if it did, it would mean that gc doesn't work, but it does
+[00:16:10] <znf> da_wunder, tried it earlier, had no effect
+[00:16:25] <BadAdviceCat> znf, the reasoning for why you should use PDO is explained here: https://phpdelusions.net/pdo/mysqli_comparison
+[00:16:27] <novns> znf, try to disable buffers if you don't need to scroll back
+[00:16:34] <novns> https://www.php.net/manual/en/mysqlinfo.concepts.buffering.php
+[00:17:24] <znf> how would I pass MYSQLI_USE_RESULT in a prepared statement?
+[00:19:12] <novns> znf, you do it in execute()
+[00:19:56] <znf> BadAdviceCat, this is basically exercise at this point, I don't discard that the usage of PDO is probably much better, but I don't really plan on refactoring this code at the moment :)
+[00:20:25] <znf> novns, execute() doesn't take arguments tough
+[00:20:26] *** Joins: mooz (~none@23.254.112.158)
+[00:20:29] <novns> or not, I'm not sure
+[00:20:40] <novns> znf, just use PDO
+[00:20:44] <znf> :)
+[00:20:51] <novns> it's more modern and more tunable
+[00:21:24] *** Quits: fef (~thedawn@user/thedawn) (Ping timeout: 276 seconds)
+[00:21:39] <novns> and switch to postgresql, why would you need mysql at all
+[00:22:09] <BadAdviceCat> +1 for PostgreSQL.
+[00:22:18] <znf> I much prefer mysql to postgresql; psql is fancier, but mysql is everywhere :)
+[00:22:53] <znf> with the risk of repeating myself - I'm not much of a programmer, I'm a sysadmin by trade
+[00:23:02] <BadAdviceCat> znf, on a serious note, what kind of problem are you trying to solve that can not be solved in this manner? https://phpdelusions.net/mysqli
+[00:23:40] <znf> BadAdviceCat, I'm not trying to solve a specific problem - I was just wondering why iterating over 370k rows was making PHP reach it's set memory limit (512MB)
+[00:24:01] <novns> because you buffer results to be able to scroll back
+[00:24:58] <znf> it's just code that is meant to be run one time for maintenance, so optimizing it further doesn't really matter for me; I just wanted to know if I'm doing something specifically wrong (ie; maybe I'm not freeing some variables, closing some statements etc.)
+[00:25:01] <novns> if you just want to iterate through rows once, then you don't need this
+[00:27:17] *** Quits: thiras (~thiras@user/thiras) (Remote host closed the connection)
+[00:27:36] *** Joins: thiras (~thiras@user/thiras)
+[00:27:44] <znf> what I gather from the docs and random google hits is that if you use ->get_result() that makes it buffered
+[00:28:00] <znf> otherwise, using ->bind_result() makes it unbuffered
+[00:30:00] <BadAdviceCat> znf, https://www.google.com/search?q=mysqli+unbuffered+query - https://www.php.net/manual/en/mysqlinfo.concepts.buffering.php
+[00:30:27] <znf> I read that, as novns pointed
+[00:30:40] <znf> but I don't see a way to pass MYSQLI_USE_RESULT to a prepared statement
+[00:30:42] <BadAdviceCat> Ah, I see novns already posted this.
+[00:30:45] <znf> ->execute() takes no argument
+[00:30:48] <novns> znf, yes, get_result() gets the whole result in memory
+[00:30:57] <novns> don't use it
+[00:31:43] <BadAdviceCat> znf, gotta read the function argument for ->query(), and then compare that to ->prepare(). The manual explains what each argument does.
+[00:32:19] <novns> BadAdviceCat, mysqli is inconsistent for simple queries and prepared queries
+[00:32:52] <novns> you can pass MYSQLI_USE_RESULT for a simple query but not for a prepared statement
+[00:33:16] <novns> that's why you just have to use PDO
+[00:34:30] <novns> or switch to python with flask or something
+[00:36:03] <znf> doing ->bind_result() and then while... ->fetch() just makes it use ~3984360 bytes of memory
+[00:36:31] <znf> so... that's ~4MiB vs. ~322MiB ?
+[00:36:45] <novns> yes
+[00:36:55] <novns> znf, congrats
+[00:37:22] *** Parts: foo (~foo@user/foo/x-8763512) ()
+[00:37:42] <znf> but that basically makes the MySQL server "work more", as that one will keep the result in memory while I iterate
+[00:38:20] <BadAdviceCat> znf, https://www.php.net/manual/en/mysqli-stmt.fetch.php - Carefully read the notes.
+[00:38:28] <novns> znf, no, you just don't create an unneeded buffer
+[00:38:50] <novns> mysql server doesn't do any more work
+[00:40:00] <znf> it still keeps a connection opened for longer in "Writing" state, afaik, does it not? so if you have to do a lot of work (not the case here), you might end up with a killed query.
+[00:40:03] <znf> Am I wrong on this?
+[00:40:58] <novns> znf, not much, there's no difference in your case if you don't process each row slowly
+[00:41:07] <BadAdviceCat> znf, you can find out whether something can be done or not by looking at the return value. For example, you wanted to know if you can still do unbuffered queries with prepared statement. Because of that, you start your research at prepared statement. - https://www.php.net/manual/en/mysqli.prepare.php <-- Then look at the function signature.
+[00:41:53] <znf> in my case no, obviously, but if I'd add a sleep(1), I'd probably hit the max_execution_time (or max_statement_time in mariadb), or the idle time? something
+[00:41:54] <znf> got it anyway :)
+[00:42:36] <BadAdviceCat> Also, description of the Parameters and RETURN values. `mysqli_stmt|false` <-- That's the return value. Then next, you look into mysqli_stmt object. https://www.php.net/manual/en/class.mysqli-stmt.php - You would check `fetch` and see the notes for example.
+[00:44:43] <BadAdviceCat> To summarize: Following the return values and checking function arguments to see if one can do things like unbuffered queries.
+[00:44:46] *** Quits: lall- (~alek@2403:6200:8862:eb0e:46b:7042:1530:c3dc) (Quit: 42)
+[01:13:35] <BadAdviceCat> znf, frankly, if you're tasked to doing this, you might as well learn it IMO. It's weird that a non-programmer is tasked just because they happen to know how to install/configure software on a server. Whomever is in charge is trying to shoehorn you into a role involving programming.
+[01:14:45] <znf> I'm not shoehorned into it, they asked if I can help them out doing X, knowing the data structure of the app pretty well, I said sure, considering I'm paid quite well for the ~20 hours of work I do per month for them, it's not a problem :P
+[01:14:57] <znf> re: memory usage, I was just curious about it for myself
+[01:15:02] *** Joins: raul338 (~raul338@181.97.203.188)
+[01:15:08] *** Quits: chozorho (~chozorho@2601:146:300:c30::719a) (Quit: WeeChat 3.0)
+[01:16:57] *** Joins: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759)
+[01:17:04] <BadAdviceCat> znf, but you're still programming. O_O You do understand what a Variable and a function is, right? Do you not want to take the time to learn it? Seems like you got some of the basics down.
+[01:17:38] <znf> I have enough experience to handle the basics, but I don't want to do a career out of it
+[01:17:59] <znf> I do have ~20 years of linux experience at this point, I'm not a junior anymore :P
+[01:18:17] <BadAdviceCat> znf, it doesn't necessarily have to be a career. It's not my career. It is a hobby for me though.
+[01:18:46] <znf> I can write working code, that's not an issue :)
+[01:18:50] <BadAdviceCat> having ~20 years of linux experience is not entirely relevant for the task of Programming though.
+[01:18:50] <znf> just not code I'd publish
+[01:18:59] *** Quits: magla (~gelignite@55d4ed71.access.ecotel.net) (Quit: Stay safe!)
+[01:19:23] <BadAdviceCat> znf, that you would not publish? As in the quality or is there something else you want to say?
+[01:19:31] *** Joins: malmalmal (~malmalmal@38.pool92-178-53.dynamic.orange.es)
+[01:19:33] <znf> probably
+[01:19:42] <znf> it gets the job done, maybe just not the way some purists would approve :P
+[01:19:46] <BadAdviceCat> znf, it's quality, right?
+[01:20:57] <BadAdviceCat> I should've said "Error free code" instead of "quality". Quality is more subjective.
+[01:21:05] <__adrian> frustrating, sometimes, that "it's fine it's just not what the elite likes" is the conclusion reached by so many people
+[01:22:08] <BadAdviceCat> Like the code may be free of errors, but there are software users who wants the dang program to do a lot more, and spoonfeed the user too.
+[01:22:59] <znf> but like I said, it's not something I specifically want to pursue, I've written wordpress plugins for my private use, I've written scripts for different purposes, and I can find my way around the documentation :)
+[01:23:46] <znf> I've done Python, PHP, even some Lua, I can bash my head against Makefiles and even some C++, and heck, I dabbled even in Qt for a bit, but I patch things up and move along
+[01:24:03] <BadAdviceCat> znf, then why say you're not much of a programmer? Then they would make you one. Just not one who makes it a career. Just something like a hobby, like me, right?
+[01:24:22] <BadAdviceCat> Then that would make you one*
+[01:24:35] <znf> because I won't consider myself one
+[01:25:22] <znf> I write PHP maybe once every month, that doesn't make me a programmer :P
+[01:25:44] <__adrian> "i'm not a career programmer" doesn't mean anything here
+[01:26:18] <__adrian> sounds like you're implying that people _shouldn't_ write good code if they're not going to do it for a career?
+[01:26:53] <znf> nah
+[01:26:58] <__adrian> do you think "good code" is just a bunch of nonsense conventions that career programmers have to do for social acceptance?
+[01:27:18] <__adrian> sorry, the jypothetical "you"
+[01:27:25] <__adrian> *hypothetical
+[01:28:38] <__adrian> can i ask why you didn't just go with the single-UPDATE approach?
+[01:30:11] <znf> the way I personally see it, just in my use case, it's not always worth the investment of dozens (hundreds?) of hours to rewrite a working app; in this case - replacing mysqli with PDO. Yes, I am aware PDO is *better*, but at the end of the day, the way I already knew how to do it took me ~10 minutes of actual "work"; sure, I've run into the memory issue, but that just meant I'd have to repeat the action after altering the limit and call it a day
+[01:30:36] <BadAdviceCat> __adrian, I wasn't here to see the single update approach, but it seems like that person just want to avoid hitting PHP's max memory, or was just curious of how this stuff (buffered vs unbuffered query) works.
+[01:30:43] <__adrian> i wouldn't necessarily rewrite an entire app either
+[01:31:01] <znf> frankly? I've never played with the JSON_ functions in MySQL, so that would have also taken me time to learn how to use, and I already know how to handle it in PHP
+[01:31:16] <__adrian> k
+[01:31:37] <znf> the other approach would have been to just run something like REPLACE(']', '252]')
+[01:31:51] <__adrian> if you want context: there are three or so json functions, and if you understand json it takes ten  minutes or so.
+[01:32:14] <znf> but I'd have to had paired it with a SELECT LIKE %% wildcard, which just rubs me the wrong way
+[01:32:33] <znf> (or, rather NOT LIKE in this case)
+[01:33:23] <BadAdviceCat> Are JSON stored in JSON or JSONB type column? Or is it string/text column?
+[01:33:36] <__adrian> "I'd have to had paired it with a SELECT LIKE %%"  // maybe there something in the code i didn't notice, but, why would you?
+[01:33:48] *** Joins: Joss (~joss@user/Joss)
+[01:34:22] <BadAdviceCat> The rule of thumb with databases is, if the database server is designed to do it, then you should do that task in the Database server, and Not in PHP.
+[01:35:13] <znf> __adrian, so I don't add the bouquet to an user that already had it
+[01:36:17] <BadAdviceCat> For example. DB server can: Sort, update data stored, do math (col1 + col2), choose rows of data based on search criteria (e.g. using the WHERE clause.) - Instead of trying to sort data, do math in PHP and etc.
+[01:36:34] <znf> it's in a varchar() column
+[01:36:34] <__adrian> i think you missed my example
+[01:37:04] *** Quits: DrowningElysium (uid190788@user/drowningelysium) (Quit: Connection closed for inactivity)
+[01:37:17] <BadAdviceCat> Of course, exceptions to this Rule of thumb applies. (It's generally better to keep application code in PHP, rather than trying to make them into a Stored Function for SQL.)
+[01:37:32] *** Quits: malmalmal (~malmalmal@38.pool92-178-53.dynamic.orange.es) (Quit: Leaving)
+[01:37:35] <znf> __adrian, could be, conversation was long
+[01:41:39] *** Quits: Joss (~joss@user/Joss) (Quit: Leaving.)
+[01:42:29] <__adrian> untested, but something like  update t set c = json_insert(j, '$.x')
+[01:43:07] <__adrian> untested, but something like  update t set c = json_insert(j, '$.x', 'y') where i in (select i from t where json_extract(j, '$.x') = 'z')
+[01:43:31] *** Quits: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk) (Quit: Leaving)
+[01:43:43] <znf> oh, I thought you have to use JSON_CONTAINS()
+[01:44:02] <znf> I was testing that now but I wasn't getting it to work
+[01:44:02] <__adrian> actually that might be more correct
+[01:44:22] <__adrian> i don't have a database in front of me
+[01:44:24] <znf> except the docs say target, candidate
+[01:44:25] <znf> https://dev.mysql.com/doc/refman/5.7/en/json-search-functions.html
+[01:44:32] <BadAdviceCat> See, the rule of thumb! :D
+[01:44:33] <__adrian> but the point is, update ... where ...
+[01:44:48] <Blondie101010> all that to save RAM on a one shot?
+[01:45:04] <znf> Blondie101010, nah, an opportunity to learn, I guess :)
+[01:45:16] <znf> I obviously did it hours ago with increasing  the memory limit
+[01:46:10] <znf> SELECT id,bouquet FROM users WHERE JSON_CONTAINS(@bouquet, 252) LIMIT 1; -- doesn't seem to return anything
+[01:46:22] <znf> anyway, this is not exactly PHP discussionn
+[01:46:26] <__adrian> don't @
+[01:46:35] <__adrian> that's a @variable
+[01:46:41] <__adrian> just use the column name
+[01:46:56] <__adrian> also you need the third parameter, the path
+[01:47:01] <znf> Ah
+[01:47:22] <znf> doesn't seem that I need it on a uni-dimensional array
+[01:47:59] <znf> so I could have just WHERE NOT JSON_CONTAINS(bouquet, 252)
+[01:48:14] <__adrian> what's your json structure look like exactly
+[01:48:24] <__adrian> is it just a list of numbers?
+[01:48:53] <znf> yuo
+[01:49:00] <znf> [48,252,176,177]
+[01:49:05] <__adrian> then believe so
+[01:49:18] <__adrian> pretty sure the default path is '$'
+[01:50:40] <znf> also, I'm kinda fairly sure that at some point the app inserted rows with integers as strings, ie: ["1", 2, 3], hence why I went the array_map... intval() thing
+[01:51:31] <__adrian> complication, but separate, and should take a few minutes to correctly normalize
+[01:57:06] <relipse> why does "composer update" do this? https://www.irccloud.com/pastebin/BE44B63C/
+[01:57:28] <relipse> I'm on php 8.1 now
+[01:58:06] <BadAdviceCat> relipse, enable mb.
+[01:58:24] <BadAdviceCat> multibyte string function thing. mb_detect_encoding is unavailable.
+[01:59:04] <BadAdviceCat> I mean, PHP's extension mbstring
+[02:09:20] *** Joins: Nekomander (~BadAdvice@user/badadvicecat)
+[02:10:09] *** Quits: BadAdviceCat (~BadAdvice@user/badadvicecat) (Ping timeout: 256 seconds)
+[02:16:11] <relipse> k thanks
+[02:33:20] *** Joins: hans (uid529825@id-529825.helmsley.irccloud.com)
+[02:38:55] *** Quits: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759) (Read error: Connection reset by peer)
+[02:39:32] *** Joins: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759)
+[02:43:52] *** Quits: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759) (Read error: Connection reset by peer)
+[02:44:30] *** Joins: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759)
+[02:46:44] *** Joins: nomad1 (~nomad@user/spacenomad)
+[02:47:02] *** Quits: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759) (Read error: Connection reset by peer)
+[02:47:39] *** Joins: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759)
+[02:50:24] *** Quits: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759) (Read error: Connection reset by peer)
+[02:51:02] *** Joins: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759)
+[02:52:02] *** Quits: nomad1 (~nomad@user/spacenomad) (Ping timeout: 240 seconds)
+[02:55:48] *** Quits: WishBoy (~WishBoy@user/wishboy) ()
+[02:56:54] *** Quits: guido (~weechat@host-95-235-249-98.retail.telecomitalia.it) (Quit: WeeChat 3.4)
+[03:18:23] *** Quits: LucaTM (~LucaTM@user/lucatm) (Quit: Textual IRC Client: www.textualapp.com)
+[03:32:29] *** Quits: Guest9014 (~vit@chello085216193138.chello.sk) (Ping timeout: 256 seconds)
+[03:38:41] *** Joins: mintoyatsu (~mint@ip24-255-4-17.tc.ph.cox.net)
+[03:53:05] *** Joins: Hiccup (cHoy@user/hiccup)
+[03:57:57] *** Quits: Teraii (~teraii@juraii-s1-1.teraii.net) (Ping timeout: 240 seconds)
+[03:58:38] *** Quits: thiras (~thiras@user/thiras) (Ping timeout: 250 seconds)
+[04:08:05] *** Joins: Teraii (~teraii@juraii-s1-1.teraii.net)
+[04:10:25] *** Quits: ms49434 (~ms49434@user/ms49434) (Quit: Leaving)
+[04:19:52] *** Quits: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759) (Read error: Connection reset by peer)
+[04:20:30] *** Joins: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759)
+[04:28:18] *** Quits: mishehu (~mishehu@mira001.eyepeeveesicks.shavedgoats.net) (Ping timeout: 260 seconds)
+[04:28:55] *** Joins: mishehu (~mishehu@mira001.eyepeeveesicks.shavedgoats.net)
+[04:48:32] *** Quits: Teraii (~teraii@juraii-s1-1.teraii.net) (Ping timeout: 240 seconds)
+[05:03:01] *** Quits: hans (uid529825@id-529825.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[05:30:23] *** Quits: vlm (~vlm@user/vlm) (Quit: "")
+[05:30:56] *** Quits: h_ (rootvegeta@fsf/member/hays) ()
+[05:33:32] *** Joins: hays (rootvegeta@fsf/member/hays)
+[05:39:55] *** Joins: Teraii (~teraii@juraii-s1-1.teraii.net)
+[05:47:11] *** Joins: molt (~molt@178-222-245-206.static.isp.telekom.rs)
+[05:49:22] *** Quits: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759) (Read error: Connection reset by peer)
+[05:49:37] *** Quits: molt (~molt@178-222-245-206.static.isp.telekom.rs) (Read error: Connection reset by peer)
+[05:50:00] *** Joins: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759)
+[05:55:12] *** Quits: stenno (~stenno@user/stenno) (Ping timeout: 250 seconds)
+[05:56:43] *** Joins: stenno (~stenno@user/stenno)
+[05:57:35] *** Quits: tirnanog (~tirnanog@user/tirnanog) (Quit: = "")
+[06:03:52] *** Quits: Teraii (~teraii@juraii-s1-1.teraii.net) (Ping timeout: 250 seconds)
+[06:05:32] *** Quits: raul338 (~raul338@181.97.203.188) (Quit: Client closed)
+[06:10:58] *** Joins: krux02_ (~krux02@p4fe5791a.dip0.t-ipconnect.de)
+[06:12:17] *** Quits: Nekomander (~BadAdvice@user/badadvicecat) (Read error: Connection reset by peer)
+[06:12:51] *** Quits: krux02 (~krux02@p4fe57352.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[06:13:02] *** Quits: mishehu (~mishehu@mira001.eyepeeveesicks.shavedgoats.net) (Ping timeout: 240 seconds)
+[06:13:06] *** Joins: Nekomander (~BadAdvice@user/badadvicecat)
+[06:16:48] *** Joins: Alex123 (~Adium@cpe-76-89-231-189.socal.res.rr.com)
+[06:19:15] *** Joins: mishehu (~mishehu@2001:470:b9db:b00b::f36d:9d3)
+[06:32:17] *** Joins: Teraii (~teraii@juraii-s1-1.teraii.net)
+[06:34:06] *** Joins: Rockwood (~Rocky@user/rocky)
+[06:42:27] *** Joins: KnowledgeShark (~Knowledge@50.34.206.168)
+[06:55:21] *** Quits: \mSg (mSg@user/msg/x-0285936) (Ping timeout: 256 seconds)
+[06:55:40] *** Joins: jargon (~jargon@174-22-192-54.phnx.qwest.net)
+[06:55:44] <jargon> Rockwood you there?
+[06:55:55] <Rockwood> jargon, yeah
+[06:56:11] <Rockwood> whats up?
+[06:56:18] <jargon> https://pastebin.com/f6E3EwPt
+[06:56:57] <jargon> I need "flags" to match for any amount of entries, not just the first encounter.
+[06:58:01] <Rockwood> https://3v4l.org/P4693
+[06:58:33] *** Joins: tw2113 (~tw2113@2001-48F8-6-1318-D2AB-D5FF-FE77-2BD5-dynamic.midco.net)
+[06:59:48] <Rockwood> sorry i can't focus right now in your concern bcz i am already stuck in my react stuff
+[06:59:49] <jargon> Rockwood, yes I am aware of this.
+[07:00:05] <Rockwood> i ve to solve my issue first
+[07:00:11] <jargon> Ok.
+[07:00:12] *** Quits: Teraii (~teraii@juraii-s1-1.teraii.net) (Ping timeout: 250 seconds)
+[07:00:13] <Rockwood> you code relates to regex
+[07:00:16] <Rockwood> your
+[07:00:21] <jargon> Yes.
+[07:00:22] <tw2113> ack, React
+[07:00:23] <Rockwood> and i am not good in that
+[07:00:37] <Rockwood> tw2113, yeah
+[07:00:48] <tw2113> my condolences
+[07:01:14] *** Joins: velix (~velix@user/velix)
+[07:01:35] <velix> is there a way to make PDO::fetchAll() typesafe? It returns always "string" here, but the column is float.
+[07:01:37] <Rockwood> lol
+[07:02:40] <jargon> Rockwood, were you the one that showed interest in playtesting my game when it is ready?
+[07:03:18] <Rockwood> jargon, sure i will
+[07:03:28] <jargon> Well, it is not ready yet.
+[07:03:38] <Rockwood> but right now i am busy
+[07:03:46] <Rockwood> sure when ready let me know
+[07:05:31] <velix> I can't even find this in the docs. https://www.php.net/manual/en/pdostatement.fetchall.php
+[07:05:59] <Blondie101010> velix:  what can't you find?
+[07:06:21] <velix> Blondie101010: PDO:fetchAll() returns an array with strings here, but some columns are float.
+[07:07:52] <Nekomander> jargon, what are you parsing for?
+[07:10:05] <Blondie101010> velix:  doesn't the driver always return strings?
+[07:10:10] *** Quits: xep (~xep@76-210-4-7.lightspeed.sntcca.sbcglobal.net) (Ping timeout: 250 seconds)
+[07:10:20] <velix> Blondie101010: that's what I didn't find in the docs :D
+[07:10:24] <velix> Blondie101010: but this makes me sad.
+[07:10:27] <velix> very sad.
+[07:10:33] <Blondie101010> don't be
+[07:10:50] <Blondie101010> if it makes you too sad, you could use mysqli, but don't
+[07:11:01] <velix> Blondie101010: but I'm on postgres ;)
+[07:11:38] <velix> Now I need to do some complicated type guessing.
+[07:11:44] <velix> "01313" isn't a number.
+[07:12:21] <velix> I wonder why PDO doesn't have this feature. Even ODBC does.
+[07:12:31] <velix> I mean, it's in direct communication with the DB.
+[07:12:31] <Blondie101010> how does it look directly on the DB?
+[07:12:44] <Nekomander> velix, what? You mean you're not using the world's only database server? :O
+[07:12:44] *** Joins: xep (~xep@76-210-4-7.lightspeed.sntcca.sbcglobal.net)
+[07:12:55] *** Joins: Teraii (~teraii@185.219.206.44)
+[07:13:00] <Blondie101010> "01313" does not look like a float representation
+[07:13:02] <velix> Nekomander: Oracle?
+[07:13:12] <velix> Blondie101010: yeah, but is_numeric() might fail here.
+[07:13:18] <Blondie101010> not only that
+[07:13:25] <Blondie101010> that is not a decimal
+[07:13:40] <Blondie101010> what does it look like in the DB client compared to others?
+[07:13:49] <Blondie101010> are you sure that is not a string?
+[07:14:10] <velix> Blondie101010: definetly. "v_float" is postgres float.
+[07:14:17] <velix> (double)
+[07:14:27] <Nekomander> velix, ensure this option is false. PDO::ATTR_STRINGIFY_FETCHES, and PDO::ATTR_EMULATE_PREPARES is set to false as well.
+[07:14:30] <Blondie101010> what is the value?
+[07:14:43] <velix> Blondie101010: stuff like 1932.3
+[07:14:55] <velix> Nekomander: let me try.
+[07:15:03] <Blondie101010> really weird conversion
+[07:15:28] <Nekomander> I've always been able to fetch int, boolean and float.
+[07:16:27] <Nekomander> Except for when I am using the world's only open/free DB server with libmysqlclient thingy.
+[07:16:43] <velix> Nekomander: I <3 you!
+[07:16:44] <velix> Thanks.
+[07:17:05] <velix> $_PDO->setAttribute(PDO::ATTR_STRINGIFY_FETCHES, false); <-- did it
+[07:17:43] <Blondie101010> nice catch Nekomander
+[07:17:45] <velix> oh, numeric columns are still cased to strings. Seems like it cannot handle these, which isn't that wrong.
+[07:18:02] <velix> would be nice to get "metadata" of a result.
+[07:18:08] <velix> let me google for this.
+[07:19:37] <velix> it would be really helpful if PDF would tell me: "the original column type were THESE".
+[07:19:49] <velix> Then I could write my own casting stuff.
+[07:20:17] <velix> PDO* ;)
+[07:22:13] <Nekomander> :D
+[07:22:27] *** Joins: \mSg (mSg@user/msg/x-0285936)
+[07:22:41] <Nekomander> 📣🎊🥳
+[07:23:21] <velix> oh, a friend told me, I should make PostgreSQL send out JSON ;)
+[07:24:37] <Nekomander> I hope your friend has a good idea on whether or not it should use/send JSON.
+[07:25:39] <Blondie101010> sounds like bad advice
+[07:25:55] <velix> Actually not, since numbers and numbers and strings are strings on json_decode ;)
+[07:26:02] <velix> "013232" will be a string
+[07:26:08] <velix> 1932.3 will be a number
+[07:26:44] <velix> Actually, I can't get PDO to get my floats & numeric columns are (float). But INT works already.
+[07:27:08] <velix> But okay. I need to cast the columns manually then.
+[07:27:16] <velix> Thanks for help!
+[07:27:25] <Nekomander> velix, kinda sorta, depending on context. If you did the json right, then the int would be an int within the json encoded string.
+[07:27:57] <velix> Nekomander: But I could write the column's type into JSON.
+[07:27:58] <Nekomander> https://speakerdeck.com/sarahmei/switching-data-stores-a-postmodern-comedy <-- In regards on reasoning for using json or not.
+[07:28:00] <velix> That's what he does.
+[07:28:15] <velix> He writes an object with column metadata for PHP.
+[07:28:28] <velix> So he knows, which column to cast in which way.
+[07:28:28] <Nekomander> PostgreSQL has nice json support, but you gotta set the type to json or jsonb iirc.
+[07:28:40] <velix> Nekomander: jsonb of course ;)
+[07:29:02] <velix> Yeah, it started somewhere in 9.5 or 9.6, and with 14.x it's fully grown up.
+[07:29:07] <velix> Nice indexes, parallel stuff etc.
+[07:29:37] <velix> But you need to create lots of nested (or CTE) queries to create complex objects.
+[07:31:31] <velix> Nope, "SELECT 1.8;" "SELECT 1.8::float8;" and "SELECT 1.8::numeric;" gets returned as string only.
+[07:31:37] <velix> But it works for INT.
+[07:31:44] *** Quits: Rockwood (~Rocky@user/rocky) (Read error: Connection reset by peer)
+[07:32:19] <Blondie101010> if the value made sense, it'd be fine
+[07:32:55] <Blondie101010> php stores some floats as strings and it handles it very well
+[07:34:03] <Blondie101010> I just don't get the representation that could have given your output
+[07:34:12] *** Joins: Rockwood (~Rocky@user/rocky)
+[07:42:46] <velix> Blondie101010: sure, that's totally fine. But it's hard for me to guess, if a column is really a string or really a number.
+[07:52:59] *** Quits: Sammitch (~Jerkface@user/sammitch) (Ping timeout: 256 seconds)
+[07:53:08] *** Joins: Sammitch (~Jerkface@user/sammitch)
+[07:54:49] <jargon> Nekomander, I am trying to search from a list of items in no particular order from the comments portion of an Ubunbtu-style Version tag.
+[07:55:24] *** Quits: Rockwood (~Rocky@user/rocky) (Quit: The Time is Over)
+[07:58:17] <jargon> My site is supposed to be able to handle Dewey Decimal in Hex, SEMVER, and Ubuntu-Versioning.
+[08:01:01] <jargon> Well not Ubuntu versioning, but yyyy-mmdd-hhnn
+[08:03:32] <jargon> I used Dewey Decimal in Hex to handle version collisions.
+[08:06:53] <jargon> (At-least in DOS I do.)
+[08:16:02] *** Quits: Nekomander (~BadAdvice@user/badadvicecat) (Ping timeout: 240 seconds)
+[08:16:20] <jargon> I was trying to capture any matches by label in no particular order, synchronously.
+[08:16:45] <jargon> Any ideas?
+[08:25:58] <jargon> How do I search for this OR that OR that in any order?
+[08:26:10] <jargon> How do I search for this AND/OR that AND/OR that in any order?
+[08:27:34] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[08:28:40] *** Joins: panella32 (~panella32@180.149.246.206)
+[08:32:13] <Blondie101010> jargon:  not sure what language you're referring to, but operator precedence can require parentheses to be flexible
+[08:37:20] *** Quits: panella32 (~panella32@180.149.246.206) (Quit: Textual IRC Client: www.textualapp.com)
+[08:40:05] <jargon> Blondie101010, PCRE.
+[08:40:49] <Blondie101010> you never learn
+[08:41:02] <Blondie101010> make your regex as simple as possible
+[08:41:09] <jargon> This is for a website, not a game.
+[08:41:17] <Blondie101010> doesn't matter
+[08:43:54] *** Quits: Alex123 (~Adium@cpe-76-89-231-189.socal.res.rr.com) (Quit: Leaving.)
+[08:44:41] <KillerWasp> game? anyone here build a game??
+[08:45:22] *** Quits: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759) (Read error: Connection reset by peer)
+[08:46:00] *** Joins: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759)
+[08:51:02] *** Joins: Alex123 (~Adium@cpe-76-89-231-189.socal.res.rr.com)
+[08:55:41] *** Joins: Nekomander (~BadAdvice@user/badadvicecat)
+[08:56:13] <Nekomander> velix, at least json strings shall correctly render its types. Unfortunately for floats: https://wiki.php.net/rfc/pdo_float_type >.<
+[08:56:21] *** Quits: jargon (~jargon@174-22-192-54.phnx.qwest.net) (Remote host closed the connection)
+[08:56:23] <Nekomander> That has been withdrawn. So yeah...
+[08:57:29] <Nekomander> So we're only able to do INTS, BOOLs, STRINGS, and NULLs for the time being.
+[08:57:37] <velix> :D
+[08:58:08] <velix> I mean, exposing the "metadata" would be more helpful... maybe that's possible
+[08:58:22] <velix> When I know, the original column is FLOAT, then I can safely cast.
+[08:58:41] <velix> but hard casting FLOAT to string? Wow :(
+[08:59:16] <velix> that's lossy for information (but not lossy for data).
+[08:59:55] <velix> my hack: "v_float", "v_numeric", "v_string".
+[09:00:09] <velix> I'm appending the type in each query now.
+[09:00:20] <velix> _f, _n _s might also work ;)
+[09:00:29] <velix> Hacky, but worky
+[09:02:13] <Nekomander> If you're fetching from your DB, you're suppose to know what you're going to get ahead of time.
+[09:03:18] <velix> Nekomander: I've got a central function, which does all the prepare stuff and returns a fine array.
+[09:03:37] <velix> Nekomander: So I want to put any query in there and get the expected array out of it.
+[09:03:50] <velix> Nekomander: without the need to rewrite the post-processing of PDO for each query.
+[09:03:55] <velix> Using my current way works nice.
+[09:04:12] <velix> But since PDO stands in connection with the database... man, it HAS the data alreader ;)
+[09:04:16] <velix> already*
+[09:04:43] <velix> in the PDO code, there must be a "cast to string" somewhere. Maybe I can simply fork it.
+[09:04:47] <velix> shouldn't be that hard.
+[09:04:59] <velix> but I don't want to maintain my own PHP fork :(
+[09:05:16] <Nekomander> If you're specifying columns in your central function thing, then you should also be able to add another parameter for types.
+[09:05:21] <Nekomander> That is the point I want to make.
+[09:06:28] <velix> I'm throwing in pretty complex queries in a .sql.inc file, which I'm reading in. But yeah, I might work around something.
+[09:06:48] <velix> Wow, that was some bad English
+[09:06:57] <velix> 06:37 am ... not my fault ;)
+[09:09:46] <velix> uhm, isn't this a pretty bad entry in the docs for include? if ((include 'vars.php') == TRUE)
+[09:09:50] <velix> shouldn't it be === TRUE ?
+[09:10:39] <Nekomander> === is indeed better.
+[09:13:25] <velix> the examples for include are outdated. They're also using <?php ?> ;)
+[09:13:28] <velix> I mean ?>
+[09:13:41] <velix> Other official examples don't.
+[09:27:17] *** Quits: Alex123 (~Adium@cpe-76-89-231-189.socal.res.rr.com) (Quit: Leaving.)
+[09:31:02] *** Joins: Alex123 (~Adium@cpe-76-89-231-189.socal.res.rr.com)
+[09:34:14] <tw2113> closing ?>'s are still valid, technically
+[09:38:42] *** Joins: PovilasCNC (~PovilasCN@user/PovilasCNC)
+[09:41:11] *** Quits: tw2113 (~tw2113@2001-48F8-6-1318-D2AB-D5FF-FE77-2BD5-dynamic.midco.net) (Quit: Leaving)
+[09:49:40] *** Joins: chipas (~chipas@user/dobbicorp)
+[09:49:59] <chipas> do i need to restart a websocket php script if the certificate has changed?
+[09:51:23] *** Quits: PovilasCNC (~PovilasCN@user/PovilasCNC) (Quit: Leaving)
+[09:58:55] <chipas> help
+[10:01:46] *** Quits: NeoCron (~NeoCron@p200300c4cf4baa00766f97a7a0c56948.dip0.t-ipconnect.de) (Ping timeout: 250 seconds)
+[10:06:17] <Nekomander> chipas, maybe not. I do not know for certain, you should test it.
+[10:06:43] <Nekomander> What certificate precisely?
+[10:07:59] <chipas> letsencrypt
+[10:08:17] <chipas> i just tested, looks like i don't need to restart
+[10:08:19] <chipas> thank you
+[10:09:12] <Nekomander> Sweet, happy coding.
+[10:11:59] *** Quits: Thanatermesis (~Thanaterm@191.92.148.122) (Ping timeout: 256 seconds)
+[10:13:31] *** Joins: Naktibalda (~Naktibald@88.135.22.17)
+[10:28:36] *** Joins: ms49434 (~ms49434@user/ms49434)
+[10:41:03] *** Quits: Alex123 (~Adium@cpe-76-89-231-189.socal.res.rr.com) (Quit: Leaving.)
+[10:45:55] *** Quits: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759) (Read error: Connection reset by peer)
+[10:47:16] *** Joins: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759)
+[10:47:57] *** Quits: stenno (~stenno@user/stenno) (Ping timeout: 240 seconds)
+[10:48:30] *** Joins: Alex123 (~Adium@cpe-76-89-231-189.socal.res.rr.com)
+[11:12:23] *** Joins: guido (~weechat@2001:b07:6455:ac4f:3641:5dff:fe55:2a8f)
+[11:14:23] *** Quits: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759) (Read error: Connection reset by peer)
+[11:15:01] *** Joins: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759)
+[11:15:57] *** Quits: onichomp (~onichomp@2806:264:4408:251:2d8d:1d46:1d20:5759) (Read error: Connection reset by peer)
+[11:16:17] *** Joins: Guest9014 (~vit@chello085216193138.chello.sk)
+[11:23:37] *** Joins: FollowTheRabbit (~FollowThe@87-231-54.netrunf.cytanet.com.cy)
+[11:23:45] *** Quits: zer0 (~zer0@user/zer0) (Remote host closed the connection)
+[11:24:06] *** Joins: lenarhoyt (~lenarhoyt@mail.bfc-net.de)
+[11:27:14] *** FollowTheRabbit is now known as atrotos
+[11:31:07] *** Joins: stenno (~stenno@user/stenno)
+[11:35:32] *** Quits: stenno (~stenno@user/stenno) (Ping timeout: 240 seconds)
+[11:44:36] <Albright> "Only root package requirements can receive temporary constraints and drupal/core is not one" - What does this mean?
+[11:45:21] <Albright> Or, to put it another way - `composer update drupal/core` is not updating to the most recent version for no clear reason. How do I force that to happen?
+[11:47:25] *** Joins: malmalmal (~malmalmal@38.pool92-178-53.dynamic.orange.es)
+[12:01:58] *** Joins: fahrradToken (~fahrradTo@2a02:810b:149f:f0f4::5cc4)
+[12:02:56] <Albright> Composer's error messages really are inscrutable. If things just don't update, there's really no hope as to figuring out why, is there?
+[12:05:31] *** Joins: LucaTM (~LucaTM@user/lucatm)
+[12:05:45] <Albright> I give up for the night.
+[12:05:59] *** Joins: stenno (~stenno@user/stenno)
+[12:09:03] *** Joins: thiras (~thiras@user/thiras)
+[12:16:32] *** Quits: Nekomander (~BadAdvice@user/badadvicecat) (Ping timeout: 240 seconds)
+[12:26:12] *** Joins: Nekomander (~BadAdvice@user/badadvicecat)
+[12:29:06] <Naktibalda> Albright: is drupal/core listed in required section of your composer.json ?
+[12:29:13] <Naktibalda> require section
+[12:29:50] <Albright> Naktibalda: No.
+[12:30:19] <Naktibalda> then add it
+[12:32:59] *** Joins: NakedKing (~NakedKing@user/nakedking)
+[12:33:06] *** Quits: NakedKing (~NakedKing@user/nakedking) (Remote host closed the connection)
+[12:53:47] *** Quits: malmalmal (~malmalmal@38.pool92-178-53.dynamic.orange.es) (Quit: Leaving)
+[12:54:21] *** Quits: novns (~novns@user/novns) (Quit: ZNC - https://znc.in)
+[12:56:16] *** Joins: novns (~novns@user/novns)
+[12:56:34] *** Quits: Alex123 (~Adium@cpe-76-89-231-189.socal.res.rr.com) (Quit: Leaving.)
+[13:05:16] *** Joins: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net)
+[13:10:07] *** Parts: velix (~velix@user/velix) (Leaving)
+[13:19:16] *** Quits: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net) (Quit: WeeChat 3.4)
+[13:23:17] *** Joins: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net)
+[13:28:28] *** Quits: fahrradToken (~fahrradTo@2a02:810b:149f:f0f4::5cc4) (Ping timeout: 250 seconds)
+[13:45:51] *** Joins: molt (~molt@178-222-245-206.static.isp.telekom.rs)
+[14:19:02] *** Quits: Nekomander (~BadAdvice@user/badadvicecat) (Ping timeout: 240 seconds)
+[14:20:32] *** Quits: stenno (~stenno@user/stenno) (Ping timeout: 240 seconds)
+[14:22:56] *** Quits: lenarhoyt (~lenarhoyt@mail.bfc-net.de) (Quit: Client closed)
+[14:24:11] *** Joins: stenno (~stenno@user/stenno)
+[14:24:20] *** Joins: fahrradToken (~fahrradTo@2a02:810b:149f:f0f4::5cc4)
+[14:42:45] *** Quits: mintoyatsu (~mint@ip24-255-4-17.tc.ph.cox.net) (Remote host closed the connection)
+[14:52:48] *** Quits: lain6141 (~lain6141@119.224.72.222) (Quit: leaving)
+[15:03:05] *** Quits: atrotos (~FollowThe@87-231-54.netrunf.cytanet.com.cy) (Quit: Client closed)
+[15:25:39] *** Joins: zer0 (~zer0@user/zer0)
+[15:26:12] *** Quits: Hiccup (cHoy@user/hiccup) (Remote host closed the connection)
+[15:29:09] *** Quits: Guest9014 (~vit@chello085216193138.chello.sk) (Ping timeout: 256 seconds)
+[15:29:33] *** Joins: tirnanog (~tirnanog@user/tirnanog)
+[15:32:07] *** Quits: Stanley (~stanley@d66-183-88-69.bchsia.telus.net) (Quit: ZNC - https://znc.in)
+[15:41:12] *** Joins: pmercado (~pmercado@186.107.48.199)
+[15:49:55] *** Quits: judabuda (kowbunga@user/judabuda) (Ping timeout: 250 seconds)
+[15:52:18] *** Joins: Stanley (~stanley@d66-183-88-69.bchsia.telus.net)
+[16:00:19] *** Quits: guido (~weechat@2001:b07:6455:ac4f:3641:5dff:fe55:2a8f) (Quit: WeeChat 3.4)
+[16:03:49] *** Quits: ProfSimm (~ProfSimm@87.227.196.109) (Remote host closed the connection)
+[16:04:09] *** Joins: ProfSimm (~ProfSimm@87.227.196.109)
+[16:09:17] *** Quits: stenno (~stenno@user/stenno) (Ping timeout: 240 seconds)
+[16:29:23] *** Joins: guido (~weechat@host-95-238-251-199.retail.telecomitalia.it)
+[16:51:59] *** Quits: fjmorazan (~quassel@user/fjmorazan) (Quit: fjmorazan)
+[16:52:30] *** Joins: fjmorazan (~quassel@user/fjmorazan)
+[16:58:36] *** Joins: stenno (~stenno@user/stenno)
+[17:03:24] *** Quits: stenno (~stenno@user/stenno) (Ping timeout: 250 seconds)
+[17:09:08] *** Quits: wolfshappen (~waff@irc.furworks.de) (Quit: later)
+[17:45:17] *** Joins: raul338 (~raul338@181.97.203.188)
+[17:46:23] *** Quits: fahrradToken (~fahrradTo@2a02:810b:149f:f0f4::5cc4) (Remote host closed the connection)
+[17:50:06] *** Joins: fahrradToken (~fahrradTo@2a02:810b:149f:f0f4::5cc4)
+[17:52:43] *** Joins: stenno (~stenno@user/stenno)
+[17:57:32] *** Quits: stenno (~stenno@user/stenno) (Ping timeout: 240 seconds)
+[18:09:41] *** Joins: judabuda (kowbunga@user/judabuda)
+[18:11:18] *** Joins: MrBech (~MrBech@152.115.67.90)
+[18:14:06] *** Joins: hh (~g@37.214.33.231)
+[18:23:59] *** Joins: wolfshappen (~waff@irc.furworks.de)
+[18:24:12] *** Joins: stenno (~stenno@user/stenno)
+[18:32:24] <relipse> is teamviewer the best way to help my grandma on her computer?
+[18:33:00] *** Joins: ThePhilgrim (~ThePhilgr@151.41.185.44)
+[18:33:21] <Naktibalda> you could visit her
+[18:34:23] <relipse> too far away
+[18:35:12] <AllenJB> Windows has a built-in tool now IIRC - Google says it's called "Quick Assist"
+[18:38:45] *** krux02_ is now known as krux02
+[18:54:46] *** Quits: ThePhilgrim (~ThePhilgr@151.41.185.44) (Ping timeout: 250 seconds)
+[19:01:05] *** Quits: wolfshappen (~waff@irc.furworks.de) (Ping timeout: 256 seconds)
+[19:02:17] *** Quits: CrazyEddy (crazyed@2603:300a:1d10:c000:de4a:3eff:fe88:cc5f) (Ping timeout: 240 seconds)
+[19:02:35] *** Joins: wolfshappen (~waff@irc.furworks.de)
+[19:16:17] *** Quits: fahrradToken (~fahrradTo@2a02:810b:149f:f0f4::5cc4) (Ping timeout: 240 seconds)
+[19:21:37] *** Quits: hays (rootvegeta@fsf/member/hays) (Ping timeout: 240 seconds)
+[19:24:06] <relipse> when I run composer update I'm getitng a bunch of orange warnings plus a red : Your requirements could not be resolved to an installable set of packages.
+[19:24:19] <relipse> what does that mean?
+[19:24:43] *** Joins: hays (~rootveget@fsf/member/hays)
+[19:25:38] <__adrian> it means you have dependencies than conflict with each other (e.g., foo/foo requires something/great version 1.0, but bar/bar requires something/great version 2.5)
+[19:25:59] <__adrian> the messages will tell you which packages are involved
+[19:27:20] <da_wunder> `composer why some/package` and `composer why-not some/package` should help
+[19:41:29] *** Quits: hays (~rootveget@fsf/member/hays) (Ping timeout: 256 seconds)
+[19:42:17] *** Joins: magla (~gelignite@55d4381b.access.ecotel.net)
+[19:43:48] *** Quits: ProfSimm (~ProfSimm@87.227.196.109) (Remote host closed the connection)
+[19:44:07] *** Joins: ProfSimm (~ProfSimm@87.227.196.109)
+[19:45:38] *** Joins: monkeyPlus (~monkeyPlu@2001:8a0:6cc5:7e01:17a:7926:2ce0:83d0)
+[19:45:45] <monkeyPlus> what is a good php ide on debian?
+[19:46:02] <relipse> monkeyPlus: PHPStorm
+[19:46:06] <monkeyPlus> k thks
+[19:46:29] <relipse> or Kate
+[19:46:35] <relipse> free
+[19:46:50] <relipse> some people like netbeans
+[19:47:41] <monkeyPlus> hmmm phpstorm is propertary
+[19:51:02] <Robdgreat> !+ide
+[19:51:02] <php-bot> Questions about specific IDEs and IDE discussion in general usually degrades rapidly due to personal preference.  It is not a valid topic for ##php. For a list of editors, /msg php-bot editors
+[19:54:00] <monkeyPlus> thks
+[19:54:27] <monkeyPlus> ill take eclipse then :)
+[19:55:11] <relipse>   Problem 1
+[19:55:11] <relipse>     - Root composer.json requires handofhelp/usps-php-api, it could not be found in any version, there may be a typo in the package name.
+[19:55:27] <Naktibalda> well, that's simple
+[19:56:09] <relipse> https://www.irccloud.com/pastebin/PZ6LSPdh/
+[19:56:19] <relipse> what is wrong with my composer.json?
+[19:57:40] <Naktibalda> relipse: package name in https://github.com/handofhelp/USPS-php-api/blob/master/composer.json is different
+[19:57:55] *** Quits: MrBech (~MrBech@152.115.67.90) (Quit: Textual IRC Client: www.textualapp.com)
+[19:57:59] <Naktibalda> change handofhelp to vinceg
+[19:58:57] <Naktibalda> or change the name in handofhelp composer.json
+[20:00:19] <relipse> vinceg has some 8.1 issues
+[20:00:29] <relipse> ok let me change composer.json in handofhelp
+[20:02:39] <relipse> now i'm getting:  Root composer.json requires handofhelp/usps-php-api master, found handofhelp/usps-php-api[dev-master] but it does not match your minimum-stability.
+[20:02:47] *** Joins: hays (rootvegeta@fsf/member/hays)
+[20:03:41] <Naktibalda> change master to dev-master in your composer.json
+[20:03:46] *** Quits: ProfSimm (~ProfSimm@87.227.196.109) (Remote host closed the connection)
+[20:04:42] <relipse> why?
+[20:04:52] <relipse> what does it mean?
+[20:04:58] <Naktibalda> because that's how you use branches
+[20:05:10] <Naktibalda> you have to prepend dev- to branch name
+[20:05:16] <relipse> ok thanks
+[20:06:34] <relipse> ok now what about these errors
+[20:06:38] <relipse> https://www.irccloud.com/pastebin/iOKMNZyU/
+[20:07:21] <Naktibalda> that's easy, mpdf is not compatible with PHP 8
+[20:07:34] <relipse> 8.1 you mean?
+[20:07:44] <Naktibalda> ah, compatible versions required php-gd
+[20:07:56] <Naktibalda>     - mpdf/mpdf[v8.0.13, ..., v8.0.15] require ext-gd * -> it is missing from your system. Install or enable PHP's gd extension.
+[20:10:26] *** Joins: Alex123 (~Adium@cpe-76-89-231-189.socal.res.rr.com)
+[20:11:15] <relipse> whoa that was it!
+[20:11:18] <relipse> thanks Naktibalda
+[20:15:36] *** Joins: brokkoli (~brokkoli@2a02:1205:5031:d3d0:f438:b9a5:7e23:ed9c)
+[20:18:18] *** Quits: raul338 (~raul338@181.97.203.188) (Quit: Client closed)
+[20:28:22] *** Quits: tccki (~tccki@box.webslate.co.nz) (Ping timeout: 250 seconds)
+[20:31:50] *** Quits: thiras (~thiras@user/thiras) (Ping timeout: 250 seconds)
+[20:35:45] *** Quits: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net) (Quit: WeeChat 3.4)
+[20:40:15] <relipse> I have a shopping cart which appears when you click the cart button, but on php 8.1 it doesn't show up when you click it
+[20:44:44] *** Joins: fef (~thedawn@user/thedawn)
+[20:46:39] *** Quits: \mSg (mSg@user/msg/x-0285936) (Ping timeout: 256 seconds)
+[20:46:58] <AllenJB> What _does_ happen? All of your problem description so far relates to the frontend / client-side, which doesn't indicate anything PHP related, since PHP is purely server-side
+[20:48:17] *** Joins: konrados (~konrados@user-5-173-147-19.play-internet.pl)
+[21:00:39] *** Quits: Naktibalda (~Naktibald@88.135.22.17) (Ping timeout: 256 seconds)
+[21:01:49] *** Joins: dimi1947 (~dimi1947@2a02:1388:86:24a0:1da1:f3e:a4df:7512)
+[21:03:43] *** Quits: shokohsc (~shokohsc@lfbn-idf2-1-431-13.w86-246.abo.wanadoo.fr) (Quit: The Lounge - https://thelounge.chat)
+[21:05:05] <relipse> it runs some ajax calls
+[21:05:08] <relipse> which is server side
+[21:05:18] <relipse> then is supposed to show the cart
+[21:05:48] *** Joins: shokohsc (~shokohsc@lfbn-idf2-1-431-13.w86-246.abo.wanadoo.fr)
+[21:06:47] *** Quits: dimi1947 (~dimi1947@2a02:1388:86:24a0:1da1:f3e:a4df:7512) (Quit: Leaving)
+[21:08:40] *** Quits: stenno (~stenno@user/stenno) (Ping timeout: 250 seconds)
+[21:13:52] *** Quits: magla (~gelignite@55d4381b.access.ecotel.net) (Ping timeout: 250 seconds)
+[21:13:58] *** Joins: geli (~gelignite@55d4fbf8.access.ecotel.net)
+[21:21:16] *** Quits: monkeyPlus (~monkeyPlu@2001:8a0:6cc5:7e01:17a:7926:2ce0:83d0) (Remote host closed the connection)
+[21:22:14] *** Quits: shokohsc (~shokohsc@lfbn-idf2-1-431-13.w86-246.abo.wanadoo.fr) (Quit: The Lounge - https://thelounge.chat)
+[21:24:00] *** Quits: clarjon1 (~clarjon1@user/clarjon1) (Read error: Connection reset by peer)
+[21:27:43] *** Joins: stenno (~stenno@user/stenno)
+[21:37:51] *** Joins: \mSg (mSg@user/msg/x-0285936)
+[21:46:28] *** Joins: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg)
+[21:46:49] *** Joins: nomercy (~wine@user/nomercy)
+[21:47:17] <nomercy> hey there
+[21:47:19] <nomercy> https://netsplit.de/networks/top100.php
+[21:47:21] <nomercy> same script?
+[21:48:01] <__adrian> what?
+[21:48:32] <nomercy> im looking for a similar script
+[21:49:35] <__adrian> no idea. i'd google it
+[21:49:59] <__adrian> or if oyu want to make one yourself, i'd assume they just have a bot connect to each network+channel and check
+[21:50:27] <__adrian> or you could always contact the site admin directly and ask nice
+[21:50:43] <nomercy> thanks
+[21:50:50] <__adrian> sure
+[21:53:36] *** TML_ is now known as TML
+[22:00:42] *** Joins: CrazyEddy (crazyed@2603:300a:1d10:c000:de4a:3eff:fe88:cc5f)
+[22:04:01] *** Joins: clichte (~Klementas@35.129.27.85)
+[22:04:33] *** Parts: clichte (~Klementas@35.129.27.85) ()
+[22:04:41] *** Joins: clichte (~Klementas@35.129.27.85)
+[22:05:18] *** Joins: shokohsc (~shokohsc@lfbn-idf2-1-431-13.w86-246.abo.wanadoo.fr)
+[22:26:13] *** Quits: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg) (Remote host closed the connection)
+[22:26:32] *** Joins: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg)
+[22:29:14] *** Quits: Mathisen (mathisen@about/windows/staff/mathisen) (Quit: ZNC 1.8.2 - https://znc.in)
+[22:32:38] *** Joins: Mathisen (mathisen@about/windows/staff/mathisen)
+[22:34:50] *** Joins: freeman_h1 (~freeman_h@37.120.159.215)
+[22:35:47] <freeman_h1> hi all, if you are sending a json encode data from one api to another using curl, is the a limit?
+[22:41:44] <AllenJB> freeman_h1: Depends how you're sending it. There's limits on the length of URLs, which affects GET data (query params), and limits on the sizes of cookies and headers. As far as I recall, there's no spec. limit on the size of POST data, but servers may implement one (PHP has post_max_size, for example). I don't believe there's any limit on the size
+[22:41:44] <AllenJB> of response body.
+[22:42:56] <freeman_h1> AllenJB, yes it is the body itself so the limit will be down to the post max size
+[22:43:52] <TML> In addition to the PHP limit, your httpd usually has a limit as well
+[22:46:38] *** Joins: harpia (~harpia@2804:2aec:205:1400:be2a:c8d5:4566:5dc8)
+[22:47:03] *** Quits: konrados (~konrados@user-5-173-147-19.play-internet.pl) (Remote host closed the connection)
+[22:48:01] *** Quits: Alex123 (~Adium@cpe-76-89-231-189.socal.res.rr.com) (Quit: Leaving.)
+[22:48:17] *** Joins: konrados (~konrados@user-5-173-147-19.play-internet.pl)
+[22:49:36] *** Joins: Nekomander (~BadAdvice@user/badadvicecat)
+[22:51:35] *** Joins: NakedKing (~NakedKing@user/nakedking)
+[23:00:46] *** Quits: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg) (Remote host closed the connection)
+[23:01:06] *** Joins: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg)
+[23:05:14] *** Joins: vlm (~vlm@user/vlm)
+[23:13:25] *** Joins: Joss (~joss@user/Joss)
+[23:15:08] *** Quits: hh (~g@37.214.33.231) (Remote host closed the connection)
+[23:15:10] *** Quits: Joss (~joss@user/Joss) (Client Quit)
+[23:15:24] *** Joins: Joss (~joss@user/Joss)
+[23:16:40] *** Parts: clichte (~Klementas@35.129.27.85) (Leaving)
+[23:18:00] *** Quits: Joss (~joss@user/Joss) (Client Quit)
+[23:24:33] *** Quits: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg) (Remote host closed the connection)
+[23:24:53] *** Joins: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg)
+[23:30:01] *** Quits: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg) (Remote host closed the connection)
+[23:30:20] *** Joins: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg)
+[23:34:48] *** Quits: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg) (Ping timeout: 256 seconds)
+[23:44:45] *** Quits: fef (~thedawn@user/thedawn) (Ping timeout: 276 seconds)
+[23:56:54] *** Joins: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk)
+[23:58:01] *** Quits: mr_gant (~mr_gant@203-206-182-122.perm.iinet.net.au) (Ping timeout: 256 seconds)
+[23:58:34] *** Joins: mr_gant (~mr_gant@203-206-182-122.perm.iinet.net.au)

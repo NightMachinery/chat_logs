@@ -1,0 +1,283 @@
+[00:09:56] *** Quits: cuhela (~cuhela@188.119.45.227) (Quit: Leaving)
+[00:22:13] *** Quits: jfuller (~jimfuller@85-160-5-248.reb.o2.cz) (Ping timeout: 240 seconds)
+[00:29:15] *** Quits: rgrinberg (~textual@177.248.156.216) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[00:30:51] *** Joins: rgrinberg (~textual@177.248.156.216)
+[00:32:36] *** Quits: nmollerup (~nmollerup@customer-2a00-7660-1612-0168-051d-e96c-af20-267b.ip6.gigabit.dk) (Quit: Leaving)
+[00:36:52] *** Quits: rgrinberg (~textual@177.248.156.216) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[00:38:30] *** Quits: gh34 (~textual@cpe-184-58-181-106.wi.res.rr.com) (Quit: Textual IRC Client: www.textualapp.com)
+[00:42:04] *** Joins: cuhela (~cuhela@188.119.45.227)
+[00:45:35] *** Quits: magla (~gelignite@d5362fd7.access.ecotel.net) (Quit: Stay safe!)
+[01:06:52] *** Joins: rgrinberg (~textual@177.248.156.216)
+[01:07:30] *** Joins: Jaxx (~Jaxx@user/jaxx)
+[01:08:50] <bagder> foutrelis: can you confirm that you're using HTTP/2 when you see the problems?
+[01:10:22] <bagder> I'm on Debian and I use a different build option set, but I think HTTP/2 and nghttp2 versions maybe could be the most interesting
+[01:10:38] <bagder> if even that
+[01:11:50] <foutrelis> bagder: this prints "conn->httpversion = 20": https://paste.xinu.at/BYm7/
+[01:12:31] <foutrelis> it prints it 5 times 🐱
+[01:12:52] <foutrelis> bagder: which debian, 11?
+[01:13:06] <bagder> sid
+[01:13:11] <bagder> unstable
+[01:13:31] *** Joins: jfuller (~jimfuller@85-160-5-248.reb.o2.cz)
+[01:14:17] <foutrelis> can repro with libnghttp2-1.43.0 too (current in arch is 1.47.0)
+[01:14:34] <bagder> yeah, I don't think its version dependent at all
+[01:14:39] <bagder> I rather suspect timing
+[01:16:20] <bagder> okay, I think I can still repro
+[01:16:30] <bagder> I had a change in my local copy
+[01:16:33] <foutrelis> we're in the correct block though, if I comment all of "if(!Curl_meets_timecondition(" then it works (but downloads the files instead of sneaking in a 304)
+[01:16:42] <bagder> yes, it's in that ballpark
+[01:17:01] *** Quits: cuhela (~cuhela@188.119.45.227) (Ping timeout: 246 seconds)
+[01:17:03] <foutrelis> oh my, I actually thought to say that but then forgot XD
+[01:17:47] <bagder> I modify the code to show which transfers that are still "pending"
+[01:17:51] <bagder> *modified
+[01:30:40] <foutrelis> to simplify the example a bit, it also repros with the same URL used >5 times, e.g. 6x "https://europe.mirror.pkgbuild.com/core/os/x86_64/core.db"
+[01:36:18] <foutrelis> bagder: can kind of repro with plain curl too: https://paste.xinu.at/ymv/
+[01:36:20] <foutrelis> * h2_process_pending_input: nghttp2_session_mem_recv() returned -902:The user callback function failed
+[01:36:23] <foutrelis> * Connection died, retrying a fresh connect (retry count: 1)
+[01:37:15] <foutrelis> I was seeing that "user callback function failed" error with pacman too at some point 🐱
+[01:41:50] *** Quits: jfuller (~jimfuller@85-160-5-248.reb.o2.cz) (Ping timeout: 272 seconds)
+[01:44:03] <foutrelis> it's probably hard to simulate 304s with http2 being multiplexed and whatnot ._.
+[01:45:27] <bagder> it shouldn't be...
+[01:45:54] <foutrelis> oh, good :)
+[01:57:09] <bagder> I have a new theory
+[01:57:46] *** Quits: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk) (Quit: Leaving)
+[01:59:37] <bagder> want a patch to try?
+[01:59:43] <foutrelis> yes
+[02:00:59] <bagder> try this https://gist.github.com/bagder/713d8b8c82f78118152d9a979d03ea33
+[02:04:00] *** Quits: rgrinberg (~textual@177.248.156.216) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[02:04:02] <foutrelis> bagder: not getting hangs with that 🐱
+[02:04:08] <bagder> wohoo
+[02:04:30] <foutrelis> and it's fast so it's simulating 304s afaict
+[02:04:59] <bagder> I'll drop the previous PR, I don't think it adds anything
+[02:05:43] <foutrelis> any idea about the dying connections? https://paste.xinu.at/ymv/#n145
+[02:06:12] <foutrelis> hmm, let me try streamclose instead of connclose (maybe that PR helps with this)
+[02:06:20] <bagder> oh right
+[02:07:15] <foutrelis> hmm, no luck with just streamclose, might need more changes to not close to connection 🐱
+[02:07:19] <foutrelis> *the connection
+[02:07:49] <foutrelis> also maybe this is a different issue than the hang :P
+[02:07:58] <bagder> I think it is
+[02:08:01] * icing watched how the  pros do it, but needs to go to bed now. glhf
+[02:08:07] <bagder> or maybe the fix triggers this
+[02:08:17] <bagder> night icing
+[02:08:18] <foutrelis> bagder: it failed before the fix too
+[02:08:24] <bagder> ah right
+[02:08:28] *** Quits: icing (~stefan@user/icing) (Quit: Leaving...)
+[02:08:51] *** Joins: seifeslimene (~seifeslim@102.158.105.22)
+[02:17:17] *** Quits: cedric (~cedric@2a01:cb11:821:7c00:295a:c0f6:bdc5:6c0) (Quit: Konversation terminated!)
+[02:17:56] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 246 seconds)
+[02:21:28] <foutrelis> bagder: pacman seems happy for the fix too
+[02:21:32] <foutrelis> *with the fix
+[02:21:41] <bagder> lovely
+[02:22:43] <bagder> I'm trying to figure which callback that nghttp2 says returns error...
+[02:26:41] <bagder> oh I think I know
+[02:27:46] <bagder> now I just need to fix it
+[02:29:51] <bagder> the just "simulated" 304 stream is gone, but there is more data still coming for that stream
+[02:30:30] <foutrelis> server be like "here, have some more data" :P
+[02:31:47] <bagder> right, because that data was already coming when curl decided it should pretend it was a 304
+[02:32:01] <bagder> and gets read of all knowledge of the stream
+[02:32:06] <bagder> *gets rid
+[02:33:17] <foutrelis> it still doesn't download the whole file when it simulates a 304, is this because the stream gets paused?
+[02:36:50] <bagder> the error there makes it disconnect the connection and since that stream is done in the eyes of curl, it won't continue
+[02:37:14] <bagder> but when I make it not disconnect, I need to make sure the stream is not continuing
+[02:43:00] <foutrelis> today I learned nginx that is trolling and returns 200 instead of 304
+[02:43:24] <bagder> right, which is what triggered this in the first place
+[02:43:25] <foutrelis> feels like it's treating if-modified-since as if-modified-exactly-on
+[02:45:22] <foutrelis> perhaps curl could roll with it and avoid the hassle of dealing with wrong responses? :)
+[02:46:08] <bagder> where's the challenge in that? =B)
+[02:46:17] <foutrelis> hah
+[02:47:41] <foutrelis> there's beauty in simplicity :)
+[02:52:54] <bagder> true
+[02:53:03] <bagder> but this functionality was done like this eons ago
+[02:54:10] <foutrelis> and it's probably quite useful when not using --remote-time
+[02:55:29] <bagder> I believe I have a fix for this too, but I'll clean it up tomorrow
+[02:55:54] <foutrelis> bagder: thanks for looking into these edge cases 🐱
+[02:56:19] <bagder> you provided a good test case!
+[03:56:27] *** Joins: epony (epony@user/epony)
+[04:17:03] *** Quits: WishBoy (~WishBoy@user/wishboy) (Remote host closed the connection)
+[04:29:20] *** Joins: rgrinberg (~textual@177.248.156.216)
+[04:38:32] *** Quits: emanuele6 (~emanuele6@user/emanuele6) (Ping timeout: 272 seconds)
+[04:50:11] *** Quits: rgrinberg (~textual@177.248.156.216) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[05:07:26] *** Joins: emanuele6 (~emanuele6@user/emanuele6)
+[05:17:10] *** Joins: rgrinberg (~textual@177.248.156.216)
+[05:26:58] *** Quits: rgrinberg (~textual@177.248.156.216) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[06:23:40] *** Quits: keypusher (keypusher@user/keypusher) (Ping timeout: 272 seconds)
+[06:24:27] *** Joins: keypusher (keypusher@user/keypusher)
+[06:50:16] *** Quits: LeSpocky (foobar@i5C7525E4.versanet.de) (Ping timeout: 272 seconds)
+[06:51:42] *** Joins: LeSpocky (foobar@i5C752240.versanet.de)
+[06:57:40] *** Quits: seifeslimene (~seifeslim@102.158.105.22) (Ping timeout: 250 seconds)
+[08:50:41] *** Quits: The_Blode (~Blode@user/the-blode/x-7164444) (Ping timeout: 256 seconds)
+[09:02:27] *** Joins: The_Blode (~Blode@user/the-blode/x-7164444)
+[09:35:18] *** Joins: jfuller (~jimfuller@85-160-5-248.reb.o2.cz)
+[09:51:27] *** Quits: cliluw (~cliluw@47.147.77.43) (Quit: Leaving)
+[09:53:59] *** Quits: jfuller (~jimfuller@85-160-5-248.reb.o2.cz) (Ping timeout: 246 seconds)
+[10:24:02] <bagder> foutrelis: #8664
+[10:24:04] -curelbot- [GitHub] PR #8664: http2: fix handling of client-initiated "done" (https://github.com/curl/curl/pull/8664)
+[10:29:27] *** Joins: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk)
+[10:30:19] *** Quits: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk) (Remote host closed the connection)
+[10:31:33] *** Joins: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk)
+[11:01:12] *** Joins: mattil (~mattil@d5z9ccdfmyl1jmjj16z-4.rev.dnainternet.fi)
+[11:15:44] <bagder> "New defects found: 0"
+[11:18:21] *** Quits: mattil (~mattil@d5z9ccdfmyl1jmjj16z-4.rev.dnainternet.fi) (Remote host closed the connection)
+[11:27:16] *** Joins: jfuller (~jimfuller@88-101-100-2.rcg.o2.cz)
+[11:30:24] *** Quits: keypusher (keypusher@user/keypusher) (Read error: Connection reset by peer)
+[11:31:59] *** Joins: keypusher (keypusher@user/keypusher)
+[11:35:06] *** Joins: icing (~stefan@2001:16b8:f37d:5600:3810:9ea4:16f6:477d)
+[11:35:07] *** Quits: icing (~stefan@2001:16b8:f37d:5600:3810:9ea4:16f6:477d) (Changing host)
+[11:35:07] *** Joins: icing (~stefan@user/icing)
+[11:47:59] *** Joins: kdudka (kdudka@nat-pool-brq-t.redhat.com)
+[11:48:41] <kushal> Dear list moderator, please approve the reply :)
+[11:51:41] <bagder> did!
+[11:52:21] <bagder> the latest vulnerability seems to have been introduced into curl mid-2013
+[11:52:57] <bagder> so another >3000 days ago one
+[12:05:08] <kushal> bagder, thank you :)
+[12:12:41] *** Quits: YuutaW (~YuutaW@mail.yuuta.moe) (Read error: Connection reset by peer)
+[12:14:02] *** Joins: YuutaW (~YuutaW@mail.yuuta.moe)
+[12:29:25] *** Quits: YuutaW (~YuutaW@mail.yuuta.moe) (Ping timeout: 250 seconds)
+[12:31:31] *** Quits: gslin (~gslin@114-34-121-114.hinet-ip.hinet.net) (Ping timeout: 260 seconds)
+[12:31:56] *** Joins: gslin (~gslin@114-34-121-114.hinet-ip.hinet.net)
+[12:37:28] *** Joins: YuutaW (~YuutaW@2404:f4c0:f9c3:501:215:5dff:fe0d:ad32)
+[12:44:43] *** Quits: martiert (~martiert@ti0185q160-2775.bb.online.no) (Quit: WeeChat 3.4.1)
+[12:47:36] *** Joins: Guest6250 (~martiert@ti0185q160-2775.bb.online.no)
+[12:49:25] *** Guest6250 is now known as martiert
+[12:53:27] * icing does not understand people who 1 day after breaking CI completely for everyone continue to discuss on the mailing list how to possibly change their commit - while leaving the breaking changer in!
+[12:57:56] <bagder> people
+[12:58:55] <icing> yeah, but he is one of the good guys. So, I fail to understand the thinking. :(
+[13:04:35] * icing will cease work for the day, stop worrying and go grocery shopping. See the shelves emptied by hoarders, buy some red wine and chocolate hopefully.
+[13:04:50] <bagder> sounds like a plan!
+[13:05:22] <icing> sometimes I envy people who run their own project, you know?
+[13:05:38] <bagder> can recommend!
+[13:13:06] <kushal> :)
+[13:16:36] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[13:25:57] *** Joins: taupiqueur_ (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[13:26:26] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 246 seconds)
+[13:26:34] <bagder> "fun" stackoverflow April fools with weirdo filters on top
+[13:27:18] <milkylainen> people.redhat.com still incomplete. :\
+[13:29:14] <foutrelis> bagder: I'll try the PR :)
+[13:30:09] <bagder> thanks
+[13:59:37] *** Joins: seifeslimene (~seifeslim@197.2.39.226)
+[14:05:20] *** Quits: taupiqueur_ (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Quit: taupiqueur_)
+[14:05:46] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[14:16:43] <foutrelis> bagder: seems to work well! 🐱
+[14:16:54] <foutrelis> no hangs or dead connections
+[14:21:06] <icing> \o/
+[14:21:09] <foutrelis> also noticed that pacman logs response code = 200 (but works fine since it discards the temporary download due to the met time condition) -- this might be because it's parsing the headers: https://gitlab.archlinux.org/pacman/pacman/-/blob/master/lib/libalpm/dload.c#L306
+[14:21:26] <foutrelis> icing: icing: o/
+[14:21:33] <foutrelis> too much icing XD
+[14:21:45] <icing> ah, it will be fine
+[14:27:58] *** Joins: hans (uid529825@id-529825.helmsley.irccloud.com)
+[14:48:41] <foutrelis> bagder: server logs seem fine too, only ~200K transferred when curl simulates a 304: https://paste.xinu.at/wn5p9O/
+[15:05:38] *** Quits: seifeslimene (~seifeslim@197.2.39.226) (Quit: Ping timeout (120 seconds))
+[15:06:41] *** Joins: seifeslimene (~seifeslim@197.2.39.226)
+[15:11:36] *** Quits: Jaxx (~Jaxx@user/jaxx) (Quit: Leaving)
+[15:14:33] <Piru> hmm might have found some security issue.
+[15:15:03] <Piru> but I'm not quite sure if this is really something curl should address or not. I'll give it some thought
+[15:35:32] *** Joins: The_Blode_ (~Blode@user/the-blode/x-7164444)
+[15:36:59] *** Quits: The_Blode (~Blode@user/the-blode/x-7164444) (Ping timeout: 246 seconds)
+[15:38:25] <bagder> foutrelis: excellent, thanks a lot for confirming this
+[15:41:57] <Piru> I'm inclined to believe this is not curl issue
+[15:42:35] <Piru> but I guess I'll submit a ticket just to discuss this in the ticket before anything is decided
+[15:43:02] <bagder> sounds like a proper approach
+[15:43:30] <Piru> I blame macOS
+[15:44:16] <bagder> btw, the reporter of the recent issue I "dismissed" posted her own blog entry about the issue she found, arguing her point
+[15:44:17] <bagder> https://nyget.in/2022/03/28/my-first-fuzzy-finding-busyloop-in-curl/
+[15:45:33] <Piru> ah result presentation for a client in 15. calendar reminders are a good thing
+[15:45:53] <Piru> without I would be emerged from this tomorrow or so :>
+[15:48:46] <bagder> I did a funny mistake. Look at this graph and check the tics on the X-axis: https://curl.se/dashboard1.html#50-percent
+[15:48:59] <bagder> they go slightly off to the right
+[15:49:27] *** nekoblit is now known as nekobot
+[15:49:27] *** nekobot is now known as nekobit
+[15:49:28] <bagder> turns out I had typoed 3600 as 3500, as number of seconds per hour ...  =)
+[15:50:05] <bagder> makes it ~half a year off after 22 years =)
+[15:50:37] *** nekobit is now known as nekobot
+[15:50:57] *** nekobot is now known as nekobit
+[15:59:27] <milkylainen> Sounds like my internal clock.
+[16:00:00] <bagder> hah
+[16:00:45] <milkylainen> A evolutional practical joke. :P
+[16:02:42] <foutrelis> bagder: hmm, streamclose might be good for 'connclose(conn, "already downloaded")' too
+[16:03:22] <foutrelis> disabled ranges for this as a test case: curl -sv -C- --remote-name-all https://foutrelis.com/test-no-range{,,,}
+[16:03:41] <bagder> oh yes
+[16:08:42] <foutrelis> I did test that it uses only one connection with streamclose, didn't check how http 1.1 behaves though 🐱
+[16:09:47] <bagder> streamclose will close the connection when 1.1 is used
+[16:10:35] <bagder> so it should be fine
+[16:12:17] <bagder> #8665
+[16:12:19] -curelbot- [GitHub] PR #8665: http: streamclose "already downloaded" (https://github.com/curl/curl/pull/8665)
+[16:13:37] <foutrelis> neat :)
+[16:23:54] * icing wants a C-aware diff that can tell a function has been removed and a new one added and not try to show what they may have in common.
+[16:24:40] <bagder> "how hard can it be?" =)
+[16:27:42] <icing> "Oh, there was some change before 'int i;' and here comes the change after that...
+[16:36:04] <foutrelis> bagder: does the lack of "k->keepon &= ~KEEP_RECV" in the 304 case and/or its existence in the "already downloaded" case make any difference?
+[16:36:45] <bagder> I don't think so, it is mostly an extra precaution that I don't think has an effect when done is set true
+[16:37:31] <foutrelis> I see, thanks :)
+[17:01:23] *** Joins: jfuller_ (~jimfuller@193.27.14.156)
+[17:02:45] *** Quits: jfuller_ (~jimfuller@193.27.14.156) (Client Quit)
+[17:04:36] *** Quits: jfuller (~jimfuller@88-101-100-2.rcg.o2.cz) (Ping timeout: 272 seconds)
+[17:04:43] <foutrelis> bagder: I think I'm still seeing some strangeness ( sorry 🥺 ) -- this is using 4 connections instead of reusing the first: 
+[17:04:53] <foutrelis> curl -v -z "Wed, 30 Mar 2030 00:00:00 GMT" https://europe.mirror.pkgbuild.com/core/os/x86_64/core.db{,,,}
+[17:05:47] <foutrelis> for some reason it's thinking the previous connection has died
+[17:07:29] <bagder> is that with the PR applied?
+[17:07:43] <foutrelis> yes, current master branch
+[17:10:56] <bagder> I suspect this can happen when the "simulated 304" happens so the next request might then have leftover stream data from the previous one still pending that is detected as "dead connection" because it is readable...
+[17:11:43] <bagder> it is clearly timing dependent, as it doesn't happen all the time for me
+[17:11:45] <foutrelis> yeah, probably works with -Z because it sneaks in all the requests in the beginning :P
+[17:12:23] <bagder> yes, with -Z the other transfers help drain the "superfluous" data
+[17:12:50] <bagder> it should still of course not do this
+[17:13:01] <foutrelis> bagder: does it repro easier for you with a larger file? curl -v -z "Wed, 30 Mar 2030 00:00:00 GMT" https://europe.mirror.pkgbuild.com/community/os/x86_64/community.db{,,,}
+[17:13:59] <bagder> that still gives me 1, 2 or 4 connections a bit intermittently
+[17:14:07] <foutrelis> fun :)
+[17:14:58] <icing> I tried to understand the code yesterday, but it did not open its secrets to me easily... =)
+[17:15:31] <bagder> it was rather tricky and the primary bug was due to a libcurl tricky thing:
+[17:16:03] <icing> it looked a bit like stream connections that are somewhat connections, but not really and....
+[17:16:18] <foutrelis> a bunch of simulated 304s likely isn't a usual occurrence so a dropped connection here or there isn't too bad
+[17:16:32] <bagder> the tricky part is that the API is for a single transfer, but it reads from a connection that contains many transfers
+[17:16:49] <bagder> and the interaction with the nghttp2 API
+[17:17:35] <bagder> foutrelis: I'm pretty sure these are at least benign disconnects so curl will recover from them fine
+[17:17:37] <icing> I understand from personal experience that adding h2 streams to a h1 design has challenges...>.)
+[17:17:47] <bagder> it certainly has
+[17:18:09] <bagder> and you know, h3 takes you to the next level =)
+[17:19:03] <icing> yeah, i dodged that one so far
+[17:25:08] <bagder> https://bagder.github.io/log/ <= another week
+[17:30:36] *** Piraty is now known as ping
+[17:30:41] *** ping is now known as Piraty
+[17:48:31] <Piru> ok. that bit done
+[18:03:26] <Piru> oof this looks like a vulnerability
+[18:03:59] <Piru> ok I guess I need to ticket it after all
+[18:15:35] <Piru> maybe later, this isn't anything super serious
+[18:16:06] *** Joins: gh34 (~textual@cpe-184-58-181-106.wi.res.rr.com)
+[18:23:29] <zagura> /25/12
+[18:37:17] *** Quits: vicecea (~vicecea@gateway/vpn/pia/vicecea) (Remote host closed the connection)
+[18:37:36] *** Joins: vicecea (~vicecea@gateway/vpn/pia/vicecea)
+[18:37:42] *** Quits: hans (uid529825@id-529825.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[18:42:50] *** Quits: seifeslimene (~seifeslim@197.2.39.226) (Quit: Client closed)
+[18:43:28] *** Joins: seifeslimene (~seifeslim@197.2.39.226)
+[19:12:06] <bagder> libcurl on wince 5 \o/
+[19:12:10] <bagder> :-)
+[19:21:15] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Ping timeout: 260 seconds)
+[19:27:19] *** Joins: hans (uid529825@id-529825.helmsley.irccloud.com)
+[19:28:35] *** Quits: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk) (Quit: Leaving)
+[19:35:57] *** Joins: WishBoy (~WishBoy@user/wishboy)
+[20:05:27] *** Joins: taupiqueur (~taupiqueu@1.104.204.77.rev.sfr.net)
+[20:09:56] *** Quits: seifeslimene (~seifeslim@197.2.39.226) (Quit: Client closed)
+[20:10:10] *** Quits: taupiqueur (~taupiqueu@1.104.204.77.rev.sfr.net) (Ping timeout: 272 seconds)
+[20:22:31] *** Joins: LuksNuke (~LuksNuke@gateway/tor-sasl/luksnuke)
+[20:25:23] *** Quits: gh34 (~textual@cpe-184-58-181-106.wi.res.rr.com) (Quit: Textual IRC Client: www.textualapp.com)
+[20:37:43] <icing> congats!
+[20:37:48] <icing> Congrats!
+[20:41:27] *** Quits: kdudka (kdudka@nat-pool-brq-t.redhat.com) (Quit: Leaving)
+[20:53:02] *** Quits: zmt00 (~zmt00@user/zmt00) (Read error: Connection reset by peer)
+[20:54:55] *** Joins: zmt00 (~zmt00@user/zmt00)
+[21:02:30] *** Joins: taupiqueur (~taupiqueu@41.247.204.77.rev.sfr.net)
+[21:05:52] *** Quits: epony (epony@user/epony) (Read error: Connection reset by peer)
+[21:06:30] *** Joins: epony (epony@user/epony)
+[21:13:14] *** Quits: WishBoy (~WishBoy@user/wishboy) ()
+[21:16:08] *** Joins: rgrinberg (~textual@177.248.156.216)
+[21:57:55] *** Quits: LuksNuke (~LuksNuke@gateway/tor-sasl/luksnuke) (Ping timeout: 240 seconds)
+[22:04:01] *** Quits: Seirdy (~Seirdy@sourcehut/user/seirdy) (Ping timeout: 250 seconds)
+[22:46:24] *** Quits: icing (~stefan@user/icing) (Quit: Leaving...)
+[22:53:44] *** Joins: cliluw (~cliluw@47.147.77.43)
+[23:26:19] *** Joins: cuhela (~cuhela@188.119.45.227)
+[23:27:34] *** Quits: rgrinberg (~textual@177.248.156.216) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[23:29:02] *** Quits: taupiqueur (~taupiqueu@41.247.204.77.rev.sfr.net) (Ping timeout: 272 seconds)
+[23:29:29] *** Joins: taupiqueur (~taupiqueu@33.245.204.77.rev.sfr.net)
+[23:50:31] *** Quits: cuhela (~cuhela@188.119.45.227) (Ping timeout: 260 seconds)
+[23:51:20] *** Joins: Seirdy (~Seirdy@sourcehut/user/seirdy)
+[23:56:21] *** Joins: taupiqueur_ (~taupiqueu@51.244.204.77.rev.sfr.net)
+[23:57:31] *** Quits: taupiqueur (~taupiqueu@33.245.204.77.rev.sfr.net) (Ping timeout: 260 seconds)

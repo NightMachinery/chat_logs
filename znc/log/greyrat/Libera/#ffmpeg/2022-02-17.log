@@ -1,0 +1,658 @@
+[00:01:00] *** Quits: crashrep (~crashrep@user/crashrep) (Quit: WeeChat 3.4)
+[00:01:08] *** Joins: c7s (~c7s@user/c7s)
+[00:09:43] <Manouchehri> galad: nvidia's encoder seems to do the trick :)
+[00:09:59] <Manouchehri> question, how can I tell if I'm using both hardware encoding *and* decoding?
+[00:10:04] <Manouchehri> ffmpeg -y -hwaccel cuda -hwaccel_output_format cuda -i /mnt/ssd/2.mp4 -vf scale_npp=2560:1440 -c:a copy -c:v hevc_nvenc -tune lossless -profile:v main10 -preset fast -f mp4 /dev/null # this is my current test
+[00:10:38] *** Joins: xenorites1 (~xenorites@65.102.235.230)
+[00:10:56] *** Joins: Vonter (~Vonter@user/vonter)
+[00:11:14] *** Quits: __Myst__ (~Myst@net-47-53-171-76.cust.vodafonedsl.it) (Quit: ZNC - https://znc.in)
+[00:11:36] *** Joins: __Myst__ (~Myst@net-47-53-171-76.cust.vodafonedsl.it)
+[00:12:12] *** Quits: xenorites (~xenorites@65.102.235.230) (Ping timeout: 240 seconds)
+[00:12:12] *** xenorites1 is now known as xenorites
+[00:16:14] <JEEB> Manouchehri: btw you should avoid utilizing the npp scale filter, instead the cuda scale filter (which can actually be distributed) should now be able to do all the jobs of it
+[00:16:30] <JEEB> and you can tell by the hwaccel_output_format and by the filter chain working
+[00:16:46] <JEEB> since the filter chain will not do a hwdownload to normal RAM by itself
+[00:17:16] <JEEB> also I think the output logging should show the pixel format as cuda
+[00:18:03] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Ping timeout: 272 seconds)
+[00:18:36] <Manouchehri> ffmpeg -y -hwaccel cuda -hwaccel_output_format cuda -i /mnt/ssd/1.mp4 -vf scale_cuda=2560:1440 -c:a copy -c:v hevc_nvenc -tune lossless -profile:v main10 -preset slow -f mp4 /dev/null # so both hardware encoding and decoding are working?
+[00:18:39] *** Joins: finsternis (~X@23.226.237.192)
+[00:19:14] <Manouchehri>   Stream #0:0 -> #0:0 (hevc (native) -> hevc (hevc_nvenc))
+[00:19:14] <JEEB> yes
+[00:19:33] <JEEB> Manouchehri: after that in the output thing I expect it to log the video stream's pixel format
+[00:19:53] <JEEB> which in case of hwaccel stuff instead of showing the data within, will show the type
+[00:19:56] <Manouchehri>   Stream #0:0(eng): Video: hevc (Main 10) (hev1 / 0x31766568), cuda(pc, bt709, progressive), 2560x1440 [SAR 1:1 DAR 16:9], q=2-31, 2000 kb/s, 59.94 fps, 60k tbn (default)
+[00:20:01] <JEEB> > cuda
+[00:20:02] <JEEB> yu
+[00:20:03] <JEEB> *yup
+[00:20:14] <Manouchehri> the input says this though
+[00:20:16] <Manouchehri>   Stream #0:0[0x1](eng): Video: hevc (Main) (hvc1 / 0x31637668), yuvj420p(pc, bt709), 3840x2160 [SAR 1:1 DAR 16:9], 156756 kb/s, 59.94 fps, 59.94 tbr, 60k tbn (default)
+[00:20:29] <JEEB> yes, because probing is only done with a sw decoder
+[00:20:54] <JEEB> basically with hwaccel_output_format you are telling FFmpeg to output as those hwaccel buffers
+[00:20:59] <JEEB> not normal memory buffers
+[00:21:06] *** Quits: Volgaar (~volgaar@2a01:cb14:675:e500:e1a8:ddac:588e:abe1) (Quit: WeeChat 3.4)
+[00:21:12] <JEEB> and scale_cuda by itself cannot convert from to another anyways
+[00:21:23] <JEEB> if you try to leave the hwaccel_output_format out, it should just  error out
+[00:21:38] <JEEB> since there is no integrated logic to make the filter chain work between hwaccel formats and normal formats
+[00:21:39] <Manouchehri> When should I use hevc_cuvid?
+[00:21:41] <JEEB> :P
+[00:21:44] <JEEB> never
+[00:21:52] <Manouchehri> why? :)
+[00:22:06] <Manouchehri> I believe you, I just didn't like the answer I saw online (which didn't give any reason lol(
+[00:22:07] <JEEB> it just leaves parsing to nvidia's drivers, which means that if they have a bug you cannot get it fixed
+[00:22:13] <Manouchehri> ahhhh
+[00:22:20] <JEEB> cuvid is basically parser + decoder more or less
+[00:22:31] <JEEB> while hwaccel is the base H.264/HEVC etc parsing/decoding
+[00:22:41] <JEEB> but then slice decoding is left to nvidia/whatever
+[00:22:42] <Manouchehri> so we're using only CUDA for decoding and encoding?
+[00:23:08] <JEEB> well, nvidia's libraries
+[00:23:18] <JEEB> it's not like you are going to be parsing GPU buffers
+[00:23:50] <JEEB> but yea, using hwaccel means you can affect something :P
+[00:24:02] <JEEB> since the base format parsing etc metadata reading is done in FFmpeg
+[00:24:32] <JEEB> while with the "full decoder" a la cuvid, you are just passing the buffers to nvidia's driver and hoping for the best
+[00:24:55] <JEEB> I probably am not 100% technically correct, but hopefully close enough :P
+[00:25:54] <JEEB> there recently was a good example of why it's good to do stuff on your side, when nvidia's driver stuff just crashed if you fed the encoder API certain metadata
+[00:26:05] <JEEB> and that could not be fixed on FFmpeg's side :P
+[00:27:05] *** Quits: ttys000_ (~ttys000@user/ttys000) (Ping timeout: 256 seconds)
+[00:29:13] *** Joins: ttys000 (~ttys000@user/ttys000)
+[00:29:21] <Manouchehri> thank you :D
+[00:29:30] <Manouchehri> is there a cuda version of transpose_npp?
+[00:30:55] <JEEB> not that I can see right away. there's a vulkan one, and IIRC there was some sort of cuda<->vulkan interoperability. not sure how well it works, though
+[00:31:02] *** Quits: vektor (~vektor@IP-094046083008.dynamic.medianet-world.de) (Quit: Client closed)
+[00:31:07] <JEEB> which transpose are you mostly interested of?
+[00:32:12] <JEEB> but you can also look into if you want to write a filter like that yourself, if you have a need for it?
+[00:32:12] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 240 seconds)
+[00:34:38] <Manouchehri> rotating 90 degrees
+[00:35:37] <Manouchehri> oh interesting, did not know about vulkan
+[00:35:46] *** Quits: rvalue (~rvalue@user/rvalue) (Read error: Connection reset by peer)
+[00:35:47] <Manouchehri> well, vulkan in ffmpeg that is
+[00:36:00] *** Joins: rvalue (~rvalue@user/rvalue)
+[00:36:38] <Manouchehri> with scale_cuda, how do I convert to yuv420p?
+[00:36:50] <Manouchehri> ffmpeg -y -hwaccel cuda -hwaccel_output_format cuda -i /mnt/ssd/1.mp4 -vf "scale_cuda=2560:1440=format=yuv420p,sharpen_npp" -c:a copy -c:v hevc_nvenc -tune lossless -profile:v main10 -preset slow -f mp4 /dev/null # better, use CUDA!
+[00:36:58] <Manouchehri> this line is obviously wrong
+[00:37:34] <JEEB> so what exactly you want to do? :D
+[00:37:45] <JEEB> like, why do you think you need yuv420p?
+[00:38:05] <Manouchehri> I need yuv420p as the output eventually for streaming :)
+[00:38:17] <Manouchehri> YUV 4:2:0 10-bit :)
+[00:38:25] <JEEB> then you don't care whether it is nv12 or yuv420p
+[00:38:38] <JEEB> nv12 being half-packed and yuv420p being fully planar
+[00:38:49] <JEEB> I guess you're saying this since your input is 10bit 4:2:0?
+[00:39:38] <Manouchehri> my input isn't that at the moment, I'm mostly messing around :p
+[00:41:20] *** Joins: Vonter (~Vonter@user/vonter)
+[00:42:22] <JEEB> scale_cuda=w=2560:h=1440:format=xyz - where xyz is one of nv12|yuv420p|yuv444p|p010|p016|yuv444p16 etc (since the format in this case is not the format meta-filter, but instead fhte
+[00:42:32] <JEEB> *but instead an option of the filter itself
+[00:42:39] <JEEB> pretty sure the documentation goes into this -_-
+[00:42:57] <JEEB> http://ffmpeg.org/ffmpeg-filters.html#scale_005fcuda
+[00:43:15] <Manouchehri> is that gonna use hardware for converting?
+[00:43:41] <JEEB> ?!?!
+[00:44:38] <JEEB> it is an option for a cuda filter, not the meta filter. I specifically said that
+[00:45:22] <JEEB> in theory the meta filter would be better if it would support this use case since it'd be consistent with what you do with normal scale filter etc, but alas that is not possible atm
+[00:50:49] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 256 seconds)
+[00:53:33] <Manouchehri> ahhhhh sorry, I see why I was confused (you explained it well)
+[00:53:46] *** Quits: System_Error (~SystemErr@user/systemerror) (Read error: Connection reset by peer)
+[00:57:52] <Polochon_street> hi! It's probably a question you must be getting a lot, but what do I need to do to make `gcc -o decode_audio decode_audio.c -lavformat -lavutil -lavcodec -static` work? The non-static version works, but with `-static`, I get `/usr/bin/ld: cannot find -lavformat: No such file or directory`
+[00:58:35] <JEEB> you only have .so shared libraries for the libraries?
+[00:58:43] <JEEB> and not the .a files?
+[00:58:46] <Polochon_street> hah, I'd need .a!
+[00:58:47] <Polochon_street> right.
+[00:58:54] <JEEB> since I think you are just telling the linker that you want static libs specifically
+[00:59:01] <Polochon_street> thanks, I knew I was missing something obvious
+[01:00:14] *** Quits: emanuele6 (~emanuele6@user/emanuele6) (Ping timeout: 252 seconds)
+[01:00:25] <Polochon_street> hmm, I'm actually doing this in parallel with cross-compilation, using https://www.gyan.dev/ffmpeg/builds/ the "full-shared" version, which does have the .a files
+[01:00:49] *** Joins: KombuchaKip (~kip@192.252.230.5)
+[01:01:05] <Polochon_street> and the compilation succeeds (I used `x86_64-w64-mingw32-gcc -o test test.c -lavformat -lavcodec -lavutil -I /home/polochon/bliss-rs/ffmpeg/include -L /home/polochon/bliss-rs/ffmpeg/lib -static`), but trying to run the obtained .exe, I get the dreadful error
+[01:01:17] <Polochon_street> `0130:err:module:import_dll Library avcodec-59.dll`
+[01:01:19] <JEEB> .dll.a are a thing with mingw
+[01:01:29] <JEEB> which are just stubs so you can link against shared libraries
+[01:01:30] <JEEB> :P
+[01:01:35] <JEEB> since the DLL files generally are put into bin
+[01:01:35] <Polochon_street> oh.
+[01:01:36] <JEEB> not lib
+[01:01:43] <Polochon_street> that's why :D
+[01:01:57] <Polochon_street> is there a way to solve this then?
+[01:02:08] <JEEB> have static libraries?
+[01:02:21] <JEEB> either build yourself or poke at Btbn's automatic builds or so
+[01:02:46] <JEEB> it's not a real problem, you're just not having the build configuration that you seem to wish for
+[01:03:36] <Polochon_street> I've tried to get the four last here https://github.com/BtbN/FFmpeg-Builds/releases, but the non-shared version just has the ffmpeg exe
+[01:03:59] <Polochon_street> and the -shared seems to has been built with `--enable-shared`, which is not what I want I guess right?
+[01:05:38] <Manouchehri> JEEB: How do you know what pixel formats are supported by a filter?
+[01:05:44] <BtbN> If you want a library to link against, you very much want the one with libraries :D
+[01:06:44] <Polochon_street> absolutely :D but then I guess I'm getting the .dll.a, which makes me in turn doesn't really allow me to make a static build?
+[01:06:59] <Polochon_street> oh, the original BtbN haha, hi
+[01:07:02] <JEEB> just put the DLLs next to the exe first?
+[01:07:12] <Polochon_street> yeah, this works
+[01:07:15] <JEEB> shoul be fine for development/testing
+[01:07:23] <Polochon_street> but the end goal is to not have them next to it :D
+[01:07:26] <JEEB> if not for final distro too
+[01:07:45] <Polochon_street> I've been procrastinating this for too long, and now it's the last thing I *have* to do :(
+[01:08:27] <JEEB> I mean if you do not know how to build FFmpeg itself, then just utilize BtbN's build framework, fork it and package the static libraries as well?
+[01:08:36] <Polochon_street> I gueeess my option is to cross-compile ffmpeg, with `--enable-static` and `--disable-shared`
+[01:08:43] <JEEB> after all, his build automation is all public
+[01:08:55] <JEEB> that's the default configuration FYI
+[01:09:00] <BtbN> JEEB, you can't. The static libraries will depend on the literal mountain of other static libs that are burried in the docker image.
+[01:09:09] <JEEB> ah
+[01:09:11] <furq> if you don't need external libraries then cross compiling is easy
+[01:09:19] <JEEB> and yes
+[01:09:21] <furq> the annoying bit is cross compiling all of those
+[01:09:34] <BtbN> If I included all the static libs in the static released, they'd be like 500MB each
+[01:09:38] <Polochon_street> haha yeah, I remembered something dreadful like that
+[01:09:57] <JEEB> not everyone needs the kitchen sink
+[01:10:07] <Polochon_street> it's nice to have the explanation as to why it's not working as I thought it would, thanks guys :
+[01:10:09] <BtbN> You can grab the docker images, and build ffmpeg and your stuff in them
+[01:10:09] <JEEB> I know my use cases and since 95+% of all decoders are included within
+[01:10:10] <Polochon_street> :)*
+[01:10:12] <BtbN> they got all the stuff needed
+[01:10:52] <JEEB> that is kind of what I hinted at by making use of your public build automation
+[01:10:55] <furq> based on the github readme you probably don't need any external libraries
+[01:11:06] <furq> but maybe song analysis requires libx264 nowadays
+[01:11:16] <JEEB> lol
+[01:11:22] <JEEB> yea if the use case is something like that
+[01:11:31] <JEEB> then a general LGPL build I'd bet even should be OK?
+[01:11:49] <JEEB> heck, if the use case is limited you should be specifically disabling features you don't require
+[01:11:53] <JEEB> less attack surface
+[01:11:58] <JEEB> and smaller binaries
+[01:12:20] <Polochon_street> that's true :D
+[01:12:21] *** Quits: Buster_ (~Buster@buster-net.ru) (Ping timeout: 256 seconds)
+[01:12:35] <furq> pretty much just ./configure --target-os=mingw32 --cross-prefix=x86_64-w64-mingw32-
+[01:12:56] <furq> if that works you can start removing stuff
+[01:13:16] <JEEB> yea, basic config first of course
+[01:13:30] <JEEB> then after that works you can start shaving the yack
+[01:14:53] <Polochon_street> damn, my windows users better enjoy all that work haha
+[01:15:06] <Polochon_street> thanks guys :D
+[01:15:49] <Manouchehri> Why does this not work? :/ ffmpeg -y -hwaccel cuda -hwaccel_output_format cuda -i /mnt/ssd/1.mp4 -c:a copy -c:v hevc_nvenc -tune lossless -profile:v main10 -pix_fmt p010le -preset slow -f mp4 /dev/null
+[01:15:57] <Manouchehri> Impossible to convert between the formats supported by the filter 'Parsed_null_0' and the filter 'auto_scale_0'
+[01:17:05] <BtbN> you're telling it to convert from CUDA to software frame via that -pix_fmt
+[01:17:07] <BtbN> it can't do that.
+[01:17:48] <Manouchehri> ffmpeg -y -hwaccel cuda -hwaccel_output_format cuda -i /mnt/ssd/1.mp4 -vf "scale_cuda=w=2560:h=1440:format=p010le" -c:a copy -c:v hevc_nvenc -tune lossless -profile:v main10 -preset slow -f mp4 /dev/null # ah, this seems like the right way to do it?
+[01:18:44] <BtbN> If scaling to that size and pixel format is what you want
+[01:21:57] <Manouchehri> is this true? https://www.reddit.com/r/ffmpeg/comments/c1im2i/comment/erdnmkn/?utm_source=share&utm_medium=web2x&context=3
+[01:22:23] *** Quits: blaze (~blaze@user/blaze) (Quit: WeeChat 3.3)
+[01:23:27] <BtbN> That 8 bit formats are only 8 bit? Yes, of course?
+[01:24:21] <Manouchehri> isn't it saying p010le and yuv420p10le contain the same amount of info?
+[01:24:46] <Manouchehri> also, I just noticed that my output file actually shows yuv420p10le instead of p010le
+[01:24:54] <BtbN> they're both 420 formats with 10bpp, yes
+[01:24:56] <Manouchehri>   Stream #0:0[0x1](eng): Video: hevc (Main 10) (hev1 / 0x31766568), yuv420p10le(pc, bt709, progressive), 2560x1440 [SAR 1:1 DAR 16:9], 1001911 kb/s, 59.94 fps, 59.94 tbr, 60k tbn (default)
+[01:26:46] *** Joins: AbleBacon (~AbleBacon@user/AbleBacon)
+[01:29:22] *** Quits: s1b1 (~s1b1@user/s1b1) (Read error: Connection reset by peer)
+[01:37:12] *** Quits: ivanich (~ivanich@45-140-123-239.broadband.tenet.odessa.ua) (Ping timeout: 272 seconds)
+[01:39:30] <Manouchehri> How do I print out what a present does?
+[01:41:53] <BtbN> for nvenc? You don't. It's just a GUID the driver gets.
+[01:44:37] *** Quits: lavaball (felix@31.204.155.215) (Remote host closed the connection)
+[01:49:00] *** Joins: bpmedley (~bpmedley@2600:1700:e2c:8410:5052:1a9e:4853:6fe1)
+[01:50:20] *** Joins: tlacatlc6 (~tlacatlc6@097-101-132-062.res.spectrum.com)
+[01:53:35] <Manouchehri> ah, thank you
+[01:55:25] *** Quits: wolfshappen (~waff@irc.furworks.de) (Ping timeout: 256 seconds)
+[01:55:36] *** Joins: s1b1 (~s1b1@user/s1b1)
+[02:00:59] *** Quits: emagex (~user@user/emagex) (Quit: ERC (IRC client for Emacs 27.1))
+[02:05:17] *** Joins: zetaE (~alpmons@139.47.114.154)
+[02:05:21] <zetaE> greets
+[02:07:49] *** Quits: cosimone (~user@93-47-229-224.ip115.fastwebnet.it) (Remote host closed the connection)
+[02:08:38] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[02:12:43] *** Joins: ivanich (~ivanich@45-140-123-239.broadband.tenet.odessa.ua)
+[02:13:01] <Manouchehri> ssl3_write_bytes:bad length
+[02:13:02] <Manouchehri> hmm
+[02:13:05] <Manouchehri> that seems bad
+[02:16:46] *** Joins: emanuele6 (~emanuele6@net-2-39-10-169.cust.vodafonedsl.it)
+[02:16:46] *** Quits: emanuele6 (~emanuele6@net-2-39-10-169.cust.vodafonedsl.it) (Changing host)
+[02:16:46] *** Joins: emanuele6 (~emanuele6@user/emanuele6)
+[02:27:52] *** Quits: arinov_ (~arinov@213.194.126.155) (Ping timeout: 272 seconds)
+[02:28:03] *** Quits: five6433334 (~five6@8.40.26.72) (Quit: The Lounge - https://thelounge.chat)
+[02:39:40] *** Quits: ivanich (~ivanich@45-140-123-239.broadband.tenet.odessa.ua) (Quit: Konversation terminated!)
+[02:45:35] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Quit: taking a break.  remember kids, sekai is better than kotonoha)
+[02:51:56] *** Quits: fkaa (~fkaa@user/fkaa) (Remote host closed the connection)
+[02:52:35] *** Joins: five64333349 (~five6@8.40.26.55)
+[03:05:22] *** Quits: Illya (sid507579@ffmpeg/developer/illya) (Read error: Connection reset by peer)
+[03:05:25] *** Quits: Manouchehri (sid384576@id-384576.hampstead.irccloud.com) (Ping timeout: 240 seconds)
+[03:05:32] *** Joins: Illya (sid507579@ffmpeg/developer/illya)
+[03:05:34] *** Quits: linjie (sid455360@id-455360.helmsley.irccloud.com) (Read error: Connection reset by peer)
+[03:05:47] *** Quits: KimiNewt (sid80838@id-80838.lymington.irccloud.com) (Read error: Connection reset by peer)
+[03:05:47] *** Joins: linjie (sid455360@id-455360.helmsley.irccloud.com)
+[03:05:47] *** Quits: jamra_ (sid16103@id-16103.ilkley.irccloud.com) (Ping timeout: 250 seconds)
+[03:05:49] *** Quits: basix (sid207495@id-207495.uxbridge.irccloud.com) (Read error: Connection reset by peer)
+[03:05:53] *** Quits: tmatth (sid143283@videolan/developer/tmatth) (Read error: Connection reset by peer)
+[03:05:56] *** Joins: KimiNewt (sid80838@id-80838.lymington.irccloud.com)
+[03:05:58] *** Quits: mindfreeze (uid250931@user/mindfreeze) (Read error: Connection reset by peer)
+[03:05:59] *** Quits: Naleksuh (sid454423@wikimedia/naleksuh) (Read error: Connection reset by peer)
+[03:06:00] *** Quits: Tips|Cloud (sid62231@id-62231.ilkley.irccloud.com) (Read error: Connection reset by peer)
+[03:06:00] *** Quits: angular_mike_ (sid45533@ilkley.irccloud.com) (Read error: Connection reset by peer)
+[03:06:00] *** Quits: ullbeking_ (sid5364@ilkley.irccloud.com) (Read error: Connection reset by peer)
+[03:06:01] *** Quits: englishm (sid6629@id-6629.tinside.irccloud.com) (Read error: Connection reset by peer)
+[03:06:04] *** Joins: basix (sid207495@id-207495.uxbridge.irccloud.com)
+[03:06:09] *** Joins: jamra_ (sid16103@id-16103.ilkley.irccloud.com)
+[03:06:24] *** Joins: angular_mike_ (sid45533@id-45533.ilkley.irccloud.com)
+[03:06:26] *** Joins: Manouchehri (sid384576@id-384576.hampstead.irccloud.com)
+[03:06:26] *** Joins: mindfreeze (uid250931@id-250931.hampstead.irccloud.com)
+[03:06:26] *** Quits: mindfreeze (uid250931@id-250931.hampstead.irccloud.com) (Changing host)
+[03:06:26] *** Joins: mindfreeze (uid250931@user/mindfreeze)
+[03:06:27] *** Joins: Naleksuh (sid454423@wikimedia/naleksuh)
+[03:06:49] *** Joins: Tips|Cloud (sid62231@2a03:5180:f:3::f317)
+[03:06:55] *** Joins: englishm (sid6629@2a03:5180:f::19e5)
+[03:07:00] *** Joins: ullbeking_ (sid5364@id-5364.ilkley.irccloud.com)
+[03:07:03] *** Joins: tmatth (sid143283@videolan/developer/tmatth)
+[03:09:56] *** Quits: palasso (~palasso@user/palasso) (Remote host closed the connection)
+[03:14:15] *** Joins: crashrep (~crashrep@user/crashrep)
+[03:17:48] *** Quits: finsternis (~X@23.226.237.192) (Ping timeout: 240 seconds)
+[03:30:05] <Manouchehri> for nearly lossless hevc, how sane does this look?
+[03:30:20] <Manouchehri> ffmpeg -hide_banner -y -hwaccel cuda -hwaccel_output_format cuda -stream_loop -1 -i /mnt/ssd/1.mp4 -vf "scale_cuda=w=2560:h=1440:format=p010le" -c:a copy -c:v hevc_nvenc -preset p7 -profile:v main10 -tier high -tune:v hq -rc:v vbr -qp:v 0 -cq:v 0 -rc-lookahead:v 32 -b_ref_mode:v each -b:v 0 -udu_sei true -movflags frag_keyframe+empty_moov -tag:v hvc1 -f mp4 /dev/null
+[03:31:21] <BtbN> looks stupidly over-tunes to me
+[03:31:29] <BtbN> *tuned
+[03:32:17] <BtbN> set preset and tune, and then play with the cq value until you like the result, the end
+[03:32:48] <BtbN> And with udu_sei enabled, you still have a very high chance of your encode exploding the moment they actually exist
+[03:33:58] <Manouchehri> ffmpeg -hide_banner -y -hwaccel cuda -hwaccel_output_format cuda -stream_loop -1 -i /mnt/ssd/1.mp4 -vf "scale_cuda=w=2560:h=1440:format=p010le" -c:a copy -c:v hevc_nvenc -preset p7 -profile:v main10 -tier high -tune:v hq -rc:v vbr -cq:v 0 -b:v 0 -movflags frag_keyframe+empty_moov -tag:v hvc1 -f mp4 /dev/null # so this instead?
+[03:34:51] <BtbN> Why are you turning off b-frames?
+[03:34:58] <BtbN> and you don't need to explicitly set vbr
+[03:35:25] <BtbN> And unless you want to scale up/down, you can completely drop that filter.
+[03:35:27] <Manouchehri> is vbr the default?
+[03:35:31] <Manouchehri> yeah I'm scaling
+[03:35:44] <Manouchehri> ffmpeg -hide_banner -y -hwaccel cuda -hwaccel_output_format cuda -stream_loop -1 -i /mnt/ssd/1.mp4 -vf "scale_cuda=w=2560:h=1440:format=p010le" -c:a copy -c:v hevc_nvenc -preset p7 -profile:v main10 -tier high -tune:v hq -rc:v vbr -cq:v 0 -b_ref_mode:v each -b:v 0 -movflags frag_keyframe+empty_moov -tag:v hvc1 -f mp4 /dev/null
+[03:38:58] *** Joins: milkt_ (~debian@gateway/tor-sasl/milkt)
+[03:39:47] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[03:39:47] *** Joins: nobiz6 (~nobiz@user/nobiz)
+[03:39:48] *** Joins: KDDLB4 (kevin@user/kddlb)
+[03:39:59] *** Quits: [R]x (~Positive@user/rx/x-1245542) (Ping timeout: 256 seconds)
+[03:40:13] *** Joins: xkuru (~xkuru@user/xkuru)
+[03:40:35] *** Quits: milkt (~debian@gateway/tor-sasl/milkt) (Ping timeout: 240 seconds)
+[03:40:41] *** Joins: deetwelv- (~deetwelve@user/deetwelve)
+[03:40:49] *** Joins: Polochon_street_ (~polochon@2001:41d0:a:64a5::1)
+[03:41:07] *** Quits: bencoh (~bencoh@user/bencoh) (Ping timeout: 256 seconds)
+[03:41:07] *** Quits: MapMan (mapman@rick.hlds.pl) (Ping timeout: 256 seconds)
+[03:41:07] *** Quits: samiamsam (~d@zukertort.childrenofmay.org) (Ping timeout: 256 seconds)
+[03:41:14] *** Joins: samiamsam (~d@zukertort.childrenofmay.org)
+[03:41:34] *** Quits: Polochon_street (~polochon@ns327719.ip-37-187-111.eu) (Ping timeout: 250 seconds)
+[03:41:41] *** Quits: nobiz (~nobiz@user/nobiz) (Ping timeout: 256 seconds)
+[03:41:41] *** Quits: skinkie (~skinkie@konink.de) (Ping timeout: 256 seconds)
+[03:41:41] *** Quits: KDDLB (kevin@user/kddlb) (Ping timeout: 256 seconds)
+[03:41:41] *** Quits: deetwelve (~deetwelve@user/deetwelve) (Ping timeout: 256 seconds)
+[03:41:41] *** nobiz6 is now known as nobiz
+[03:41:41] *** KDDLB4 is now known as KDDLB
+[03:42:20] *** deetwelv- is now known as deetwelve
+[03:42:47] *** Joins: bencoh (~bencoh@nautica.notk.org)
+[03:43:00] *** Joins: MapMan (~mapman@rick.hlds.pl)
+[03:44:24] *** Quits: itsalexjones (~itsalexjo@82.4.99.241) (Read error: Connection reset by peer)
+[03:44:31] *** Joins: skinkie (~skinkie@konink.de)
+[03:44:42] *** Joins: [R]x (~Positive@user/rx/x-1245542)
+[03:44:44] *** Quits: crashrep (~crashrep@user/crashrep) (Remote host closed the connection)
+[03:45:00] *** Quits: rdrg109 (~rdrg109@user/rdrg109) (Ping timeout: 240 seconds)
+[03:45:05] *** Joins: crashrep (~crashrep@user/crashrep)
+[03:45:25] *** Joins: rdrg109 (~rdrg109@user/rdrg109)
+[03:45:25] *** Joins: Vonter (~Vonter@user/vonter)
+[03:46:18] *** Quits: omegatron (~some@p5b056cb8.dip0.t-ipconnect.de) (Quit: No Ping reply in 180 seconds.)
+[03:53:46] *** Joins: milkt (~debian@gateway/tor-sasl/milkt)
+[03:53:58] *** Quits: milkt_ (~debian@gateway/tor-sasl/milkt) (Remote host closed the connection)
+[03:56:44] *** Joins: x_kuru (~xkuru@user/xkuru)
+[03:57:03] *** Joins: pal_ (~pal@76-14-89-2.sf-cable.astound.net)
+[03:57:26] *** Joins: demon__ (~user@62.114.200.238)
+[03:57:33] *** Joins: minimalist (~minimal@user/minimal)
+[03:57:53] *** Quits: minimal (~minimal@user/minimal) (Read error: Connection reset by peer)
+[03:57:53] *** Quits: euphoricallysane (~quatro@user/euphoricallysane) (Read error: Connection reset by peer)
+[03:57:53] *** Joins: euphoricallysane (~quatro@071-010-248-219.res.spectrum.com)
+[03:57:55] *** Quits: euphoricallysane (~quatro@071-010-248-219.res.spectrum.com) (Changing host)
+[03:57:55] *** Joins: euphoricallysane (~quatro@user/euphoricallysane)
+[03:57:57] <Manouchehri> https://github.com/HandBrake/HandBrake/issues/2231#issuecomment-520108626
+[03:58:02] <Manouchehri> useful for anyone else curious
+[04:00:21] *** Quits: xkuru (~xkuru@user/xkuru) (Ping timeout: 272 seconds)
+[04:00:21] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Ping timeout: 272 seconds)
+[04:00:39] *** Quits: anotheruser (~user@41.176.171.61) (Ping timeout: 256 seconds)
+[04:00:58] *** Quits: pal (~pal@76-14-89-2.sf-cable.astound.net) (Ping timeout: 272 seconds)
+[04:01:48] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 240 seconds)
+[04:02:02] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[04:06:18] *** Quits: darkapex (~darkapex@user/darkapex) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[04:06:53] *** Quits: muji369 (~muji369@92.40.176.68.threembb.co.uk) (Ping timeout: 256 seconds)
+[04:07:08] *** Joins: darkapex (~darkapex@user/darkapex)
+[04:21:36] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[04:21:54] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[04:33:34] *** Quits: Seirdy (~Seirdy@sourcehut/user/seirdy) (Quit: exiting 3.4)
+[04:36:12] *** Joins: Vonter (~Vonter@user/vonter)
+[04:36:58] *** Quits: tela (~JnNy@172.245.36.125) (Remote host closed the connection)
+[04:37:35] *** Joins: water (~water@172.245.36.125)
+[04:37:59] <Manouchehri> 4:00:56 PM <JEEB> not that I can see right away. there's a vulkan one, and IIRC there was some sort of cuda<->vulkan interoperability. not sure how well it works, though
+[04:37:59] <Manouchehri> what's the vulkan filter called?
+[04:41:06] <BtbN> That issue comment is simply wrong about all of its claims, Manouchehri
+[04:41:14] <BtbN> qmin/qmax default to -1 for nvenc
+[04:41:26] <Manouchehri> oh lol
+[04:41:43] <BtbN> and if you set -cq, the value of -b is ignored and even avtively overwritten to 0
+[04:41:49] <BtbN> only rc_max_rate is still honored
+[04:45:29] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[04:45:44] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[04:50:49] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 256 seconds)
+[04:58:07] *** Quits: therobin (~UserNick@2607:f2c0:94b9:9e00:9dab:8e79:a7d4:971b) (Quit: Going offline, see ya! (www.adiirc.com))
+[05:09:17] *** Joins: Vonter (~Vonter@user/vonter)
+[05:09:18] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[05:09:33] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[05:18:12] *** Quits: tlacatlc6 (~tlacatlc6@097-101-132-062.res.spectrum.com) (Remote host closed the connection)
+[05:18:31] *** Joins: tlacatlc6 (~tlacatlc6@097-101-132-062.res.spectrum.com)
+[05:22:41] *** Quits: __Myst__ (~Myst@net-47-53-171-76.cust.vodafonedsl.it) (Ping timeout: 272 seconds)
+[05:26:30] *** Joins: __Myst__ (~Myst@net-47-53-171-76.cust.vodafonedsl.it)
+[05:30:19] *** Quits: vlm (~vlm@user/vlm) (Quit: "")
+[05:30:45] *** Quits: l4yer (~l4yer@2001:ac8:31:8900:1011:2752:807d:fa72) (Ping timeout: 250 seconds)
+[05:32:09] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[05:32:24] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[05:33:08] *** Joins: therobin (~UserNick@2607:f2c0:94b9:9e00:74f6:a077:18d4:471d)
+[05:33:15] *** Joins: vlm (~vlm@user/vlm)
+[05:37:24] *** Quits: cmp (~cmp@lputeaux-658-1-177-87.w92-154.abo.wanadoo.fr) (Ping timeout: 240 seconds)
+[05:39:00] *** Joins: myon98 (~myon98@user/myon98)
+[05:44:59] *** Quits: euphoricallysane (~quatro@user/euphoricallysane) (Quit: Leaving)
+[05:45:13] *** Joins: euphoricallysane (~quatro@user/euphoricallysane)
+[05:49:48] *** Joins: Thedarkb1-Deskto (~Thedarkb@2001:bb6:b403:e042:19e8:85b4:7fb1:958e)
+[05:50:53] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 256 seconds)
+[05:51:47] <Manouchehri> if -cq 0 is set, does -preset p1 vs p7 do anything for the quality? Or does the present only impact the filesize?
+[05:52:17] *** Quits: Thedarkb-Desktop (~Thedarkb@78.141.240.26) (Ping timeout: 256 seconds)
+[05:55:08] <BtbN> 0 is the default value and means constant quality mode is disabled.
+[05:55:53] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[05:56:09] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[06:03:33] *** Quits: justGhost (~justache@user/justache) (Remote host closed the connection)
+[06:04:42] *** Joins: justGhost (~justache@user/justache)
+[06:05:42] *** Quits: zumba_addict (~zumba_add@2601:240:4500:8320:224:1dff:fec8:64f6) (Quit: Client closed)
+[06:05:45] *** Joins: Vonter (~Vonter@user/vonter)
+[06:09:18] *** Joins: dbolton_ (~dbolton@2601:204:d77f:a9d7:2939:2f4a:d2eb:6aa1)
+[06:12:36] *** Quits: dbolton (~dbolton@2601:204:d77f:a9d7:2c0d:d510:be26:72a9) (Ping timeout: 240 seconds)
+[06:12:58] <Manouchehri> Oh, so -cq 1 would have better quality?
+[06:14:26] *** Quits: minimalist (~minimal@user/minimal) (Quit: Leaving)
+[06:19:47] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[06:20:02] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[06:39:48] *** Quits: kurosu (uid342582@id-342582.hampstead.irccloud.com) (Quit: Connection closed for inactivity)
+[06:40:36] *** Quits: jos1 (~jos3@dyndsl-091-096-037-050.ewe-ip-backbone.de) (Ping timeout: 240 seconds)
+[06:41:01] *** Joins: guest (~guest@222.128.6.148)
+[06:42:37] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[06:42:52] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[06:43:48] *** Quits: dbolton_ (~dbolton@2601:204:d77f:a9d7:2939:2f4a:d2eb:6aa1) (Ping timeout: 240 seconds)
+[06:54:19] *** Joins: jos1 (~jos3@host-091-097-191-177.ewe-ip-backbone.de)
+[07:00:34] *** Joins: lucaswang (~lucaswang@58.246.19.98)
+[07:02:21] *** Quits: x_kuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[07:02:51] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 256 seconds)
+[07:05:24] *** Quits: therobin (~UserNick@2607:f2c0:94b9:9e00:74f6:a077:18d4:471d) (Remote host closed the connection)
+[07:06:28] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[07:06:30] *** Joins: Vonter (~Vonter@user/vonter)
+[07:06:43] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[07:09:28] *** Joins: therobin (~UserNick@2607:f2c0:94b9:9e00:28a2:b857:e1be:2e31)
+[07:24:37] *** Quits: therobin (~UserNick@2607:f2c0:94b9:9e00:28a2:b857:e1be:2e31) (Ping timeout: 240 seconds)
+[07:25:07] *** Joins: therobin (~UserNick@2607:f2c0:94b9:9e00:bdc5:bdfb:ca98:18cd)
+[07:30:18] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Read error: Connection reset by peer)
+[07:30:32] *** Joins: Kei_N (~Kei_N@user/kei-n/x-2886111)
+[07:35:09] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 256 seconds)
+[07:40:12] *** Quits: demon__ (~user@62.114.200.238) (Ping timeout: 240 seconds)
+[07:47:33] *** Joins: someuser (~user@62.114.198.142)
+[07:47:44] <aphysically> huh dashjs doesn't like the mp3 I tried; I had to use audiotag mp4a which worked for mpv/streamlink opening the dash stream, but dashjs says it's invalid
+[07:48:02] <furq> browsers generally don't like mp3 in mp4
+[07:48:10] <furq> mp3 sure mp4 sure both? no way
+[07:48:15] <aphysically> ah
+[07:48:19] <aphysically> I won't worry about it then
+[07:48:49] <aphysically> I only wanted to make it work with mp3 for completeness so if I had a source I could just copy it over
+[07:49:07] <aphysically> which almost never happens so whatever
+[07:50:24] <aphysically> I guess the webm would work then, but not sure if dashenc's hls playlist works with it......and I'm not sure if I would have to touch all the audio tags again :P
+[07:53:53] *** Quits: therobin (~UserNick@2607:f2c0:94b9:9e00:bdc5:bdfb:ca98:18cd) (Read error: Connection reset by peer)
+[08:09:36] *** Joins: Vonter (~Vonter@user/vonter)
+[08:13:31] *** Joins: l4yer (~l4yer@2001:ac8:31:8900:1011:2ee9:c0ad:92f0)
+[08:16:12] *** Quits: waleee (~waleee@h-98-128-229-110.NA.cust.bahnhof.se) (Ping timeout: 272 seconds)
+[08:20:27] *** Quits: crashrep (~crashrep@user/crashrep) (Quit: WeeChat 3.4)
+[08:21:18] *** Joins: Lazenca (Lazenca@user/lazenca)
+[08:24:00] *** Joins: therobin (~UserNick@2607:f2c0:94b9:9e00:f1ae:8a32:8683:6ef1)
+[08:28:27] *** Joins: zumba_addict (~zumba_add@2601:240:4500:8320:224:1dff:fec8:64f6)
+[08:31:45] *** Quits: tlacatlc6 (~tlacatlc6@097-101-132-062.res.spectrum.com) (Quit: Leaving)
+[08:50:51] *** Quits: Nex8192 (~Nex8192@user/nex8192) (Ping timeout: 256 seconds)
+[10:09:36] *** Quits: rvalue (~rvalue@user/rvalue) (Read error: Connection reset by peer)
+[10:09:50] *** Joins: rvalue (~rvalue@user/rvalue)
+[10:18:00] *** Joins: Seirdy (~Seirdy@sourcehut/user/seirdy)
+[10:20:52] *** Quits: guest (~guest@222.128.6.148) (Quit: Connection closed)
+[10:22:19] *** Joins: Aurora_v_kosmose (~LispyLigh@user/lispylights)
+[10:22:49] <Aurora_v_kosmose> Does anyone know of any code usable for example on how to add chapters to a file?
+[10:23:08] <Aurora_v_kosmose> Programatically, that is, instead of extracting ffmetadata and reusing the command after modifying it.
+[10:29:50] *** Quits: Lazenca (Lazenca@user/lazenca) (Remote host closed the connection)
+[10:30:16] *** Joins: Volgaar (~volgaar@2a01:cb14:675:e500:e1a8:ddac:588e:abe1)
+[10:36:28] *** Quits: Keshl (~Purple@idlerpg/player/Keshl) (Ping timeout: 268 seconds)
+[10:36:44] *** Parts: OTIBA[m] (~otibanerd@2001:470:69fc:105::1:8987) ()
+[10:44:24] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 272 seconds)
+[10:46:27] <zetaE> is anybody aware of this?? NVIDIA Image Scaling SDK
+[10:46:55] <zetaE> https://www.phoronix.com/scan.php?page=news_item&px=NVIDIA-Image-Scaling-SDK-1.0.2
+[10:46:57] <JEEB> Aurora_v_kosmose: looking at the avformat header's doxy comments, nb_chapters and chapters seems where you have an allocated array of AVChapters
+[10:48:11] <zetaE> another weird question, is there a linux stand alone player like youtubes with video sections titles and all that?
+[10:48:41] <JEEB> zetaE: yea I took a brief look into it and linked it on libplacebo's side. it's nice that they also released something under MIT, but I think it was relatively standard scaling primitives. so using a normal scaler through libplacebo or something should yield similar results. my understanding can be partial/incorrect, o' course.
+[10:48:49] <JEEB> just like the similar AMD thing
+[10:50:47] <Aurora_v_kosmose> Oh I see. Each AVChapter has an inset AVDictionary.
+[10:51:35] <zetaE> JEEB: does the SDK use the GPU to do it?
+[10:51:58] <zetaE> JEEB: does libeplaceb use any type of GPU acceleration to carry out the scaling?
+[10:52:17] <JEEB> that's the idea of libplacebo :P
+[10:52:57] <zetaE> if they release a scaling with their nvidia branding it ought to have a selling point
+[10:53:20] <JEEB> well they got the main benefit already
+[10:53:24] <JEEB> just like AMD did
+[10:53:35] <JEEB> "omg they released something under their name as open source"
+[10:53:36] <haasn> I don't actually remember looking into this
+[10:53:38] <haasn> possibly I did and forgot about it
+[10:53:51] <JEEB> it was the GLSL/HLSL thing that I linked yesterday
+[10:54:06] <JEEB> and you were weirded out how it did half-float data types
+[10:54:07] <haasn> somebody did very recently port a bunch of AMD shaders to GLSL though
+[10:54:10] <haasn> oh
+[10:54:12] <haasn> I see
+[10:54:29] <JEEB> > surprised it's 'float16_t' and 'f16vec2' instead of 'half' and 'hvec2'
+[10:54:32] <haasn> how GLSL did, rather
+[10:54:32] <JEEB> so you did at least look at it :D
+[10:54:41] <haasn> I only looked at the #define sea since that's what you commented on :p
+[10:54:47] <JEEB> :)
+[10:55:00] <JEEB> yea, it was an interesting take at making it work with both HLSL and GLSL
+[10:57:37] *** Joins: kurosu (uid342582@id-342582.hampstead.irccloud.com)
+[11:00:55] *** Quits: Aurora_v_kosmose (~LispyLigh@user/lispylights) (Ping timeout: 240 seconds)
+[11:03:19] *** Joins: mixfix41 (~homefame@user/mixfix41)
+[11:03:24] *** Quits: bpmedley (~bpmedley@2600:1700:e2c:8410:5052:1a9e:4853:6fe1) (Ping timeout: 240 seconds)
+[11:11:01] <zetaE> so basically libplaced is on par with Nvidia's
+[11:11:56] *** Joins: arinov_ (~arinov@213.194.126.155)
+[11:12:31] *** Joins: Vonter (~Vonter@user/vonter)
+[11:13:10] *** Joins: finsternis (~X@23.226.237.192)
+[11:14:34] *** Joins: Aurora_v_kosmose (~LispyLigh@user/lispylights)
+[11:16:32] *** Joins: Keshl (~Purple@idlerpg/player/Keshl)
+[11:19:07] *** Joins: ivanich (~ivanich@45-140-123-239.broadband.tenet.odessa.ua)
+[11:19:18] <haasn> I don't know, I haven't really looked at it
+[11:19:38] <haasn> they're doing a lot of fancy things we aren't
+[11:19:43] <haasn> I'd say just do an image comparison and find out for yourself
+[11:25:24] *** Quits: zumba_addict (~zumba_add@2601:240:4500:8320:224:1dff:fec8:64f6) (Quit: Client closed)
+[11:31:20] *** Joins: palasso (~palasso@user/palasso)
+[11:32:03] *** Joins: MajorBiscuit (~MajorBisc@c-001-018-023.client.tudelft.eduvpn.nl)
+[11:34:36] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 240 seconds)
+[11:38:29] *** Joins: Vonter (~Vonter@user/vonter)
+[11:52:36] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 240 seconds)
+[11:56:24] *** Joins: Vonter (~Vonter@user/vonter)
+[11:59:13] *** Joins: wolfshappen (~waff@irc.furworks.de)
+[11:59:52] *** Quits: wolfshappen (~waff@irc.furworks.de) (Client Quit)
+[12:02:56] *** Joins: cmp (~cmp@lputeaux-658-1-177-87.w92-154.abo.wanadoo.fr)
+[12:03:44] *** Quits: Vonter (~Vonter@user/vonter) (Read error: Connection reset by peer)
+[12:04:00] *** Joins: lavaball (felix@31.204.155.215)
+[12:05:43] *** Joins: wolfshappen (~waff@irc.furworks.de)
+[12:06:02] *** Joins: Vonter (~Vonter@user/vonter)
+[12:07:24] *** Joins: cosimone (~user@93-47-231-171.ip115.fastwebnet.it)
+[12:10:33] *** Joins: XdaddyZX_ (uid456733@id-456733.tinside.irccloud.com)
+[12:11:00] *** Joins: huan (~huan@ec2-18-183-181-67.ap-northeast-1.compute.amazonaws.com)
+[12:15:55] *** Quits: huan (~huan@ec2-18-183-181-67.ap-northeast-1.compute.amazonaws.com) (Quit: Client closed)
+[12:16:42] *** Joins: fkaa (~fkaa@user/fkaa)
+[12:32:36] *** Quits: jbg (~jbg@user/jbg) (Quit: Ping timeout (120 seconds))
+[12:32:56] *** Joins: jbg (~jbg@user/jbg)
+[12:40:53] *** Quits: wallacer (~quassel@2001:bc8:1824:9a:cafe:babe:b00b:aa03) (Remote host closed the connection)
+[12:41:49] *** Joins: muji369 (~muji369@92.40.176.77.threembb.co.uk)
+[12:42:04] *** Joins: wallacer (~quassel@2001:bc8:1824:9a:cafe:babe:b00b:aa03)
+[12:50:26] *** Quits: muji369 (~muji369@92.40.176.77.threembb.co.uk) (Ping timeout: 272 seconds)
+[12:51:04] *** Quits: xenorites (~xenorites@65.102.235.230) (Ping timeout: 272 seconds)
+[12:53:10] *** Joins: rv1sr (~rv1sr@user/rv1sr)
+[13:02:52] *** Joins: xenorites (~xenorites@65.102.235.230)
+[13:06:48] *** nikos_ is now known as nikos
+[13:10:30] *** Joins: lbvotkin (~lbvotkin@108.red-88-3-241.dynamicip.rima-tde.net)
+[13:28:42] *** Joins: itsalexjones (~itsalexjo@82.4.99.241)
+[13:51:08] *** Quits: lucaswang (~lucaswang@58.246.19.98) (Quit: Connection closed)
+[14:01:37] *** Quits: c7s (~c7s@user/c7s) (Ping timeout: 256 seconds)
+[14:04:24] *** Joins: Blacker47 (~Blacker47@user/blacker47)
+[14:04:27] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 256 seconds)
+[14:07:21] *** Joins: Vonter (~Vonter@user/vonter)
+[14:14:09] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[14:30:11] *** Quits: bencoh (~bencoh@nautica.notk.org) (Changing host)
+[14:30:11] *** Joins: bencoh (~bencoh@user/bencoh)
+[14:32:27] *** Joins: c7s (~c7s@user/c7s)
+[14:34:18] *** Quits: ivanich (~ivanich@45-140-123-239.broadband.tenet.odessa.ua) (Ping timeout: 272 seconds)
+[14:35:16] *** Quits: Icedream (~icedream@hzn-b.serverkomplex.de) (Quit: A lol made me boom.)
+[14:37:30] *** Joins: Icedream (~icedream@hzn-b.serverkomplex.de)
+[14:52:06] *** Joins: Nex8192 (~Nex8192@user/nex8192)
+[14:52:48] *** Quits: Dariusz (~d.frankie@217-67-201-162.itsa.net.pl) (Quit: leaving)
+[14:53:11] *** Joins: Dariusz (~d.frankie@217-67-201-162.itsa.net.pl)
+[14:56:01] *** Quits: euphoricallysane (~quatro@user/euphoricallysane) (Ping timeout: 256 seconds)
+[14:57:44] *** Joins: xkuru (~xkuru@user/xkuru)
+[14:57:53] *** Joins: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr)
+[15:01:36] *** Quits: xkuru (~xkuru@user/xkuru) (Remote host closed the connection)
+[15:04:21] *** Joins: xkuru (~xkuru@user/xkuru)
+[15:05:44] *** Joins: blaze (~blaze@user/blaze)
+[15:09:13] *** Joins: euphoricallysane (~quatro@user/euphoricallysane)
+[15:12:00] *** Quits: euphoricallysane (~quatro@user/euphoricallysane) (Remote host closed the connection)
+[15:12:23] *** Joins: euphoricallysane (~quatro@user/euphoricallysane)
+[15:16:04] *** Joins: ivanich (~ivanich@45-140-123-239.broadband.tenet.odessa.ua)
+[15:18:00] *** Quits: euphoricallysane (~quatro@user/euphoricallysane) (Ping timeout: 272 seconds)
+[15:27:36] *** Quits: MajorBiscuit (~MajorBisc@c-001-018-023.client.tudelft.eduvpn.nl) (Ping timeout: 252 seconds)
+[15:27:48] *** Quits: fling (~fling@user/fling) (Ping timeout: 240 seconds)
+[15:30:10] *** Quits: itsalexjones (~itsalexjo@82.4.99.241) (Read error: Connection reset by peer)
+[15:30:18] *** Joins: OnkelTem (~OnkelTem@user/onkeltem)
+[15:30:52] <OnkelTem> Hi folks. I'm trying to convert a video to a gif. But seems like ffmpeg creates a monster: I cannot neither optimize it or even resize using ImageMagick
+[15:31:18] <OnkelTem> I used this to convert: ffmpeg -i 1.mkv 1.gif
+[15:31:42] <OnkelTem> also I couldn't get it rendered by Imgur
+[15:32:00] <OnkelTem> ffmpeg version 4.2.4-1ubuntu0.1
+[15:34:28] *** Quits: foul_owl (~kerry@23.82.193.104) (Ping timeout: 272 seconds)
+[15:44:36] *** Quits: adanwan (~adanwan@gateway/tor-sasl/adanwan) (Remote host closed the connection)
+[15:44:50] *** Joins: adanwan (~adanwan@gateway/tor-sasl/adanwan)
+[15:48:05] *** Joins: MajorBiscuit (~MajorBisc@c-001-013-023.client.tudelft.eduvpn.nl)
+[15:49:01] *** Joins: foul_owl (~kerry@23.82.193.88)
+[15:51:12] *** Joins: rsx (~dummy@ppp-188-174-158-157.dynamic.mnet-online.de)
+[16:02:20] *** Quits: c7s (~c7s@user/c7s) (Ping timeout: 272 seconds)
+[16:05:16] *** Quits: blaze (~blaze@user/blaze) (Quit: WeeChat 3.3)
+[16:26:40] *** Joins: crashrep (~crashrep@user/crashrep)
+[16:29:43] *** Quits: microchip_ (~neutrino@user/microchip/x-0766185) (Quit: There is no spoon!)
+[16:46:55] *** Quits: taupiqueur (~taupiqueu@lmontsouris-659-1-2-186.w193-248.abo.wanadoo.fr) (Quit: taupiqueur)
+[16:48:59] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[17:02:33] *** Joins: LunaLovegood (~alice2@75.98.139.193)
+[17:02:55] *** Quits: lbvotkin (~lbvotkin@108.red-88-3-241.dynamicip.rima-tde.net) (Quit: Connection closed)
+[17:04:53] <haasn> use webm?
+[17:06:54] <LunaLovegood> When trying to split a MPTS (multiple program transport stream), I get "Non-monotonous DTS in output stream ..." warnings all the time. That's caused by each program running on its own clock (PCR/DTS/PTS/etc). Is there a way to have ffmpeg tolerate a different clock for each output file/socket? Example command that causes issue:
+[17:06:59] <LunaLovegood> ffmpeg -i in.ts -map 0:p:1 -c copy -f mpegts out1.ts -map 0:p:2 -c copy -f mpegts out2.ts
+[17:07:23] <LunaLovegood> Where program 1 and program 2's have different PCRs.
+[17:08:47] <LunaLovegood> Note that extracting only out1.ts or only out2.ts solves the issue, but I'd want to split a 15 programs TS stream in a single ffmpeg instance if possible. (ZMQ/tcp inputs and outputs)
+[17:10:00] <LunaLovegood> Also, the warnings are not harmless, ffmpeg tries to "fix" the DTS values, which messes up the outputs.
+[17:16:04] *** Joins: a47 (~a@bzq-79-179-188-63.red.bezeqint.net)
+[17:18:44] *** Quits: a47 (~a@bzq-79-179-188-63.red.bezeqint.net) (Client Quit)
+[17:28:02] *** Quits: meinside (uid24933@id-24933.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[17:36:05] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 256 seconds)
+[17:40:14] *** Joins: microchip_ (~neutrino@user/microchip/x-0766185)
+[17:43:22] <LunaLovegood> Adding -copyts fixes the issue, but it's weird because that shouldn't be needed.
+[17:59:19] *** Quits: MajorBiscuit (~MajorBisc@c-001-013-023.client.tudelft.eduvpn.nl) (Ping timeout: 256 seconds)
+[18:02:03] *** Joins: MajorBiscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e)
+[18:14:16] *** Joins: meinside (uid24933@id-24933.helmsley.irccloud.com)
+[18:24:15] *** Quits: adanwan (~adanwan@gateway/tor-sasl/adanwan) (Ping timeout: 240 seconds)
+[18:27:43] *** Joins: adanwan (~adanwan@gateway/tor-sasl/adanwan)
+[18:28:40] *** Joins: admal (~admal@gateway/tor-sasl/admal)
+[18:33:19] <JEEB> LunaLovegood: I usually utilize something simpler for splitting multi-program mpeg-ts like dvblast/multicat
+[18:34:10] <JEEB> in theory ffmpeg.c should adjust the initial timestamps to each input's start_time
+[18:36:18] <bencoh> dvblast/multicat are definitely great tools for that kind of things :)
+[18:38:08] <JEEB> esp. if you're just dumping that same mpeg-ts without doing adjustments other than splitting the programs
+[18:39:40] *** Joins: microchip__ (~neutrino@user/microchip/x-0766185)
+[18:40:39] *** Quits: microchip_ (~neutrino@user/microchip/x-0766185) (Ping timeout: 252 seconds)
+[18:45:07] *** microchip__ is now known as microchip_
+[18:56:21] *** Joins: minimal (~minimal@user/minimal)
+[19:00:01] *** Joins: Kruppt (~Kruppt@50-111-60-7.drhm.nc.frontiernet.net)
+[19:02:46] *** Quits: Aurora_v_kosmose (~LispyLigh@user/lispylights) (Remote host closed the connection)
+[19:03:07] *** Joins: Aurora_v_kosmose (~LispyLigh@user/lispylights)
+[19:15:28] *** Joins: dbolton (~dbolton@2601:204:d77f:a9d7:c1f9:4bb7:1aff:a52f)
+[19:20:44] *** Quits: crashrep (~crashrep@user/crashrep) (Quit: WeeChat 3.4)
+[19:26:49] *** Joins: microchip__ (~neutrino@user/microchip/x-0766185)
+[19:27:01] <cmp> what should I use in preference between avg_frame_rate and r_frame_rate ? I noticed that some streams seems to use one or the other
+[19:29:57] *** Quits: microchip_ (~neutrino@user/microchip/x-0766185) (Ping timeout: 240 seconds)
+[19:30:08] *** Quits: ixlun (~ixlun@2001:470:69fc:105::41b3) (Quit: You have been kicked for being idle)
+[19:37:45] *** Joins: wyatt8750 (~wyatt8740@76.72.175.112)
+[19:38:13] *** Quits: wyatt8740 (~wyatt8740@76.72.175.118) (Ping timeout: 256 seconds)
+[19:38:47] *** Quits: pa (~pah@user/pah) (Ping timeout: 256 seconds)
+[19:39:56] *** Joins: pah (~pah@user/pah)
+[19:45:05] *** Joins: microchip_ (~neutrino@user/microchip/x-0766185)
+[19:46:35] *** Joins: lbvotkin (~lbvotkin@108.red-88-3-241.dynamicip.rima-tde.net)
+[19:49:04] *** Quits: microchip__ (~neutrino@user/microchip/x-0766185) (Ping timeout: 272 seconds)
+[19:54:19] *** Quits: microchip_ (~neutrino@user/microchip/x-0766185) (Quit: There is no spoon!)
+[19:54:35] *** Joins: microchip_ (~neutrino@user/microchip/x-0766185)
+[19:56:40] *** Quits: microchip_ (~neutrino@user/microchip/x-0766185) (Client Quit)
+[19:56:55] *** Joins: microchip_ (~neutrino@user/microchip/x-0766185)
+[20:02:22] *** Quits: microchip_ (~neutrino@user/microchip/x-0766185) (Ping timeout: 272 seconds)
+[20:11:12] *** Joins: microchip_ (~neutrino@user/microchip/x-0766185)
+[20:21:17] *** Quits: ivanich (~ivanich@45-140-123-239.broadband.tenet.odessa.ua) (Ping timeout: 256 seconds)
+[20:23:10] *** Joins: crashrep (~crashrep@user/crashrep)
+[20:24:30] *** Polochon_street_ is now known as Polochon_street
+[20:29:59] <OnkelTem> haasn: thanks I'll try!
+[20:42:17] *** Joins: waleee (~waleee@h-98-128-229-110.NA.cust.bahnhof.se)
+[20:43:36] *** pah is now known as pa
+[20:45:00] *** Joins: CruxOfTheB (~CruxOfThe@192.222.196.53)
+[20:45:49] *** Quits: crashrep (~crashrep@user/crashrep) (Quit: WeeChat 3.4)
+[20:46:38] *** Joins: microchip__ (~neutrino@user/microchip/x-0766185)
+[20:47:42] *** Quits: microchip_ (~neutrino@user/microchip/x-0766185) (Ping timeout: 252 seconds)
+[20:52:10] *** Quits: rsx (~dummy@ppp-188-174-158-157.dynamic.mnet-online.de) (Quit: rsx)
+[20:52:38] *** Quits: cmp (~cmp@lputeaux-658-1-177-87.w92-154.abo.wanadoo.fr) (Quit: Connection closed)
+[20:52:56] *** Joins: zumba_addict (~zumba_add@2601:240:4500:8320:224:1dff:fec8:64f6)
+[20:57:00] *** Quits: jerome- (~jerome@88.173.24.196) (Remote host closed the connection)
+[20:58:02] *** Quits: meinside (uid24933@id-24933.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[20:59:22] *** Quits: nd (~nd@user/nd) (Ping timeout: 272 seconds)
+[21:10:37] *** microchip__ is now known as microchip_
+[21:11:17] *** Quits: MajorBiscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e) (Ping timeout: 240 seconds)
+[21:14:02] *** Joins: VarunAgw (~VarunAgw@ip5f5bd251.dynamic.kabel-deutschland.de)
+[21:18:15] *** Joins: jerome- (~jerome@88.173.24.196)
+[21:24:42] *** Quits: s55 (~s55@user/s55) (Ping timeout: 272 seconds)
+[21:25:43] *** Joins: ivanich (~ivanich@45-140-123-239.broadband.tenet.odessa.ua)
+[21:27:19] *** Quits: Kruppt (~Kruppt@50-111-60-7.drhm.nc.frontiernet.net) (Quit: Leaving)
+[21:30:21] *** Quits: zumba_addict (~zumba_add@2601:240:4500:8320:224:1dff:fec8:64f6) (Quit: Client closed)
+[21:33:55] *** Joins: s55 (~s55@user/s55)
+[21:52:30] *** Joins: emagex (~user@user/emagex)
+[22:01:57] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 252 seconds)
+[22:04:10] *** Joins: chazy (~chazy@225.red-81-43-176.staticip.rima-tde.net)
+[22:05:11] <chazy> hi, i have a webm video with transparent bg (alpha channel), but i can't remember the codec used, only that i used png images to create a video sequence for web use, the problem is it has a large resolution and file size
+[22:05:24] <chazy> how can i resize the file without loosing the alpha channel?
+[22:06:40] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[22:08:46] *** Joins: Buster_ (~Buster@46.160.36.66)
+[22:11:41] *** Joins: Vonter (~Vonter@user/vonter)
+[22:16:04] *** Joins: microchip__ (~neutrino@user/microchip/x-0766185)
+[22:16:48] *** Quits: microchip_ (~neutrino@user/microchip/x-0766185) (Ping timeout: 252 seconds)
+[22:17:54] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 272 seconds)
+[22:18:02] *** Quits: microchip__ (~neutrino@user/microchip/x-0766185) (Client Quit)
+[22:18:14] <kepstin> the codec would have been vp9. You can re-encode that file with ffmpeg preserving the alpha channel, but to do so you need to manually select the libvpx-vp9 decoder
+[22:18:21] *** Joins: microchip_ (~neutrino@user/microchip/x-0766185)
+[22:18:45] <kepstin> (which you do by putting "-c:v libvpx-vp9" before the -i option that specifies the input file)
+[22:20:58] <chazy> that makes sense
+[22:21:00] <chazy> one last thing, in windows what do i use instead of &&? it's giving me an error
+[22:21:15] <chazy> or do i not need 2 passes? sorry i'm not an expert at this
+[22:21:23] <kepstin> you could just run 2 commands separately
+[22:21:42] *** Joins: zumba_addict (~zumba_add@2601:240:4500:8320:224:1dff:fec8:64f6)
+[22:21:46] <kepstin> 2-pass encoding is recommended with libvpx since its 1 pass rate control isn't very good
+[22:22:57] <chazy> how do i do that then? do i have to replace something from the command?
+[22:23:04] <chazy> c:\ffmpeg c:vlibvpx-vp9 -i video.webm -c:v libvpx-vp9 -b:v 0 -crf 30 -vf "scale=640:-1" -pass 1 -an -f null NULl && \
+[22:23:20] <kepstin> the "&&" is just use to run one command first then the other
+[22:23:31] <kepstin> so you can run the part before &&, then run the part after the &*&
+[22:23:36] <chazy> oh ok
+[22:24:38] <furq> && works just fine in cmd
+[22:24:45] <furq> it'll be the backslash/newline that it doesn't like
+[22:26:33] <lbvotkin> I'm transcoding some PCM audio to aac in c++ and i'm getting `2 frames left in the queue on closing` . I'm calling the modern `api ie avcodec_send_frame()`  then `avcodec_receive_packet()` then `av_write_frame()` . Is there a flush command or something that I should be calling on shutdown or should I just not care about the last 2 frames?
+[22:27:23] <kepstin> to flush the encoder, you call send_frame() with NULL, then receive_packet until it stops returning packets.
+[22:27:58] <lbvotkin> brilliant -- thanks a lot!
+[22:31:39] *** Quits: microchip_ (~neutrino@user/microchip/x-0766185) (Quit: There is no spoon!)
+[22:32:00] *** Joins: microchip_ (~neutrino@user/microchip/x-0766185)
+[22:33:06] *** Quits: microchip_ (~neutrino@user/microchip/x-0766185) (Client Quit)
+[22:35:26] *** Joins: microchip_ (~neutrino@user/microchip/x-0766185)
+[22:43:41] *** Joins: omegatron (~some@p5b056cb8.dip0.t-ipconnect.de)
+[22:45:29] *** Joins: iive (~iive@87.119.101.204.client.entry.bg)
+[22:49:42] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[22:58:03] *** Quits: Vonter (~Vonter@user/vonter) (Ping timeout: 252 seconds)
+[23:01:27] *** Joins: muji369 (~muji369@92.40.176.79.threembb.co.uk)
+[23:04:28] *** Joins: chazy1 (~chazy@225.red-81-43-176.staticip.rima-tde.net)
+[23:06:22] *** Joins: nd (~nd@user/nd)
+[23:06:36] *** Quits: chazy (~chazy@225.red-81-43-176.staticip.rima-tde.net) (Ping timeout: 240 seconds)
+[23:15:54] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[23:16:30] *** Quits: zumba_addict (~zumba_add@2601:240:4500:8320:224:1dff:fec8:64f6) (Quit: Client closed)
+[23:17:39] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[23:18:52] *** Joins: microchip__ (~neutrino@user/microchip/x-0766185)
+[23:18:55] *** Quits: microchip_ (~neutrino@user/microchip/x-0766185) (Ping timeout: 250 seconds)
+[23:19:52] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Client Quit)
+[23:21:27] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[23:23:58] *** Joins: johnjaye (~pi@173.209.64.74)
+[23:24:05] <johnjaye> in the amix filter are the weights arbitrary?
+[23:24:15] <johnjaye> like it coudld be 2 and 4 or 5 and 10 it dosen't matter?
+[23:25:29] *** Quits: microchip__ (~neutrino@user/microchip/x-0766185) (Quit: There is no spoon!)
+[23:25:46] *** Joins: microchip__ (~neutrino@user/microchip/x-0766185)
+[23:25:53] *** microchip__ is now known as microchip_
+[23:38:43] *** Joins: crashrep (~crashrep@user/crashrep)
+[23:43:16] *** ravioli_ is now known as ravioli
+[23:47:22] *** Quits: crashrep (~crashrep@user/crashrep) (Quit: WeeChat 3.4)
+[23:48:48] *** Joins: panella32 (~panella32@154.6.22.33)
+[23:50:51] *** Quits: waleee (~waleee@h-98-128-229-110.NA.cust.bahnhof.se) (Ping timeout: 252 seconds)
+[23:52:37] *** Joins: waleee (~waleee@h-98-128-229-110.NA.cust.bahnhof.se)

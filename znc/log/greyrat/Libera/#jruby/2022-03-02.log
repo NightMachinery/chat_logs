@@ -1,0 +1,198 @@
+[00:06:18] <headius> enebo: random PR is done... all MRI tests and rubyspecs pass, including tests of the formatter from securerandom gem
+[00:06:29] <headius> securerandom gem has a 0.2.0 release that matches Ruby 3.1
+[00:06:35] <enebo[m]> coolio
+[00:06:54] <headius> only one failure remaining in securerandom tests that I will continue looking at, but I will merge the PR now
+[00:08:28] <headius> oh I merged in some PRs from kiichi and mrnoname also
+[00:09:14] <headius> mrnoname merged in some jruby.sh code that is more explicit about how it munges strings to act like arrays
+[00:59:55] <headius> some weird hangs on my PR but they don't seem consistent... like one Java version out of three hanging
+[01:00:48] <headius> yeah don't seem related to my thing
+[01:00:57] <headius> I'm going to try to get more of our suites green
+[01:18:15] <headius> enebo: I am finding a lot of failures in jruby suite that are just stale behaviors, I will try to patch them for 3.1 behavior but some like SortedSet tests probably should just be deleted and we can defer to the gem's tests at some point
+[01:18:33] <headius> if I can trace any of these tests to something duplicate in CRuby suite I'll just delete ours
+[01:19:29] <headius> SortedSet tests in particular seem to fail several of our jruby/test_set.rb tests so I think we should just ditch them and pick up the gem's tests once we can run the new sorted_set that depends on rbtree
+[01:55:09] <headius> enebo: this seems like it broke non-Windows: https://github.com/jruby/jruby/commit/65f31a3075834764803a05afbd0dfa287d2ca1bb
+[01:55:24] <headius> ruby -e 'p File.extname("..")'
+[01:55:31] <headius> that should still return "" but it returns "." now
+[01:59:35] <headius> maybe you changed that while trying to run Rails or something real on Windows?
+[02:05:29] <enebo[m]> headius: that fixed something in spec/ruby
+[02:05:40] <enebo[m]> It could have broken more things I guess
+[02:05:51] <headius> ok I see, you basically forced Windows behavior on all platforms
+[02:05:58] <headius> which fixes most things but breaks this one case
+[02:06:14] <headius> I'm form-fitting the ".." case and cleaning up the conditionals to fix this
+[02:19:14] *** Joins: satyanash_alt (~satyanash@143.110.247.92)
+[02:20:13] *** Quits: satyanash (~satyanash@143.110.247.92) (Ping timeout: 256 seconds)
+[04:23:57] <headius> https://github.com/jruby/jruby/pull/7124
+[04:24:20] <headius> that fixes everything except two jruby/test_pathname.rb failures detecting absolute file paths from a URI
+[04:25:01] <headius> both remaining failures are of the form `assert Pathname.new('uri:classloader:/asd').absolute?`
+[04:36:43] <headius> ok the pathname change is due to an "optimization" in pathname.rb that does not recognize our URLs:
+[04:36:44] <headius> https://github.com/ruby/ruby/commit/39312cf4d6c2ab3f07d688ad1a467c8f84b58db0
+[04:37:30] <headius> I can revert to `!relative?` or try to improve this regex to work with URL forms (perhaps just expanding what it allows before the `:` in the Windows drive letter support?)
+[15:47:17] <kares[m]>  there's an ugly issue with both 9.2 and 9.3 (seems like a RGs loading issue) when using Bundler and latest jruby-openssl gem is installed (along side the default gem):
+[15:47:17] <kares[m]> https://github.com/jruby/jruby-openssl/issues/248#issuecomment-1056860599
+[15:48:40] <kares[m]> just started looking into it - planning further reduction and trying to raise with RubyGems - at least for now it seems like it should be able to handle these cases
+[17:02:13] <headius> kares: this might play into SSL context issues on master
+[17:02:56] <headius> I will try to file bugs today for the missing bits that prevent net-http from working out of the box
+[17:26:25] <kares[m]> headius: not sure about what the issues are on master, but this is a loading issue -> missing up openssl.rb from the default gem with the installed newer gem
+[17:26:31] <kares[m]> feel free to point me towards the master thingy
+[17:27:33] <headius> Yeah maybe not related then but I will figure out what needs to be done
+[17:40:18] <kares[m]> in this case if latest jruby-openssl was the default gem shipped with jruby everything would work as expected (with regards to the bug I linked)
+[17:40:18] <kares[m]> going to continue digging how's to blame and will report back if I find anything ...
+[17:40:47] <headius> Aha I see
+[17:41:03] <kares[m]> okay progress - 9.3.3.0 is not affected only JRuby 9.2
+[18:12:32] <headius> Aha, is it just older RubyGems causing a problem?
+[18:49:58] <kares[m]> tried 9.2 with the shipped one as well as latest - same behavior
+[18:50:53] <headius> Hmm ok
+[18:51:18] <kares[m]> also tried updating to the same RGs version that 9.3 has but still broken
+[18:51:57] <kares[m]> oh right I think I have a lead on what this might be ...
+[18:52:42] <kares[m]> 9.3 shipped with the autoload rewrite right, so now an auto-loaded constant triggers a proper require (which is patched by RGs) ?
+[18:57:14] <kares[m]> seems like it's that - given that `jruby -ropenssl -S bundle` works as a work-around (forcing an early load of OpenSSL - which bypassed the later autoload :OpenSSL)
+[19:08:50] <headius> Ah yes that could definitely be the problem, but I don't remember when autoload started dynamically calling require
+[19:09:39] <headius> So it does an autoload but that doesn't use the patched require and as a result does not activate the gem
+[19:11:06] <enebo[m]> https://github.com/jruby/jruby/actions/runs/1918805836
+[19:11:42] <enebo[m]> spec:ruby:fast ended up with 32 more F/E from this and I find this unexpected since this is just changes to our launcher script
+[19:14:58] <headius> See anything that looks like it is related to the script?
+[19:15:45] <headius> This is why I'm trying to get more suites green on master, because I don't know how many things are supposed to be failing
+[19:16:10] <enebo[m]> not yet but it was consistent up to this commit as 190 total (a tiny bit of variation when you landed random stuff since you fixed something but created to NPEs -- we were 189 for a while)
+[19:16:44] <enebo[m]> I just look at spec:ruby:fast as my main focus on results since that feels like a floor of support
+[19:16:49] <enebo[m]> MRI test is much larger and more picky
+[19:17:23] <enebo[m]> I do look at both suites when woking on an individual method or thing to make sure both are happy but as far as total number I look at spec:ruby:fast
+[19:18:19] <headius> Perhaps we should tag things with some in progress tag name so we can see what we expect to fail right now and new failures will show up in CI
+[19:18:30] <headius> We don't have to use the fails tag
+[19:18:31] <enebo[m]> I expect by the time we tag out what we won't do on spec:ruby:fast all dependent CI using JRuby-head should be working again
+[19:19:08] <enebo[m]> I think we are pretty close...like 50 of the  190 are just fiber
+[19:19:26] <enebo[m]> 10-20 are things like GC#total_time which we can probably just tag out now
+[19:19:34] <enebo[m]> maybe make NotImplementedError
+[19:19:56] <enebo[m]> (and who knows perhaps that one can be done but you get the idea)
+[19:20:16] <headius> Many of the peripheral failures will go away but for example the JRuby suite fixes I made were about half new behavior that made the test wrong
+[19:20:45] <headius> I'm just saying we could tag with WIP or something and not give up on fixing them but at least have a green CI baseline
+[19:21:01] <enebo[m]> as far as outdated tests in our suites I don't care as much but I also think not as much is broken there
+[19:21:19] <headius> You can ask mspec to just run the WIP specs
+[19:21:38] <headius> It could even be added as a job so we don't look completely green but we have the known failures in one specific place
+[19:21:48] <enebo[m]> so how do we communicate this to k77 etc?
+[19:22:23] <headius> Are you saying we need them to fail or people won't try to work on them?
+[19:22:38] <enebo[m]> will anyone besides us know they fail?
+[19:22:42] <headius> Having the second job in CI that says something like unfinished features would convey it pretty well
+[19:23:09] <enebo[m]> ah so run this twice but one is green
+[19:23:25] <headius> Or we add a second job that excludes the work in progress tag and allow the main spec run to be read. I don't care either way, I just want some green runs of specs as a baseline
+[19:23:50] <enebo[m]> I just wanted obvious missing stuff to stick out clearly that it is not done
+[19:24:17] <headius> Right now there's nothing I can run locally or in CI that will tell me if we've regressed
+[19:24:27] <headius> Even going by failure counts is not accurate because I might fix 10 things but break 10 others which isn't really progress
+[19:24:30] <enebo[m]> A second green version of spec:ruby would be helpful
+[19:24:44] <headius> A la my random changes
+[19:25:03] <enebo[m]> as I said I am largely only focusing on the results of spec:ruby as baseline Ruby support
+[19:25:14] <headius> Yeah I just can't track 190 failures and know that I didn't break something
+[19:25:23] <enebo[m]> The output of that is alphabetical too so in many cases you can scroll to see
+[19:26:01] <headius> Scroll through 190 failures and make sure I didn't regress anything?
+[19:26:23] <enebo[m]> but if you want to make special tag and then run spec:ruby:fast twice that is an idea which gives us immediate feedback and a good showing of what is not done
+[19:26:45] <headius> yeah I'll make a PR with some tags for WIP stuff
+[19:27:21] <enebo[m]> I am ok with that and no I don't expect people to scroll through the whole output but I have not had issues with spec:ruby:fast in particular mostly because the features do not tend to hit other things
+[19:27:29] <enebo[m]> Some things will hit many things like chaning IO perhaps
+[19:27:44] <enebo[m]> I don't expect we will be able to notice regressions in that case
+[19:27:44] <headius> would you prefer that spec:ruby:fast stay red or move WIP specs to a new spec:ruby:wip
+[19:27:53] <enebo[m]> but I never thought of running the same tests twice
+[19:28:13] <enebo[m]> I don't care.  One will be temporary
+[19:28:27] <headius> yeah maybe... we may want it for 3.2 work though
+[19:28:43] <headius> this time is a big leap of course
+[19:29:06] <enebo[m]> kiichi maybe will be less confused perhaps spec:ruby:fast job is suddenly green but I am sure they will figure it out
+[19:29:19] <enebo[m]> oh yeah we can re-add this once we are done and move on to the next thing too
+[19:29:51] <enebo[m]> at some level we want to cut down how long tests run so I would look at this idea as just a big cycle early testing strategy and not a persistent one
+[19:29:54] <headius> WIP run would largely be a no-op if there's no WIP tags so it will just fade away until we start marking stuff WIP again
+[19:30:14] *** Quits: kovyrin[m] (~kovyrinma@2001:470:69fc:105::1:6d6c) (Quit: You have been kicked for being idle)
+[19:30:21] <enebo[m]> Like we may still have some WIP tags in a month and then just make those hard tags at that point (with issues or not depending on severity)
+[19:30:42] <enebo[m]> oh well that is fine.  It will still spin something up and not do much
+[19:30:45] <headius> this will add a little time but mostly just booting and running... the failed WIP specs will not run in spec:ruby:fast
+[19:30:58] <enebo[m]> I guess that probably is not a lot of time and it requires no effort
+[19:31:08] <headius> I can throw together a PR in a few minutes
+[19:31:08] <enebo[m]> yeah that makes sense to me
+[19:31:34] <headius> I have not come up with a good fix for that pathname thing that broke jruby suite but that is the last failure there
+[19:32:09] <enebo[m]> I am still editing ripper again...I get bored and then look at other stuff.  Some things are mind-numbing
+[19:32:12] <headius> mentioned above... merging in updated stdlib broke Pathname#absolute? because the new version from CRuby loses our handling of URIs
+[19:32:23] <headius> might be breaking other JI stuff but I have not checked
+[19:32:49] <enebo[m]> ah maybe we can core-ext it as a monkey patch until it makes it upstream?
+[19:33:15] <headius> it is one of the last few files we merge in from our forked stdlib so I have no problem with ending that merge
+[19:34:01] <headius> but the "optimized" logic now uses a regex to match absolute paths and I have had trouble coming up with an expression that will work for URIs
+[19:34:13] <headius> if we can fix that jruby suite should go back to green on master
+[19:34:55] <enebo[m]> heh...I imagine that is a much larger regexp than they are using
+[19:40:27] <headius> yeah I tried to just use a smaller part of the W3C recommended URI regex but couldn't get matching to work the way I expected
+[19:48:37] *** Quits: Freaky (~freaky@user/freaky) (Ping timeout: 240 seconds)
+[19:49:57] <headius> enebo: where did you see NPEs?
+[19:50:26] <headius> I don't see any new ones locally in a run of core specs without fails/hangs
+[19:51:08] <enebo[m]> SecureRandom.random_number generates a random value in given (float) range limits ERRO
+[19:51:12] <enebo[m]> in spec:ruby:fast
+[19:51:16] <enebo[m]> 2 of them
+[19:51:19] <headius> ah a library spec
+[19:51:25] <headius> ok I will look into it
+[19:51:41] <headius> random_number is new so not surprising I missed some case
+[19:51:48] <enebo[m]> both bignum things
+[19:52:52] <enebo[m]> I wish CI output was structural in the sense it could output across runs and you could just 'diff' and get tests which changed
+[19:53:27] <enebo[m]> One could maybe make a good regexp to generate just the F/E messages on spec/mspec I guess
+[19:53:42] <enebo[m]> So long as you can predict order or properly sort
+[19:54:05] <enebo[m]> in error output for our runs mspec seems to output in alpha order
+[19:54:16] <enebo[m]> It is a strange usecase I guess
+[19:54:19] <headius> it could output some structured format
+[19:54:20] <headius> I think there is a json renderer
+[19:54:47] <enebo[m]> XML or nothing!
+[19:55:04] <headius> SGML and DSSSL bruh
+[19:55:25] <enebo[m]> The ultimate CI would keep last result and show differences
+[19:56:01] <enebo[m]> People will tell me I am crazy because you always run CI green but I think we have an interesting usecase where this would be nice
+[19:56:23] <enebo[m]> Plus on more invasive branches I have broken lots of stuff to unbreak it all again
+[19:57:03] <enebo[m]> I guess temporary flags could solve it for that too
+[20:03:31] <headius> I think it's fine to have a red job or two in CI that shows what needs to be done, but having no green jobs in the critical areas just makes it too hard for me to track regressions
+[20:14:02] *** Joins: subbu (~subbu@user/subbu)
+[20:56:18] *** Joins: Freaky (~freaky@user/freaky)
+[21:34:28] <headius> 1)
+[21:34:28] <headius> An exception occurred during: loading /Users/headius/projects/jruby/spec/ruby/language/regexp/escapes_spec.rb ERROR
+[21:34:28] <headius> SyntaxError: /Users/headius/projects/jruby/spec/ruby/language/regexp/escapes_spec.rb:70: (RegexpError) target of repeat operator is not specified: /+/
+[21:34:28] <headius>     /\cJ+/.match("\n\n").to_a.should == ...
+[21:34:29] <headius> enebo: this one can't be tagged because the file fails to load
+[21:35:31] <enebo[m]> headius: yeah that was the weird one i mentioned.  I will look into it quick since I need a break
+[21:35:54] <headius> ok
+[21:36:11] <headius> I have the tags in locally, just adding a rake target and CI job for WIP
+[21:37:00] <enebo[m]> ./bin/jruby -e 'p /\cJ+/.match("\n\n")'
+[21:37:00] <enebo[m]> #<MatchData "\n\n">
+[21:37:30] <headius> hmm
+[21:37:54] <enebo[m]> I was on something maybe a week old from a branch
+[21:37:56] <enebo[m]> just making sure it is still that way
+[21:38:55] <enebo[m]> hahaha to many gems now!
+[21:38:59] <enebo[m]> s/to/so
+[21:39:32] <enebo[m]> ok so this is a regression in last week or so commits
+[21:39:37] <enebo[m]> did we update joni?
+[21:41:15] <enebo[m]> oh I did fix something involving ? which was broken but I doubt that is called from here.  I will try and bisect
+[21:44:19] <headius> hmmm
+[21:44:27] <headius> yeah I have not touched anything related to regex in the last week
+[21:44:29] <headius> WIP PR is here: https://github.com/jruby/jruby/pull/7125
+[21:46:38] <headius> It's currently running as part of a matrix so it shows up alongside a bunch of other runs. I can make it its own top level job for more visibility perhaps
+[21:48:27] <enebo[m]> I think so long as we know to look at it when reviewing PRs and educating people about it then it won't matter.  We will look at this first as a canary
+[21:48:40] <enebo[m]> At least knowing it is there is not a big problem for me to check it
+[21:49:06] <enebo[m]> bisecting when we change signatures in JRubyMethod is longer
+[21:49:24] <headius> Ha
+[22:30:16] <headius> /home/runner/work/jruby/jruby/bin/jruby:7: syntax error, unexpected local variable or method (SyntaxError)
+[22:30:16] <headius> if command -v local >/dev/null; then
+[22:30:16] <headius>               ^~~~~
+[22:30:21] <headius> I have pinged mrnoname about it
+[22:32:03] <enebo[m]> I pushed fix for language issue
+[22:32:34] <headius> a few dozen things are only failing on CI and I'm not sure why
+[22:32:35] <enebo[m]> 06a62c937831cb7d81cb94e8d4790ee54696bfa1
+[22:32:38] <headius> nothing that would seem to be very platform-specific
+[22:32:38] <enebo[m]> just cp that over
+[22:36:24] <headius> I rebased on top of master but want to figure out these 30-some failures that don't show up locally
+[22:37:29] <headius> oh you know what, these might all be due to the script
+[22:37:34] <headius> they all seem to launch something
+[22:37:39] <headius> or mostly due to the script
+[22:38:08] <headius> might be working locally because of some sh difference on macOS and mrnoname's machine compared to ubuntu on CI
+[22:38:48] <enebo[m]> and the regression on spec:ruby:fast was 32
+[22:38:48] <headius> I did not fix those SecureRandom NPEs yet
+[22:38:49] <enebo[m]> you fixed 2 right?
+[22:38:49] <enebo[m]> the NPEs
+[22:39:14] <enebo[m]> oh ok well it is ~30 in the landing of that script...so I bet it is from that
+[22:39:27] <enebo[m]> you could revert that too to see
+[22:39:47] <enebo[m]> So if this a case of CI not having a command that you do locally?
+[22:40:20] <headius> it's possible but the changes should only be using posix stuff
+[22:40:23] <headius> I suppose something could be missing
+[22:41:57] <enebo[m]> It must not be happening for most invocations since it would be more than 30 then
+[22:42:03] <enebo[m]> although fast does not do much spawning
+[22:42:13] <enebo[m]> or at least that was part of why fast exists
+[22:54:19] <headius> I tagged those SecureRandom fails for now because I don't want to try to pivot to fixing them in the middle of getting this green
+[22:54:26] <headius> they will show up in the wip run
+[22:56:20] <headius> mrnoname gave me a possible fix I pushed to branch
+[22:56:27] <headius> we are both confused why it works locally

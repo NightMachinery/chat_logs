@@ -1,0 +1,368 @@
+[00:11:55] <headius> ok that's progress... I have jffi tracking fixed arg count versus passed arg count and choosing vararg or normal ffi invocation
+[00:12:03] <headius> nothing uses var path but the fixed count is at least propagating
+[00:12:50] <headius> trying to make this a minimal change since the old logic basically sets up va_arg manually... hopefully I can localize this to M1 and only use the new logic there, until we can test and rebuild other platforms
+[01:01:34] <headius> omg I think it called the varargs path properly
+[01:01:42] <headius> if it was this easy all along I'm going to kick myself
+[01:23:23] <headius> two out of three varargs tests are passing, so that seems to be a good sign
+[01:23:43] <headius> the third is passing an int as a size_t to printf("%zu") and the value is getting garbled
+[02:17:30] <headius> ok this is pretty close
+[02:17:36] <headius> I have the varargs test passing on M1
+[02:17:44] <headius> the fcntl tests in jnr-posix still seem off
+[02:19:17] <headius> aha!
+[02:19:27] <headius> fcntl is not called as varargs from jnr-posix
+[02:20:03] <headius> so there's an issue here from the perspective of a jnr-ffi caller... if you specify no varargs, we do not know to branch into the varargs logic
+[02:20:53] <headius> on platforms where FFI always passes fixed + varargs in the same way this works fine, but when varargs have special handling we need to know to use this other path
+[02:30:47] <headius> we might have this fixed tonight
+[03:00:11] <headius> enebo: still around?
+[03:00:15] <headius> this is the problem here: https://github.com/jnr/jnr-posix/blob/752f608f5134e2c2eae125cda2e237cf4bbb4d36/src/main/java/jnr/posix/LibC.java#L91
+[03:00:41] <headius> we used to bind fcntl as a varargs function but since we only used the int form we added additional bindings for that and started to prefer them
+[03:01:08] <headius> this works fine when the underlying FFI treats fixed args and varargs the same, because they all just go on the stack
+[03:01:38] <headius> M1 FFI however passes fixed and varargs differently and so we need to know where the fixed args end and the varargs begin
+[03:01:55] <headius> the non-varargs form here is therefore unsupportable as-is on M1
+[03:02:06] <headius> I can see two options
+[03:02:33] <headius> 1. switch to the varargs form... this would be the easy short-term fix in jnr-posix since the libc interface is not public
+[03:02:58] <headius> 2. provide a way in jnr-ffi to specify where varargs start so we can set up the param counts properly
+[03:03:20] <headius> @Variadic annotation or something
+[03:03:28] <headius> I'm going to go with the first option to confirm this is working
+[03:34:03] <headius> yeah I think I have it
+[03:34:17] <headius> fcntl is weird because the argument passed might have different widths but int64_t works on m1 for all tests
+[03:35:33] <headius> also works on darwin x86...
+[05:22:19] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[05:58:17] *** Quits: sagax (~sagax_nb@user/sagax) (Ping timeout: 240 seconds)
+[08:14:20] <headius> ssaschaa: https://github.com/jnr/jffi/pull/121
+[08:15:10] <headius> if you are ambitious you could build that (see README.md for build instructions, and then do "mvn install") and then build JRuby with it (update pom.rb to point at the snapshot version and mvn clean build) and give it a try
+[08:15:21] <headius> might be a couple days before I work out the binary compatibility and upstream changes
+[10:40:58] <ssaschaa[m]> Good morning! Wow! That‘s awesome! I‘ll give it a try, definitely.
+[12:04:32] <ssaschaa[m]> So... got your PR #121 at jnr/jffi and build and installed it successfully. Then updated pom.rb to take the jffi-1.3.9-SNAPSHOT and build jruby. Unfortunately, the reported behaviour of creating a file (mode will be 0001 instead of 0666 or 0644) stays the same. Could it be due to any mistake while building?
+[12:06:12] <ssaschaa[m]> Pumping the same jffi-1.3.9-SNAPSHOT to jnr/jnr-ffi does not resolve any jnr.ffi.VarargsTest.
+[12:37:32] *** Joins: dangerousdave (~dangerous@host-92-16-216-211.as13285.net)
+[13:59:48] *** Quits: dangerousdave (~dangerous@host-92-16-216-211.as13285.net) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[14:00:13] *** Joins: dangerousdave (~dangerous@host-92-16-216-211.as13285.net)
+[14:25:45] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Ping timeout: 268 seconds)
+[14:26:22] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[16:26:03] *** Quits: dangerousdave (~dangerous@host-92-16-216-211.as13285.net) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[16:58:05] <headius> Okay, seems like maybe it's not building quite right. I will try to get it released in the next day or two once I confirm it's fully working
+[17:05:36] <headius> scared me for a second that I might have been running x86 JDK but no, it
+[17:05:41] <headius> is aarch64
+[17:06:51] <headius> silly me... there are fixes up the stack that I did not have you build
+[17:07:17] <headius> clearly fixing jffi won't help if jnr-ffi also needs fixes, which it does
+[17:07:28] <headius> I was just excited to have you test it 😀
+[17:24:03] <headius> well I think I have a way to release this without rebuilding all platforms
+[17:24:08] *** Joins: dangerousdave (~dangerous@host-92-16-216-211.as13285.net)
+[17:24:22] <headius> I'll just stuff the fixed count into the high word of this `flags` value already passed into C
+[17:24:47] <headius> older builds will just ignore it and continue to work the way they do today and new builds will pick it up and use the variadic ffi logic
+[17:25:08] <headius> so I should be able to release today after getting some additional eyes on this
+[17:26:06] <ssaschaa[m]> Cool! Just direct me to any PR or release I should try.
+[17:27:19] <headius> enebo: I'd like your input on how to handle the varargs issue in jnr-posix bindings... also affects `open` which is ssaschaa case
+[17:28:10] <headius> maybe something as simple as a @Variadic(fixedCount = 123) annotation to attach to the binding
+[17:43:33] <headius> enebo: I think this is ready to review: https://github.com/jnr/jffi/pull/121
+[17:43:49] <headius> we can chat about the varargs issues in the upstream libraries when you are in the office
+[17:51:21] *** Joins: enebo[m] (~enebo@2001:470:69fc:105::e6)
+[17:51:22] <enebo[m]> Ok
+[17:53:09] <enebo[m]> I get to shovel twice today because we are getting a delivery at 9
+[17:53:31] <headius> doesn't seem to be coming down very hard
+[17:53:39] <headius> how much are we supposed to get?
+[17:55:35] <enebo[m]> well I think we got about an 1" since last night but if we go north a little ways it will be 3+
+[17:56:03] <enebo[m]> I saw we were like 20% likely to get 3+ so we were likely pretty close
+[17:56:43] <headius> yeah inch or less near me here when I drove the kid to school
+[17:57:40] <enebo[m]> our driveway is steep enough and the delivery guy can be pretty old from this place so I want to limit liability :)
+[17:57:54] <enebo[m]> the required # of params is in flags but was it always like that or is that from another commit?
+[17:59:07] <enebo[m]> oh I see
+[17:59:12] <enebo[m]> callcontext is doing that
+[17:59:50] <enebo[m]> I missed that line first time through
+[18:00:14] <enebo[m]> reading your comments on the PR also helps
+[18:00:57] <enebo[m]> My main comment is that so long as all this stuff is released in lock-step then it doesn't matter how it is passed
+[18:01:14] <enebo[m]> So doing this to prevent rebuilding all the platforms we support seems like a good idea
+[18:07:20] <headius> yeah that is the reason for shoving it into the high bits
+[18:07:58] <headius> otherwise I need to modify the jni and check a version or failover to older code when the changes are not in the build binary... it just seemed like a lot more work than we want to do right now and we need a better migration path anyway
+[18:08:29] <headius> revving the jni stub without breaking old builds will require more thought
+[18:09:05] <enebo[m]> I think this is undoable later when we have more changes which will require the pain of rebuilds
+[18:09:13] <headius> with this last change it works properly on the x86 platforms tested in CI, which have not been rebuilt
+[18:09:22] <enebo[m]> So we are not using all those bits we may as well use them to put off rebuilding
+[18:09:32] <headius> yeah
+[18:09:57] <enebo[m]> but perhaps there should be a comment on needing to move this 
+[18:09:57] <headius> the JNI changes are in private code anyway
+[18:10:15] <enebo[m]> err change it I guess
+[18:10:17] <enebo[m]> just in case we do not build for 2 years or something
+[18:10:19] <headius> I can add more explanation to the newCallContext API
+[18:10:30] <headius> and perhaps in the C code somewhere
+[18:10:41] <enebo[m]> Yeah I think just a FIXME somewhere or maybe an issue too?
+[18:11:12] <enebo[m]> One day we will live in a world where we have all these things as images (even IBM mainframes :) )
+[18:11:46] <enebo[m]> C compile farm seems like it should be a thing
+[18:12:24] <headius> we have an issue about versioning the native library
+[18:12:39] <headius> and there's related issues anywhere someone has submitted C patches
+[18:13:13] <headius> the CI for JFFI does do multi-arch builds for Linux but currently just builds them... no testing or saving them anywhere
+[18:13:32] <headius> a contrib set up qemu + debian docker to do that building automatically
+[18:14:03] <headius> testing it would require also running the JVM within qemu so I'm not sure that will scale well in CI
+[18:14:38] <enebo[m]> heh
+[18:14:44] <headius> maybe this will be moot some day when we can rely on Panama
+[18:15:06] <enebo[m]> Oh panama
+[18:15:06] <ssaschaa[m]> I just did a checkout on your PR #121 and if I didn't fail to build it correctly, it will still show the same permission issue on File.open ...
+[18:15:13] <headius> ssaschaa: correct
+[18:15:38] <headius> that is the other issue we need to talk about
+[18:16:24] <enebo[m]> foreign linker of panama is in 16
+[18:16:38] <headius> enebo: not sure if you saw my messages yesterday... have a look at this jnr-posix change: https://github.com/headius/jnr-posix/commit/c6d4478f076bcd04b5891cebc1b06431767dc36f
+[18:17:11] <enebo[m]> oh and call is in 15
+[18:17:17] <headius> so the problem here is that jnr-ffi was never fully adapted for variadic calls and just assumes varargs can be passed like normal fixed args
+[18:17:22] <enebo[m]> so when we can move to 17 we can probably ditch jffi
+[18:17:29] <headius> there's motivation
+[18:17:47] <headius> probably not happening until 2023 though 😀
+[18:18:24] <headius> so back to jnr-posix... this fcntl (and the open call ssaschaa is seeing bugs from) are variadic functions in C but jnr-posix binds them as having all fixed args
+[18:18:47] <headius> this works fine on platforms where both kinds of args are passed the same but on M1 we need to know how many args are fixed in the C call
+[18:19:12] <headius> there's no way to do that in jnr-ffi currently other than specifying the binding using Java varargs
+[18:20:18] <headius> this fcntl hack just removes the fixed bindings in favor of a single varargs binding but I'm not sure this is the way we want to go
+[18:21:10] <enebo[m]> hmm
+[18:21:22] <enebo[m]> yeah this side of things has a longer life
+[18:21:59] <enebo[m]> although if those two older signatures still works then I guess it works
+[18:22:10] <headius> they don't on M1
+[18:22:27] <enebo[m]> yeah I am just talking about existing users 
+[18:23:01] <enebo[m]> They will still compile with new signature and not break
+[18:23:16] <headius> at minimum I think we need to introduce an annotation to say where the fixed args end if a user is binding a variadic call without java varargs
+[18:23:22] <enebo[m]> M1 will use new signature and work.
+[18:23:43] <headius> @Variadic(fixedCount = 2) for example in this fcntl case
+[18:23:44] <enebo[m]> Seems like this is not ideal and we have to consider if there are other bindings which are not working on M1
+[18:24:12] <headius> indeed, and I missed fixing open on this branch because jnr-posix apparently doesn't test it
+[18:24:27] <enebo[m]> If we end up making 3-4 functions into varargs like this then it feels more and more unappealing
+[18:24:40] <headius> the issue makes sense though... just looking at these bindings you can't tell if it is variadic, so neither can the new variadic logic in jnr-ffi
+[18:24:44] <headius> right
+[18:24:49] <enebo[m]> yeah
+[18:24:49] <headius> if it were just fcntl I'd just do it
+[18:25:22] <headius> I think I can add the method-level annotation easily enough
+[18:25:38] <enebo[m]> If we add an annotation that seems like a good solution since C has variadic functions and you may not want incoming args to have to line up exactly like C 
+[18:25:54] <headius> I had also considered an annotation for varadic args passed as fixed args... like @Vararg(type = size_t.class)
+[18:26:25] <headius> but that is fixing another problem with this.. only the Object... form can specify how the varargs are supposed to be marshalled currently
+[18:26:34] <headius> the int64_t.class bit in that patch
+[18:26:38] <enebo[m]> non-variadic count fits my mental headspace if for no other reason we look at ruby defs the same way
+[18:26:58] <headius> yeah I think it is the minimum change
+[18:27:17] <headius> it will mean anyone with similar bindings will need to add this to work properly on M1
+[18:27:24] <headius> but I see no easier alternative
+[18:27:38] <enebo[m]> sure.
+[18:27:46] <enebo[m]> It feels like it is filling a semantic gap to me
+[18:28:28] <headius> it was "nice" that you could specify the args as normal params and it still works, but that doesn't translate to platforms with special variadic behavior
+[18:29:44] <enebo[m]> yeah it is just a pointer of pointers sort of stops if there functions don't work that way
+[19:00:13] *** Quits: dangerousdave (~dangerous@host-92-16-216-211.as13285.net) (*.net *.split)
+[19:00:14] *** Quits: andreimaxim[m] (~andreimax@2001:470:69fc:105::1:6099) (*.net *.split)
+[19:00:14] *** Quits: TimGitter[m]1 (~gittertir@2001:470:69fc:105::314f) (*.net *.split)
+[19:00:14] *** Quits: liamwhiteGitter[ (~gitterlia@2001:470:69fc:105::312d) (*.net *.split)
+[19:00:14] *** Quits: JesseChavezGitte (~gitterjes@2001:470:69fc:105::3122) (*.net *.split)
+[19:00:15] *** Quits: nowherefast[m] (~nowherefa@2001:470:69fc:105::1:52b0) (*.net *.split)
+[19:00:15] *** Quits: BlaneDabneyGitte (~gitterrae@2001:470:69fc:105::3140) (*.net *.split)
+[19:00:17] *** Quits: adam12 (~adam12@about/ruby/adam12) (*.net *.split)
+[19:00:17] *** Quits: enebo[m] (~enebo@2001:470:69fc:105::e6) (*.net *.split)
+[19:00:17] *** Quits: CharlesOliverNut (~gitterhea@2001:470:69fc:105::311e) (*.net *.split)
+[19:00:17] *** Quits: TimGitter[m] (~gittertim@2001:470:69fc:105::314b) (*.net *.split)
+[19:00:18] *** Quits: FlorianDoubletGi (~gitterflo@2001:470:69fc:105::310c) (*.net *.split)
+[19:00:18] *** Quits: ssaschaa[m] (~ssaschaam@2001:470:69fc:105::1:605e) (*.net *.split)
+[19:00:18] *** Quits: headius (~headius@2001:470:69fc:105::3027) (*.net *.split)
+[19:00:18] *** Quits: edipofederle[m] (~edipofede@2001:470:69fc:105::30f1) (*.net *.split)
+[19:00:18] *** Quits: rebelwarrior[m] (~rebelwarr@2001:470:69fc:105::beba) (*.net *.split)
+[19:00:18] *** Quits: ChrisSeatonGitte (~gitterchr@2001:470:69fc:105::30fb) (*.net *.split)
+[19:00:20] *** Quits: UweKuboschGitter (~gitterdon@2001:470:69fc:105::3100) (*.net *.split)
+[19:00:20] *** Quits: nilsding (~nilsding@user/nilsding) (*.net *.split)
+[19:00:20] *** Quits: byteit101[m] (~byteit101@2001:470:69fc:105::30ec) (*.net *.split)
+[19:00:20] *** Quits: OlleJonssonGitte (~gitteroll@2001:470:69fc:105::313b) (*.net *.split)
+[19:00:20] *** Quits: Albertico[m] (~albertico@2001:470:69fc:105::1:3a89) (*.net *.split)
+[19:00:21] *** Quits: _whitelogger (~whitelogg@uruz.whitequark.org) (*.net *.split)
+[19:00:22] *** Quits: MattWelke[m] (~mattwelke@2001:470:69fc:105::1:34bb) (*.net *.split)
+[19:00:22] *** Quits: puritylake[m] (~puritylak@2001:470:69fc:105::1:1904) (*.net *.split)
+[19:00:22] *** Quits: MarcinMielyskiGi (~gitterlop@2001:470:69fc:105::3134) (*.net *.split)
+[19:00:22] *** Quits: marcheiligers[m] (~marcheili@2001:470:69fc:105::1:5286) (*.net *.split)
+[19:00:22] *** Quits: RomainManni-Buca (~gitterrma@2001:470:69fc:105::3146) (*.net *.split)
+[19:00:24] *** Quits: basshelal[m] (~basshelal@2001:470:69fc:105::30e7) (*.net *.split)
+[19:00:24] *** Quits: KarolBucekGitter (~gitterkar@2001:470:69fc:105::3127) (*.net *.split)
+[19:00:24] *** Quits: XavierNoriaGitte (~gitterfxn@2001:470:69fc:105::3111) (*.net *.split)
+[19:00:24] *** Quits: kares[m] (~karesmatr@2001:470:69fc:105::30d1) (*.net *.split)
+[19:00:26] *** Quits: Freaky (~freaky@user/freaky) (*.net *.split)
+[19:00:26] *** Quits: mattpatt[m] (~mattpattm@2001:470:69fc:105::315d) (*.net *.split)
+[19:00:26] *** Quits: MattPattersonGit (~gitterfid@2001:470:69fc:105::3105) (*.net *.split)
+[19:00:26] *** Quits: JulesIvanicGitte (~gittergui@2001:470:69fc:105::3118) (*.net *.split)
+[19:00:26] *** Quits: klobuczek[m] (~klobuczek@2001:470:69fc:105::1:24c) (*.net *.split)
+[19:00:27] *** Quits: satyanash (~satyanash@143.110.247.92) (*.net *.split)
+[19:01:11] *** Joins: dangerousdave (~dangerous@host-92-16-216-211.as13285.net)
+[19:01:11] *** Joins: andreimaxim[m] (~andreimax@2001:470:69fc:105::1:6099)
+[19:01:11] *** Joins: TimGitter[m]1 (~gittertir@2001:470:69fc:105::314f)
+[19:01:56] *** Joins: MattWelke[m] (~mattwelke@2001:470:69fc:105::1:34bb)
+[19:01:56] *** Joins: RomainManni-Buca (~gitterrma@2001:470:69fc:105::3146)
+[19:01:56] *** Joins: marcheiligers[m] (~marcheili@2001:470:69fc:105::1:5286)
+[19:01:56] *** Joins: MarcinMielyskiGi (~gitterlop@2001:470:69fc:105::3134)
+[19:01:56] *** Joins: puritylake[m] (~puritylak@2001:470:69fc:105::1:1904)
+[19:02:06] *** Joins: UweKuboschGitter (~gitterdon@2001:470:69fc:105::3100)
+[19:02:06] *** Joins: nilsding (~nilsding@user/nilsding)
+[19:02:06] *** Joins: Albertico[m] (~albertico@2001:470:69fc:105::1:3a89)
+[19:02:06] *** Joins: OlleJonssonGitte (~gitteroll@2001:470:69fc:105::313b)
+[19:02:06] *** Joins: byteit101[m] (~byteit101@2001:470:69fc:105::30ec)
+[19:02:06] *** Joins: _whitelogger (~whitelogg@uruz.whitequark.org)
+[19:02:13] *** Joins: basshelal[m] (~basshelal@2001:470:69fc:105::30e7)
+[19:02:13] *** Joins: kares[m] (~karesmatr@2001:470:69fc:105::30d1)
+[19:02:13] *** Joins: XavierNoriaGitte (~gitterfxn@2001:470:69fc:105::3111)
+[19:02:13] *** Joins: KarolBucekGitter (~gitterkar@2001:470:69fc:105::3127)
+[19:02:13] *** Joins: Freaky (~freaky@user/freaky)
+[19:02:19] *** Joins: FlorianDoubletGi (~gitterflo@2001:470:69fc:105::310c)
+[19:02:19] *** Joins: ssaschaa[m] (~ssaschaam@2001:470:69fc:105::1:605e)
+[19:02:19] *** Joins: headius (~headius@2001:470:69fc:105::3027)
+[19:02:19] *** Joins: edipofederle[m] (~edipofede@2001:470:69fc:105::30f1)
+[19:02:19] *** Joins: ChrisSeatonGitte (~gitterchr@2001:470:69fc:105::30fb)
+[19:02:19] *** Joins: rebelwarrior[m] (~rebelwarr@2001:470:69fc:105::beba)
+[19:02:25] *** Joins: liamwhiteGitter[ (~gitterlia@2001:470:69fc:105::312d)
+[19:02:25] *** Joins: JesseChavezGitte (~gitterjes@2001:470:69fc:105::3122)
+[19:02:25] *** Joins: BlaneDabneyGitte (~gitterrae@2001:470:69fc:105::3140)
+[19:02:25] *** Joins: nowherefast[m] (~nowherefa@2001:470:69fc:105::1:52b0)
+[19:02:34] *** Joins: adam12 (~adam12@about/ruby/adam12)
+[19:02:48] *** Joins: enebo[m] (~enebo@2001:470:69fc:105::e6)
+[19:02:48] *** Joins: TimGitter[m] (~gittertim@2001:470:69fc:105::314b)
+[19:02:48] *** Joins: CharlesOliverNut (~gitterhea@2001:470:69fc:105::311e)
+[19:03:02] *** Quits: nilsding (~nilsding@user/nilsding) (Ping timeout: 240 seconds)
+[19:03:03] *** Joins: klobuczek[m] (~klobuczek@2001:470:69fc:105::1:24c)
+[19:03:03] *** Joins: JulesIvanicGitte (~gittergui@2001:470:69fc:105::3118)
+[19:03:03] *** Joins: MattPattersonGit (~gitterfid@2001:470:69fc:105::3105)
+[19:03:03] *** Joins: mattpatt[m] (~mattpattm@2001:470:69fc:105::315d)
+[19:03:03] *** Joins: satyanash (~satyanash@143.110.247.92)
+[19:03:35] *** Quits: mattpatt[m] (~mattpattm@2001:470:69fc:105::315d) (Ping timeout: 260 seconds)
+[19:03:35] *** Quits: MattPattersonGit (~gitterfid@2001:470:69fc:105::3105) (Ping timeout: 260 seconds)
+[19:03:35] *** Quits: JulesIvanicGitte (~gittergui@2001:470:69fc:105::3118) (Ping timeout: 260 seconds)
+[19:03:35] *** Quits: klobuczek[m] (~klobuczek@2001:470:69fc:105::1:24c) (Ping timeout: 260 seconds)
+[19:05:25] *** Quits: andreimaxim[m] (~andreimax@2001:470:69fc:105::1:6099) (Ping timeout: 240 seconds)
+[19:05:25] *** Quits: TimGitter[m]1 (~gittertir@2001:470:69fc:105::314f) (Ping timeout: 240 seconds)
+[19:05:46] *** Quits: enebo[m] (~enebo@2001:470:69fc:105::e6) (Ping timeout: 245 seconds)
+[19:05:46] *** Quits: CharlesOliverNut (~gitterhea@2001:470:69fc:105::311e) (Ping timeout: 245 seconds)
+[19:05:46] *** Quits: TimGitter[m] (~gittertim@2001:470:69fc:105::314b) (Ping timeout: 245 seconds)
+[19:05:59] *** Quits: FlorianDoubletGi (~gitterflo@2001:470:69fc:105::310c) (Ping timeout: 250 seconds)
+[19:05:59] *** Quits: ssaschaa[m] (~ssaschaam@2001:470:69fc:105::1:605e) (Ping timeout: 250 seconds)
+[19:05:59] *** Quits: headius (~headius@2001:470:69fc:105::3027) (Ping timeout: 250 seconds)
+[19:05:59] *** Quits: edipofederle[m] (~edipofede@2001:470:69fc:105::30f1) (Ping timeout: 250 seconds)
+[19:05:59] *** Quits: rebelwarrior[m] (~rebelwarr@2001:470:69fc:105::beba) (Ping timeout: 250 seconds)
+[19:05:59] *** Quits: ChrisSeatonGitte (~gitterchr@2001:470:69fc:105::30fb) (Ping timeout: 250 seconds)
+[19:06:02] *** Quits: UweKuboschGitter (~gitterdon@2001:470:69fc:105::3100) (Ping timeout: 240 seconds)
+[19:06:02] *** Quits: byteit101[m] (~byteit101@2001:470:69fc:105::30ec) (Ping timeout: 240 seconds)
+[19:06:02] *** Quits: OlleJonssonGitte (~gitteroll@2001:470:69fc:105::313b) (Ping timeout: 240 seconds)
+[19:06:02] *** Quits: Albertico[m] (~albertico@2001:470:69fc:105::1:3a89) (Ping timeout: 240 seconds)
+[19:06:37] *** Quits: MattWelke[m] (~mattwelke@2001:470:69fc:105::1:34bb) (Ping timeout: 250 seconds)
+[19:06:37] *** Quits: puritylake[m] (~puritylak@2001:470:69fc:105::1:1904) (Ping timeout: 250 seconds)
+[19:06:37] *** Quits: MarcinMielyskiGi (~gitterlop@2001:470:69fc:105::3134) (Ping timeout: 250 seconds)
+[19:06:37] *** Quits: marcheiligers[m] (~marcheili@2001:470:69fc:105::1:5286) (Ping timeout: 250 seconds)
+[19:06:37] *** Quits: RomainManni-Buca (~gitterrma@2001:470:69fc:105::3146) (Ping timeout: 250 seconds)
+[19:06:56] *** Quits: liamwhiteGitter[ (~gitterlia@2001:470:69fc:105::312d) (Ping timeout: 252 seconds)
+[19:06:56] *** Quits: JesseChavezGitte (~gitterjes@2001:470:69fc:105::3122) (Ping timeout: 252 seconds)
+[19:06:56] *** Quits: nowherefast[m] (~nowherefa@2001:470:69fc:105::1:52b0) (Ping timeout: 252 seconds)
+[19:06:56] *** Quits: BlaneDabneyGitte (~gitterrae@2001:470:69fc:105::3140) (Ping timeout: 252 seconds)
+[19:07:34] *** Quits: basshelal[m] (~basshelal@2001:470:69fc:105::30e7) (Ping timeout: 268 seconds)
+[19:07:34] *** Quits: KarolBucekGitter (~gitterkar@2001:470:69fc:105::3127) (Ping timeout: 268 seconds)
+[19:07:34] *** Quits: XavierNoriaGitte (~gitterfxn@2001:470:69fc:105::3111) (Ping timeout: 268 seconds)
+[19:07:34] *** Quits: kares[m] (~karesmatr@2001:470:69fc:105::30d1) (Ping timeout: 268 seconds)
+[19:13:17] *** Joins: mattpatt[m] (~mattpattm@2001:470:69fc:105::315d)
+[19:13:17] *** Joins: klobuczek[m] (~klobuczek@2001:470:69fc:105::1:24c)
+[19:13:22] *** Joins: MattPattersonGit (~gitterfid@2001:470:69fc:105::3105)
+[19:13:38] *** Joins: JulesIvanicGitte (~gittergui@2001:470:69fc:105::3118)
+[19:16:55] *** Joins: andreimaxim[m] (~andreimax@2001:470:69fc:105::1:6099)
+[19:16:56] *** Joins: TimGitter[m]1 (~gittertir@2001:470:69fc:105::314f)
+[19:17:59] *** Joins: rebelwarrior[m] (~rebelwarr@2001:470:69fc:105::beba)
+[19:17:59] *** Joins: ssaschaa[m] (~ssaschaam@2001:470:69fc:105::1:605e)
+[19:18:02] *** Joins: edipofederle[m] (~edipofede@2001:470:69fc:105::30f1)
+[19:18:02] *** Joins: ChrisSeatonGitte (~gitterchr@2001:470:69fc:105::30fb)
+[19:18:02] *** Joins: FlorianDoubletGi (~gitterflo@2001:470:69fc:105::310c)
+[19:18:03] *** Joins: headius (~headius@2001:470:69fc:105::3027)
+[19:21:13] *** Joins: TimGitter[m] (~gittertim@2001:470:69fc:105::314b)
+[19:21:13] *** Joins: CharlesOliverNut (~gitterhea@2001:470:69fc:105::311e)
+[19:21:15] *** Joins: enebo[m] (~enebo@2001:470:69fc:105::e6)
+[19:24:32] *** Joins: UweKuboschGitter (~gitterdon@2001:470:69fc:105::3100)
+[19:27:36] *** Joins: MattWelke[m] (~mattwelke@2001:470:69fc:105::1:34bb)
+[19:27:36] *** Joins: RomainManni-Buca (~gitterrma@2001:470:69fc:105::3146)
+[19:27:39] *** Joins: marcheiligers[m] (~marcheili@2001:470:69fc:105::1:5286)
+[19:27:39] *** Joins: MarcinMielyskiGi (~gitterlop@2001:470:69fc:105::3134)
+[19:27:40] *** Joins: puritylake[m] (~puritylak@2001:470:69fc:105::1:1904)
+[19:30:00] *** Joins: liamwhiteGitter[ (~gitterlia@2001:470:69fc:105::312d)
+[19:30:00] *** Joins: JesseChavezGitte (~gitterjes@2001:470:69fc:105::3122)
+[19:30:00] *** Joins: BlaneDabneyGitte (~gitterrae@2001:470:69fc:105::3140)
+[19:30:00] *** Joins: nowherefast[m] (~nowherefa@2001:470:69fc:105::1:52b0)
+[19:32:05] *** Joins: XavierNoriaGitte (~gitterfxn@2001:470:69fc:105::3111)
+[19:32:06] *** Joins: basshelal[m] (~basshelal@2001:470:69fc:105::30e7)
+[19:32:06] *** Joins: KarolBucekGitter (~gitterkar@2001:470:69fc:105::3127)
+[19:32:07] *** Joins: kares[m] (~karesmatr@2001:470:69fc:105::30d1)
+[19:34:03] <headius> I think I have a Variadic annotation working
+[19:35:25] <enebo[m]> I did mvn install on both and both ran tests (jnr-ffi I saw recompiled but you verified uncompile above)
+[19:35:42] <enebo[m]> on new_varargs just so that is clear
+[19:36:38] <headius> if you didn't run the ant targets for jffi then you should be using the archived binary
+[19:36:39] <headius> jnr-ffi builds some test libs, that's all
+[19:44:24] <headius> aha, adding Variadic test uncovered another place I needed to patch for FFI varargs
+[19:44:42] <headius> the ASM generated stubs also need this logic, but for now I will punt anything variadic into the non-ASM path
+[19:46:04] *** Joins: Albertico[m] (~albertico@2001:470:69fc:105::1:3a89)
+[19:46:07] *** Joins: OlleJonssonGitte (~gitteroll@2001:470:69fc:105::313b)
+[19:46:34] *** Joins: byteit101[m] (~byteit101@2001:470:69fc:105::30ec)
+[19:48:11] <enebo[m]> where is the ant build.xml file?
+[19:48:38] <headius> jffi, look in README.md for the proper incantation
+[19:50:32] <enebo[m]> hahaha I think I accidentally edited the wrong .git/config (I added wrong remote originally) and now jffi had jnr-ffi remote for you and it seemingly is happy to merge that
+[19:51:12] <headius> yeah it is pretty stupid about remotes
+[19:51:44] <enebo[m]> oh look now there is a build.xml
+[19:52:16] <enebo[m]> so I ran jnr-ffi twice I guess :)
+[19:53:15] <enebo[m]> hmm compile not working
+[19:54:01] <enebo[m]> ah I need makeinfo
+[19:54:49] <enebo[m]> texinfo is needed to build this
+[19:55:34] <enebo[m]> I was able to build 'ant jar && ant archive-platform-jar && mvn package'
+[19:56:32] <enebo[m]> So now it is not running tests from maven
+[19:56:33] <headius> if you install that then jnr-ffi should pick it up with the new binary
+[19:56:46] <enebo[m]> ok I will go back over to that
+[19:57:25] <enebo[m]> I just did mvn install that branch should pick it up proper version?
+[19:58:43] <enebo[m]> ok confirmed.  It ran to completion with no errors
+[20:00:13] <headius> yes
+[20:00:23] <headius> it should pick it up from your local
+[20:01:01] <enebo[m]> yeah it did since I never had a SNAPSHOT build of that version
+[20:04:23] <headius> additional wrinkle with this variadic thing... for simple signatures it tries to use optimized JNI entry points to avoid marshalling the values via the JVM heap, but those paths do not know about fixed versus variadic
+[20:04:43] <headius> so this may have to skip the optimized entry points for these cases like fcntl
+[20:04:58] <headius> if you remove Variadic it will go back to optimized version but may not work on all platforms
+[20:06:13] <enebo[m]> hmm
+[20:33:59] *** Joins: nilsding (~nilsding@user/nilsding)
+[21:11:09] <headius> ok I struggled with a bug here but I think I have it working
+[21:11:13] <headius> in jnr-ffi VarargsTest I added a signature for snprintf that has no Java varargs
+[21:11:41] <headius> it is formatting as "%zu" which should be size_t or 64-bit unsigned in this case
+[21:12:09] <headius> specifying the Java signature with an int param does not work... it does not marshal the int into 64 bits and so the result is garbled
+[21:12:12] <headius> using long works
+[21:12:23] <headius> I will have to see how this affects fcntl
+[21:12:54] <headius> so this is a case that was never tested, but needed uint64 and shows that the non-varargs signatures have to match width exactly or we need more annotations to convert properly
+[21:13:11] <headius> some of these things seem like they just worked by accident
+[21:47:29] <headius> I think the jnr-ffi Variadic changes are done... going to try applying it to jnr-posix now
+[21:50:13] <headius> I added another test for int with size_t annotation... also appears to work right
+[22:06:47] <headius> enebo: Have a look at the variadic annotation in https://github.com/jnr/jnr-ffi/pull/292 and my use of it in https://github.com/jnr/jnr-posix/pull/174
+[22:07:30] <headius> for the latter I also had to add a uint64 type annotation to get the int form of fcntl to work properly on M1. I suspect this is because it is pickier about variable alignment since it is sticking all varargs on the stack rather than in registers
+[22:08:20] <headius> I'm going to try plugging these into jruby on M1 and see how it looks
+[22:09:21] <enebo[m]> ok
+[22:10:24] <headius> my one concern about this change is that uint64 annotation
+[22:10:42] <headius> it works ok on x86 without it
+[22:28:52] <headius> well tests are looking better but every call to open is failing with permission errors 😝
+[22:29:38] <enebo[m]> The changes look ok to me but more because nothing jumped out.
+[22:29:53] <enebo[m]> I don't say that with a lot of confidence
+[22:30:12] <headius> ssaschaa: you run zsh or what?
+[22:30:17] <enebo[m]> but perhaps the more tests the better and you did add something so that builds a little bit more
+[22:30:31] <headius> I just noticed your command line has a ! in double quotes and that doesn't work on bash
+[22:30:47] <headius> enebo: this is exactly ssaschaa issue so I am close
+[22:31:17] <headius> heh
+[22:31:19] <headius> $ stat /tmp/test.txt
+[22:31:19] <headius> 16777233 4427426 --wxr-----
+[22:31:23] <headius> yeah not quite
+[22:32:31] <enebo[m]> SHIP IT
+[22:32:57] <enebo[m]> So n stack values must have word alignment?
+[22:33:05] <enebo[m]> to work as variadic call?
+[22:34:24] <headius> well that's my blind theory
+[22:34:58] <headius> I am trying to add @mode_t annotation to this open binding to see if that fixes it
+[22:35:20] <enebo[m]> so variadic call with int and short would force the compiler to cast a short into an int so it would be same size for the call
+[22:35:45] <enebo[m]> I will make an admission that I don't think I used va_* in like 30 years 
+[22:35:59] <headius> yeah I have had to learn more about it than I wanted to know
+[22:37:18] <ssaschaa[m]> headius: yes zsh, but does it matter?
+[22:37:34] <headius> no I was just curious why that command line works for you
+[22:37:47] <headius> I just removed the ! to run it
+[22:38:17] <ssaschaa[m]> the whole issue seems to be quite challenging...
+[22:38:30] <headius> oh it's a lot of fun 😀
+[22:40:12] <ssaschaa[m]> fun fact: i simply enforce permissions using File.chmod 0755 when detecting a file with '[OTHERS_EXECUTE]' at sysopenInternal at jruby
+[22:40:27] <headius> ok it doesn't like mode_t, must not have the right plumbing to marshal that... uint64 seems to fix it but I want a better understanding of why
+[22:40:47] <headius> ssaschaa: yeah that's not a bad workaround if you can run off a local build
+[22:40:47] <ssaschaa[m]> bad hack
+[22:42:23] <ssaschaa[m]> but as you are talking about the background of this issue, i am really surprised that all the other things are working...
+[22:42:49] <ssaschaa[m]> i mean i am using oracle jdbc with jruby ;-)
+[22:46:23] <headius> all the stuff at the JVM level is easy peasy compared to this
+[23:20:38] *** Quits: dangerousdave (~dangerous@host-92-16-216-211.as13285.net) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[23:24:36] *** Joins: dangerousdave (~dangerous@host-92-16-216-211.as13285.net)
+[23:37:50] *** Quits: dangerousdave (~dangerous@host-92-16-216-211.as13285.net) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[23:50:26] *** Joins: dangerousdave (~dangerous@host-92-16-216-211.as13285.net)
+[23:53:35] <headius> heh well I managed to break open on x86... not sure if that is progress
+[23:53:48] <headius> expected:<438> but was:<33188>
+[23:54:12] <headius> not sure how it is getting this 100644 file permission
+[23:54:18] <headius> maybe I am doing something wrong in test

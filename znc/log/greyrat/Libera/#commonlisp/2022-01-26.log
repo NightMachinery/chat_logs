@@ -1,0 +1,1093 @@
+[00:01:07] *** Joins: Oladon (~olad@98.43.81.226)
+[00:07:03] *** Quits: amb007 (~a_bakic@213.12.23.93.rev.sfr.net) (Ping timeout: 256 seconds)
+[00:07:19] *** Joins: amb007 (~a_bakic@102.215.76.86.rev.sfr.net)
+[00:07:38] *** Quits: mgl (~mgl@cpc87455-finc19-2-0-cust234.4-2.cable.virginm.net) (Quit: Client closed)
+[00:08:07] *** Quits: cage (~cage@dynamic-adsl-84-221-50-16.clienti.tiscali.it) (Quit: rcirc on GNU Emacs 27.1)
+[00:10:50] *** Quits: aartaka (aartaka@gateway/vpn/protonvpn/aartaka) (Ping timeout: 250 seconds)
+[00:11:21] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Ping timeout: 276 seconds)
+[00:12:08] *** Quits: Inline (~Inline@ip-037-201-240-204.um10.pools.vodafone-ip.de) (Ping timeout: 250 seconds)
+[00:13:07] *** Joins: ec (~ec@gateway/tor-sasl/ec)
+[00:14:12] *** Joins: parjanya (~esb@2804:14c:1ad:9351:1402:1741:3531:7449)
+[00:17:56] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 268 seconds)
+[00:18:30] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Ping timeout: 276 seconds)
+[00:29:57] *** Quits: Colt (~Colt@user/colt) (Quit: Leaving)
+[00:30:43] *** Quits: wheelsucker (~user@2600:8801:8c24:d000::8e14) (Remote host closed the connection)
+[00:37:19] *** Joins: mgl (~mgl@cpc87455-finc19-2-0-cust234.4-2.cable.virginm.net)
+[00:38:34] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[00:47:41] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[00:50:01] *** Quits: lottaquestions_ (~nick@2607:fa49:5041:a200:25ff:41f8:15ee:65e1) (Remote host closed the connection)
+[00:50:26] *** Joins: lottaquestions_ (~nick@2607:fa49:5041:a200:9d2a:1a5d:fbd1:7e6b)
+[00:52:28] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 268 seconds)
+[00:53:31] *** Quits: xsperry (~xs@user/xsperry) (Ping timeout: 256 seconds)
+[00:56:59] *** Joins: Inline (~Inline@ip-037-201-240-204.um10.pools.vodafone-ip.de)
+[00:57:38] *** Quits: Dynom (~niels@80-114-12-206.cable.dynamic.v4.ziggo.nl) (Quit: WeeChat 3.4)
+[01:03:05] <phoe> EdLangley[m]: it won't work
+[01:03:16] <phoe> or, rather, it will only work if we can detect that the GF is DX
+[01:03:31] <phoe> imagine (generic-flet ((foo ... )) #'foo)
+[01:03:42] <phoe> if there are EQL-specialized methods, UNWIND-PROTECT will remove them
+[01:04:36] <phoe> and if any method closes over an argument, then we're screwed, because we need to return different objects for different closures - so we cannot preallocate a single LOAD-TIME-VALUE GF, we need to create them from scratch
+[01:05:22] <phoe> ...but the good news is, we can expand GENERIC-FLET into a FLET of method functions and have these precompiled - we only need to create the method and GF metaobjects, add methods to the GF, and FBIND the GF - and we're good to go
+[01:05:26] *** Quits: artchad (~user@public-gprs225103.centertel.pl) (Read error: Connection reset by peer)
+[01:06:51] <phoe> and, if we can detect that the local function is DX (either via a user declaration or by code-walking, if we do not notice any FUNCTION calls referring to that free function binding) then we can use the optimized approach with a single LOAD-TIME-VALUE GF and, in case of closures via EQL specializers, adding or removing methods on entry/exit of dynamic scope
+[01:07:10] *** Quits: susam (~susam@user/susam) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[01:07:20] *** Joins: susam (~susam@user/susam)
+[01:07:23] <phoe> does it make sense?
+[01:15:03] *** Quits: dilated_dinosaur (~dino@cpc1-bexl9-2-0-cust231.2-3.cable.virginm.net) (Ping timeout: 256 seconds)
+[01:16:36] *** Joins: dilated_dinosaur (~dino@cpc1-bexl9-2-0-cust231.2-3.cable.virginm.net)
+[01:21:29] <Bike> so generic-flet only ever makes a new function, rather than adding to an existing one?
+[01:21:40] <phoe> adding to an existing one? what do you mean?
+[01:22:30] <phoe> even the CLtL2 GENERIC-FLET always creates new local GFs, it doesn't augment any preexisting ones
+[01:22:37] <phoe> and I assume that we are aiming for a CLtL2esque API here
+[01:22:40] <EdLangley[m]> Yeah, I think dynamically changing the methods of a pre-existing generic function is asking for sadness
+[01:22:52] <Bike> i see
+[01:22:56] <phoe> EdLangley[m]: actually I think it is possible, BUT
+[01:23:06] <phoe> that GF must be DX - it cannot escape the dynamic scope
+[01:23:07] <Bike> just wondering, since i still don't have a good understanding of what this is for
+[01:23:28] <phoe> because then we can preallocate a single GF along with N methods and just switch their guts around on demand
+[01:25:20] <phoe> Bike: AFAIK it's syntax sugar + optimization chances over creating anonymous GF objects and using these
+[01:27:10] <EdLangley[m]> On reflection, anonymous GFs aren't very useful because the reason to use a GF is to let 3rd party code interoperate with your own code
+[01:27:19] <EdLangley[m]> By extending your protocol
+[01:27:22] *** szos is now known as shozo
+[01:27:41] <EdLangley[m]> But, if the GF is defined hidden inside a function, there's no way to do this.
+[01:27:44] <phoe> by this logic, neither are lexically scoped GFs
+[01:27:57] <EdLangley[m]> So, it just becomes a slow TYPECASE
+[01:28:02] <phoe> yep
+[01:28:05] <EdLangley[m]> Anonymous classes might be useful, though
+[01:28:18] *** Quits: scymtym (~user@2001:638:504:20e6:6ac3:87e0:e782:f3fc) (Remote host closed the connection)
+[01:28:18] <phoe> unless you add metaclasses into the mix to get some customized slow TYPECASE
+[01:28:21] <EdLangley[m]> To implement a protocol inside a function
+[01:28:31] <phoe> and we come back to CLASS-LET!
+[01:28:56] <EdLangley[m]> Of course, in Java, anonymous classes mostly exist so you can do callbacks
+[01:31:18] <phoe> in Java, methods belong to classes; we don't do that here
+[01:32:17] *** Quits: shka (~herr@109.231.0.226) (Ping timeout: 240 seconds)
+[01:32:41] *** Quits: dre (~dre@2001:8003:c932:c301:7948:9e4c:da1f:659b) (Quit: Leaving)
+[01:33:10] *** Joins: dre (~dre@2001:8003:c932:c301:7948:9e4c:da1f:659b)
+[01:33:50] <phoe> so I think it should be possible to write (and even optimize) GENERIC-FLET and GENERIC-LABELS using portable CL, MOP, and a code walker to detect FUNCTION calls; GENERIC-LAMBDA is also obviously possible
+[01:34:22] *** Joins: Algernon69 (~Algernon6@2a04:cec0:10ef:dcbd:a8c8:cf80:f660:38d6)
+[01:34:46] <phoe> the question is, do we have any practical reasons other than going full Cave Johnson on this
+[01:34:54] <phoe> and by Cave Johnson, I mean, quote, "Science isn't about WHY. It's about WHY NOT. Why is so much of our science dangerous? Why not marry safe science if you love it so much."
+[01:35:19] <Bike> the lack of extensibility is basically what i was wondering about yeah
+[01:35:31] <Bike> and i think that was one of the reasons generic-flet/labels was originally removed?
+[01:35:36] <phoe> yes
+[01:35:42] <Bike> along with "nobody understands what the heck this is"
+[01:35:53] <phoe> yes
+[01:36:15] <phoe> I mean, you could in theory grab a local GF object via #' and then forcibly ADD-METHOD some stuff into it
+[01:36:21] <phoe> the question is, again, why
+[01:38:25] <EdLangley[m]> A lot of the generic-flet stuff could probably just be written as a fancy macro for a typecase
+[01:38:38] <phoe> yes, and then maybe some people would enjoy the local :METHOD syntax and qualifiers for method combinations
+[01:41:42] *** Quits: dra (~dra@2a04:4540:6422:2c00:1c1a:dda9:f862:c077) (Remote host closed the connection)
+[01:42:12] <EdLangley[m]> Yeah, but a lot of that stuff could be done statically during macroexpansion
+[01:42:44] <phoe> in the most general case? yes
+[01:43:11] <phoe> you should be able to statically analyze this, especially if no qualifiers are used, and just turn this into a non-generic function with a big ole TYPECASE inside
+[01:43:54] *** Quits: Oladon (~olad@98.43.81.226) (Quit: Leaving.)
+[01:45:03] <phoe> and optionally fall back to standard MOP wizardry in case any unrecognized options are present, e.g. a custom metaclass
+[01:48:20] <phoe> ...or #'CALL-NEXT-METHOD
+[01:48:30] <phoe> I have no idea how a single TYPECASE would handle that
+[01:50:27] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Quit: ERC (IRC client for Emacs 27.1))
+[01:50:57] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[01:51:09] <phoe> crazy stuff
+[01:55:32] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 240 seconds)
+[02:06:28] *** Joins: dra (~dra@2a04:4540:6422:2c00:a91f:8138:a9f8:59d2)
+[02:07:28] *** Quits: AeroNotix (~xeno@185.107.67.252) (Quit: WeeChat 3.4)
+[02:07:38] *** Quits: Jach (~Jach@2601:600:8600:307:7e31:e7a7:f1f3:a96b) (Read error: Connection reset by peer)
+[02:15:12] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 250 seconds)
+[02:16:26] <Bike> fbind a function of one argument for each "method". have that one parameter be #'call-next-method. the typecase calls a method appropriately
+[02:16:52] <phoe> hmm
+[02:17:24] <phoe> yes, that works
+[02:19:39] *** Quits: occ (~occ@user/occ) (Ping timeout: 256 seconds)
+[02:20:59] <Bike> next-method-p is a little more involved but not much. passing no-next-method a method would be trickier
+[02:28:02] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[02:30:23] *** Quits: Algernon69 (~Algernon6@2a04:cec0:10ef:dcbd:a8c8:cf80:f660:38d6) (Read error: Network is unreachable)
+[02:32:44] *** Joins: Jach (~Jach@2601:600:8600:307:7e31:e7a7:f1f3:a96b)
+[02:37:50] *** Joins: scymtym (~user@ip-94-114-248-79.unity-media.net)
+[02:43:25] *** Joins: pjb (~pjb@user/pjb)
+[02:59:36] *** Joins: kevingal (~quassel@2a02:8084:4140:f300:2c84:596b:76cb:6e53)
+[03:00:55] *** Quits: dra (~dra@2a04:4540:6422:2c00:a91f:8138:a9f8:59d2) (Remote host closed the connection)
+[03:04:51] *** Joins: akoana (~ah@user/akoana)
+[03:07:40] <dbotton> Is there a convention used in code for a variable named "this" or "self" by Common Lispers?
+[03:08:31] <Bike> i don't think so. generic functions are not strongly tied to any argument in particular.
+[03:09:13] <phoe> dbotton: what do you mean by "this"?
+[03:09:31] *** Quits: raeda_ (~raeda@72.49.252.109) (Quit: Leaving)
+[03:11:02] <dbotton> similar to C++ this that refers to the object that a method was called on
+[03:11:08] <phoe> which one?
+[03:11:17] <phoe> like, in (defgeneric foo (bar baz quux)), do you mean BAR, BAZ, or QUUX?
+[03:12:24] <dbotton> likely bar - even though in CL it could be all of them
+[03:12:32] <phoe> that's the thing, it could be any of them
+[03:12:41] <phoe> so, the notion is to call BAR, well
+[03:12:44] <phoe> BAR
+[03:14:13] <dbotton> Since this is in code that is generated for the user, originally I did that
+[03:14:32] *** Quits: dre (~dre@2001:8003:c932:c301:7948:9e4c:da1f:659b) (Ping timeout: 240 seconds)
+[03:15:00] <phoe> I think that generating code for the user is going to be harmful if it teaches the user that there is some sort of "self" in methods
+[03:15:04] <dbotton> however since the name of BAR can change with a configuration change it means every thing has to generated again
+[03:15:21] <EdLangley[m]> Some things like PRINT-OBJECT use OBJECT or similar for the parameter the user is expected to specialize
+[03:15:32] <EdLangley[m]> PRINT-OBJECT disallows specializing on the stream, iirc
+[03:15:44] <EdLangley[m]> clhs PRINT-OBJECT
+[03:15:45] <specbot> http://www.lispworks.com/reference/HyperSpec/Body/f_pr_obj.htm
+[03:16:10] <phoe> uh? why?
+[03:16:23] <phoe> "methods should therefore not depend on the identity of this stream." is the only thing that's mentioned
+[03:16:33] <EdLangley[m]> Yeah, sbcl warns because of that
+[03:16:38] <dbotton> well object is already being used
+[03:16:49] <EdLangley[m]> but, if you can't depend on the identity of the stream, you can't rely on it being the class you expect it to be
+[03:16:55] <phoe> ooh
+[03:16:57] <phoe> yes, I see
+[03:17:00] <phoe> that makes sense
+[03:17:02] <EdLangley[m]> e.g. the pretty printer will wrap the stream with internal classes
+[03:17:52] <mfiano> initialize-instance uses INSTANCE
+[03:18:00] <phoe> dbotton: the main issue I see is, what meaning do you want to convey - argument names can be completely dumb like ARGUMENT-1 ARGUMENT-2 ARGUMENT-3 and so on, but they are meaningless
+[03:18:17] <phoe> if you are telling the user to configure something, use the argument names to tell them what they are configuring
+[03:18:23] <dbotton> I could use "panel" and that would avoid phoe's issue of bad "lesson" in self/this
+[03:18:26] <phoe> and what kind of operations they should be able to perform there
+[03:18:28] <mfiano> Just name it what the most specific thing that it can be, not something generic like THIS or SELF that has a single-dispatch connatation
+[03:18:34] <phoe> ^
+[03:19:05] <mfiano> Hell I'd use single letters over that. That would send the wrong message to a newcomer.
+[03:19:27] <dbotton> so panel it is.
+[03:24:45] *** Quits: kevingal (~quassel@2a02:8084:4140:f300:2c84:596b:76cb:6e53) (Remote host closed the connection)
+[03:28:01] *** Quits: mgl (~mgl@cpc87455-finc19-2-0-cust234.4-2.cable.virginm.net) (Ping timeout: 256 seconds)
+[03:29:11] *** Joins: molson_ (~molson@2001-48F8-704A-123D-0-0-75F-102C-static.midco.net)
+[03:30:36] <dbotton> where it is being used https://usercontent.irccloud-cdn.com/file/BmMWCtJU/scn.png
+[03:32:02] *** Quits: molson (~molson@2001-48F8-704A-123D-0-0-75F-1029-static.midco.net) (Ping timeout: 240 seconds)
+[03:32:37] <dbotton> panel is an object containing all the controls, obj is the control firing the event
+[03:36:13] <mfiano> It's usually better style to be explicit.
+[03:36:20] <mfiano> OBJECT vs OBJ
+[03:37:57] *** Quits: varjag (~user@ti0040a400-5479.bb.online.no) (Ping timeout: 240 seconds)
+[03:42:48] <dbotton> i'll think it over, wonder if another word works better for object of event, maybe target
+[03:42:53] *** Joins: occ (~occ@user/occ)
+[03:42:55] *** Quits: pve (~pve@176-93-73-71.bb.dnainternet.fi) (Quit: leaving)
+[03:43:20] <mfiano> message
+[03:43:30] <mfiano> oh object receiving the event
+[03:43:56] <mfiano> recipient
+[04:01:17] *** Quits: Inline (~Inline@ip-037-201-240-204.um10.pools.vodafone-ip.de) (Ping timeout: 240 seconds)
+[04:02:27] *** Joins: varjag (~user@ti0040a400-5479.bb.online.no)
+[04:04:35] *** Joins: taiju (~user@240b:253:ec40:2400:b7d1:436e:2d61:e925)
+[04:07:24] *** Quits: occ (~occ@user/occ) (Remote host closed the connection)
+[04:11:51] *** Quits: varjag (~user@ti0040a400-5479.bb.online.no) (Ping timeout: 256 seconds)
+[04:24:15] *** Joins: pmwals09 (~pmwals09@c-73-218-223-243.hsd1.ma.comcast.net)
+[04:25:37] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 240 seconds)
+[04:41:15] *** Quits: pmwals09 (~pmwals09@c-73-218-223-243.hsd1.ma.comcast.net) (Remote host closed the connection)
+[04:42:32] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 240 seconds)
+[04:44:22] *** Joins: pmwals09 (~pmwals09@c-73-218-223-243.hsd1.ma.comcast.net)
+[04:44:53] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[04:50:13] *** Quits: VincentV` (~user@212.97.4.163) (Remote host closed the connection)
+[04:54:04] *** Joins: xsperry (~xs@user/xsperry)
+[05:03:04] *** Joins: lispy (~lispy4@84.69.59.93)
+[05:05:37] *** Quits: xsperry (~xs@user/xsperry) (Ping timeout: 240 seconds)
+[05:08:37] *** Quits: random-nick (~random-ni@87.116.167.125) (Ping timeout: 240 seconds)
+[05:08:51] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[05:13:48] *** Joins: xsperry (~xs@user/xsperry)
+[05:13:57] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 240 seconds)
+[05:16:12] *** Quits: morganw (~user@80.225.24.132) (Remote host closed the connection)
+[05:19:31] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[05:24:37] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 240 seconds)
+[05:28:32] *** Quits: xsperry (~xs@user/xsperry) (Ping timeout: 240 seconds)
+[05:31:58] *** Joins: ec (~ec@gateway/tor-sasl/ec)
+[05:32:14] *** Joins: tophullyte (tophullyte@gateway/vpn/protonvpn/tophullyte)
+[05:43:06] *** Joins: s-liao (~s-liao@101.86.96.21)
+[05:43:45] *** Joins: dre (~dre@2001:8003:c932:c301:c799:698e:a7d8:4ce6)
+[05:51:11] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[05:52:44] *** Joins: occ (~occ@user/occ)
+[05:52:53] *** Quits: x88x88x (~x88x88x@149.28.53.172) (Read error: Connection reset by peer)
+[05:54:26] *** Joins: xsperry (~xs@user/xsperry)
+[05:54:33] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Ping timeout: 276 seconds)
+[05:56:41] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 256 seconds)
+[05:57:43] *** Joins: ec (~ec@gateway/tor-sasl/ec)
+[06:05:36] *** Quits: tophullyte (tophullyte@gateway/vpn/protonvpn/tophullyte) (Quit: Leaving)
+[06:08:09] <dbotton> Is there a way in common lisp to turn off a style warning for unused variables for a certain region beyond using (declare (ignore target))?
+[06:10:47] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[06:16:47] <Bike> Not really. Maybe you can swing something with sbcl's muffle-conditions extension though
+[06:17:05] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 256 seconds)
+[06:17:42] <etimmons> Or declare them ignorable (if the problem is that it's hard for you to tell if they are actually used)
+[06:20:50] <dbotton> pain but guess ignorable best option
+[06:21:09] <dbotton> is there way to do more than one var at a time?
+[06:21:19] <dbotton> doesn't see from doc
+[06:23:26] <etimmons> Yeah, (declare (ignorable foo bar baz))
+[06:28:45] *** Joins: kathe (~mayuresh@49.32.253.29)
+[06:28:55] <kathe> hi all. :)
+[06:29:55] <kathe> gah, i guess i'm in too early.
+[06:30:18] <kathe> if there are any indians around, wish them a happy republic day 2022. :)
+[06:30:20] <kathe> bye.
+[06:30:23] *** Quits: kathe (~mayuresh@49.32.253.29) (Client Quit)
+[06:31:53] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[06:38:45] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Ping timeout: 276 seconds)
+[06:42:07] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 268 seconds)
+[06:51:27] *** Joins: kathe (~mayuresh@49.32.253.29)
+[06:58:59] *** Joins: jealousmonk (~user@2804:431:e7c5:c29d:f611:a6e4:135a:8b29)
+[06:59:24] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[07:00:23] *** Quits: akoana (~ah@user/akoana) (Quit: leaving)
+[07:04:16] <yitzi> kathe: not Indian, but happy Republic Day.
+[07:04:34] <kathe> thanks yitzi. :)
+[07:04:45] <kathe> yitzi, where are you from?
+[07:05:12] <yitzi> USA.
+[07:05:44] <kathe> aha, the land of freedom and opportunity! :)
+[07:09:51] <yitzi> Yes, but most of all we love Democracies and Republics of all kinds...so kudos!
+[07:10:45] <kathe> true.
+[07:10:56] <kathe> the u.s. is world's favourite democracy.
+[07:11:07] <kathe> while india is the world's largest democracy.
+[07:12:01] *** Quits: terrorjack (~terrorjac@2a01:4f8:1c1e:509a::1) (Quit: The Lounge - https://thelounge.chat)
+[07:12:53] *** Joins: terrorjack (~terrorjac@2a01:4f8:1c1e:509a::1)
+[07:14:38] <kathe> would you be in a position to comment on which is a good common lisp programming environment under macos?
+[07:15:07] <kathe> i am currently on ubuntu, but might migrate to macos in 6 years time.
+[07:15:33] <kathe> i "was" going to migrate to windows and hence use lispworks, but macos is looking very impressive.
+[07:18:09] *** Quits: occ (~occ@user/occ) (Read error: Connection reset by peer)
+[07:19:25] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 256 seconds)
+[07:21:08] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 250 seconds)
+[07:22:48] <semz> kathe: Clozure CL is probably a good choice, it focuses on Macs quite a bit and I think it even has its own IDE on there (although I've never used it so I can't say anything about its quality)
+[07:23:10] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[07:27:02] <kathe> semz: thanks for that tip, it led me to discover hemlock.
+[07:27:20] <kathe> semz: and due to hemlock, i found out about clx.
+[07:27:28] <kathe> semz: many thanks.
+[07:29:38] <kathe> hmnn, hemlock is very interesting, but doesn't have the wide array of modes available with 'gnu' emacs.
+[07:30:09] <kathe> i think i'd better stick with ubuntu and learn 'gnu' emacs well.
+[07:30:31] <beach> Good morning everyone!
+[07:30:46] <kathe> heya beach. how've you been?
+[07:30:59] <kathe> beach: i'm here after a long time, been unwell.
+[07:31:06] <beach> Sorry to hear that.
+[07:31:23] <kathe> beach: you know me also as "mayuresh" and "mayureshkathe".
+[07:31:33] <beach> Got it.
+[07:31:38] <kathe> though i've now settled down with "kathe" as that's also my domain name.
+[07:32:38] <kathe> i don't have any background in common lisp nor emacs, and i'm a bit confused about how to learn both in parallel without messing up my thought process.
+[07:32:53] <kathe> i used to work with autolisp, so that's my route to common lisp.
+[07:33:11] <kathe> i know that there is a tutorial and a manual inside emacs itself.
+[07:33:45] <kathe> so should i first work through the emacs tutorial and manual, get well acclimatised with emacs and then start-off with common lisp?
+[07:34:25] <kathe> though i have no idea about how to make emacs work with 'sbcl' as an 'ide'.
+[07:35:52] <kathe> i had been quite gung-ho about forth, but after my interaction with some people from it's community regarding introducing a "condition system" and an object system via a metaobject protocol were shot down, i'm going to stick with common lisp.
+[07:36:17] <EdLangley[m]> ccl doesn't work on M1 macs at the moment
+[07:36:32] <EdLangley[m]> At this point, IMO, sbcl is the best implementation on macs
+[07:37:35] <kathe> thanks EdLangley, i think i'm going to stick with ubuntu. not only does it offer better facilities for development systems but a ubuntu-based setup also costs a lot lesser than a mac.
+[07:38:33] <White_Flame> kathe: pretty much everybody doing CL is using emacs
+[07:38:36] <kathe> sorry about the expressing interest in macos before i'd factored in the cost.
+[07:39:16] <kathe> White_Flame: so i've heard. even my mentor uses it.
+[07:39:47] <White_Flame> those who don't use emacs are forging their own path, and yeah hopefully other paths get as fully supported
+[07:40:32] <ns12> kathe: What text editor are you currently using? Perhaps your current text editor has some support for Common Lisp. This will free up more time for learning Common Lisp.
+[07:41:16] <kathe> i cut my teeth on 'sco' openserver so i tend to lean toward vi (not vim), but i'm eager to learn emacs because of the tight integration with common lisp development routines.
+[07:41:17] <White_Flame> after sbcl & emacs, you want to install, in order: quicklisp, quicklisp-slime-helper
+[07:41:42] <White_Flame> you shouldn't really need to adjust any config files after following their steps
+[07:42:33] <kathe> White_Flame: i'll look into quicklisp and quicklisp-slime-helper.
+[07:42:38] <EdLangley[m]> https://portacle.github.io is also a good way to get a nice package of "all of the above"
+[07:42:42] <White_Flame> oh wait, I keep forgetting about portacle
+[07:42:43] <White_Flame> yeah
+[07:42:51] <White_Flame> it's a "lisp in a box" singel solution
+[07:42:52] <ns12> I personally use the SBCL REPL directly (with rlwrap for readline keybindings). That's another way to defer learning Emacs.
+[07:43:24] *** Quits: hobo (~hobo@2600:1700:8972:63f:3313:2d33:be9f:8246) (Quit: ZNC 1.8.2 - https://znc.in)
+[07:43:29] <kathe> ns12: can you suggest any reading material online?
+[07:43:43] <ns12> kathe: On which topic?
+[07:43:51] <White_Flame> lots of cheat sheets, if you're learning: http://pchristensen.com/wp-content/uploads/2008/02/slimecommands.pdf
+[07:43:57] <EdLangley[m]> minion: tell kathe about PCL
+[07:43:57] <minion> kathe: look at PCL: pcl-book: "Practical Common Lisp", an introduction to Common Lisp by Peter Seibel, available at http://www.gigamonkeys.com/book/ and in dead-tree form from Apress (as of 11 April 2005).
+[07:44:43] <kathe> EdLangley: i've heard rumours about 'pcl' being reworked on. true?
+[07:44:57] <ns12> Here's a list: https://github.com/EbookFoundation/free-programming-books/blob/main/books/free-programming-books-langs.md#lisp
+[07:45:07] <kathe> ns12: about how to use something other than emacs for common lisp 'ide'.
+[07:45:13] <EdLangley[m]> Maybe, Peter Seibel talked about it a bit
+[07:45:18] <EdLangley[m]> But, CL is mostly the same as it was
+[07:45:26] <ns12> kathe: Look in the Common Lisp cookbook.
+[07:45:36] <EdLangley[m]> kathe: I started with slimv and there's also vlime (both for vim)
+[07:45:57] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Ping timeout: 240 seconds)
+[07:46:07] <kathe> EdLangley: how do slimv and vlime compare against emacs+slime?
+[07:46:09] <ns12> kathe: https://lispcookbook.github.io/cl-cookbook/editor-support.html
+[07:47:02] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[07:47:29] <kathe> ns12: thanks for both those links. very helpful. :)
+[07:48:58] <ns12> In the free books list, "Practical Common Lisp" and/or "Common Lisp: A Gentle Introduction to Symbolic Computation" are typically recommended to beginners.
+[07:49:11] <White_Flame> also, the #clschool channel is dedicated to learning
+[07:49:32] <kathe> I checked out slimv and vlime based setup, but i think i'll go with emacs because i can do almost everything else from within emacs (irc, email, notes, todo, etc.).
+[07:49:34] <lisp123> #CLSCHOOL is a gem
+[07:49:50] <kathe> White_Flame: thanks for that tip.
+[07:50:24] <lisp123> kathe: Try EVIL Mode in Emacs
+[07:50:29] <ns12> lisp123: I wish there were public logs of #clschool.
+[07:50:33] <kathe> ns12: i've heard that the digital version of touretzky's book doesn't have corrections present in the paperback one.
+[07:51:17] <kathe> i think that org-mode thingy is very impressive.
+[07:52:03] *** Joins: occ (~occ@user/occ)
+[07:52:04] <kathe> i had an exchange with phoe where he mentioned he's redoing the recipes book.
+[07:53:12] <kathe> 2 things that most impress me about common lisp are the "condition system" and the "metaobject protocol" based object-system.
+[07:55:30] *** Quits: OlCe` (~user@lfbn-nic-1-117-92.w2-15.abo.wanadoo.fr) (Ping timeout: 268 seconds)
+[07:56:15] <kathe> i don't remember finding the "condition system" in autolisp, nor did any of the seniors talk about it back then.
+[07:58:33] <Bike> "The *error* function takes a single string argument, which is supplied by AutoCAD when an error is encountered during program evaluation. This string describes the error which has caused the *error* function to evaluate." doesn't sound like it has the condition system
+[07:59:11] <kathe> it's more like an extended control-flow mechanism. ;)
+[07:59:16] <kathe> as phoe calls it. :)
+[07:59:31] <kathe> the "condition system" is something else entirely. :)
+[08:00:22] <kathe> i went through the sample session in phoe's "Appendix E". it's mind blowing. waiting to complete learning common lisp and buy phoe's book on the "condition system".
+[08:00:40] *** Joins: Jing (~hedgehog@240e:390:7c53:a7e1:b574:732d:3b12:8f10)
+[08:01:17] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[08:06:43] <mfiano> I'd need conformal displacement for anything more than a flat row-major view of the backing storage, correct?
+[08:07:37] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 240 seconds)
+[08:08:34] <Bike> yeah, standard displacement is all row major all the time
+[08:08:52] <mfiano> Currently I only need a view of a pixel in a '(width height channel-count) #3a, but I was also thinking of things like a NxM kernel view for convolutions.
+[08:10:16] <mfiano> Guess I could just derive the shape/extents from a single pixel and mutate the original directly.
+[08:10:32] <mfiano> Unfortunate, but doable.
+[08:15:35] *** Joins: semz_ (~semz@user/semz)
+[08:16:37] *** Quits: occ (~occ@user/occ) (Ping timeout: 240 seconds)
+[08:18:20] *** Quits: semz (~semz@user/semz) (Ping timeout: 250 seconds)
+[08:18:33] *** Joins: occ (~occ@user/occ)
+[08:19:37] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[08:23:29] *** Joins: OlCe`` (~user@amarseille-656-1-684-224.w90-8.abo.wanadoo.fr)
+[08:24:01] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 256 seconds)
+[08:29:54] <kathe> brb
+[08:30:32] *** semz_ is now known as semz
+[08:32:06] *** Quits: lisp123 (~lisp123@5.30.23.247) (Remote host closed the connection)
+[08:37:34] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[08:42:09] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 256 seconds)
+[08:46:04] <qhong> recalling the discussion about software longevity a few days ago, what you guys think about a Nix/Guix replicate that runs in a single Lisp image a la asdf?
+[08:47:12] *** Joins: beach` (~user@2a01:cb19:150:3400:31b6:1d0a:d09:5e43)
+[08:50:08] <kathe> qhong: would you care to elaborate for those who are neophytes?
+[08:51:37] *** Quits: beach (~user@2a01:cb19:150:3400:c20e:ab91:8f25:19ba) (Ping timeout: 268 seconds)
+[08:52:00] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-98.dsl.bell.ca) (Remote host closed the connection)
+[08:56:44] *** Quits: jealousmonk (~user@2804:431:e7c5:c29d:f611:a6e4:135a:8b29) (Quit: ERC (IRC client for Emacs 27.1))
+[09:00:07] <kagevf> I use guix to install nyxt since that's the only way I could figure out how to get all the right versions of nyxt, sbcl, and emacs ... necessary to connect to nyxt's swank server from slime
+[09:02:31] <kagevf> qhong: what would the nix/guix inside CL do? find, and build CL systems? and allow easy switching between different versions? and also act as a package manager? so it would replace asdf and QL, plus add the versioning?
+[09:07:52] *** Quits: pmwals09 (~pmwals09@c-73-218-223-243.hsd1.ma.comcast.net) (Remote host closed the connection)
+[09:11:08] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[09:17:21] *** Quits: wyrd (~wyrd@gateway/tor-sasl/wyrd) (Ping timeout: 276 seconds)
+[09:19:05] *** beach` is now known as beach
+[09:19:17] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 240 seconds)
+[09:20:18] *** Quits: occ (~occ@user/occ) (Ping timeout: 250 seconds)
+[09:21:43] *** Joins: occ (~occ@user/occ)
+[09:22:17] *** Joins: aartaka (aartaka@gateway/vpn/protonvpn/aartaka)
+[09:23:58] *** Joins: wyrd (~wyrd@gateway/tor-sasl/wyrd)
+[09:25:04] *** Quits: Bike (~Bike@71.69.170.70) (Quit: Connection closed)
+[09:32:33] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[09:33:31] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[09:34:34] <kathe> what's the difference between slime and sly?
+[09:34:45] <kathe> i mean other than sly is modern.
+[09:35:13] <moon-child> sly has 100% more cats
+[09:37:01] <qhong> kagevf: Yes I think so
+[09:37:07] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 256 seconds)
+[09:37:37] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 240 seconds)
+[09:37:49] <qhong> kagevf: I also think that reproducibility is a pain point of the status quo of CL eco-system. Hyrum law is real. I have no hope contemporary CL projects still work after just 20 years
+[09:37:54] <kathe> moon-child: :)
+[09:38:31] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[09:43:37] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 240 seconds)
+[09:47:04] <mfiano> Sounds like CLPM
+[09:48:28] *** Quits: fitzsim (~user@69-165-165-189.dsl.teksavvy.com) (Read error: Connection reset by peer)
+[09:49:18] <qhong> mfiano: AFAIU CLPM is akin to a traditional package manager (ala pip, npm etc) rather than a functional pm
+[09:50:38] *** Joins: Inline (~Inline@ip-037-201-240-204.um10.pools.vodafone-ip.de)
+[09:51:45] <mfiano> Of course. Many existing software systems rely on stateful actions during installation. ASDF is programmable to do anything you could want.
+[09:52:29] *** Joins: lisp123w (~user@80.227.170.170)
+[09:52:59] <lisp123w> kathe: I was trying Sly recently last week but had some pretty bad experiences so reverted to Slime
+[09:53:05] <EdLangley[m]> I believe POIU attempted to do something more reproducible
+[09:53:44] <lisp123w> But in general Sly has some more advanced features (like stickers, which allows to mark a region to get automatic printing on the output) and a better search
+[09:54:09] <moon-child> qhong: cl is in general ideologically aligned towards flexibility over analyzability
+[09:55:24] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 250 seconds)
+[09:55:44] <kathe> lisp123w: thanks.
+[09:56:05] <qhong> UNIX (and UNIX toolchain) allows as much flexibility (albeit much more poorly designed) on its FS state as CL (and ASDF), yet ppl eventually curse it and invented Nix/Guix
+[09:56:09] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[09:56:27] <qhong> But maybe I'm reading too much and it's a non-problem for CL at least so far
+[09:56:55] <moon-child> ha, this comes up again
+[09:57:00] <moon-child> unix is referentially transparent
+[09:57:08] <moon-child> so chroots are easier
+[09:57:14] <moon-child> vs fcge
+[09:57:18] <mfiano> jails > chroots
+[09:57:24] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[09:57:50] <moon-child> mfiano: well, that is interesting, because jails encapsulate non-referentially-transparent things (such as network devices).  Probably not super relevant to present discussion
+[09:57:54] <qhong> I think rename-package hack will work for most packages?
+[09:58:26] <moon-child> qhong: in particular, I can trivially calculate (and isolate) the closure of some object in unix, but not in lisp
+[09:58:32] <qhong> As for edge cases, Nix/Guix has to deal with them manually too and it doesn't seem like too much a practical issue
+[09:58:37] <mfiano> No, it really won't. Packages can be created, and sometimes are, at runtime.
+[09:59:02] <mfiano> Or as part of the compilation process.
+[09:59:08] <moon-child> and I can observe all the side effects of an arbitrary operation (see ptrace, dtrace, this has been effected in practice)
+[09:59:09] <qhong> mfiano: I understand you can certainly break it, my question is how many packages actually do it
+[09:59:12] <mfiano> THey aren't always statically known.
+[09:59:18] <mfiano> Quite a few
+[10:00:05] <qhong> moon-child: you mean dependency closure or dependent closure?
+[10:00:18] <qhong> I think dependent closure can also be calculated in Lisp
+[10:00:35] <moon-child> qhong: the closure of an object is the set containing that object and all the objects it points to
+[10:00:41] <moon-child> here I actually meant transitive closure, but
+[10:00:47] <moon-child> (actually, the implementation generally gets such a closure, e.g. for fasls; but you do not)
+[10:01:02] *** Quits: frgo (~frgo@p548a30d7.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[10:01:27] <qhong> moon-child: you mean one can get who-reference for arbitrary datum? damn I always want it so hard when CLing
+[10:01:41] <lisp123w> kathe: I think Sly works better for multiple REPLs (I was doing a setup where I had SBCL / CCL / CLISP all on 1 command each), but I didn't want to spend time debugging the issues I had (lag on remote connection to an Image, some other strange bugs) so I reverted to Slime and it suited me.
+[10:01:44] <qhong> moon-child: guess I should ditch CL and start BASHing
+[10:01:49] <moon-child> :/
+[10:02:35] <lisp123w> kathe: However, the stickers thing in SLY is really good - so don't discount it based on my words. Its just that I was doing some bespoke setups which Sly had some issues on my machine
+[10:03:17] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 240 seconds)
+[10:03:29] <EdLangley[m]> Lispworks's delivery system can do a bunch of stuff that's unsafe if symbols are interned dynamicaly
+[10:03:44] <qhong> mfiano: I think dynamic package creation at compile time should be workable
+[10:04:12] <kathe> lisp123w: thanks. on a different note, would you suggest that i learn to work with emacs in parallel with learning common lisp?
+[10:04:12] <EdLangley[m]> So, heuristics like "rename package is safe" can get you pretty far
+[10:04:31] <EdLangley[m]> But, you need some way of verifying the assumptions
+[10:04:46] <mfiano> Can you take care of dynamic runtime code that generates symbols looking for a specific package with uiop:symbol-call, alexandria:format-symbol in macro's, etc?
+[10:05:03] <EdLangley[m]> It's not hard to right code that doesn't do that
+[10:05:43] <qhong> Basically, before build, all dependency are renamed to their nominal names, and after build, all dependencies plus newly created packages are renamed to their unique name
+[10:06:19] <qhong> mfiano: if they happen at runtime then it's screwed
+[10:06:25] <mfiano> I wouldn't want anything to do with such restrictions, but then again, I don't like Linux either.
+[10:06:31] <EdLangley[m]> I don't use things like INTERN and UIOP:SYMBOL-CALL very much at all
+[10:06:49] <lisp123w> kathe: Yes, it will be useful for many reasons I won't go into. The trick with Emacs is read the tutorial and guide (don't just jump in), then learn the keybindings C-h k (which lets you see what a keystroke does), C-h f (which describes function at point), C-h v (which describes variable at point), C-h b or C-h m (to see what keybindings are active in the buffer). But I'll shut up now (you can ask #emacs for more help there)
+[10:07:17] <EdLangley[m]> And I can tell when a system uses them, because inevitably my preference of doing (setf print-case :downcase) breaks loading such systems :)
+[10:08:07] <qhong> EdLangley[m]: That may be a nice hack to test the FPM assumption!
+[10:08:13] <mfiano> Lisp is too dynamic :)
+[10:08:32] * mfiano is amused at the thought of #'(setf documentation) being changed when you look at it.
+[10:08:41] <EdLangley[m]> clhs WITH-STANDARD-IO-SYNTAX
+[10:08:41] <specbot> http://www.lispworks.com/reference/HyperSpec/Body/m_w_std_.htm
+[10:08:55] <qhong> EdLangley[m]: oops
+[10:08:59] <EdLangley[m]> Macros that generate symbols need to use this :)
+[10:09:22] <qhong> And if they use this they can break FPM assumption while passing the above test...
+[10:10:17] <EdLangley[m]> Anyways, a lot of programs can still run if you delete all the packages
+[10:10:28] <EdLangley[m]> As long as you keep a reference to the entrypoint somewhere
+[10:11:09] <qhong> Actually I think there is an outrageous hack to make macros finding specific package at runtime still work
+[10:11:41] <qhong> First I assume they will use keyword symbols instead of strings, then we can unintern those keywords after each build, and hack `find-package` so they recognize such keyword
+[10:11:50] <qhong> (resolve them to proper dependency)
+[10:13:14] <lisp123w> EdLangley[m]: !!! Thank you for that archaic macro, very useful to protect against unintended consequences
+[10:16:54] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[10:17:23] <EdLangley[m]> So, I think the best way (at the moment) to make building systems deterministic is to compute a dependency graph of the system you want to load and then do a depth-first postorder traversal of the graph, building each system you encounter in a subprocess
+[10:17:33] <EdLangley[m]> Then you load all the generated FASLs in order
+[10:22:32] <qhong> EdLangley[m]: hmm, interesting. so, because we can't do isolation in Lisp, let's use UNIX process virtualization to do isolation
+[10:22:50] <qhong> EdLangley[m]: sounds plausible but I don't really like it because unix :/
+[10:23:08] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 250 seconds)
+[10:25:48] <qhong> EdLangley[m]: wait isn't that just using Guix
+[10:27:19] <kathe> i gotta go now.
+[10:27:21] *** Quits: kathe (~mayuresh@49.32.253.29) (Quit: leaving)
+[10:30:44] *** Joins: artchad (~user@public-gprs225103.centertel.pl)
+[10:31:03] *** Quits: lispy (~lispy4@84.69.59.93) (Quit: Leaving)
+[10:34:34] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[10:35:21] *** Quits: azimut_ (~azimut@gateway/tor-sasl/azimut) (Ping timeout: 276 seconds)
+[10:39:10] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 250 seconds)
+[10:40:45] *** Quits: xsperry (~xs@user/xsperry) (Read error: Connection reset by peer)
+[10:48:19] *** Quits: s-liao (~s-liao@101.86.96.21) (Ping timeout: 256 seconds)
+[10:50:11] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[10:53:17] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 240 seconds)
+[10:54:57] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 268 seconds)
+[10:55:06] *** Joins: kathe (~mayuresh@49.32.239.150)
+[10:55:31] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[10:57:03] *** Joins: Algernon69 (~Algernon6@88.124.69.179)
+[10:58:31] *** Joins: Algernon91 (~Algernon6@2a04:cec0:10ef:dcbd:5d2d:ced5:fd7a:5dda)
+[10:58:45] *** Parts: Jach (~Jach@2601:600:8600:307:7e31:e7a7:f1f3:a96b) ()
+[10:58:51] *** Joins: rgherdt (~rgherdt@2a02:8109:86c0:d8d:70bc:f294:948f:2599)
+[10:59:17] *** Quits: vats (~vats@180.149.226.242) (Ping timeout: 240 seconds)
+[10:59:32] *** Quits: Inline (~Inline@ip-037-201-240-204.um10.pools.vodafone-ip.de) (Ping timeout: 250 seconds)
+[11:01:49] *** Quits: Algernon69 (~Algernon6@88.124.69.179) (Ping timeout: 240 seconds)
+[11:05:45] *** Joins: xsperry (~xs@user/xsperry)
+[11:06:02] *** Joins: Jach (~Jach@2601:600:8600:307:7e31:e7a7:f1f3:a96b)
+[11:06:17] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[11:10:37] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 256 seconds)
+[11:11:01] *** Quits: xsperry (~xs@user/xsperry) (Read error: Connection reset by peer)
+[11:12:18] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[11:14:55] *** Joins: Cymew (~ante@c-0c87225c.023-1144-7570702.bbcust.telenor.se)
+[11:15:06] *** Joins: xsperry (~xs@user/xsperry)
+[11:15:54] <phoe> kathe: you can buy the book before completing learning Common Lisp! </shameless_plug>
+[11:16:32] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 240 seconds)
+[11:16:36] <kathe> phoe: i assure you that i will definitely buy the book, only i want to be ready for it. :)
+[11:16:42] <moon-child> I dare say if you have completely learned common lisp you will not get much value out of the book, but
+[11:16:53] <phoe> :D
+[11:17:47] <kathe> phoe: will you please consider writing a similar walk-through for 'clos' using 'mop'? currently there are disparate books, mostly going beyond what's really required to work under common lisp.
+[11:18:06] <moon-child> amop?
+[11:18:15] <mfiano> AMOP is the one to read.
+[11:18:34] <mfiano> THough as a technical book, it is quite dry and makes many mistakes.
+[11:18:46] <kathe> 'amop' is dependent on "keene".
+[11:18:57] <phoe> yes
+[11:19:00] <kathe> and "keene" isn't readily available. even on amazon.
+[11:19:10] <kathe> phoe: thanks a million for considering.
+[11:19:25] <phoe> the only sane way to access keene's book is to *somehow* grab a physical copy or to visit Library Generic
+[11:19:32] *** Parts: pranavats (3fba1d1b34@2a00:c70:1:178:170:40:189:1) (Error from remote client)
+[11:19:34] <phoe> *Genesis :D
+[11:19:42] <kathe> :)
+[11:19:51] <phoe> although PCL also teaches basics of CLOS
+[11:20:32] <mfiano> Somehow?
+[11:20:45] <phoe> yes, find and buy a used one
+[11:20:50] <phoe> that isn't trivial and it can be expensive
+[11:20:51] <mfiano> I have a brand new one.
+[11:20:59] <phoe> wait, it's still in print? :O
+[11:21:07] <moon-child> https://www.abebooks.com/products/isbn/9780201175899?clickid=WmHzvNy54xyIWLPUVSRa73dbUkGyAWwJITkbUg0&cm_mmc=aff-_-ir-_-64682-_-77798&ref=imprad64682&afn_sr=impact
+[11:21:12] <moon-child> claims to have it for $50
+[11:21:21] <mfiano> Well I got it a few years ago, but I never opened it yet.
+[11:21:43] <phoe> yes, these are the used ones I menioned
+[11:21:55] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Quit: WeeChat 3.4)
+[11:21:58] *** Quits: artchad (~user@public-gprs225103.centertel.pl) (Read error: Connection reset by peer)
+[11:21:59] <phoe> the new ones have insane prices
+[11:22:14] <mfiano> Mine is new. Arrived in pristine condition too
+[11:22:40] <kathe> phoe: a book for the rest of us. please please please. :)
+[11:22:52] <phoe> kathe: hm
+[11:23:13] *** Joins: karlosz (~karlosz@47.151.136.69)
+[11:23:59] *** Quits: gioyik (~gioyik@gateway/tor-sasl/gioyik) (Quit: WeeChat 3.3)
+[11:24:45] *** Quits: xsperry (~xs@user/xsperry) (Read error: Connection reset by peer)
+[11:27:05] <mfiano> Hmm I think I'll read this book this weekend. Looks like I will enjoy it better than AMOP. I found too many errors in that book that stunted my learning and questioned my sanity.
+[11:27:57] <kathe> phoe: i think you'd do a better job of writing an error-free book.
+[11:28:28] <phoe> kathe: if you're alluding to TCLCS, I simply had enough reviewers from all over my known Lisp world
+[11:28:32] *** Quits: karlosz (~karlosz@47.151.136.69) (Ping timeout: 240 seconds)
+[11:28:43] <phoe> that was enough to catch many many mistakes I'd personally made as a writer
+[11:28:45] *** Quits: amb007 (~a_bakic@102.215.76.86.rev.sfr.net) (Ping timeout: 256 seconds)
+[11:29:00] *** Joins: amb007 (~a_bakic@138.135.22.93.rev.sfr.net)
+[11:29:05] <phoe> this, and TCLCS is so much *less* complex than the MOP
+[11:29:07] <mfiano> I heard a bad review of TCLCS the other day :(
+[11:29:19] <phoe> !
+[11:29:20] <kathe> phoe: i bet you'll get similar support for a 'clos'/'mop' book which is modern.
+[11:29:28] *** Joins: shka (~herr@109.231.0.226)
+[11:29:29] *** Joins: cosimone (~user@93-44-185-255.ip98.fastwebnet.it)
+[11:29:33] <phoe> I need to know it so I can possibly improve a future second edition
+[11:29:41] <mfiano> Let me see if I can find it.
+[11:29:42] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[11:29:50] <kathe> phoe: there's a book on 'clos' by paepcke from 'mit' press.
+[11:29:58] <parjanya> ‘modern’ is overrated, if something works well that’s more than enough (and hi)
+[11:30:25] <phoe> the main issue with keene book is that some examples don't really work anymore, and they're kind of badly chosen (e.g. the lock primitive)
+[11:30:36] <kathe> phoe: the 'mit' press book explains 3 different approaches to 'mop' implementation without relying on common lisp.
+[11:30:50] <phoe> and paepcke's is kind of a collection of articles rather than a singular and consistent book
+[11:30:58] *** Joins: karlosz (~karlosz@47.151.136.69)
+[11:31:12] <kathe> is i agree on that about the paepcke book.
+[11:31:16] <phoe> which makes it both interesting for some people and uninteresting for others
+[11:31:34] <kathe> in fact most of the paepcke book seems to be available as papers in 'pdf'.
+[11:36:21] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[11:36:22] *** Joins: xsperry (~xs@user/xsperry)
+[11:37:14] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 250 seconds)
+[11:38:35] *** Joins: Major_Biscuit (~MajorBisc@86-88-79-148.fixed.kpn.net)
+[11:38:39] <kathe> i found a book called "interpreting lisp" by knotts. is it good?
+[11:39:09] <phoe> kathe: https://www.reddit.com/r/lisp/comments/6qc61v/second_edition_published_interpreting_lisp/dkw66fl/
+[11:39:41] <phoe> tl;dr run away screaming
+[11:41:51] <kathe> phoe: thanks. i'm not going for it.
+[11:43:26] *** Quits: iamFIREc1 (~iamFIREcr@user/iamfirecracker) (Read error: Connection reset by peer)
+[11:50:07] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[11:53:07] *** Quits: occ (~occ@user/occ) (Ping timeout: 256 seconds)
+[11:54:32] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 240 seconds)
+[11:56:55] *** Joins: s-liao (~s-liao@101.86.96.21)
+[11:58:08] *** Quits: karlosz (~karlosz@47.151.136.69) (Quit: karlosz)
+[11:58:46] *** Joins: karlosz (~karlosz@47.151.136.69)
+[11:59:41] *** Joins: pranavats (3fba1d1b34@2a00:c70:1:178:170:40:189:1)
+[12:01:33] *** Joins: occ (~occ@user/occ)
+[12:03:58] *** Quits: Lord_Nightmare (Lord_Night@user/lord-nightmare/x-3657113) (Quit: ZNC - http://znc.in)
+[12:04:15] *** Quits: jeosol (~jeosol@user/jeosol) (Ping timeout: 256 seconds)
+[12:04:23] <kathe> i gotta go. time for lunch. see you all later.
+[12:04:25] *** Quits: kathe (~mayuresh@49.32.239.150) (Quit: leaving)
+[12:05:15] *** Joins: mgl (~mgl@cpc87455-finc19-2-0-cust234.4-2.cable.virginm.net)
+[12:08:10] *** Joins: Lord_Nightmare (Lord_Night@user/lord-nightmare/x-3657113)
+[12:08:20] *** Quits: Major_Biscuit (~MajorBisc@86-88-79-148.fixed.kpn.net) (Ping timeout: 268 seconds)
+[12:08:47] *** Quits: s-liao (~s-liao@101.86.96.21) (Ping timeout: 256 seconds)
+[12:14:22] *** Quits: karlosz (~karlosz@47.151.136.69) (Quit: karlosz)
+[12:22:20] *** Quits: amb007 (~a_bakic@138.135.22.93.rev.sfr.net) (Read error: Connection reset by peer)
+[12:22:51] *** Joins: amb007 (~a_bakic@host.26.88.68.195.rev.coltfrance.com)
+[12:26:07] *** Joins: pve (~pve@37-136-155-201.rev.dnainternet.fi)
+[12:31:22] *** Joins: Major_Biscuit (~MajorBisc@c-001-019-027.client.tudelft.eduvpn.nl)
+[12:34:00] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[12:39:12] *** Joins: Dynom (~niels@80-114-12-206.cable.dynamic.v4.ziggo.nl)
+[12:40:43] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 256 seconds)
+[12:44:24] *** Quits: OlCe`` (~user@amarseille-656-1-684-224.w90-8.abo.wanadoo.fr) ()
+[12:49:10] *** Joins: iamFIREc1 (~iamFIREcr@user/iamfirecracker)
+[12:49:48] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[12:54:57] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 240 seconds)
+[13:02:15] *** Quits: occ (~occ@user/occ) (Ping timeout: 256 seconds)
+[13:02:28] *** Quits: cosimone (~user@93-44-185-255.ip98.fastwebnet.it) (Remote host closed the connection)
+[13:07:03] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[13:07:07] *** Joins: s-liao (~s-liao@101.86.96.21)
+[13:08:26] *** Joins: vats (~vats@180.149.226.242)
+[13:11:17] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 240 seconds)
+[13:15:43] *** Joins: OlCe (~user@amarseille-656-1-684-224.w90-8.abo.wanadoo.fr)
+[13:18:19] *** Joins: knobo (~knobo@cCF845BC1.dhcp.as2116.net)
+[13:22:58] *** Joins: davep (uid504677@id-504677.tinside.irccloud.com)
+[13:23:19] *** Joins: artchad (~user@public-gprs225103.centertel.pl)
+[13:28:40] *** Quits: Jing (~hedgehog@240e:390:7c53:a7e1:b574:732d:3b12:8f10) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[13:33:28] *** Joins: luna-is-here (~quassel@2a02:908:f761:2a3c::a)
+[13:40:40] *** Quits: amk (~amk@109.255.169.126) (Remote host closed the connection)
+[13:41:40] *** Joins: amk (~amk@109.255.169.126)
+[13:44:18] *** Joins: Jing (~hedgehog@240e:390:7c53:a7e1:491:83dc:6241:13db)
+[13:46:02] *** Joins: cosimone (~user@93-44-185-255.ip98.fastwebnet.it)
+[14:05:18] *** Quits: wyrd (~wyrd@gateway/tor-sasl/wyrd) (Ping timeout: 276 seconds)
+[14:07:06] *** Joins: wyrd (~wyrd@gateway/tor-sasl/wyrd)
+[14:07:51] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[14:13:57] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 240 seconds)
+[14:14:00] *** Joins: kevingal (~quassel@149.157.101.196)
+[14:19:19] *** Quits: Lord_of_Life (~Lord@user/lord-of-life/x-2819915) (Ping timeout: 256 seconds)
+[14:19:34] *** Joins: Lord_of_Life (~Lord@user/lord-of-life/x-2819915)
+[14:22:37] *** Quits: kevingal (~quassel@149.157.101.196) (Ping timeout: 240 seconds)
+[14:23:15] *** Joins: kevingal (~quassel@2001:770:c0:401:857c:20f5:bf8b:7412)
+[14:38:33] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[14:38:39] *** Quits: knobo (~knobo@cCF845BC1.dhcp.as2116.net) (Quit: Client closed)
+[14:45:23] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 256 seconds)
+[14:45:45] *** Quits: s-liao (~s-liao@101.86.96.21) (Ping timeout: 256 seconds)
+[14:48:16] *** Joins: kathe (~mayuresh@49.32.152.185)
+[14:49:34] <kathe> looks like it's either going to require extreme dedication for me to erase 24 years of ingrained key-stroke muscle memory, or i'm going to have to use "vim + vlime".
+[14:50:57] <kathe> emacs has this interesting thing called buffers which become useful when grabbing code from/to the emacs email client, emacs code editor, emacs irc client and org-mode.
+[14:53:03] <kathe> it would allow me to never take my hands off the keyboard and not have to switch between multiple onscreen windows for various applications. emacs has all of it in one place. in addition to having fantastic support for common lisp development.
+[14:53:25] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[14:59:40] *** Joins: attila_lendvai (~alendvai@2a02:ab88:3710:7c80:9130:5abf:96b3:dc0c)
+[14:59:46] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[15:00:06] <phoe> kathe: or use evil mode
+[15:00:17] <phoe> all the vim keybindings on all of the emacs
+[15:00:22] <phoe> e.g. spacemacs has an option to use it by default
+[15:00:23] *** Quits: Algernon91 (~Algernon6@2a04:cec0:10ef:dcbd:5d2d:ced5:fd7a:5dda) (Ping timeout: 268 seconds)
+[15:00:43] <kathe> phoe: great! thanks for that tip. will look into it.
+[15:01:43] *** Joins: s-liao (~s-liao@101.86.96.21)
+[15:02:12] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 250 seconds)
+[15:04:18] *** Joins: Algernon91 (~Algernon6@2a04:cec0:10ef:dcbd:5d2d:ced5:fd7a:5dda)
+[15:04:58] *** Joins: random-nick (~random-ni@87.116.167.125)
+[15:06:38] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-98.dsl.bell.ca)
+[15:09:42] <ns12> phoe: Doesn't evil conflict with paredit?
+[15:10:58] <kathe> i particularly like vlime as mentioned at https://susam.net/blog/lisp-in-vim.html
+[15:14:24] <ns12> How do BSD users get their Common Lisp libraries if they do not use Quicklisp? The ports tree for FreeBSD, NetBSD, and OpenBSD are mostly devoid of Common Lisp libraries.
+[15:14:51] *** Quits: Equill (~Equill@154.red-80-39-174.dynamicip.rima-tde.net) (Ping timeout: 256 seconds)
+[15:16:15] <kathe> ns12, i don't think there are very many common lisp developers working on any of the 'bsd' systems.
+[15:18:21] *** Joins: occ (~occ@user/occ)
+[15:18:21] *** Quits: amb007 (~a_bakic@host.26.88.68.195.rev.coltfrance.com) (Read error: Connection reset by peer)
+[15:18:52] *** Joins: amb007 (~a_bakic@155.135.22.93.rev.sfr.net)
+[15:20:39] <mgl> Is there an equivalent of sb-ext:symbol-global-value on ECL?
+[15:21:32] <phoe> ns12: it doesn't, at least for me on mostly default evil settings - but I use smartparens instead
+[15:21:42] *** Quits: s-liao (~s-liao@101.86.96.21) (Quit: Client closed)
+[15:21:58] *** Joins: s-liao (~s-liao@101.86.96.21)
+[15:24:18] <phoe> mgl: maybe #ecl will be able to answer better
+[15:24:31] <mgl> thanks
+[15:25:01] *** Joins: mjoerg (~user@user/mjoerg)
+[15:26:50] *** Quits: mjoerg (~user@user/mjoerg) (Remote host closed the connection)
+[15:28:43] *** Joins: Equill (~Equill@80.30.200.244)
+[15:29:00] *** Joins: frgo (~frgo@p548a30d7.dip0.t-ipconnect.de)
+[15:29:56] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 250 seconds)
+[15:30:44] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[15:31:43] *** Quits: amb007 (~a_bakic@155.135.22.93.rev.sfr.net) (Read error: Connection reset by peer)
+[15:32:23] *** Joins: amb007 (~a_bakic@155.135.22.93.rev.sfr.net)
+[15:34:51] <ns12> kathe: So what OS do Common Lisp programmers use? Linux? Some Linux distributions use NetBSD's ports tree (pkgsrc). There are zero Common Lisp libraries in pkgsrc.
+[15:35:08] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 250 seconds)
+[15:35:23] <phoe> linux here
+[15:35:30] <phoe> I also know about macos and windows people
+[15:36:04] *** Quits: pjb (~pjb@user/pjb) (Read error: Connection reset by peer)
+[15:38:28] <kathe> ns12, mostly linux (debian and derived) and macos.
+[15:38:58] <kathe> ns12, i think most common lisp libraries are got using quicklisp.
+[15:39:57] <ns12> Yeah, Debian has many Common Lisp libraries in its package repository.
+[15:40:07] *** Joins: pjb (~pjb@user/pjb)
+[15:40:42] <phoe> (sadly)
+[15:41:09] <phoe> they are a constant source of anguish and conflicts to anyone who has them installed and wants to use e.g. Quicklisp
+[15:44:15] <ns12> Isn't that ASDF's fault for not allowing users to arbitrarily add/remove/reorder the directories where libraries are found?
+[15:45:26] <phoe> it allows them to do so
+[15:45:41] <phoe> but people need to remember to do it, and they don't
+[15:46:48] <ns12> AFAIK, it is not possible to make ASDF ignore a single directory such as /usr/share/common-lisp/cl-asdf/
+[15:48:25] <phoe> it's possible to remove it from its central registry variable, that's for sure
+[15:48:29] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[15:49:20] <ns12> Suppose I have installed many Common Lisp libraries using APT. The libraries get installed in /usr/share/common-lisp/ (e.g. /usr/share/common-lisp/cl-lib1/, /usr/share/common-lisp/cl-lib2, etc.).
+[15:49:20] <ns12> How do I make ASDF completely ignore the existence of /usr/share/common-lisp/cl-lib1/ only?
+[15:50:14] <phoe> (let ((asdf:*central-registry* (remove #p"/usr/share/common-lisp/cl-lib1/" asdf:*central-registry* :test #'equalp))) ...) ?
+[15:50:28] <phoe> oh, wait, you have a subdirectory in there
+[15:50:42] <ns12> Isn't the asdf:*central-registry* method obsolete?
+[15:51:13] <phoe> I have no idea how to exclude it the "proper" way, I'
+[15:51:25] <phoe> I'd simply clone cl-lib1 into my local-projects and have this one provide cl-lib1.asd
+[15:51:32] <ns12> asdf:*central-registry* is NIL by default, so there is really nothing to remove from it.
+[15:52:15] <ns12> "I'd simply clone cl-lib1 into my local-projects and have this one provide cl-lib1.asd" - Yes, but then ASDF will complain/warn that there are two different versions of the same library ...
+[15:52:32] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 240 seconds)
+[15:53:17] <phoe> will it? AFAIK it'll stop on the first found ASD file
+[15:53:25] <phoe> but then again, I might very likely be wrong
+[15:53:29] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[15:53:42] <phoe> I do not have a lot of practical ASDF experience, I use it for simple cases most of the time
+[15:53:45] <ns12> "I have no idea how to exclude it the "proper" way" - I actually have no idea whether or not it is possible. I'll read the docs again (for the fourth time...).
+[15:55:19] <ns12> Me too, I use it for simple cases most of the time. I just have not figured out how to make ASDF ignore one single library at a specified filepath.
+[15:59:36] *** Quits: amb007 (~a_bakic@155.135.22.93.rev.sfr.net) (Read error: Connection reset by peer)
+[16:00:25] *** Joins: amb007 (~a_bakic@host.26.88.68.195.rev.coltfrance.com)
+[16:01:32] *** Joins: ec (~ec@gateway/tor-sasl/ec)
+[16:02:40] *** Quits: amb007 (~a_bakic@host.26.88.68.195.rev.coltfrance.com) (Read error: Connection reset by peer)
+[16:03:19] *** Joins: amb007 (~a_bakic@host.26.88.68.195.rev.coltfrance.com)
+[16:03:23] *** Quits: s-liao (~s-liao@101.86.96.21) (Ping timeout: 256 seconds)
+[16:05:01] <_death> maybe something like putting (:source-registry (:exclude "cl-lib1")) in ~/.config/common-lisp/source-registry.conf (I've not tried it.. check the manual for more info)
+[16:07:11] <_death> add seasoning and :inherit-configuration
+[16:11:37] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 240 seconds)
+[16:11:55] *** Quits: parjanya (~esb@2804:14c:1ad:9351:1402:1741:3531:7449) (Ping timeout: 268 seconds)
+[16:12:43] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[16:13:45] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[16:17:11] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 256 seconds)
+[16:26:41] <phoe> minion: memo for marcoxa: a CDR idea would be to make DESCRIBE for symbols configurable, so e.g. if I create some custom namespace mapping from symbols to my custom objects, I can have this reflected in (describe 'foo); the portable DESCRIBE-OBJECT mechanism doesn't allow for that.
+[16:26:42] <minion> Remembered. I'll tell marcoxa when he/she/it next speaks.
+[16:30:57] *** Quits: mgl (~mgl@cpc87455-finc19-2-0-cust234.4-2.cable.virginm.net) (Quit: Client closed)
+[16:32:50] <_death> maybe trying to use describe for that is what's wrong
+[16:33:42] <_death> also note that any arbitrary object can serve as a name for something
+[16:34:20] <phoe> _death: I'm looking at LISP-NAMESPACE and the horrible hack it uses for actually adding things to DESCRIBE output
+[16:34:45] <phoe> and the worst thing is that it seems to work, and that LISP-NAMESPACE is the 51st most popular Quicklisp system
+[16:36:58] <_death> just because someone wrote something doesn't mean it's a good idea?.. and just because it's been downloaded many times doesn't mean it's popular (= used by many)
+[16:38:28] <phoe> agreed, and agreed
+[16:39:50] <beach> Perhaps it is best to supply something entirely different both for DESCRIBE and DOCUMENTATION.  I mean, no other module depends on them, so we might as well design a new mechanism for them.
+[16:40:27] <beach> That way, we could plan for internationalization, for instance, but also for something other than raw text for DOCUMENTATION.
+[16:41:04] <phoe> yes, but that won't work with CL:DESCRIBE, which is *the* object description facility
+[16:41:08] <phoe> same with CL:DOCUMENTATION
+[16:41:32] <beach> Yes, that would be the point.  Abandon those broken facilities.
+[16:41:55] <phoe> they ain't broken, they just aren't extensible
+[16:42:01] <phoe> think CL streams without Gray streams
+[16:42:13] <beach> Whatever.
+[16:42:14] <phoe> or CL:READ without Eclector :D
+[16:42:35] <phoe> I assume we could use a client technique to pass additional arguments to DESCRIBE or DOCUMENTATION, just like Eclector does with READ
+[16:42:40] <Shinmera> Colleen: look up multilang-documentation
+[16:42:41] <Colleen> About multilang-documentation https://shinmera.github.io/multilang-documentation
+[16:42:50] <phoe> Shinmera: TIL, thank you
+[16:43:55] <beach> Shinmera: Great!  Too bad the language object is not that of acclimation.
+[16:44:13] <Shinmera> Granted, I never had the time to actually make use of it. But I hoped it would find some use when the Radiance documentation was translated into Japanese. Sadly it never got beyond the primary documentation file (so no docstrings were localised)
+[16:44:30] <phoe> (defclass xkcd-language (acclimation:language multilang-documentation:language) ...)
+[16:44:45] <beach> Anyway, I was also thinking of structured documentation that can contain links, and that can be presented in different ways.
+[16:44:58] <beach> But I'll be quiet now.
+[16:45:40] <Shinmera> I think someone here used my documentation-utils package with an extension of their own to provide structured docstrings that are then just compiled down to a plaintext version for backwards compat.
+[16:47:27] <_death> maybe some semantic network package that could allow interactive exploration
+[16:48:17] * Shinmera has to return to gamedev
+[16:48:32] *** Quits: Major_Biscuit (~MajorBisc@c-001-019-027.client.tudelft.eduvpn.nl) (Ping timeout: 240 seconds)
+[16:50:57] *** Quits: vats (~vats@180.149.226.242) (Ping timeout: 240 seconds)
+[16:51:53] *** Quits: kathe (~mayuresh@49.32.152.185) (Quit: leaving)
+[16:55:11] <phoe> ...the elephant in the room that is here is that none of the implementations seem to define an :AFTER (SYMBOL T) method on DESCRIBE-OBJECT
+[16:55:15] *** Joins: Major_Biscuit (~MajorBisc@86-88-79-148.fixed.kpn.net)
+[16:56:32] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 240 seconds)
+[16:56:35] *** Quits: artchad (~user@public-gprs225103.centertel.pl) (Read error: Connection reset by peer)
+[16:56:55] *** Quits: occ (~occ@user/occ) (Remote host closed the connection)
+[17:03:47] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[17:05:03] <_death> so there's a semantic network project called sneps.. sneps3 is from 2012 and seems to use ltk/common-graphics or a java gui.. it also has allegro-specific code for loading (no asdf), wonder how much effort would be needed to get it to work portably.. and it seems they decided to rewrite in clojure :o
+[17:06:21] <_death> anyway, it's a pretty small project (10kloc incl. ltk bundled) so.. not much effort
+[17:08:07] *** Quits: mepy (~mepy@62.98.26.19) (Remote host closed the connection)
+[17:10:27] *** Quits: pieguy128 (~pieguy128@bras-base-mtrlpq5031w-grc-52-65-93-194-105.dsl.bell.ca) (Ping timeout: 256 seconds)
+[17:11:38] <_death> with some gamedev toolkit (trial) maybe an interface like http://www.wikiwebapp.com/ can be written for introspecting the lisp image
+[17:12:37] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 240 seconds)
+[17:12:38] <Shinmera> I will happily accept contributors to Trial/Alloy :)
+[17:13:44] *** Joins: morganw (~user@80.225.24.132)
+[17:13:55] *** Joins: pieguy128 (~pieguy128@bas1-montreal02-65-92-163-251.dsl.bell.ca)
+[17:14:02] <_death> ah yes, I probably meant alloy
+[17:14:18] <Shinmera> Trial is the game engine, Alloy the UI toolkit.
+[17:15:58] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[17:19:13] <_death> maybe some weekend ;)
+[17:26:46] <_death> I did just try some alloy examples, and seems to mostly work.. menu-bar items appear to have wrong widths (maybe has something to do with stumpwm?)
+[17:26:56] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 250 seconds)
+[17:27:43] <Shinmera> fwiw we just released a jam game written using Trial that's fully open source: https://github.com/Shinmera/vpetjam with binaries / screenshots here: https://shinmera.itch.io/vegetablemash
+[17:29:03] <Shinmera> _death: The glfw backend uses the fond text renderer, which is abandoned. The maintained backend is the msdf renderer, but that one requires precompiling texture atlases for fonts using an external tool. |3b| has been working on the pure-lisp version of that for some time, and hopefully it'll be ready for use this year so I can switch to that and purge the fond one.
+[17:32:55] <_death> I see
+[17:37:32] *** Quits: pieguy128 (~pieguy128@bas1-montreal02-65-92-163-251.dsl.bell.ca) (Ping timeout: 240 seconds)
+[17:37:55] <morganw> Could I ask, was there ever a working prototype or theory about how to run a Common Lisp game on Android or iOS?
+[17:38:49] <Shinmera> Iirc there are cl games running on android.
+[17:38:57] <Shinmera> stuff published on the store even.
+[17:40:33] <morganw> Would those likely be using ECL and then wrapping the native code?
+[17:41:12] <Shinmera> yes
+[17:41:39] *** Joins: Bike (~Bike@71.69.170.70)
+[17:43:28] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[17:45:54] *** Parts: pranavats (3fba1d1b34@2a00:c70:1:178:170:40:189:1) (Error from remote client)
+[17:48:49] *** Joins: pieguy128 (~pieguy128@bas8-montreal02-65-93-195-202.dsl.bell.ca)
+[17:48:54] *** Quits: wyrd (~wyrd@gateway/tor-sasl/wyrd) (Ping timeout: 276 seconds)
+[17:50:32] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 240 seconds)
+[17:52:01] *** Joins: nij- (~jin@2001-48F8-9021-806-0-0-0-6F8B-dynamic.midco.net)
+[17:53:30] *** Quits: taiju (~user@240b:253:ec40:2400:b7d1:436e:2d61:e925) (Remote host closed the connection)
+[17:54:37] *** Joins: foxfromabyss (~foxfromab@dynamic-077-183-119-085.77.183.pool.telefonica.de)
+[17:55:08] *** Joins: wyrd (~wyrd@gateway/tor-sasl/wyrd)
+[17:55:30] <foxfromabyss> Is there a better way of searching for a library, than querying this? https://www.quicklisp.org/beta/releases.html
+[17:55:53] <foxfromabyss> the search takes quite a while for me and fails
+[17:55:53] <Shinmera> ql:system-apropos and https://quickdocs.org
+[17:56:39] <foxfromabyss> thanks!
+[17:57:13] <phoe> is there anything in the spec that guarantees that (let ((x 1) (x 2)) x) will signal an error?
+[17:57:48] <loke[m]> Does it signal an error? 😃
+[17:58:26] <phoe> it does, on my implementation
+[17:58:40] <phoe> but the question is whether it's mandated anywhere or if it results in UB
+[17:58:45] <nij-> It does too, on my sbcl.
+[17:59:01] <phoe> ha! it does not signal an error on CCL and instead returns 2
+[17:59:18] <phoe> CLHS LET does not mention anything about this
+[17:59:23] <_death> it's undefined behavior iirc
+[17:59:27] <foxfromabyss> Is it also possible to find the source code for a quicklisp library? specifically looking for a readme or smth similar
+[17:59:42] <Shinmera> foxfromabyss: ql downloads the source, so
+[17:59:45] <phoe> foxfromabyss: https://github.com/quicklisp/quicklisp-projects/tree/master/projects/zpb-ttf
+[17:59:54] <phoe> replace the last part of the URI with your system name
+[18:00:00] <foxfromabyss> yes but .. i am *searching* for a library and not sure if the one i found is the one I am looking for
+[18:00:03] <foxfromabyss> oh I see, thanks
+[18:00:15] <Shinmera> so just quickload it and M-. to it :)
+[18:00:40] <foxfromabyss> pfft :D
+[18:00:58] <Shinmera> it's not a joke
+[18:03:58] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[18:08:23] *** Joins: azimut (~azimut@gateway/tor-sasl/azimut)
+[18:11:01] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 240 seconds)
+[18:11:10] *** Joins: pranavats (3fba1d1b34@2a00:c70:1:178:170:40:189:1)
+[18:13:53] *** Joins: fitzsim (~user@69-165-165-189.dsl.teksavvy.com)
+[18:13:57] <foxfromabyss> i guessed as much, just too lazy to do it, hence the pfft :P
+[18:16:18] *** Joins: occ (~occ@user/occ)
+[18:18:07] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[18:21:24] *** Joins: parjanya (~esb@2804:14c:1ad:9351:1402:1741:3531:7449)
+[18:22:19] *** Joins: epolanski (uid312403@id-312403.helmsley.irccloud.com)
+[18:23:04] <epolanski> hey all, pretty new to common lisp. I wanted to ask if there's some library to write html front ends in pure common lisp. I don't really need much js interop I can implement all I need on my own
+[18:23:14] <phoe> epolanski: CL-WHO comes to mind
+[18:23:52] <Shinmera> I use clip
+[18:24:02] <Shinmera> for pretty much everything, both static and dynamic.
+[18:25:25] <Shinmera> I may be biased for the usual reasons though
+[18:26:49] <epolanski> interesting I want to give it a spin, I have recently released a pet project and since I have already all E2E tests setup I thought it would be nice to create an experimental branch and TDD the same application in a different language, possibly common lisp
+[18:27:42] <Shinmera> sounds like a plan :)
+[18:28:55] *** Joins: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4)
+[18:38:31] <Josh_2> Hello
+[18:39:01] <Josh_2> I use spinneret for generating HTML
+[18:41:22] <pve> epolanski: there's also CL-EMB, which has a bit of a JSP vibe
+[18:41:33] <Shinmera> There's a *ton* of HTML generators
+[18:41:45] <Shinmera> not sure if there's as many as there are json parsers, but it has to be close.
+[18:45:01] <semz> it's just so simple to make one
+[18:47:28] *** Joins: Inline (~Inline@ip-037-201-240-204.um10.pools.vodafone-ip.de)
+[18:48:38] <epolanski> ok but generating templates is one of the issues, what about interacting with dom APIs?
+[18:49:57] <epolanski> e.g. making SPAs in scala, elm, haskell, ocaml is possible, wonder if that's true for common lisp as well
+[18:52:00] <Shinmera> what's an "spa"
+[18:52:24] <epolanski> can I use something like https://github.com/cxxxr/valtan to implement some bindings to JS apis?
+[18:52:53] <epolanski> single page application
+[18:53:17] <Shinmera> You can use stuff like Parenscript to pretend like you're writing CL which is then spit out as JS
+[18:53:32] <Shinmera> But all of these approaches are severely limited and only expose a subset of CL
+[18:54:07] <Shinmera> There is currently no full implementation that can compile to JS, and it is unlikely it would be worth it anyway, due to the runtime size imposed by the CL standard.
+[18:54:31] *** Quits: foxfromabyss (~foxfromab@dynamic-077-183-119-085.77.183.pool.telefonica.de) (Ping timeout: 256 seconds)
+[18:54:46] <epolanski> is that because many cl apis are implemented in C?
+[18:55:09] <Shinmera> Huh?
+[18:55:16] <Shinmera> what does that even mean
+[18:55:49] <_death> may want to check out https://github.com/rabbibotton/clog
+[18:56:17] <Shinmera> Common Lisp is a big standard, with a lot of stuff that is needed to make an implementation compliant. For instance, the entire compiler needs to be available at runtime. By necessity this makes the runtime large.
+[18:56:20] <epolanski> I'm new to CL but I've read that many CL functions are not implemented in CL itself but, e.g. in C
+[18:56:28] <Shinmera> where did you read that
+[18:56:37] <Shinmera> because it's bonkers
+[18:56:58] <beach> I too would like to know the author of that writing.
+[18:57:36] <epolanski> I've read that in Land of Lisp book
+[18:57:53] <beach> I have that book.  Can you give a page number?
+[18:58:38] <beach> It would be another item in my list of points where that book is bad.
+[18:58:57] <ck_> Barsky uses and recommends clisp in his books, right?
+[18:59:06] <ck_> what's number one on that list?
+[18:59:13] <Shinmera> epolanski: To preempt things, how functions are implemented is an implementation detail. However, all implementations that are in serious use implement most of their library in CL. C is only really used to interface with the operating system or to implement very hairy things like the GC.
+[18:59:14] <epolanski> I'm not ultra fond of the book to be honest, not as much as I was in SICP when I've first read it
+[18:59:53] <epolanski> found many enthusiastic comments on hacker news so I started reading it
+[18:59:59] <beach> http://metamodular.com/Books/land-of-lisp.html is the beginning of the list.
+[19:01:14] <beach> I recommend Practical Common Lisp instead.
+[19:01:23] <beach> minion: Please tell epolanski about PCL.
+[19:01:23] <minion> epolanski: please look at PCL: pcl-book: "Practical Common Lisp", an introduction to Common Lisp by Peter Seibel, available at http://www.gigamonkeys.com/book/ and in dead-tree form from Apress (as of 11 April 2005).
+[19:01:48] <epolanski> thanks, I will add it to the list 💪
+[19:01:50] <beach> epolanski: But I would still like to know the page number of that.
+[19:02:09] <beach> ... of that statement that many CL APIs are implemented in C.
+[19:02:13] <epolanski> I will check it later as I read it on a different device
+[19:02:21] <beach> No rush.
+[19:02:57] <epolanski> Shinmera: then I guess that it's similar to how JS node makes syscalls implemented in a different language.
+[19:03:22] <epolanski> but it's only a detail of the environment rather than the language itself
+[19:03:34] <beach> epolanski: And you can remove Land of Lisp from your list.  It contains so many errors that it is embarrassing, and it is likely to give the reader many incorrect ideas.
+[19:04:19] <epolanski> thank you, never ever gonna trust hacker news on lisp again
+[19:04:55] <aeth> iirc, Land of Lisp has a whole chapter that only works in CLISP, which hasn't had a stable release in over 10 years (July 2010)
+[19:04:56] <Shinmera> Snide comment: "don't trust hacker news" seems like a generally applicable recommendation :)
+[19:05:22] <aeth> and imo CLISP was never that good of an implementation unless you needed low RAM (because it's bytecode interpreted, not native compiled)
+[19:06:41] <pve> Clearly there should exist a "html templating library construction kit", that makes the user answer questions like "Name of library?", "Use CLOS? Y/N", "Single or multiple packages?", "Coding style? [80's, 90's, ...]" etc and then output the library. This way people could get the feeling of rolling their own, without wasting a bunch of time ;)
+[19:07:12] <Xach> There are a few users who post good/interesting Lisp info on HN. I follow lispm, mikelevins, reikonomusha and a few others directly via https://hnrss.github.io rather than going to the site.
+[19:08:06] <aeth> HN was always about startups... Lisp and programming-in-general content has gone down and complaining-about-housing-costs-in-SF has gone up as the bull market rallies for over a decade now.
+[19:08:37] <ck_> n-gate.com seems to be on hiatus unfortunately
+[19:10:37] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Ping timeout: 240 seconds)
+[19:14:18] *** Joins: treflip (~user@user/treflip)
+[19:14:33] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 256 seconds)
+[19:17:07] <tyson2> I got very frustrated trying to figure out Land of Lisp.  Now restarting with PCL
+[19:17:26] <tyson2> indeed LoL has some very confusing code and quite a few errors
+[19:19:10] *** Quits: nworb (~zbrownm]@2001:470:69fc:105::1:33db) (Quit: Client limit exceeded: 20000)
+[19:19:45] <_death> I found land of lisp entertaining, but I was not a newbie at the time, and I wouldn't recommend it to newbies
+[19:20:01] <aeth> I think it needs a new edition
+[19:20:02] *** Joins: nworb (~zbrownm]@2001:470:69fc:105::1:33db)
+[19:20:16] <aeth> it could probably be fixed
+[19:20:54] <aeth> Iirc, I have an ebook PDF of it... from a Humble Book Bundle ages ago?
+[19:22:27] *** Quits: Bike (~Bike@71.69.170.70) (Quit: Connection closed)
+[19:23:21] <tyson2> aeth: I found the author's lisp style to be confusing
+[19:23:34] <tyson2> seemed hackerish to me
+[19:24:12] <tyson2> mind you there was some interesting ideas in the book
+[19:24:33] <aeth> tyson2: well, my impression at the time, and it has been years, is that it seemed oudated.
+[19:25:04] <tyson2> anyway I've committed to PCL, just need to block out regular timeslots for it
+[19:26:24] <aeth> my impression of PCL is that it doesn't seem... linear? I definitely read the chapters out of order as needed
+[19:27:36] <aeth> definitely more useful than LoL
+[19:27:48] <tyson2> I decided not to try using PCL on windows, will install it in WSL (probably using Docker image), and develop from emacs on windows, which I'm comfortable with
+[19:27:50] *** Quits: kevingal (~quassel@2001:770:c0:401:857c:20f5:bf8b:7412) (Ping timeout: 250 seconds)
+[19:28:33] <tyson2> sbcl I mean
+[19:33:53] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[19:35:59] *** Joins: kevingal (~quassel@149.157.101.196)
+[19:41:15] <etimmons> qhong: Since you referenced the discussion a few days ago, I'm guessing you're also interested in loading multiple versions of the same system into the same image? Perhaps even as part of the dependency tree of a single project?
+[19:41:27] <etimmons> If so, I think your rename-package hack will also likely make generic functions way less useful.
+[19:41:47] *** Joins: Bike (~Bike@204.84.244.12)
+[19:41:50] <etimmons> Let's assume there's a system (and package) FOO. It defines the class BAR and has a generic function BAZ with a method specialized on BAR.
+[19:42:05] <etimmons> Then I have a system qux that somehow pulls in two different versions of FOO in its dependency tree. Let's say they're renamed to FOO@1 and FOO@2.
+[19:42:16] <etimmons> Under the current practice, it'd be completely fine to share instances of BAR across different branches of the dependency tree.
+[19:42:32] <etimmons> But if that happens with the rename-package hack, you'll likely end up calling FOO@2:BAZ on a FOO@1:BAR instance. No such method exists for that: boom.
+[19:43:01] <etimmons> nij-: you may be interested in that ^ as well
+[19:43:52] *** Joins: mgl (~mgl@cpc87455-finc19-2-0-cust234.4-2.cable.virginm.net)
+[19:44:17] <beach> Another reason for first-class global environments.
+[19:45:08] <etimmons> beach: I really need to read your paper on that. It's very interesting to me, but so far I've been inferring capabilities based on what other people are saying
+[19:45:23] <etimmons> Need to go directly to the source myself
+[19:45:41] <beach> etimmons: I don't think you have to do that.  It is pretty trivial, really.
+[19:46:10] <beach> The only invention is the cell thing to make function calls as fast as in typical Common Lisp implementations.
+[19:46:17] <qhong> etimmons: I'm still thinking about what reproducible mean under CL context. I think the problem stems from the absence of distinction between "software" and "config" in Lisp system. Different version of "software" should be definitely isolated, but maybe not so config. We may heuristically count all special variables and generic functions as configs.
+[19:46:32] <qhong> beach: I don't think FCGE can help with the above generic function problem
+[19:46:35] <beach> etimmons: But you can obviously read it if you like.
+[19:46:44] <etimmons> I guess my biggest question is how can different environments interact (if at all). That's not something I've been able to glean from listening to others
+[19:46:57] *** Quits: scymtym (~user@ip-94-114-248-79.unity-media.net) (Ping timeout: 240 seconds)
+[19:47:02] <beach> It is also not described in the paper.
+[19:47:38] <phoe> EdLangley[m]: the main issue with GENERIC-{FLET,LABELS} is the special operator CL:FUNCTION - we want it to return the GF itself, rather than some intermediate function that wraps over it (as would be the case with FBIND)
+[19:47:41] <beach> But I think I may have a video on that.  For the online Lisp meeting.
+[19:47:46] <phoe> beach: yes please
+[19:48:00] <beach> No, I mean, I think I already gave it.
+[19:48:18] <phoe> oh wait! yes, I remember
+[19:48:20] <phoe> let me find it
+[19:48:41] <etimmons> looks like: https://youtu.be/gE6SsLAZ4Mo ?
+[19:48:42] <beach> Number 3
+[19:48:50] <phoe> yes, thank you
+[19:48:52] <_death> phoe: btw, I missed the clog talk.. got a link?
+[19:48:55] <etimmons> nice, I'll watch that
+[19:49:19] <phoe> _death: https://www.reddit.com/r/lisp/comments/s1itqi/the_common_lisp_omnificent_gui_online_lisp/
+[19:49:24] <phoe> also see the comment for a follow-up video
+[19:49:31] <tyson2> would also like to see the Clog talk video
+[19:49:39] <phoe> tyson2: https://www.reddit.com/r/lisp/comments/s1itqi/the_common_lisp_omnificent_gui_online_lisp/
+[19:49:42] <phoe> also see the comment for a follow-up video
+[19:49:50] <tyson2> thanks phoe
+[19:50:59] <_death> thanks
+[19:52:21] <phoe> EdLangley[m]: it seems that a real GENERIC-FBIND trying to bind a function named FOO would need to bind a generic function object as some lexical variable #:FOO, then walk the body form and rewrite it in order to replace (FOO ...) calls with (FUNCALL #:FOO ...) and value occurrences of #'FOO with just #:FOO
+[19:52:49] <phoe> and that's ugly but necessary if we want CL:FUNCTION to work correctly in that context
+[19:53:44] <phoe> either that, or get an implementation-defined FBIND, or use some kind of DEFGENERIC-with-an-anonymous-name trickeries like that post mentioned
+[20:04:45] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Ping timeout: 276 seconds)
+[20:08:49] *** Parts: nij- (~jin@2001-48F8-9021-806-0-0-0-6F8B-dynamic.midco.net) (#commonlisp)
+[20:11:49] <Bike> i wonder if an fbind could be useful for other things. if not generic functions, some other kinds of funcallable instances.
+[20:14:23] <phoe> I guess it could, sure
+[20:14:53] <phoe> if you have a working implementation-defined FBIND then a GENERIC-FLET becomes easy
+[20:15:29] <phoe> but there isn't such a thing, AFAIK, and won't be because FBIND requires evaluation before a function is bound
+[20:15:53] <phoe> the best there is is SERAPEUM:FBIND which does macrology and binding intermediate functions to work around this
+[20:16:07] *** Quits: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-98.dsl.bell.ca) (Remote host closed the connection)
+[20:16:20] <Bike> "won't be"? i mean, i don't see any reason it couldn't work as a language extension
+[20:17:14] <phoe> OK, let me clarify: "won't be" as in "I have no idea if any implementer actually considers it worthy enough to implement it as a true special form"
+[20:17:28] <phoe> and it needs to be a special form because it needs to interact with CL:FUNCTION
+[20:17:43] <phoe> ...or it needs to walk and rewrite bodies as I mentioned above
+[20:20:19] <Bike> oh, yeah sure.
+[20:20:39] <Bike> guess it could be slightly complicated since now #'foo can mean something other than a known function or global lookup. probably not a huge deal though.
+[20:21:29] <phoe> the whole point of it being a special form is it interacting with CL:FUNCTION the same way that CL:FLET and CL:LABELS do
+[20:21:57] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 240 seconds)
+[20:21:58] <phoe> how exactly its semantics are implemented is a bit more complex I guess, because you need to grab a function as a value and stuff it back into the function namespace
+[20:22:26] <phoe> and unlike with FLET/LABELS you have no idea what kind of function object it is, you don't know its lambda list or type
+[20:22:31] <phoe> (and unlike with global lookups)
+[20:22:51] <phoe> I guess that can complicate a FBIND implementation, unless the programmer provides appropriate FTYPE declarations
+[20:23:43] <phoe> like, (defun foo (fn) (fbind ((fn fn)) ...)) - inside the body we have no idea what #'FN is like or how to optimize it
+[20:24:07] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[20:26:12] <Bike> yeah, but that's also true if you just write #'fn to refer to a global function.
+[20:26:21] <phoe> yes
+[20:26:48] <phoe> like, a naïve version would be to rewrite FBIND into LET, FUNCTION of FBIND'd functions into variable references, and calls
+[20:27:14] <phoe> I can probably grab a code walker and make a portable PoC of sorts
+[20:27:34] *** Joins: cage (~cage@dynamic-adsl-84-221-50-16.clienti.tiscali.it)
+[20:27:41] <phoe> like, if CL-CONT can do that then so can we
+[20:29:05] <Bike> oh i'm just thinking of how to do it as an implementor. if i wanted to try a userspace thing i'd probably just shadow cl:function and #' and call it good
+[20:29:34] <phoe> I'd call it sorta ugly and actually rewrite the body instead, so I can keep the original cl:function and #'
+[20:32:15] <Bike> i figure it would be fine since if you're using fbind you're already doing an extension thing, and also it's lexical, so the fbind user is also the one using the shadow #'
+[20:32:37] <Bike> fbind would toss some information into symbol-macrolet, which the function macro would then use, and if there wasn't any fbind to the name it would just expand into cl:function
+[20:32:45] *** Quits: kevingal (~quassel@149.157.101.196) (Ping timeout: 256 seconds)
+[20:32:48] <phoe> yes
+[20:33:18] <phoe> I just want to avoid shadowing CL:FUNCTION for user convenience
+[20:33:50] *** Joins: kevingal (~quassel@2001:770:c0:401:2925:bac0:faad:c07c)
+[20:38:41] *** Joins: jealousmonk (~user@2804:431:e7c5:c29d:f611:a6e4:135a:8b29)
+[20:39:58] *** Quits: [smlckz] (3329f5a75b@user/smlckz) (Quit: Gateway shutdown)
+[20:39:58] *** Quits: splatt990 (4b25e29db1@198.108.77.17) (Quit: Gateway shutdown)
+[20:40:11] *** Quits: amb007 (~a_bakic@host.26.88.68.195.rev.coltfrance.com) (Read error: Connection reset by peer)
+[20:41:15] *** Quits: Cymew (~ante@c-0c87225c.023-1144-7570702.bbcust.telenor.se) (Ping timeout: 256 seconds)
+[20:41:22] *** Joins: jeosol (~jeosol@user/jeosol)
+[20:41:37] *** Joins: amb007 (~a_bakic@host.26.88.68.195.rev.coltfrance.com)
+[20:41:58] *** Joins: Inline__ (~Inline@ip-037-201-240-204.um10.pools.vodafone-ip.de)
+[20:42:23] *** Quits: Inline (~Inline@ip-037-201-240-204.um10.pools.vodafone-ip.de) (Ping timeout: 256 seconds)
+[20:45:43] *** Joins: Oladon (~olad@98.43.81.226)
+[20:54:41] *** Joins: ec (~ec@gateway/tor-sasl/ec)
+[20:55:57] *** Joins: scymtym (~user@ip-94-114-248-79.unity-media.net)
+[21:00:44] * phoe has an oh-shit moment when he realizes that agnostic-lizard is GPLv3
+[21:01:19] *** Joins: artchad (~user@public-gprs225103.centertel.pl)
+[21:02:22] <beach> What's the problem with that?
+[21:02:53] <phoe> I supplied it as a dependency for a MIT library, and that's not a good thing licensing-wise
+[21:03:15] <beach> I see.
+[21:03:54] <qhong> Anyone who understand what GPL means for CL?
+[21:05:55] <pl> qhong: people have issues understanding what GPL means for /C/, Lisp is probably exposing it even more :/
+[21:06:44] <phoe> I guess it's same as elsewhere, you need to share source code for everything in your Lisp image when you deliver binaries containing GPL code, plus anti-tivoization clauses in case of GPLv3
+[21:07:20] <phoe> figuring out "what's code and what's data" is left as an exercise to the reader
+[21:08:14] *** Joins: Inline (~Inline@ip-037-201-240-204.um10.pools.vodafone-ip.de)
+[21:08:22] *** Quits: Inline__ (~Inline@ip-037-201-240-204.um10.pools.vodafone-ip.de) (Ping timeout: 250 seconds)
+[21:08:52] <qhong> phoe: so lispworks is screwed?
+[21:09:41] <Bike> why would lispworks be screwed
+[21:09:42] <phoe> I have no idea :D it probably uses the same mechanism that allows you to deliver GPLv3 code using proprietary compilers, e.g. MSVC or Intel for C/C++
+[21:09:45] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Ping timeout: 276 seconds)
+[21:10:16] *** Joins: foxfromabyss (~foxfromab@dynamic-077-183-119-085.77.183.pool.telefonica.de)
+[21:10:31] <qhong> phoe: but lispworks will live inside the same image/address space…
+[21:10:37] <phoe> yes, the main exercise here is that there's no good way to tell apart the code and the platform in image-based environments
+[21:11:00] <pl> phoe: scope of what's covered by GPL or not is apparently non-trivial
+[21:11:10] <phoe> yes, and this is one example
+[21:12:11] <foxfromabyss> Hello :)
+[21:12:12] <foxfromabyss> I am trying to use https://github.com/fukamachi/websocket-driver, specifically the client part
+[21:12:12] <foxfromabyss> But it fails with HTTP 400 being unexpected, regardless whether I target a remote, known-to-work, server, or the local server, done like the example in the repo suggests
+[21:12:13] <foxfromabyss> Any advise on how to troubleshoot this?
+[21:12:37] <foxfromabyss> *advice
+[21:14:16] <random-nick> I think GPL has a section about system libraries, which is what allows you to compile with proprietary C compilers but I don't know if something like the entirety of lispworks counts as a system library for the GPL
+[21:14:50] <phoe> well, you can't run Lisp code without a Lisp implementation, so
+[21:15:16] <dbotton> phoe I added a link in a comment on the lisp meeting to a small follow up video with a fully fleshed out builder including events, etc https://www.reddit.com/r/lisp/comments/sd9wf1/clog_builder_cl_web_3_awesome_lang_awesome_tool/
+[21:15:24] <random-nick> I think it's more about the system libraries being interchangeable with free ones
+[21:15:28] <random-nick> or something like that
+[21:15:35] <phoe> dbotton: thnaks!
+[21:15:45] <random-nick> which might hold for CL itself
+[21:15:53] <phoe> random-nick: well, you can grab SBCL instead of LispWorks and deliver with that I guess
+[21:15:53] <random-nick> but lispworks also has a bunch of extensions
+[21:15:56] *** Quits: Inline (~Inline@ip-037-201-240-204.um10.pools.vodafone-ip.de) (Ping timeout: 268 seconds)
+[21:16:12] <phoe> and you can grab the free implementations of these extensions too :D or write them if they don't exist
+[21:16:25] *** Joins: masinter (~masinter@c-73-158-116-21.hsd1.ca.comcast.net)
+[21:23:01] <EdLangley[m]> Why wouldn't (let ((#1=#:foo (make-funcallable))) (flet ((foo (&rest args) (apply #1# args))) ....)) work?
+[21:28:09] *** Joins: Algernon666 (~Algernon6@2a04:cec0:10fe:c92d:5d2d:ced5:fd7a:5dda)
+[21:29:58] *** Quits: Jing (~hedgehog@240e:390:7c53:a7e1:491:83dc:6241:13db) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[21:30:38] *** Joins: tyson2 (~user@bras-base-toroon0624w-grc-17-50-101-91-98.dsl.bell.ca)
+[21:31:58] *** Quits: Algernon91 (~Algernon6@2a04:cec0:10ef:dcbd:5d2d:ced5:fd7a:5dda) (Ping timeout: 268 seconds)
+[21:33:33] *** Quits: Algernon666 (~Algernon6@2a04:cec0:10fe:c92d:5d2d:ced5:fd7a:5dda) (Read error: Connection reset by peer)
+[21:34:59] *** Quits: treflip (~user@user/treflip) (Remote host closed the connection)
+[21:37:42] <Bike> EdLangley[m]: what i'm envisioning here is situations in which you want to do something with the instance other than call it.
+[21:37:47] *** Joins: ec (~ec@gateway/tor-sasl/ec)
+[21:38:01] <Bike> in which case you can't then work with #'foo, which is just a mundane function
+[21:39:39] *** Quits: wyrd (~wyrd@gateway/tor-sasl/wyrd) (Ping timeout: 276 seconds)
+[21:39:52] <White_Flame> dbotton: your URL included "web_3" and I was about to rail against that phrase ;)
+[21:40:31] <White_Flame> thankfully, that was not the case
+[21:40:45] <EdLangley[m]> Bike: good point
+[21:41:41] <Bike> that said, while i've probably defined more classes of functional instances than 99.9% of lispers, i've never really needed to lexically bind them.
+[21:44:02] <Bike> partly that's probably because i'm using them within an implementation, though. people writing software software probably have different patterns
+[21:46:14] <fe[nl]ix> phoe: alexandria:unwind-protect-case implements the technique in your blog post
+[21:47:04] *** Quits: MatrixTravelerbo (~voyagert2@2001:470:69fc:105::22) (K-Lined)
+[21:49:35] <fe[nl]ix> https://gist.github.com/sionescu/f4e768fd1fbce11700e5f1b22be50a66
+[21:52:07] <dbotton> White_Flame lol well nothing has changed on the web in a very long time, including people trying to hi jack names with version numbers
+[21:52:43] <dbotton> The fact that CL is so stable is one of its greatest appeals
+[21:53:14] *** Quits: Bike (~Bike@204.84.244.12) (Quit: Connection closed)
+[21:53:19] *** Joins: Inline (~Inline@ip-037-201-241-209.um10.pools.vodafone-ip.de)
+[21:54:00] *** Quits: Oladon (~olad@98.43.81.226) (Quit: Leaving.)
+[22:01:01] <phoe> fe[nl]ix: !!!
+[22:01:04] * phoe updates the post
+[22:01:41] *** Joins: Algernon666 (~Algernon6@2a01:e0a:511:6ce0:a078:3cdd:386b:cd9b)
+[22:02:20] <Shinmera> If CL is so stable how come my game crashes all the damn time
+[22:02:29] <Shinmera> Checkmate, atheists
+[22:04:48] <Catie> Gottem
+[22:05:04] <phoe> fe[nl]ix: updated, thank you!
+[22:05:05] *** Joins: lisp123 (~lisp123@5.30.23.247)
+[22:07:24] *** Quits: amb007 (~a_bakic@host.26.88.68.195.rev.coltfrance.com) (Read error: Connection reset by peer)
+[22:07:42] *** Joins: amb007 (~a_bakic@host.26.88.68.195.rev.coltfrance.com)
+[22:08:15] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Ping timeout: 276 seconds)
+[22:09:28] *** Quits: lisp123 (~lisp123@5.30.23.247) (Ping timeout: 250 seconds)
+[22:09:52] <phoe> EdLangley[m]: (eq #1# #'foo) ;=> NIL
+[22:10:27] <phoe> that's the only issue, as Bike mentioned
+[22:12:32] <EdLangley[m]> Yeah, personally I'd put up with that to avoid code-walking :)
+[22:13:05] <EdLangley[m]> Alternatively, FBIND could just have lisp-1 semantics and just LET + FLET foo
+[22:13:24] <phoe> I'mma go the rough route
+[22:13:50] * phoe quickloads hu.dwim.walker
+[22:14:06] *** Quits: foxfromabyss (~foxfromab@dynamic-077-183-119-085.77.183.pool.telefonica.de) (Quit: Client closed)
+[22:14:13] *** Joins: varjag (~user@ti0040a400-5479.bb.online.no)
+[22:20:03] <dbotton> shinmera as we I use to say in my corporate days - but it worked on my machine - ie don[t blame for human error ;)
+[22:20:30] <Shinmera> My shitty code doesn't even work on my machine
+[22:20:50] <dbotton> Ah but do enough ctr-alt-x and nothing works
+[22:20:59] *** Quits: Major_Biscuit (~MajorBisc@86-88-79-148.fixed.kpn.net) (Ping timeout: 256 seconds)
+[22:21:55] *** Quits: Algernon666 (~Algernon6@2a01:e0a:511:6ce0:a078:3cdd:386b:cd9b) (Ping timeout: 268 seconds)
+[22:23:20] <Shinmera> Anyway, sure wish I had the money to hire another programmer so I could concentrate on, you know, actually designing stuff instead of fixing the myriad of bugs in my tower of yaks
+[22:27:53] *** Joins: Bike (~Bike@71.69.170.70)
+[22:27:56] *** Quits: luna-is-here (~quassel@2a02:908:f761:2a3c::a) (Quit: luna-is-here)
+[22:27:57] *** Quits: amb007 (~a_bakic@host.26.88.68.195.rev.coltfrance.com) (Ping timeout: 240 seconds)
+[22:28:08] *** Joins: amb007 (~a_bakic@250.134.22.93.rev.sfr.net)
+[22:30:09] *** Quits: anticomputer_ (~anticompu@gateway/tor-sasl/anticomputer) (Remote host closed the connection)
+[22:30:33] *** Joins: anticomputer (~anticompu@gateway/tor-sasl/anticomputer)
+[22:31:55] *** Joins: lispy (~lispy4@84.69.59.93)
+[22:34:31] *** Joins: luna-is-here (~quassel@2a02:908:f761:2a3c::a)
+[22:36:40] <dbotton> I think that is the dream of all developers
+[22:36:44] *** Joins: ec (~ec@gateway/tor-sasl/ec)
+[22:37:11] <Shinmera> Is it? Some people love to debug.
+[22:37:23] <dbotton> Those are programmers
+[22:37:49] <Shinmera> Feels like semantics.
+[22:37:52] <dbotton> I develop software as my artistic expressions
+[22:38:40] <dbotton> I know how to program of course
+[22:39:17] <dbotton> That is what I am loving most about CL, the ease to express my ideas
+[22:41:37] <dbotton> If I had the money I would hire a programmer to add the robustness needed that I get in other languages like Ada that don't come for free but you are forced to address from the start
+[22:41:58] <dbotton> not the language mind you, add the robustness to my code
+[22:46:36] *** Quits: ec (~ec@gateway/tor-sasl/ec) (Ping timeout: 276 seconds)
+[22:47:52] *** Joins: _73` (~user@pool-108-49-252-36.bstnma.fios.verizon.net)
+[22:47:59] *** Joins: raeda (~raeda@72.49.252.109)
+[22:48:39] <Shinmera> For the scale of the kind of game I'm building I'm definitely way under-budgeted and under-staffed :/
+[22:49:15] *** Joins: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4)
+[22:49:53] *** Quits: _73 (~user@pool-108-49-252-36.bstnma.fios.verizon.net) (Ping timeout: 256 seconds)
+[22:52:09] *** Quits: aartaka (aartaka@gateway/vpn/protonvpn/aartaka) (Ping timeout: 256 seconds)
+[22:52:46] *** Joins: aartaka (aartaka@gateway/vpn/protonvpn/aartaka)
+[22:56:07] *** Quits: _73` (~user@pool-108-49-252-36.bstnma.fios.verizon.net) (Ping timeout: 256 seconds)
+[22:56:20] *** Joins: Major_Biscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e)
+[23:00:36] *** Quits: Major_Biscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e) (Ping timeout: 250 seconds)
+[23:02:39] *** Joins: Major_Biscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e)
+[23:07:23] *** Quits: Major_Biscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e) (Ping timeout: 252 seconds)
+[23:18:22] *** Joins: foxfromabyss (~foxfromab@dynamic-077-183-119-085.77.183.pool.telefonica.de)
+[23:20:09] <foxfromabyss> I feel a bit overwhelmed by the amount of json libraries, that all look good
+[23:20:10] <foxfromabyss> i've looked at the comparison https://sabracrolleton.github.io/json-review
+[23:20:10] <foxfromabyss> but it still is very overwhelming
+[23:20:11] <foxfromabyss> any preferences that someone would like to share? :)
+[23:23:12] <phoe> jzon
+[23:23:29] <phoe> or anything that has no (optimize (safety 0)) in its code
+[23:23:43] <foxfromabyss> is that a good indicator? :D
+[23:23:50] <lagash> foxfromabyss: make a sacrifice to the Goddess Fortuna, where you'll find the answer through a series of lightning bolts striking your house
+[23:23:51] <foxfromabyss> *in general
+[23:23:55] *** Joins: nij- (~jin@2001-48F8-9021-806-0-0-0-6F8B-dynamic.midco.net)
+[23:24:04] <foxfromabyss> hmm, an interesting plan
+[23:25:23] <foxfromabyss> thanks!
+[23:25:24] *** Quits: amb007 (~a_bakic@250.134.22.93.rev.sfr.net) (Read error: Connection reset by peer)
+[23:26:34] *** Joins: amb007 (~a_bakic@102.215.76.86.rev.sfr.net)
+[23:27:02] *** Quits: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net) (Ping timeout: 250 seconds)
+[23:29:01] *** Quits: cage (~cage@dynamic-adsl-84-221-50-16.clienti.tiscali.it) (Quit: rcirc on GNU Emacs 27.1)
+[23:33:06] *** Joins: karmichammer (~patrick@ip68-9-95-224.ri.ri.cox.net)
+[23:44:48] *** Quits: attila_lendvai (~alendvai@2a02:ab88:3710:7c80:9130:5abf:96b3:dc0c) (Ping timeout: 250 seconds)
+[23:46:58] *** Joins: asarch (~asarch@189.250.218.98)
+[23:47:29] <asarch> Is there any client a la https://github.com/Rigellute/spotify-tui?
+[23:52:37] *** Joins: ec (~ec@gateway/tor-sasl/ec)
+[23:55:48] *** Quits: foxfromabyss (~foxfromab@dynamic-077-183-119-085.77.183.pool.telefonica.de) (Quit: Client closed)

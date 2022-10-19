@@ -1,0 +1,1651 @@
+[00:00:04] *** Joins: Guest7463 (~Guest@host210.181-14-186.telecom.net.ar)
+[00:00:08] <SamuelMarks> hmm
+[00:00:12] <ioxzev1z> ,cc char x = ['a', 'b', 'c', 'd']; strlen(x);
+[00:00:12] *** Quits: zx2c4 (sid204921@gentoo/developer/zx2c4) (Ping timeout: 240 seconds)
+[00:00:13] <candide> ioxzev1z: error: expected expression before '[' token
+[00:00:15] <goblin> char c = 255; printf("%u", c) // anyone wants to guess what gets printed? I'm wondering if it's defined behaviour (or is it reading invalid memory somewhere), and why we're not getting any warnings with gcc 10.2.1 -Wall -Wextra
+[00:00:16] <SamuelMarks> ioxzev1z - So aby idea how to debug this?
+[00:00:24] <ioxzev1z> ,cc char x[4] = ['a', 'b', 'c', 'd']; strlen(x);
+[00:00:25] <candide> ioxzev1z: Same output.
+[00:01:00] *** Joins: Teukka (~teukka@84-216-41-232.customers.ownit.se)
+[00:01:00] *** Quits: Teukka (~teukka@84-216-41-232.customers.ownit.se) (Changing host)
+[00:01:00] *** Joins: Teukka (~teukka@user/Teukka)
+[00:01:13] *** Joins: z4kpi (~z4kpi@user/zacts)
+[00:01:13] <masoudd> ,cc char x[4] = {'a', 'b', 'c', 'd'}; strlen(x);
+[00:01:16] <candide> masoudd: no output: x = "abcd"
+[00:01:28] <ioxzev1z> masoudd, thanks, need a break xD
+[00:01:43] <SamuelMarks> goblin - on cling I get      4294967295(int) 10
+[00:02:03] <fizzie> ,clang -fsanitize=address char x[4] = {'a', 'b', 'c', 'd'}; printf("%zu", strlen(x));
+[00:02:06] <candide> fizzie: ================================================================= ==3353==ERROR: AddressSanitizer: stack-buffer-overflow on address 0x7ffed70828a4 at pc 0x000000465e09 bp 0x7ffed7082870 sp 0x7ffed7082020 READ of size 5 at 0x7ffed70828a4 thread T0     #0 0x465e08  (/home/vm/prog+0x465e08)     #1 0x4fe001  (/home/vm/prog+0x4fe001)     #2 0x7f4016b0458f  (/lib64/libc.so.6+0x2d58f)     #3 0x7f4016b046... <truncated; https://0x0.st/o8gw.txt>
+[00:02:35] *** Joins: zx2c4 (sid204921@gentoo/developer/zx2c4)
+[00:02:43] *** Joins: teepee (~teepee@openscad/teepee)
+[00:03:02] <ChoHag> goblin: char is signed. When 255 is assigned to it your two's-complement machine interprets it as -1. When passed to printf it's promoted to an int which remains a word full of 1 bits.
+[00:03:12] <goblin> SamuelMarks, yeah gcc prints 4294967295 too
+[00:03:13] <fizzie> `char` is *sometimes* signed.
+[00:03:17] <rkta> ioxzev1z: A string is a contiguous sequence of characters terminated by and including the first null character. Isn't it?
+[00:03:26] <ioxzev1z> rkta, a string literal is by definiton null-terminated, e.g "foo"
+[00:03:59] <fizzie> And I believe it's strictly speaking undefined to pass a negative `int` as the printf argument corresponding to the "%u" conversion specifier.
+[00:04:04] <ioxzev1z> rkta, but that doesn't mean that the thing passed to strlen is null-temrinated, such as an array
+[00:04:12] *** Quits: z4kpi (~z4kpi@user/zacts) (Client Quit)
+[00:04:25] <goblin> ChoHag, do you know if, during this promotion, the extra 3 bytes for zeroes get properly allocated or are they read from invalid memory?
+[00:04:46] <rkta> ioxzev1z: If I pass an array that is not null terminated to strlen, I'm passing an array, but not a string.
+[00:04:49] <goblin> (ignoring the fact that it probably just gets optimized to 4-byte int anyway)
+[00:04:51] <edk> they aren't exactly allocated
+[00:04:58] <ChoHag> Yes. In order to form an argument for the printf call the runtime allocates an int-sized amount of space on the stack.
+[00:05:14] <ChoHag> (Usually, modulo people like fizzie reminding us that a stack may not be necessary)
+[00:05:43] <edk> the promotion converts the byte value to an exact int value, which probably lives in an int-sized register; it's already acquired its "extra bytes" by the time it gets passed to printf
+[00:06:00] <goblin> fizzie, oh, fun. My next issue is: if it's undefined, is it exploitable? ;-)
+[00:06:10] <ChoHag> Not in any way, shape or form.
+[00:06:12] *** Quits: SamuelMarks (~samuel@user/samuelmarks) (Ping timeout: 240 seconds)
+[00:06:13] <ChoHag> Probably.
+[00:06:15] <edk> that one probably isn't exploitable at all
+[00:06:19] <goblin> ok
+[00:07:19] *** Joins: p0g0 (~p0g0@23.252.182.13)
+[00:07:41] <fizzie> To be clear, the integer promotion part is well-defined, the question is just whether printf("%u", -1); is undefined or not. I believe it is; but as suggested unlikely to be an exploitable issue.
+[00:08:24] <ioxzev1z> rkta, depends on your defintion of string. If you mean string literal ("") then it is by definition null-terminated, but consider an array filled via read(): it can contain a string or more without being null-terminated until you specifically buf[len] = '\0';
+[00:08:30] *** Joins: Dean (~Dean@user/De4n-Whit3/x-9385125)
+[00:08:33] <Dean> hello
+[00:08:36] *** Joins: SaltHilStroller_ (~SaltHillS@searspoint.nvidia.com)
+[00:08:54] <edk> well, the standard has a definition of string, and it's pretty much word for word what rkta said
+[00:09:02] <rkta> ioxzev1z: my definition comes from the C99 draft.
+[00:09:35] <ChoHag> read doesn't return a string.
+[00:09:45] <goblin> cool, thanks. So if I want it printed as 255, I guess printf("%u", (unsigned char)c) is fine?
+[00:09:52] *** Joins: Guest9 (~Guest9@2601:406:303:e150:2149:87a0:ddc8:f404)
+[00:10:00] <ChoHag> It can.
+[00:10:25] <edk> let's see
+[00:10:36] *** Quits: euandreh (~euandreh@2804:14c:33:9fe5:a0be:91d2:ac63:61de) (Ping timeout: 240 seconds)
+[00:10:45] <ChoHag> Or you need to declare it as unsigned.
+[00:10:49] <fizzie> Under the usual circumstances, that'd still promote to `int`, but since it's a nonnegative value, it's *really close* to fine.
+[00:11:07] <ChoHag> 255 from an unsigned char will promote to 255.
+[00:11:53] <goblin> ChoHag, nah, changing the declaration is out of the question as it's declared in Xlib
+[00:12:12] <ChoHag> Well 255 doesn't fit then.
+[00:12:37] <ChoHag> It works by luck because of C's casual disregard for a datum's type.
+[00:12:59] <edk> ,cc static char a[26984]; open("/dev/zero",0); ssize_t s = read(3,a,sizeof a); puts((char *)&s);
+[00:13:01] <candide> edk: [warning: implicit declaration of function 'open'; did you mean 'popen'? [-Wimplicit-function-declaration]] hi
+[00:13:02] <edk> read returns a string!
+[00:13:09] * edk finger guns
+[00:13:13] <goblin> (I'm talking about https://cgit.freedesktop.org/xorg/app/xev/tree/xev.c#n423 )
+[00:13:38] <ChoHag> Sometimes.
+[00:13:48] *** Quits: zx2c4 (sid204921@gentoo/developer/zx2c4) (Ping timeout: 240 seconds)
+[00:14:04] <edk> maybe i didn't make it return a conspicuous enough string this time
+[00:14:34] *** Joins: zx2c4 (sid204921@gentoo/developer/zx2c4)
+[00:15:50] <ChoHag> Well you're not because that doesn't involve any chars at all.
+[00:16:12] *** Joins: SamuelMarks (~samuel@user/samuelmarks)
+[00:16:18] * SamuelMarks is back
+[00:16:21] <fizzie> Ah, well, that one has an explicit conversion to `unsigned int`, so it's not even undefined. It may not be necessarily the value you'd prefer, but it's well-defined: if `e->key_vector[i]` is negative, it'll always convert to (the value) (UINT_MAX+1) + that.
+[00:16:26] <ChoHag> Unless key_vector is a char array, and that still has a cast that hasn't shown up before.
+[00:16:34] <fizzie> (It is a char array.)
+[00:17:06] <goblin> key_vector is precisely a char array, yes
+[00:17:37] <fizzie> Yeah. Well, for a `char` with the value -1 it will consistently print UINT_MAX, and for -2 it will print UINT_MAX-1, and so on.
+[00:18:04] <goblin> yup. Which is not quite what's expected ;-) But no-one noticed since at least 2003
+[00:18:20] <ChoHag> I think you'll find X is a little older than that.
+[00:18:23] *** Joins: rgrinberg (~textual@2806:101e:7:70b6:1d31:e9e4:aac9:787c)
+[00:18:45] <ChoHag> That sounds like it was about when freedesktop decided to stick their oar in.
+[00:19:08] <goblin> yeah, hence 'at least'. 2003 was the first commit that got imported into the current git tree
+[00:19:50] <ChoHag> But this time we'll do it *right*.
+[00:20:18] *** Quits: phrix (~phrix@185.76.176.47) (Quit: Leaving)
+[00:20:29] *** Joins: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net)
+[00:20:32] <goblin> so how to do it right? ;-) I kinda want it reinterpreted as an unsigned char, and then converted to some sort of unsigned integer I guess
+[00:20:56] *** Joins: SamuelMa1ks (~samuel@user/samuelmarks)
+[00:20:58] <ChoHag> Never mind. Look up CADT.
+[00:21:06] <goblin> which I guess it pretty much what (unsigned char) is doing
+[00:22:05] <goblin> ChoHag, Center for Alcohol & Drug Treatment comes up
+[00:22:28] <ChoHag> That's the grown up version.
+[00:23:40] <ChoHag> You either need to put data into keytable that xev can interpret, or rebuild xev.
+[00:23:44] *** smlavine is now known as smlaVine
+[00:24:06] <ChoHag> Since it takes longer to type the command in to build xev than it does to build it that's not an unfavourable route.
+[00:25:35] *** smlaVine is now known as smlavine
+[00:26:24] <goblin> ChoHag, hmm, I was just thinking of submitting a patch so that it gets printed more reasonably
+[00:26:40] <ChoHag> Do it.
+[00:26:41] <goblin> I can recalculate things manually for my usage scenario for now
+[00:27:29] *** Quits: meator (~meator@user/meator) (Quit: Leaving)
+[00:27:42] <ChoHag> However I have to wonder what's unreasonable about it and whether your problem isn't somewhere else.
+[00:27:48] *** Quits: mahmutov (~mahmutov@37.155.14.255) (Ping timeout: 240 seconds)
+[00:28:53] <goblin> ChoHag, I'm only blocked by you saying (unsigned char) works by accident ;-)
+[00:28:56] <ChoHag> If you want to store the value 255 in keytable you're going to have to make it an unsigned char.
+[00:29:53] <goblin> ChoHag, xev just prints that key_vector (which is apparently a set of 256 bits representing pressed keys)
+[00:30:01] <ChoHag> You can put 255 into a signed char because C is lackadaisical like that.
+[00:30:16] *** Quits: magla (~gelignite@55d44f7e.access.ecotel.net) (Quit: Stay safe!)
+[00:30:36] <goblin> ChoHag, when the keys pressed add up to over 127, then rather than seeing a mildly-reasonable "255", you see a rather unreasonable 4G
+[00:30:59] * ChoHag sighs
+[00:31:04] <goblin> IMHO hex would be even more reasonable, but not sure if that'll break compatibility somewhere
+[00:31:25] <ChoHag> Regardless of what you think is happening, that byte does not contain the value 128.
+[00:31:40] <ChoHag> It may look like it, but it's not.
+[00:31:56] <goblin> well, it sure as hell does not contain 4G either
+[00:32:09] <ChoHag> So if you want to put it there, you're going to need to change the way that byte is looked at.
+[00:32:28] <goblin> yeah, a reinterpret_cast
+[00:33:16] <goblin> which, I believe, in C terms looks just like (unsigned char)
+[00:33:28] <ChoHag> Or you could perhaps put even a modicum of effort into understanding what is actually happening before trying to fix it?
+[00:33:46] <goblin> ChoHag, that's what's brought me to this channel
+[00:33:48] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Ping timeout: 240 seconds)
+[00:34:18] <ChoHag> You cannot store the value you want in a signed char. You have an signed char and store the value anyway. What did you expect would happen?
+[00:35:26] <ChoHag> You need to change the way keytable is interpreted, either in its structure or before serialising it via printf.
+[00:35:45] <goblin> ChoHag, the value stored is meant to simply represent 8 bits, and in Xlib it's stored as a signed char, unfortunately. I'm not going to change Xlib as that's quite crazy, so I just want to change xev so it gets printed in a nicer way
+[00:36:12] <goblin> yeah, precisely
+[00:36:14] <ChoHag> Fine, but printf doesn't interpret it as 8 bits, and using it as a function argument doesn't interpret it as 8 bits.
+[00:36:38] <ChoHag> They see ints and when given things that aren't ints perform well-defined actions on them to turn them into ints.
+[00:36:47] <goblin> sure. So my thinking is, to let printf interpret it as an unsigned char, and print it as a value from 0 to 255
+[00:37:10] <ChoHag> By the time you call printf the fact that *you're* interpreting it as 8 bits is irrelevant.
+[00:37:13] *** Quits: sebag (~guest@91.245.82.2) (Quit: WeeChat 3.1)
+[00:37:21] <goblin> (since that's likely what the author intended back in the last millenium)
+[00:37:38] <ChoHag> Possibly, but sometimes char was meant to stand for character.
+[00:37:58] <goblin> ohhh
+[00:38:03] <goblin> yeah, not in this case
+[00:38:35] *** Quits: Darkcoal (~user@user/Darkcoal) (Quit: Darkcoal)
+[00:39:37] *** Quits: ZedHedTed (~ZedHedTed@user/zedhedted) (Remote host closed the connection)
+[00:39:53] *** Joins: ZedHedTed (~ZedHedTed@user/zedhedted)
+[00:41:57] <goblin> I know this because of https://www.oreilly.com/library/view/xlib-programming-manual/9780596806187/re15.html
+[00:42:41] *** Quits: oakyy (~oaky@h-155-4-161-203.A518.priv.bahnhof.se) (Ping timeout: 256 seconds)
+[00:43:04] <goblin> it documents key_vector as "A bit vector or mask, each bit representing one physical key, with a total of 256 bits. For a given key, its keycode is its position in the keyboard vector."
+[00:43:36] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[00:43:45] *** Joins: Filystyn (~piotr@user/filystyn)
+[00:43:46] <Filystyn> hello
+[00:44:49] <Filystyn> how to get highest aligment size
+[00:45:02] <Filystyn> in older C
+[00:45:11] *** Parts: gera (~gera@user/gera) (Leaving)
+[00:45:55] *** Joins: VoidSync (~sync@user/voidsync)
+[00:46:03] <ChoHag> sizeof (memory) / 2
+[00:47:15] <ChoHag> I suspect that's not what you meant.
+[00:47:31] *** Joins: oriba (~oriba@dynamic-077-183-242-005.77.183.pool.telefonica.de)
+[00:47:31] <Filystyn> yeah i wnat the smallest memory size of malloc
+[00:47:37] <Filystyn> can return
+[00:47:46] <ChoHag> 0.
+[00:47:52] <Filystyn> more
+[00:47:56] <ChoHag> 1?
+[00:48:00] *** Quits: strajder (~strajder@user/strajder) (Quit: leaving)
+[00:48:04] <Filystyn> no
+[00:48:48] *** Quits: oriba (~oriba@dynamic-077-183-242-005.77.183.pool.telefonica.de) (Client Quit)
+[00:49:00] *** Quits: SamuelMarks (~samuel@user/samuelmarks) (Ping timeout: 240 seconds)
+[00:49:08] *** Joins: oriba (~oriba@dynamic-077-183-242-005.77.183.pool.telefonica.de)
+[00:49:28] *** Quits: SamuelMa1ks (~samuel@user/samuelmarks) (Ping timeout: 272 seconds)
+[00:49:37] *** Quits: rgrinberg (~textual@2806:101e:7:70b6:1d31:e9e4:aac9:787c) (Ping timeout: 240 seconds)
+[00:50:50] *** Joins: oxfuxxx (~oxfuxxx@217.138.213.30)
+[00:51:19] *** Joins: steve__ (~steve@ool-182c2b80.dyn.optonline.net)
+[00:51:46] *** Joins: noarb- (~noarb@user/noarb)
+[00:52:19] *** Quits: noarb (~noarb@user/noarb) (Ping timeout: 256 seconds)
+[00:52:30] *** Joins: strajder (~strajder@user/strajder)
+[00:55:59] *** Joins: chomwitt (~chomwitt@2a02:587:dc15:800:fd31:6830:eca:6aa3)
+[00:56:06] *** Joins: z4kpi (~z4kpi@user/zacts)
+[00:57:24] *** Quits: slidercrank (~slidercra@user/slidercrank) (Ping timeout: 240 seconds)
+[00:59:29] *** Joins: noarb (~noarb@user/noarb)
+[00:59:29] *** Quits: tiotags (~tiotags@user/tiotags) (Quit: Leaving)
+[01:00:22] *** Quits: SymbioticFemale (~Symbiotic@user/SymbioticFemale) (Quit: leaving)
+[01:00:52] *** Quits: noarb- (~noarb@user/noarb) (Ping timeout: 272 seconds)
+[01:01:53] *** Joins: sarvet (~sarvet@p200300e8d707c5044a53ba310a94c1fc.dip0.t-ipconnect.de)
+[01:02:08] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 272 seconds)
+[01:02:46] *** Quits: gry (~quassel@botters/gry) (Ping timeout: 272 seconds)
+[01:02:54] *** Quits: ZedHedTed (~ZedHedTed@user/zedhedted) (Quit: Reboot)
+[01:03:30] *** Joins: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net)
+[01:04:24] *** Joins: gry (~quassel@botters/gry)
+[01:05:24] *** Quits: SaltHilStroller_ (~SaltHillS@searspoint.nvidia.com) (Ping timeout: 240 seconds)
+[01:05:27] *** Joins: SaltHillStroller (~SaltHillS@searspoint.nvidia.com)
+[01:05:49] *** Joins: Torr (~Torr@user/torr)
+[01:06:29] *** Quits: moog (~moog@107.126.48.23) (Ping timeout: 256 seconds)
+[01:07:49] *** Joins: cvmn (~caveman@gateway/tor-sasl/caveman)
+[01:08:02] *** Quits: gildasio (~gildasio@gateway/tor-sasl/gildasio) (Quit: WeeChat 3.4)
+[01:08:36] *** Joins: peki (~peki@91.191.14.22)
+[01:09:11] <fizzie> The traditional "hacky" way of getting the largest alignment requirement is a `struct { char c; union { /* all the types in the world */ } u; }` and offsetof.
+[01:09:49] *** Joins: SaltHilStroller_ (~SaltHillS@searspoint.nvidia.com)
+[01:10:02] *** Joins: slidercrank (~slidercra@user/slidercrank)
+[01:10:20] *** ik is now known as kleiner
+[01:10:25] *** kleiner is now known as ik
+[01:10:55] <Filystyn> thx
+[01:11:00] <Filystyn> this will do
+[01:11:23] <fizzie> ,cc struct alignment_query { char unused; union { unsigned long long t1; double t2; long double t3; void *t4; void (*t5)(void); } types; }; printf("%zu is probably similar to %zu", offsetof(struct alignment_query, types), alignof (max_align_t));
+[01:11:25] <candide> fizzie: 16 is probably similar to 16
+[01:12:43] *** Quits: SaltHillStroller (~SaltHillS@searspoint.nvidia.com) (Ping timeout: 256 seconds)
+[01:14:10] *** Quits: snortie (~snortie@2a02:970:1186:1800:f881:7773:c6f5:7fb8) (Ping timeout: 250 seconds)
+[01:15:56] <roxlu> hi, does someone maybe know if you can save a GDB session to a file so I can share it with someone?
+[01:16:16] <ChoHag> Possibly.
+[01:16:19] <ChoHag> Easier to use tmux.
+[01:16:54] <ChoHag> Oh wait not interactively? Just copy the terminal output.
+[01:16:57] <roxlu> ChoHag: ya though that means I can't close my current session and have someone else inspect it later
+[01:17:11] <peki> are you on Linux?
+[01:17:30] <roxlu> no, like I want to save the current session, then share the file with someone else who can open it and continue inspecting the state
+[01:17:31] <roxlu> yes
+[01:17:49] <ChoHag> They'll just need the binary and the core file.
+[01:18:03] <peki> i'd guess you can add ">> out" to output what you see into a file named "out"
+[01:18:12] <peki> but i dunno about saving sessions, i rarely debug like that
+[01:18:14] <peki> lolz
+[01:18:21] <roxlu> ChoHag: ah that sounds good! How do I save the core file?
+[01:18:27] *** Joins: Whatshisface (~jon@catv-178-48-246-132.catv.fixed.vodafone.hu)
+[01:18:35] <ChoHag> gdb probably has a way.
+[01:18:41] <ChoHag> Segfaulting is a good method.
+[01:18:45] <roxlu> peki: oh maybe session wasn't the right word
+[01:18:51] <roxlu> ChoHag: haha ok :)
+[01:19:02] *** Joins: moog (~moog@107.126.48.23)
+[01:19:15] <peki> good luck xd
+[01:19:28] *** Joins: ZedHedTed (~ZedHedTed@user/zedhedted)
+[01:19:30] <roxlu> thanks! at least I've got something to google for
+[01:20:03] <ChoHag> Start gdb again with 'gdb <binary> <corefile>'.
+[01:20:05] *** Quits: ncrowl (~ncrowl@94-255-226-55.cust.bredband2.com) (Ping timeout: 256 seconds)
+[01:20:35] <roxlu> generate-core-file is probably what I wanted
+[01:21:38] <roxlu> ah thanks so much, that works perfectly
+[01:21:41] *** Joins: ncrowl (~ncrowl@94-255-226-49.cust.bredband2.com)
+[01:21:46] *** Quits: Enitin (~Enitin@82.102.22.85) (Ping timeout: 272 seconds)
+[01:23:43] *** Quits: Serpent7776 (~Serpent77@90-156-31-193.internetia.net.pl) (Quit: leaving)
+[01:25:34] *** Quits: acerbic (~acerbic@cs-xdata-50-86-53-119.cspire.com) (Read error: Connection reset by peer)
+[01:26:10] *** Joins: Guest31 (~Guest31@95.134.40.68)
+[01:26:17] <Guest31> Helo
+[01:26:37] <peki> hi!
+[01:27:32] <Dean> hi
+[01:27:37] *** Quits: Dean (~Dean@user/De4n-Whit3/x-9385125) (Quit: Lost terminal)
+[01:27:39] *** Joins: nitrix (~nitrix@user/nitrix)
+[01:27:47] <Guest31> I just was going through obsd style guide (which they probably borrowed from somewhere) and found this caution "DO NOT use function calls in initializers."
+[01:28:48] <Guest31> I'm now trying to find a situation in which this could make a problems (unless you want to stay c89)
+[01:29:07] <rcf> Keep in mind that theirs is based on the BSD style that goes back through the 1980s
+[01:29:27] <Guest31> Yeah but they write c99
+[01:29:30] <Guest31> mostly
+[01:29:34] *** Joins: unlink2 (~unlink@p200300ebcf12830011a7c6fae7585651.dip0.t-ipconnect.de)
+[01:30:11] *** Quits: zeenk (~zeenk@2a02:2f04:a30d:1300:51a3:bcfc:6cda:9fc5) (Quit: Konversation terminated!)
+[01:30:14] <rcf> Indeed, but they've decided that they like that particular old rule and have kept it regardless.
+[01:30:39] <rcf> Purely as a matter of style.
+[01:30:56] <peki> i'd ask a very straight-forward question
+[01:31:15] <peki> but what are some practical differences between c99 and ansi?
+[01:31:44] <Guest31> why they left it with caps lock it's the only place there with "DO NOT"
+[01:31:46] <Guest31> Ok
+[01:31:56] <peki> i know that ANSI (C89, right?) doesn't support double-slash comments
+[01:32:11] <peki> but it goes severely deeper than that, lol
+[01:32:12] <nitrix> peki, Line comments, Variable Length Arrays, are the most obivous.
+[01:32:15] <Guest31> also initializtion
+[01:32:28] <Guest31> wth declarations
+[01:32:36] <rcf> And declarations wherever you want.
+[01:32:48] *** Quits: karakedi (~eAC53C340@user/karakedi) (Read error: Connection reset by peer)
+[01:32:59] <Guest31> you cannot int i = 0; in c89
+[01:33:09] <sham1> Yes you can
+[01:33:12] <rcf> That's allowed
+[01:33:22] <nitrix> You can, simply not in some places.
+[01:33:38] <peki> i tried to build my SQL2 app using C89 and it did stutter on the for loops
+[01:33:42] <peki> granted, I used
+[01:33:47] <peki> unsigned short int i = 0;
+[01:34:15] *** Quits: cvmn (~caveman@gateway/tor-sasl/caveman) (Ping timeout: 240 seconds)
+[01:34:42] <Guest31> You are right
+[01:34:52] <nitrix> Compile using C18. C is predominantly backwards compatible.
+[01:35:04] <peki> I am still compiling under C99
+[01:35:16] <rcf> Unless you're on a weird platform without it
+[01:35:17] *** Quits: chomwitt (~chomwitt@2a02:587:dc15:800:fd31:6830:eca:6aa3) (Ping timeout: 240 seconds)
+[01:35:21] <peki> since I use neovim
+[01:35:27] <peki> and CoC for autocompletion
+[01:35:36] <nitrix> What does neovim has anything to do with it.
+[01:35:46] *** Quits: VoidSync (~sync@user/voidsync) (Remote host closed the connection)
+[01:36:00] <peki> I have no idea how to set a C standard for it's completion engine
+[01:36:20] *** Quits: byteskeptical (~amnesia@user/byteskeptical) (Quit: Lost terminal)
+[01:36:23] <peki> when I get the hang of that, though, I might have some more fun with it, lol
+[01:37:13] *** Quits: wootehfoot (~wootehfoo@user/wootehfoot) (Read error: Connection reset by peer)
+[01:37:21] <nitrix> In your coc-settings.json, you can add "clangd.arguments": ["-std=c17"]
+[01:37:44] <peki> whoaaaa, thanks a bunch! :"D
+[01:37:45] <nitrix> Assuming you're using clangd. There are other LSPs with their own ways, I'm sure you can figure it out.
+[01:37:56] <peki> nitrix, i am, yeah
+[01:38:40] <sham1> clangd can also use compile_commands.json
+[01:38:54] *** Quits: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net) (Remote host closed the connection)
+[01:39:30] <nitrix> I used to have that get generated my CMake for me. Now I have a proper IDE though, no need to do those hacks myself.
+[01:39:58] <peki> nice, nice
+[01:40:10] <peki> i used VS Community
+[01:40:16] *** Joins: Enitin (~Enitin@82.102.22.85)
+[01:40:21] <peki> no chance for using that on this OS, though
+[01:40:29] *** Joins: mahmutov (~mahmutov@37.155.38.202)
+[01:40:32] <peki> love this much more, though
+[01:42:38] *** Joins: floatcomplex (~floatcomp@wireguard/tunneler/floatcomplex)
+[01:43:02] *** Parts: sarvet (~sarvet@p200300e8d707c5044a53ba310a94c1fc.dip0.t-ipconnect.de) ()
+[01:43:11] *** Joins: SamuelMarks (~samuel@user/samuelmarks)
+[01:43:12] *** Joins: SamuelMa1ks (~samuel@user/samuelmarks)
+[01:43:19] *** Quits: hashfunc1e68 (~user@162.254.115.155) (Ping timeout: 256 seconds)
+[01:45:49] *** Parts: peki (~peki@91.191.14.22) (Leaving)
+[01:47:43] <roxlu> ok, so I've got my gdb core saved ... but now I'm also really curious what migh tbe going on in my app (...)
+[01:48:40] <roxlu> I've pasted some info that GDB and it seems that when my app freezes, 2 threads try to lock the same mutex. See "Thread 4" and "Thread 9" here: https://gist.github.com/roxlu/6ce7a3518ff3ff82cd2f9603a51aa98b  both call `lockMutexFn()` with the same mutex.
+[01:48:41] <candide> Title of roxlu's link: After ~30-60min my app that uses the KVS Producer C SDK hangs; just stops; no cpu, nothing. I'm trying to figure out what might cause this. · GitHub
+[01:49:50] *** Quits: zer0bitz (~zer0bitz@2001:2003:f74d:b800:252f:1c34:e1bf:7de2) (Ping timeout: 260 seconds)
+[01:49:54] *** Joins: nabaiste^ (~nabaiste@50.233.120.162)
+[01:50:06] <roxlu> I actually don't think it's a deadlock, but as both threads hang on the same mutex I'm wondering why my app doesn't continue
+[01:52:30] *** Joins: SymbioticFemale (~Symbiotic@user/SymbioticFemale)
+[01:52:52] *** Quits: tech_exorcist (txrcst@user/tech-exorcist/x-0447479) (Quit: Disconnecting)
+[01:53:31] *** Quits: z4kpi (~z4kpi@user/zacts) (Quit: Client closed)
+[01:56:58] *** Joins: karakedi (~eAC53C340@user/karakedi)
+[02:04:17] *** Quits: cust (amaama@blackbox.amaama.org) (Ping timeout: 240 seconds)
+[02:06:06] *** Joins: theseb (~theseb@47-220-214-54.cnrocmta03.res.dyn.suddenlink.net)
+[02:06:43] <theseb> is int *f[3] have type int**?"
+[02:06:59] <theseb> DOES int *f[3] have type int**?
+[02:06:59] *** Joins: JanC_ (~janc@user/janc)
+[02:07:09] *** JanC is now known as Guest5415
+[02:07:09] *** Quits: Guest5415 (~janc@user/janc) (Killed (calcium.libera.chat (Nickname regained by services)))
+[02:07:09] *** JanC_ is now known as JanC
+[02:07:21] <theseb> how access 2nd element?
+[02:07:28] <theseb> *f[1] or f[2] ?
+[02:07:39] *** Joins: cust (amaama@2607:f2c0:f00f:2500::3)
+[02:07:45] <theseb> i need the 2nd int* pointer stored in the array
+[02:08:29] *** Joins: chomwitt (~chomwitt@2a02:587:dc15:800:53f7:4b4c:ef86:ecad)
+[02:08:30] <theseb> btw...does it matter in a function signature if i do foo(int** a) or foo(int* a[]) ??
+[02:08:41] <theseb> both the same?
+[02:08:59] <masoudd> ,english int *f[3];
+[02:09:01] <candide> masoudd: Declare `f` as an array of 3 elements of pointer to int.
+[02:09:22] <fizzie> As a function parameter, they're the same.
+[02:09:28] <fizzie> Elsewhere, they're not.
+[02:11:48] <nitrix> theseb, Given the declaration `int *f[3]`, `f` has type `int *[3]`, `f[0]` has type `int *`, `*f[0]` has type `int`.
+[02:11:55] <nitrix> Declaration follows usage.
+[02:12:14] <Filystyn> (*f)[3] would be less friendly
+[02:13:30] <nitrix> `int (*f)[3]` is a completely different type. Then `f` has type `int (*)[3]`, `*f` is `int [3]`, `(*f)[0]` is `int`.
+[02:13:45] <Filystyn> yeah
+[02:15:02] <theseb> masoudd: wow you have a channel script that gives you an English description of C code? nice!
+[02:15:29] <masoudd> theseb, I don't :) candide answers to everyone
+[02:15:40] <theseb> ,english unsigned int *abc(void *f, int a, float b);
+[02:15:41] <candide> theseb: Declare `abc` as a function taking `f` as pointer to void, `a` as int and `b` as float and returning pointer to unsigned int.
+[02:15:52] <masoudd> feel free to /query candide
+[02:15:53] <candide> No such factoid 'feel'; Found one factoid in #c containing 'feel': canihaztehcodez is /say ##c is not the place to have others do your homework. If you don't understand parts of your assignment, feel free to ask but don't expect others to do your homework.
+[02:16:22] <theseb> candide: is rust better than c?
+[02:16:28] <theseb> *crickets*
+[02:16:34] <candide> t﻿heseb, That's profoundly interesting.
+[02:16:36] <chiselfuse> no
+[02:17:08] <nitrix> ,cc printf("Hello"); // It can evaluate code.
+[02:17:10] <candide> nitrix: Hello
+[02:17:41] <nitrix> We also often use it to quote the standard.
+[02:17:48] <nitrix> ,c11 3.4.3p1
+[02:17:48] <candide> http://www.iso-9899.info/n1570.html#3.4.3p1 [Terms, definitions, and symbols] undefined behavior behavior, upon use of a nonportable or erroneous program construct or of erroneous data, for which this International Standard imposes no requirements
+[02:18:09] <chiselfuse> does it "evaluate" code like in templeos? :P
+[02:18:23] <nitrix> What does that mean? I'm not familiar with templeos.
+[02:18:38] <masoudd> it's running a c compiler in a virtual machine
+[02:19:06] <nitrix> It's a proper GCC + GDB toolchain, with sanitizers and all.
+[02:19:32] <masoudd> no interpretation happening here. no siree. Just good old compilin'
+[02:19:44] <chiselfuse> nitrix: in templeos you can run c statements on a command line, actually holyc not c
+[02:19:52] <chiselfuse> you can look it up
+[02:19:59] <nitrix> ,cc -paste printf("Hello");
+[02:20:02] <candide> nitrix: https://0x0.st/o8Ek.txt
+[02:20:11] <nitrix> You can see the full .c file generated and the command it runs.
+[02:20:12] *** Quits: alch (~alch@151.68.13.255) (Ping timeout: 240 seconds)
+[02:20:22] <masoudd> it also has factoids i think
+[02:20:23] *** Joins: pert (~pert@fsf/member/pert)
+[02:20:25] <masoudd> ,strlen
+[02:20:25] <candide> No such factoid 'strlen'; Found 3 factoids containing 'strlen': [#c] %zu remove_char_from_string remove_string_from_string
+[02:20:53] *** Quits: Filystyn (~piotr@user/filystyn) (Quit: leaving)
+[02:21:15] <nitrix> ,mallocidiom
+[02:21:15] <candide> T *p = malloc(sizeof *p) is more robust than T *p = malloc(sizeof (T)) because sizeof *p will always be the correct size of T and it prevents unnecessarily repeating the T (DRY principle). If sizeof (T) is used and later one of the T's is changed there will be a mismatch. T *p = malloc(sizeof *p) is more concise and easier to read, especially when T is a compound type.
+[02:21:21] <nitrix> ,dontcastmalloc
+[02:21:22] <candide> There is no need to cast the result of library functions that return void *; it makes your code hard to read, adds no value, and can hide a bug if you don't have a valid prototype in scope. See http://c-faq.com/malloc/mallocnocast.html
+[02:21:26] <nitrix> A bunch of them yeah.
+[02:21:45] * floatcomplex still considers mallocidiom harmful
+[02:21:52] <sham1> Why
+[02:22:07] *** Joins: alch (~alch@151.68.33.121)
+[02:22:32] <floatcomplex> because elevating the guidance it gives to the same status as the other idioms just increases the noise level and increases the likelihood that more important stuff will be ignored
+[02:22:59] <nitrix> A trivia guessing game, an rpg game, simulators, translations, channel management, it even has it's own programming language.
+[02:23:00] <theseb> how access 5th element of an array in **foo?  *foo + 4 works but why doesn't *foo[4] work?
+[02:23:26] <floatcomplex> define "doesn't"
+[02:23:42] <nitrix> *foo + 4 and *foo[4] aren't the same thing.
+[02:23:49] <theseb> why not?
+[02:24:03] <theseb> i'm printing their values and can confirm they are different
+[02:24:05] <nitrix> Because of the precedence of the [], * and + operators.
+[02:24:31] <theseb> i want to do *foo+4 in a more elegant way with brackets...is it possible?
+[02:24:32] *** Parts: floatcomplex (~floatcomp@wireguard/tunneler/floatcomplex) (No fucks left on device)
+[02:24:44] <nitrix> x[y] is syntactic sugar for *(x+y), so *foo[4] is equivalent to *(*(foo+4)).
+[02:24:44] <theseb> i tried **foo[4] and *foo[4]
+[02:24:49] <Maxdamantus> theseb: foo[0] + 4
+[02:25:23] <theseb> what about foo[4] ?
+[02:25:30] <theseb> Maxdamantus: yes
+[02:25:37] <Maxdamantus> foo[4] is different
+[02:25:51] <theseb> is there a way to do it without using + ?
+[02:25:52] <Maxdamantus> `foo[0] + 4` just adds 4 to the first element of `foo`
+[02:25:58] <masoudd> foo is an array of pointers. f[4] gives you the fourth pointer in the array
+[02:26:13] <theseb> wait...so foo[4] will work?
+[02:26:20] *** Quits: ioxzev1z (~ioxzev1z@user/ioxzev1z) (Quit: Leaving)
+[02:26:29] <masoudd> if you want the fourth pointer, then yes
+[02:26:53] <nitrix> I think someone skipped the chapter on arrays.
+[02:26:57] <Maxdamantus> `foo[4]` gives you the 5th element of `foo`, but `*foo + 4` just adds 4 to the first element (ie, it's equivalent to `foo[0] + 4`)
+[02:27:09] <nitrix> There's nothing special about arrays containing pointers. They are still arrays.
+[02:27:33] <masoudd> ah yeah fifth*
+[02:30:17] <Guest31> A bit offtopic have anyone worked with BSD indent util?
+[02:30:45] <nitrix> ##workingset might be able to help.
+[02:30:59] <Guest31> Thanks!
+[02:32:12] <Guest31> Pointers are not arrays btw
+[02:32:41] *** Joins: freepp (~freepppp@193.92.35.32.dsl.dyn.forthnet.gr)
+[02:32:52] *** Quits: freepp (~freepppp@193.92.35.32.dsl.dyn.forthnet.gr) (Client Quit)
+[02:33:01] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Quit: ERC (IRC client for Emacs 27.1))
+[02:34:09] *** Joins: pizdets (~pizdets@183.182.114.44)
+[02:34:27] <nitrix> The identifier of an array evaluates to a pointer to its first element when within an expression.
+[02:34:36] *** Quits: kitsunenokenja (~kitsunech@68.91.220.96) (Ping timeout: 272 seconds)
+[02:34:48] *** Quits: pizdets_ (~pizdets@183.182.110.76) (Ping timeout: 250 seconds)
+[02:34:51] <nitrix> The only time it doesn't is when used with the sizeof operator, which has a special clause to say it doesn't.
+[02:34:58] <fizzie> And the unary & operator.
+[02:35:09] <nitrix> And that.
+[02:35:23] *** Quits: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-1d0c-49f9-d027-bee6.res6.spectrum.com) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[02:36:29] <nitrix> But I think that's a little pointless to explain. theseb seems more interested by guessing randomly until their code appears to work, than understanding what they're doing.
+[02:37:08] *** Quits: moog (~moog@107.126.48.23) (Ping timeout: 272 seconds)
+[02:37:27] *** Quits: SamuelMa1ks (~samuel@user/samuelmarks) (Ping timeout: 256 seconds)
+[02:37:27] *** Quits: SamuelMarks (~samuel@user/samuelmarks) (Ping timeout: 256 seconds)
+[02:37:41] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:852c:c89f:7cdd:a935) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[02:38:45] <theseb> nitrix: i think i understand now...The identifier of an array evaluates to a pointer to its first element <-- that cleared it up!
+[02:38:47] <theseb> thanks!
+[02:41:59] *** Quits: m4v (~znc@ubuntu/member/m4v) (Ping timeout: 256 seconds)
+[02:42:26] *** Quits: nkiz- (~nki@adsl-89-217-141-227.adslplus.ch) (Quit: ZNC 1.8.2 - https://znc.in)
+[02:42:29] <nitrix> Good luck!
+[02:42:40] <clarity> great duck
+[02:42:53] *** Quits: kenanmarasli (~kenanmara@user/kenanmarasli) (Quit: Leaving)
+[02:43:19] *** Quits: theseb (~theseb@47-220-214-54.cnrocmta03.res.dyn.suddenlink.net) (Quit: Leaving)
+[02:43:29] *** Joins: m4v (~znc@ubuntu/member/m4v)
+[02:43:32] *** Joins: moog (~moog@107.126.48.23)
+[02:43:36] *** Joins: nkiz (~nki@adsl-89-217-141-227.adslplus.ch)
+[02:44:00] *** Joins: SaltHillStroller (~SaltHillS@searspoint.nvidia.com)
+[02:45:54] *** Joins: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com)
+[02:46:01] *** Joins: ferdna (~ferdna@user/ferdna)
+[02:47:09] *** Joins: TonyStone (~TonyStone@2603-7080-8607-c36a-b0ed-1a92-719b-f6c2.res6.spectrum.com)
+[02:51:03] *** Quits: moog (~moog@107.126.48.23) (Ping timeout: 256 seconds)
+[02:52:23] *** Joins: euandreh (~euandreh@2804:14c:33:9fe5:41b:9f3:a75a:9b8b)
+[02:52:54] *** Quits: SymbioticFemale (~Symbiotic@user/SymbioticFemale) (Remote host closed the connection)
+[02:53:13] *** Joins: SymbioticFemale (~Symbiotic@user/SymbioticFemale)
+[02:53:23] *** Joins: snortie (~snortie@2a02:8308:386:b900:f881:7773:c6f5:7fb8)
+[02:54:22] *** Joins: moog (~moog@107.126.48.23)
+[02:55:31] *** Quits: mrig (~mrig@user/mrig) (Quit: WeeChat 2.8)
+[02:55:35] *** Quits: oxfuxxx (~oxfuxxx@217.138.213.30) (Remote host closed the connection)
+[02:55:49] *** Joins: peki (~peki@91.191.14.22)
+[02:57:22] *** Parts: peki (~peki@91.191.14.22) (Leaving)
+[02:59:41] *** Joins: soapsudsxx (~soapsudsx@141.193.188.140)
+[03:00:04] *** Quits: LucaTM (~LucaTM@user/lucatm) (Quit: Textual IRC Client: www.textualapp.com)
+[03:01:31] *** Quits: gh34 (~textual@cpe-184-58-181-106.wi.res.rr.com) (Quit: Textual IRC Client: www.textualapp.com)
+[03:02:08] *** Quits: drbeco (~beco@2804:351c:dd03:4500:a332:d74e:8d17:e625) (Quit: Leaving)
+[03:04:47] *** Quits: Akuli (~Akuli@87-94-111-102.bb.dnainternet.fi) (Quit: Akuli)
+[03:06:17] *** Quits: chomwitt (~chomwitt@2a02:587:dc15:800:53f7:4b4c:ef86:ecad) (Ping timeout: 240 seconds)
+[03:08:28] *** Joins: drbeco (~beco@2804:351c:dd03:4500:a332:d74e:8d17:e625)
+[03:09:00] *** Quits: random-nick (~random-ni@87.116.179.129) (Ping timeout: 240 seconds)
+[03:09:17] *** Joins: Rynn (rynn@gateway/vpn/protonvpn/rynn)
+[03:13:03] *** Joins: pnbeast (~pnbeast@24.102.186.191.res-cmts.snh.ptd.net)
+[03:15:08] *** Joins: Zambyte (~Zambyte@cpe-104-228-60-14.nycap.res.rr.com)
+[03:15:20] *** Quits: strajder (~strajder@user/strajder) (Quit: gn)
+[03:16:15] *** Parts: hsv (~unknown@user/hsv) ()
+[03:20:21] *** Quits: xa0s (~xa0s@mab.sdf.org) (Remote host closed the connection)
+[03:20:46] *** Quits: luke-jr (~luke-jr@user/luke-jr) (Quit: ZNC - http://znc.sourceforge.net)
+[03:21:33] *** Joins: luke-jr (~luke-jr@user/luke-jr)
+[03:22:39] *** Quits: Klinda (~superleag@user/klinda) (Quit: Konversation terminated!)
+[03:24:27] *** Joins: xa0s (~xa0s@mab.sdf.org)
+[03:25:05] *** Joins: peki (~peki@91.191.14.22)
+[03:25:34] *** Joins: janb (~janb@78.156.33.193)
+[03:25:35] *** Quits: teepee (~teepee@openscad/teepee) (Ping timeout: 240 seconds)
+[03:25:47] *** Parts: peki (~peki@91.191.14.22) ()
+[03:27:28] *** Joins: teepee (~teepee@openscad/teepee)
+[03:28:08] *** Quits: zx2c4 (sid204921@gentoo/developer/zx2c4) (Read error: Connection reset by peer)
+[03:28:42] *** Joins: zx2c4 (sid204921@gentoo/developer/zx2c4)
+[03:29:42] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Ping timeout: 272 seconds)
+[03:31:51] *** Joins: SamuelMarks (~samuel@user/samuelmarks)
+[03:31:53] *** Joins: SamuelMa1ks (~samuel@user/samuelmarks)
+[03:32:06] *** Quits: Guest7463 (~Guest@host210.181-14-186.telecom.net.ar) (Remote host closed the connection)
+[03:33:05] *** Quits: xa0s (~xa0s@mab.sdf.org) (Quit: leaving)
+[03:36:12] *** Quits: SamuelMa1ks (~samuel@user/samuelmarks) (Ping timeout: 240 seconds)
+[03:36:12] *** Quits: SamuelMarks (~samuel@user/samuelmarks) (Ping timeout: 240 seconds)
+[03:37:37] *** Quits: aradesh (~aradesh@user/aradesh) (Quit: WeeChat 1.9.1)
+[03:38:15] *** Quits: Guest9 (~Guest9@2601:406:303:e150:2149:87a0:ddc8:f404) (Quit: Client closed)
+[03:39:07] *** Quits: zx2c4 (sid204921@gentoo/developer/zx2c4) (Read error: Connection reset by peer)
+[03:40:14] *** Joins: zx2c4 (sid204921@gentoo/developer/zx2c4)
+[03:40:16] *** Joins: xa0s (~xa0s@mab.sdf.org)
+[03:40:38] *** Quits: skapata (~Skapata@user/skapata) (Ping timeout: 250 seconds)
+[03:42:22] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 272 seconds)
+[03:45:13] *** Quits: merrinx (~merrinx@ti0028a400-1685.bb.online.no) (Quit: WeeChat 3.3)
+[03:47:09] *** Quits: freep (~freepppp@193.92.35.32.dsl.dyn.forthnet.gr) (Read error: Connection reset by peer)
+[03:48:50] *** Joins: SamuelMarks (~samuel@user/samuelmarks)
+[03:49:17] *** Joins: chenqisu1 (~chenqisu1@183.217.200.249)
+[03:49:58] *** Quits: Wulf (~Wulf@user/wulf) (Ping timeout: 272 seconds)
+[03:50:47] *** Joins: brad_mssw (~bhouse@c-76-106-206-149.hsd1.fl.comcast.net)
+[03:51:03] *** Joins: Wulf (~Wulf@user/wulf)
+[03:51:31] *** Quits: brad_mssw (~bhouse@c-76-106-206-149.hsd1.fl.comcast.net) (Client Quit)
+[03:53:09] *** Quits: brad_mssw|mac (~bhouse@2601:344:4100:b490:4035:ae46:8d90:7cb5) (Ping timeout: 256 seconds)
+[03:53:43] *** Quits: SamuelMarks (~samuel@user/samuelmarks) (Ping timeout: 256 seconds)
+[03:55:27] *** Joins: skapata (~Skapata@user/skapata)
+[03:56:17] *** Quits: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[03:57:01] *** Joins: brad_mssw (~bhouse@c-76-106-206-149.hsd1.fl.comcast.net)
+[03:58:13] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[03:58:13] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[03:58:13] *** Joins: wroathe (~wroathe@user/wroathe)
+[03:59:23] *** Quits: snortie (~snortie@2a02:8308:386:b900:f881:7773:c6f5:7fb8) (Ping timeout: 256 seconds)
+[04:02:06] *** Joins: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com)
+[04:04:11] *** Quits: koo5_ (~quassel@51.140.155.227) (Quit: http://quassel-irc.org - Chat comfortably. Anywhere.)
+[04:05:08] *** Joins: koo5_ (~quassel@51.140.155.227)
+[04:06:52] *** Joins: SamuelMarks (~samuel@user/samuelmarks)
+[04:10:57] *** Quits: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net) (Quit: Leaving)
+[04:12:08] *** Quits: SamuelMarks (~samuel@user/samuelmarks) (Ping timeout: 272 seconds)
+[04:15:11] *** Quits: Y4knotiS (~YaknotiS@cpc1-cmbg18-2-0-cust87.5-4.cable.virginm.net) (Ping timeout: 256 seconds)
+[04:20:32] *** Joins: _nuxil_ (~nuxil@141.195.51.213)
+[04:20:32] *** Quits: nuxil_ (~nuxil@141.195.51.213) (Read error: Connection reset by peer)
+[04:21:20] *** Quits: ncrowl (~ncrowl@94-255-226-49.cust.bredband2.com) (Quit: leaving)
+[04:21:34] *** Joins: ncrowl (~ncrowl@94-255-226-49.cust.bredband2.com)
+[04:25:49] *** Quits: Rynn (rynn@gateway/vpn/protonvpn/rynn) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[04:29:17] *** Quits: cthi (~cthi@097-082-138-151.res.spectrum.com) (Quit: Lost terminal)
+[04:30:47] *** Joins: ka80 (~ka80@user/ka80)
+[04:31:29] *** Joins: Matt|home (~matt@adsl-74-233-58-148.mia.bellsouth.net)
+[04:32:27] *** Quits: blindguard (~blindguar@2a02:908:1864:c200::ef3c) (Quit: Konversation terminated!)
+[04:39:51] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[04:40:41] *** Quits: Betal (~Betal@user/betal) (Ping timeout: 256 seconds)
+[04:41:24] *** Quits: adip_ (~adip@dia24.neoplus.adsl.tpnet.pl) (Ping timeout: 240 seconds)
+[04:41:24] *** Quits: adip (~adip@dia24.neoplus.adsl.tpnet.pl) (Ping timeout: 240 seconds)
+[04:44:48] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[04:44:48] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[04:44:48] *** Joins: wroathe (~wroathe@user/wroathe)
+[04:44:53] *** Quits: dogbert2 (~Bill@ip68-227-25-62.lv.lv.cox.net) (Remote host closed the connection)
+[04:45:09] *** Joins: dogbert2 (~Bill@ip68-227-25-62.lv.lv.cox.net)
+[04:45:10] *** Quits: admal (~admal@gateway/tor-sasl/admal) (Remote host closed the connection)
+[04:45:29] *** Quits: hanzo (uid532183@user/hanzo) (Quit: Connection closed for inactivity)
+[04:56:33] *** Quits: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[05:01:30] *** Quits: brad_mssw (~bhouse@c-76-106-206-149.hsd1.fl.comcast.net) (Quit: Leaving)
+[05:01:48] *** gry is now known as Gry
+[05:02:03] *** Joins: zuplex (~zuplex@202.51.76.90)
+[05:02:40] *** Quits: seninha (~chatzilla@user/seninha) (Remote host closed the connection)
+[05:03:50] *** Joins: SamuelMarks (~samuel@user/samuelmarks)
+[05:04:25] *** Joins: SamuelMa1ks (~samuel@user/samuelmarks)
+[05:05:06] *** Quits: Torr (~Torr@user/torr) (Remote host closed the connection)
+[05:07:52] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[05:07:57] *** Joins: seninha (~chatzilla@user/seninha)
+[05:08:45] *** Quits: SamuelMa1ks (~samuel@user/samuelmarks) (Ping timeout: 256 seconds)
+[05:09:08] *** Quits: SamuelMarks (~samuel@user/samuelmarks) (Ping timeout: 272 seconds)
+[05:11:24] *** Quits: SaltHillStroller (~SaltHillS@searspoint.nvidia.com) (Ping timeout: 240 seconds)
+[05:11:24] *** Quits: SaltHilStroller_ (~SaltHillS@searspoint.nvidia.com) (Ping timeout: 240 seconds)
+[05:12:40] *** Quits: janb (~janb@78.156.33.193) (Quit: Leaving)
+[05:12:46] *** Joins: Richard_Cavell (uid165693@id-165693.ilkley.irccloud.com)
+[05:16:31] *** Joins: rgrinberg (~textual@2806:101e:7:70b6:744e:48ba:f1f7:e529)
+[05:22:37] *** Quits: pert (~pert@fsf/member/pert) (Read error: Connection reset by peer)
+[05:22:57] *** Joins: pert (~pert@fsf/member/pert)
+[05:23:02] *** Quits: pert (~pert@fsf/member/pert) (Remote host closed the connection)
+[05:25:13] *** Joins: SaltHilStroller_ (~SaltHillS@searspoint.nvidia.com)
+[05:25:13] *** Joins: SaltHillStroller (~SaltHillS@searspoint.nvidia.com)
+[05:30:36] *** Quits: SaltHilStroller_ (~SaltHillS@searspoint.nvidia.com) (Ping timeout: 240 seconds)
+[05:31:18] *** Quits: SaltHillStroller (~SaltHillS@searspoint.nvidia.com) (Ping timeout: 272 seconds)
+[05:33:57] *** Quits: gr33n7007h (~gr33n7007@user/gr33n7007h) (Ping timeout: 240 seconds)
+[05:36:21] *** Joins: gr33n7007h (~gr33n7007@user/gr33n7007h)
+[05:38:23] *** Joins: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net)
+[05:40:57] *** Quits: orestarod (~orestarod@2a02:2149:8b20:700:2b9d:7f86:7169:61c0) (Ping timeout: 240 seconds)
+[05:43:02] *** Quits: rgrinberg (~textual@2806:101e:7:70b6:744e:48ba:f1f7:e529) (Read error: Connection reset by peer)
+[05:44:27] *** Joins: rgrinberg (~textual@2806:101e:7:70b6:744e:48ba:f1f7:e529)
+[05:50:38] *** Joins: noarb- (~noarb@user/noarb)
+[05:50:41] *** Quits: oriba (~oriba@dynamic-077-183-242-005.77.183.pool.telefonica.de) (Ping timeout: 256 seconds)
+[05:50:57] *** Quits: noarb (~noarb@user/noarb) (Ping timeout: 272 seconds)
+[05:51:03] *** Quits: plastico (~plastico@neomutt/plastico) (Quit: WeeChat 3.4)
+[05:51:18] *** Joins: j-james (~apropos@dhcp-206-87-155-139.ubcsecure.wireless.ubc.ca)
+[05:51:40] *** Quits: j-james (~apropos@dhcp-206-87-155-139.ubcsecure.wireless.ubc.ca) (Client Quit)
+[05:54:30] *** Joins: SaltHilStroller_ (~SaltHillS@searspoint.nvidia.com)
+[05:54:31] *** Joins: SaltHillStroller (~SaltHillS@searspoint.nvidia.com)
+[05:56:09] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Quit: WeeChat 3.4)
+[05:57:13] *** Joins: dyeplexer (~dyeplexer@user/dyeplexer)
+[05:57:16] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[05:59:42] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Client Quit)
+[06:04:32] *** Quits: justGhost (~justache@user/justache) (Read error: Connection reset by peer)
+[06:05:11] *** Joins: justGhost (~justache@user/justache)
+[06:05:50] *** Joins: harveypwca (~harveypwc@2601:246:c180:a570:3828:d8:e523:3f67)
+[06:07:02] *** Joins: orthoplex64 (~crm@70.120.0.94)
+[06:12:21] *** evanextreme is now known as evanextreme[away
+[06:16:28] *** Quits: SymbioticFemale (~Symbiotic@user/SymbioticFemale) (Remote host closed the connection)
+[06:16:30] *** Joins: danielcamiel (~danielcam@user/danielcamiel)
+[06:16:43] *** Quits: danielcamiel (~danielcam@user/danielcamiel) (Remote host closed the connection)
+[06:17:07] *** Joins: danielcamiel (~danielcam@user/danielcamiel)
+[06:19:57] *** Joins: oriba (~oriba@dynamic-077-191-095-152.77.191.pool.telefonica.de)
+[06:20:17] *** Quits: alch (~alch@151.68.33.121) (Ping timeout: 240 seconds)
+[06:22:30] *** Joins: alch (~alch@151.68.85.69)
+[06:22:56] *** Joins: SymbioticFemale (~Symbiotic@user/SymbioticFemale)
+[06:23:17] *** Quits: moog (~moog@107.126.48.23) (Remote host closed the connection)
+[06:25:12] *** Joins: moog (~moog@107.126.48.23)
+[06:26:51] *** Joins: SamuelMarks (~samuel@user/samuelmarks)
+[06:31:28] *** Quits: masoudd (~masoudd@user/masoudd) (Ping timeout: 272 seconds)
+[06:31:55] *** Joins: SamuelMa1ks (~samuel@user/samuelmarks)
+[06:33:48] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 240 seconds)
+[06:33:48] *** Quits: banc (banc@gateway/vpn/airvpn/banc) (Ping timeout: 240 seconds)
+[06:38:06] *** Quits: seninha (~chatzilla@user/seninha) (Remote host closed the connection)
+[06:42:46] <Grell> anyone use Exherbo linux?  What are its advantages to other distros when it comes to development?
+[06:43:00] <chiselfuse> idk
+[06:45:24] *** Quits: SaltHillStroller (~SaltHillS@searspoint.nvidia.com) (Ping timeout: 272 seconds)
+[06:45:24] *** Quits: SaltHilStroller_ (~SaltHillS@searspoint.nvidia.com) (Ping timeout: 272 seconds)
+[06:45:42] *** Joins: SaltHilStroller_ (~SaltHillS@searspoint.nvidia.com)
+[06:45:42] *** Joins: SaltHillStroller (~SaltHillS@searspoint.nvidia.com)
+[06:46:17] *** Quits: crashrep (~crashrep@user/crashrep) (Quit: WeeChat 3.4)
+[06:50:24] *** Quits: oriba (~oriba@dynamic-077-191-095-152.77.191.pool.telefonica.de) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[06:52:43] *** Quits: evanextreme[away (~evan@2604:4080:1000:8150:913b:c4e3:4b44:3850) (Quit: My laptop has gone to sleep. Bye!)
+[06:52:57] *** Joins: banc (banc@gateway/vpn/airvpn/banc)
+[06:55:51] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[06:56:07] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[06:56:07] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[06:56:07] *** Joins: wroathe (~wroathe@user/wroathe)
+[06:58:03] <nightstrike> is it well defined to pass a NULL for either argument to strstr?
+[06:58:51] <nightstrike> cppreference says "The behavior is undefined if either str or substr is not a pointer to a null-terminated byte string.", but in theory, NULL is a null terminated byte string, right?
+[06:59:34] *** Quits: rgrinberg (~textual@2806:101e:7:70b6:744e:48ba:f1f7:e529) (Quit: Textual IRC Client: www.textualapp.com)
+[07:00:23] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Ping timeout: 256 seconds)
+[07:01:27] <nightstrike> nvm, NULL is not a valid pointer to a null terminated byte string
+[07:01:29] <dyeplexer> No, "\0" is a null terminated byte string, which has a valid memory address.
+[07:01:32] <nightstrike> sorry for the noise
+[07:01:55] <nightstrike> hah, I beat you to it by like... 0.068 seconds :)
+[07:02:01] <dyeplexer> lol
+[07:02:32] <AmR> Can I ask about build error it's mixed project
+[07:02:34] <AmR> ?
+[07:02:41] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[07:03:03] *** Joins: cuppajoe (~joe@ip70-171-93-122.no.no.cox.net)
+[07:03:47] *** Quits: steve__ (~steve@ool-182c2b80.dyn.optonline.net) (Ping timeout: 256 seconds)
+[07:04:44] <nightstrike> https://www.quotes.net/mquote/90686 :)
+[07:04:46] <candide> Title of nightstrike's link: Lieutenant Commander Data: And for a time, I was tempted by her offer. Captain Jean-Luc Picard: How long a time? Lieutenant Commander Data: 0.68 seconds sir. For an android, that is nearly an eternity.
+[07:04:49] *** Quits: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net) (Quit: Ex-Chat)
+[07:05:06] <nightstrike> AmR: Maybe I can help
+[07:05:32] <cuppajoe> How often are GCC extensions used in real world code? Does using them make the code non portable to other platforms?
+[07:06:30] <nightstrike> cuppajoe: IME, many gcc extensions are supported by any compilers that matter
+[07:06:56] <nightstrike> frankly, a bunch of them are just allowed c99 things in c90 mode
+[07:07:16] *** Joins: Azem (~haise01@user/haise01)
+[07:07:19] <nightstrike> but even more interesting things like nested functions can be used in icc.
+[07:07:33] <nightstrike> statement expressions are pretty well supported, too
+[07:07:55] <nightstrike> what feature are you interested in?  You can test it on godbolt for a variety of major compilers and versions
+[07:08:31] <nightstrike> (if you are using a special purpose compiler, like tinycc, don't expect a lot of them to work
+[07:08:51] *** Quits: cuppajoe (~joe@ip70-171-93-122.no.no.cox.net) (Quit: WeeChat 3.4)
+[07:10:35] *** Quits: Emet-Selch (~haise01@user/haise01) (Ping timeout: 256 seconds)
+[07:14:22] *** Joins: FH_thecat (~FH_thecat@75.11.25.212.ftth.as8758.net)
+[07:17:33] *** Joins: _mikey (~mikey@user/mikey/x-4335048)
+[07:17:57] *** Quits: Rounin (~david@84.212.130.215) (Ping timeout: 256 seconds)
+[07:17:57] *** Quits: mahmutov (~mahmutov@37.155.38.202) (Ping timeout: 240 seconds)
+[07:22:34] *** Quits: Richard_Cavell (uid165693@id-165693.ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[07:24:57] *** Quits: SaltHilStroller_ (~SaltHillS@searspoint.nvidia.com) (Ping timeout: 240 seconds)
+[07:24:57] *** Quits: SaltHillStroller (~SaltHillS@searspoint.nvidia.com) (Ping timeout: 240 seconds)
+[07:25:08] <AmR> nightstrike: Can I pm you, I think this off topic
+[07:25:18] <nightstrike> sure
+[07:25:24] <nightstrike> there's also #gcc
+[07:25:36] *** Joins: Myth (~pi@173.233.125.203)
+[07:26:50] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 250 seconds)
+[07:27:48] *** Quits: slidercrank (~slidercra@user/slidercrank) (Ping timeout: 240 seconds)
+[07:28:40] <nightstrike> hey, you were asking about build issues on #mingw-w64
+[07:28:45] <nightstrike> I don't think I can help :(
+[07:30:55] <nitrix> nightstrike, Unless explicitly stated otherwise, arguments to library functions cannot be invalid values such as null pointers. (C11 7.1.4p1).
+[07:31:27] <nightstrike> ah, that's a nice blanket CYA statement :)
+[07:31:33] <nightstrike> makes sense thou
+[07:32:16] *** Quits: nyah (~nyah@05453449.skybroadband.com) (Ping timeout: 272 seconds)
+[07:33:05] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[07:33:05] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[07:33:05] *** Joins: wroathe (~wroathe@user/wroathe)
+[07:33:12] *** Quits: alphabeta (~kilolympu@31.205.200.235) (Quit: Quitting IRC :()
+[07:35:39] *** Quits: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[07:36:02] *** Quits: supakeen (~user@python/site-packages/supakeen) (Quit: WeeChat 3.4)
+[07:36:31] *** Joins: supakeen (~user@python/site-packages/supakeen)
+[07:37:47] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[07:40:18] <nightstrike> static struct { int const a; int b; } x = { .b = .a = 1 };  // Is there any way to make that work, or do I have to separately say a=1 and b=1?
+[07:42:57] *** Quits: Sadale (~Sadale@user/sadale) (Read error: Connection reset by peer)
+[07:45:12] *** Joins: Sadale (~Sadale@user/sadale)
+[07:50:51] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[07:54:26] *** Quits: danielcamiel (~danielcam@user/danielcamiel) (Ping timeout: 272 seconds)
+[07:54:52] <rcf> nightstrike: no easier way, no.
+[07:55:04] <nightstrike> ok
+[07:55:09] *** Joins: Betal (~Betal@user/betal)
+[07:55:37] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Ping timeout: 240 seconds)
+[07:57:47] <rcf> nightstrike: ...well, depending on what those numbers are supposed to mean: make your default value 0.
+[07:58:10] <nightstrike> sadly, 0 can't be the default
+[08:00:25] <rcf> nightstrike: or, if the layout will not change and is clear at the point of initialization, you could skip the designators and make it more compact.
+[08:00:54] <nightstrike> I just didn't want to repeat the 1
+[08:01:27] <rcf> If it’s common you could cheat with macros as well I suppose
+[08:02:40] *** Quits: pulse (~pulse@user/pulse) (Ping timeout: 272 seconds)
+[08:04:18] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[08:05:31] *** Joins: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com)
+[08:15:22] *** Joins: ent58 (~ent58@rrcs-97-76-214-244.se.biz.rr.com)
+[08:37:39] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[08:41:45] *** Quits: milkt (~debian@gateway/tor-sasl/milkt) (Remote host closed the connection)
+[08:42:11] *** Joins: milkt (~debian@gateway/tor-sasl/milkt)
+[08:52:01] *** Quits: boB_K7IQ (~boB_K7IQ@174-26-254-41.phnx.qwest.net) (Ping timeout: 256 seconds)
+[08:52:58] *** Joins: boB_K7IQ (~boB_K7IQ@ip72-201-138-188.ph.ph.cox.net)
+[08:55:50] <derelict> deop
+[08:56:39] <pnbeast> It looks like it worked before you did it!  Amazing.
+[08:57:46] *** Quits: mountaingoat (~mountaing@user/mountaingoat) (Ping timeout: 272 seconds)
+[08:58:06] *** Joins: mountaingoat (~mountaing@user/mountaingoat)
+[08:58:48] *** Quits: AmR (~AmREiSa@156.199.14.65) (Quit: Konversation terminated!)
+[09:06:00] *** Quits: mountaingoat (~mountaing@user/mountaingoat) (Ping timeout: 272 seconds)
+[09:07:12] *** Joins: mountaingoat (~mountaing@user/mountaingoat)
+[09:07:57] *** Quits: skapata (~Skapata@user/skapata) (Read error: Connection reset by peer)
+[09:12:21] *** Quits: FluffyMask (~masque@user/fluffymask) (Quit: WeeChat 3.4)
+[09:20:01] *** Joins: smoke (~smoke@user/smoke)
+[09:20:37] *** Quits: smoke (~smoke@user/smoke) (Client Quit)
+[09:24:53] *** Quits: mrgz (~mrgz@201-42-0-191.dsl.telesp.net.br) (Ping timeout: 256 seconds)
+[09:33:39] *** Joins: byteskeptical (~amnesia@user/byteskeptical)
+[09:34:19] *** Joins: immibis (~hexchat@dynamic-089-204-138-049.89.204.138.pool.telefonica.de)
+[09:35:39] *** Quits: immibis_ (~hexchat@dynamic-089-204-138-049.89.204.138.pool.telefonica.de) (Ping timeout: 256 seconds)
+[09:38:56] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Ping timeout: 272 seconds)
+[09:43:17] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 256 seconds)
+[09:43:42] *** Joins: oakyy (~oaky@h-155-4-161-203.A518.priv.bahnhof.se)
+[09:46:05] *** Quits: Zambyte (~Zambyte@cpe-104-228-60-14.nycap.res.rr.com) (Quit: leaving)
+[09:50:14] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[09:59:29] *** Joins: loganlee[gnu] (~Thunderbi@user/loganlee)
+[10:01:03] *** Joins: adip (~adip@dia24.neoplus.adsl.tpnet.pl)
+[10:01:06] *** Joins: adip_ (~adip@dia24.neoplus.adsl.tpnet.pl)
+[10:01:09] *** Quits: immibis (~hexchat@dynamic-089-204-138-049.89.204.138.pool.telefonica.de) (Ping timeout: 256 seconds)
+[10:03:48] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Ping timeout: 240 seconds)
+[10:06:20] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[10:07:24] *** Quits: mountaingoat (~mountaing@user/mountaingoat) (Ping timeout: 240 seconds)
+[10:08:12] *** Joins: eroux (~eroux@102-65-81-186.ftth.web.africa)
+[10:17:35] *** Quits: alch (~alch@151.68.85.69) (Read error: Connection reset by peer)
+[10:21:02] *** Joins: mountaingoat (~mountaing@user/mountaingoat)
+[10:21:49] *** Joins: alch (~alch@151.68.85.148)
+[10:29:48] *** Quits: FH_thecat (~FH_thecat@75.11.25.212.ftth.as8758.net) (Quit: Leaving)
+[10:34:02] *** Joins: Atque (~Atque@user/atque)
+[10:39:15] *** Quits: ent58 (~ent58@rrcs-97-76-214-244.se.biz.rr.com) (Quit: Client closed)
+[10:39:58] *** Joins: cthi (~cthi@097-082-138-151.res.spectrum.com)
+[10:40:34] *** Quits: SymbioticFemale (~Symbiotic@user/SymbioticFemale) (Remote host closed the connection)
+[10:43:05] *** Quits: ckdCreations (~ckdCreati@147.55.133.142) (Read error: Connection reset by peer)
+[10:45:06] *** Joins: ckdCreations (~ckdCreati@147.55.133.138)
+[10:48:45] *** Joins: Darkcoal (~user@user/Darkcoal)
+[10:49:49] *** Quits: cthi (~cthi@097-082-138-151.res.spectrum.com) (Quit: leaving)
+[10:50:47] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Read error: Connection reset by peer)
+[10:51:08] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[10:52:34] *** Quits: baloona (~baloona@mail.baloona.de) (Ping timeout: 260 seconds)
+[11:03:11] *** Joins: freep (~freepppp@193.92.35.32.dsl.dyn.forthnet.gr)
+[11:03:22] *** Joins: kts (~kts@103.73.237.162)
+[11:03:25] *** Joins: mrig (~mrig@user/mrig)
+[11:04:57] *** Joins: mahmutov (~mahmutov@37.155.70.125)
+[11:06:58] *** Quits: eroux (~eroux@102-65-81-186.ftth.web.africa) (Ping timeout: 272 seconds)
+[11:08:11] *** Joins: baloona (~baloona@mail.baloona.de)
+[11:09:29] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[11:12:20] *** Joins: hashfuncf15 (~user@162.254.115.155)
+[11:12:36] *** Quits: Darkcoal (~user@user/Darkcoal) (Ping timeout: 250 seconds)
+[11:13:05] *** Joins: meator (~meator@user/meator)
+[11:13:40] *** Joins: Darkcoal (~user@user/Darkcoal)
+[11:19:07] *** Quits: Darkcoal (~user@user/Darkcoal) (Ping timeout: 256 seconds)
+[11:19:42] *** Quits: mh3f_ (~mdhowle@cpe-98-25-217-234.sc.res.rr.com) (Remote host closed the connection)
+[11:20:53] *** Joins: Darkcoal (~user@user/Darkcoal)
+[11:21:21] *** Joins: jusski (~user@78-63-85-123.static.zebra.lt)
+[11:25:37] *** Quits: Darkcoal (~user@user/Darkcoal) (Ping timeout: 240 seconds)
+[11:26:02] *** Joins: Darkcoal (~user@user/Darkcoal)
+[11:27:22] *** Quits: meator (~meator@user/meator) (Quit: Leaving)
+[11:28:28] *** Joins: meator (~meator@user/meator)
+[11:29:10] *** Joins: zeenk (~zeenk@2a02:2f04:a30d:1300:51a3:bcfc:6cda:9fc5)
+[11:33:07] *** Quits: pnbeast (~pnbeast@24.102.186.191.res-cmts.snh.ptd.net) (Quit: WeeChat 2.7.1)
+[11:34:38] *** Quits: reset (~reset@user/reset) (Quit: reset)
+[11:35:40] *** Quits: loganlee[gnu] (~Thunderbi@user/loganlee) (Quit: loganlee[gnu])
+[11:36:31] *** Quits: zuplex (~zuplex@202.51.76.90) (Remote host closed the connection)
+[11:42:22] *** Joins: dave0 (~davezero@069.d.003.ncl.iprimus.net.au)
+[11:43:52] *** Joins: loganlee (~Thunderbi@user/loganlee)
+[11:45:56] *** Quits: dogbert2 (~Bill@ip68-227-25-62.lv.lv.cox.net) (Remote host closed the connection)
+[11:46:13] *** Joins: dogbert2 (~Bill@ip68-227-25-62.lv.lv.cox.net)
+[11:48:09] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[11:48:09] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[11:48:09] *** Joins: wroathe (~wroathe@user/wroathe)
+[11:51:56] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 272 seconds)
+[11:53:00] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 240 seconds)
+[11:57:19] *** Quits: mahmutov (~mahmutov@37.155.70.125) (Ping timeout: 256 seconds)
+[11:57:57] <meator> Hello. How can I read from a changing file?
+[11:57:58] <meator> My program is reading the file and another process is modifying the file.
+[11:59:56] *** Joins: zuplex (~zuplex@202.51.76.90)
+[12:03:50] <nitrix> inotify is probably the best way to approach something like that.
+[12:04:12] *** Quits: pooryorick (~pooryoric@87-119-174-173.tll.elisa.ee) (Ping timeout: 240 seconds)
+[12:06:45] <meator> But how can I "reload" the file? Do I have to close() it and reopen?
+[12:07:38] *** Joins: VoidSync (~sync@user/voidsync)
+[12:11:40] <Beastie> meator: just read it.... normally the kernel serializes system calls to a single file in order to avoid simultaneous read/write on the same data.... but you are in risk anyway... it is possible that between two reads, there's a wriite that changes one while it has had no time to change the other part... and you get inconsistent.
+[12:12:38] <Beastie> you should implement (using the mechanisms provided to do it) some mutual access policy to arbitrage the sequencing of writes agains reads.
+[12:13:19] *** Joins: Klinda (~superleag@user/klinda)
+[12:15:57] <meator> https://bpa.st/BESA
+[12:15:58] <meator> When I edit the file while the program is waiting for getchar(), the program still prints the old line.
+[12:18:55] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[12:18:55] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[12:18:55] *** Joins: wroathe (~wroathe@user/wroathe)
+[12:23:57] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[12:25:43] *** Quits: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[12:31:40] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:852c:c89f:7cdd:a935)
+[12:33:21] *** Joins: slidercrank (~slidercra@user/slidercrank)
+[12:34:12] *** Quits: gr33n7007h (~gr33n7007@user/gr33n7007h) (Quit: WeeChat 3.4)
+[12:35:25] *** Joins: LucaTM (~LucaTM@user/lucatm)
+[12:36:52] *** Joins: kenanmarasli (~kenanmara@user/kenanmarasli)
+[12:39:44] *** Quits: loganlee (~Thunderbi@user/loganlee) (Quit: loganlee)
+[12:42:39] *** Joins: aradesh (~aradesh@user/aradesh)
+[12:44:49] *** Quits: _mikey (~mikey@user/mikey/x-4335048) (Remote host closed the connection)
+[12:45:08] *** Quits: dyeplexer (~dyeplexer@user/dyeplexer) (Ping timeout: 272 seconds)
+[12:45:09] *** Quits: Betal (~Betal@user/betal) (Quit: WeeChat 3.4)
+[12:45:22] *** Joins: _mikey (~mikey@user/mikey/x-4335048)
+[12:49:43] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[12:49:43] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[12:49:43] *** Joins: wroathe (~wroathe@user/wroathe)
+[12:52:31] *** Joins: steve__ (~steve@ool-182c2b80.dyn.optonline.net)
+[12:54:33] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[12:59:41] *** Joins: dyeplexer (~dyeplexer@user/dyeplexer)
+[13:03:01] *** Joins: ffff (~thomas@157.35.71.160)
+[13:04:08] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[13:05:23] *** Quits: jjido (~Denis@2a02:c7f:5c91:e700:852c:c89f:7cdd:a935) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[13:06:36] <Amun-Ra> meator: get the source of tail and check how "tail -f" does it
+[13:07:43] *** Joins: qubes (~qubes@2001:8004:2758:10cc:6ab2:b847:d2b2:ef2c)
+[13:07:55] <qubes> what do you guys think about https://twitter.com/__phantomderp/status/1494884135688626180?
+[13:08:09] *** Joins: inlight (~thomas@user/inlight)
+[13:08:24] *** Quits: chenqisu1 (~chenqisu1@183.217.200.249) (Remote host closed the connection)
+[13:08:57] <Beastie> meator: there is some error in your code.
+[13:09:01] *** Joins: immibis (~hexchat@62.156.144.218)
+[13:09:16] <Amun-Ra> qubes: I'm all for
+[13:09:39] <qubes> Amun-Ra: you reckon most c programmers will use C23?
+[13:09:48] <Amun-Ra> qubes: I doubt it
+[13:10:05] <qubes> is most C these days for legacy systems?
+[13:10:13] <Amun-Ra> qubes: unless there's something in c23 worth the switch
+[13:10:14] <dave0> meator: i think the usual unix way is use a pipe .. and /bin/tee if you want a copy of it in a file aswell
+[13:10:34] <Beastie> you are using read (which you cannot mix with getchar() freely) until it returns <= 0, which is eof) you need to check the return code of getchar before continuing to allow for EOF condition to be processed.
+[13:10:42] *** Quits: ffff (~thomas@157.35.71.160) (Ping timeout: 256 seconds)
+[13:10:49] <qubes> i mean why not use it unless you're on a legacy system?
+[13:11:15] <Beastie> It is recommended not to  use a system call (read()) to read characters one by one... better to use fgetch().
+[13:11:39] <Amun-Ra> qubes: depends on the project, whether it's a library or not, I'lll give it a try
+[13:11:40] <Beastie> this allows buffering in stdio and more efficient code.
+[13:11:44] <dave0> qubes: the problem is linux and windows nt are written in c
+[13:11:48] *** Joins: Serpent7776 (~Serpent77@90-156-31-193.internetia.net.pl)
+[13:12:18] <Amun-Ra> linux not as in kernel
+[13:12:24] <qubes> dave0: ah good point
+[13:13:27] <Amun-Ra> I hope C99 will finally have default arguments (C99 as in C in 2099;)
+[13:14:28] *** Joins: iomari891 (~iomari891@105.112.138.38)
+[13:16:32] <meator> Read is operating on "file" and getchar() is operating on stdin. These are unrelated to each other. Why would mixing cause problems?
+[13:18:02] <dave0> getchar and friends will get stuck at eof .. if you    clearerr();    first, it will try to read more
+[13:18:04] *** Quits: inlight (~thomas@user/inlight) (Ping timeout: 272 seconds)
+[13:18:35] <Maxdamantus> Beastie: in some cases it might be desirable to read 1 byte at a time through `read`, eg when you want read until some particular input is detected then allow another process to read the remaining bytes.
+[13:18:36] *** Quits: dyeplexer (~dyeplexer@user/dyeplexer) (Ping timeout: 240 seconds)
+[13:19:18] <meator> The example program isn't perfect, but it illustrates the point.
+[13:19:30] *** Joins: inlight (~thomas@user/inlight)
+[13:19:35] <Maxdamantus> (if you use the `read` command in a shell, it will normally read 1 byte at a time, until it reads a newline character)
+[13:19:45] <meator> I have tried to use stdio functions and the result is the same.
+[13:20:29] *** Joins: wroathe (~wroathe@user/wroathe)
+[13:20:45] *** Quits: nathanael (~nathanael@user/nathanael) (Read error: Connection reset by peer)
+[13:21:18] <Maxdamantus> ah, that was in reference to some code further up.
+[13:21:33] <dave0> afaik unix stdio is a wrapper over read/write .. it correctly handles short reads for you
+[13:22:18] <Maxdamantus> Well, it might buffer, which can be undesirable in the cases I'm describing.
+[13:23:10] <meator> If I understand it corectly, there are two files with the same name. The program still sees the old file because it has opened it, and the other file is the modified one.
+[13:23:20] <sham1> Well it better buffer, because buffering is a good thing to do
+[13:23:56] *** Joins: nathanael (~nathanael@user/nathanael)
+[13:23:58] <Maxdamantus> ,sh (echo foo; echo bar) | sh -c 'read x; echo "$x" | rev; cat'
+[13:23:59] <candide> Maxdamantus: oof bar
+[13:24:18] <Maxdamantus> That relies on doing 1-byte `read()`s, will generally not work with `getchar`
+[13:24:35] *** Quits: Guest31 (~Guest31@95.134.40.68) (Ping timeout: 256 seconds)
+[13:24:56] <ChoHag> meator: It helps to use an OS which keeps its entire source code in /usr/src -- less /usr/src/usr.bin/tail/tail.c
+[13:25:00] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 240 seconds)
+[13:25:19] <ChoHag> It's <300 lines and much of it is handling some sort of obsolete argument parsing mechanish.
+[13:25:56] <meator> I have downloaded coreutils source code because I have nothing better to do. tail.c has 2537 lines.
+[13:25:58] <ChoHag> Lacking a real computer, the internet can come to the rescue: https://cvsweb.openbsd.org/src/usr.bin/tail/tail.c?rev=1.23&content-type=text/x-cvsweb-markup
+[13:26:05] <ChoHag> Yeah that's GNU for you.
+[13:26:16] <ChoHag> Throw that shit away.
+[13:26:17] *** Quits: SamuelMarks (~samuel@user/samuelmarks) (Ping timeout: 256 seconds)
+[13:26:34] *** Quits: SamuelMa1ks (~samuel@user/samuelmarks) (Ping timeout: 256 seconds)
+[13:26:36] *** Quits: hashfuncf15 (~user@162.254.115.155) (Ping timeout: 240 seconds)
+[13:26:55] <Maxdamantus> (and in general, you shell needs to be doing 1-byte `read()`s, since otherwise it might consume bytes that were meant to be input to the program it's running, if the user starts writing things very quickly after pressing enter)
+[13:27:01] <dave0> last time i looked gnu cat was 100 lines and netbsd cat was   while(c = getchar()) putchar(c)
+[13:27:10] <ChoHag> Or at least leave it in a pile marked "here be dragons".
+[13:27:12] <Maxdamantus> I'm referring to the `read`
+[13:27:29] <Maxdamantus> `read` is meant to consume bytes until '\n'
+[13:27:41] <Maxdamantus> `cat` is meant to consume bytes until `read(2)` returns 0
+[13:27:42] <ChoHag> I doubt GNU cat is 100 lines.
+[13:27:47] <ChoHag> Their standard preamble is longer than that.
+[13:28:01] <dave0> ChoHag: you mean i underestimated? lol
+[13:28:07] <ChoHag> meator: You have the coreutils source to hand. Find out for us...
+[13:29:09] <meator> > wc -l cat.c
+[13:29:10] <meator> 767 cat.c
+[13:29:19] <Beastie> Maxdamantus: in some cases...but I don't think in this case.
+[13:29:30] <ChoHag> Wow. 248 on openbsd.
+[13:29:36] <ChoHag> Fully self-contained too. Do you have a cat.h?
+[13:29:55] <meator> No cat.h.
+[13:30:02] <inlight> what is cat. h ?
+[13:30:22] <ChoHag> Well that's something at least.
+[13:31:05] *** Joins: dyeplexer (~dyeplexer@user/dyeplexer)
+[13:34:11] <Maxdamantus> 357 on SVR4
+[13:36:21] <ChoHag> dave0: This is the version of cat that netbsd imported from 386bsd in 1993: http://cvsweb.netbsd.org/bsdweb.cgi/src/bin/cat/cat.c?rev=1.1&content-type=text/x-cvsweb-markup&only_with_tag=MAIN
+[13:36:26] <dave0> 767 is a little bit excessive
+[13:36:51] <ChoHag> Too big, but small enough to understand in one go still.
+[13:37:01] <dave0> it has options
+[13:37:07] *** Joins: cart_ (~cart@2a01:4c8:41e:420c:8462:5209:42d2:7648)
+[13:37:19] <ChoHag> I don't know anywhere which has further history available.
+[13:37:40] <dave0> ah here we go
+[13:37:41] <dave0> https://github.com/pete/cats/blob/master/plan9-cat.c
+[13:37:46] <dave0> plan 9 to the rescue
+[13:38:53] *** Joins: merrinx (~merrinx@ti0028a400-1685.bb.online.no)
+[13:39:42] <ChoHag> They should reimplement /bin/unixcat as an rc script that uses plan 9 utilities to implement unix cat's options.
+[13:40:24] <ChoHag> It's not enough writing a minicat, everyone knows you can do that. Cat grew those features for reasons.
+[13:40:36] <ChoHag> Mostly bad reasons really, but reasons.
+[13:41:26] <ChoHag> Otherwise it just looks like an old Pike shouting at the clown.
+[13:42:07] <meator> But I'm not here to argue about libc implementations. Program has open()ed a file. Another process changed the file after that. How can I get access to the modified file?
+[13:42:40] *** Joins: szkl (uid110435@id-110435.uxbridge.irccloud.com)
+[13:42:52] <ChoHag> You already do modulo buffers and caches.
+[13:43:16] *** Quits: cart_ (~cart@2a01:4c8:41e:420c:8462:5209:42d2:7648) (Ping timeout: 245 seconds)
+[13:43:31] <ChoHag> If your writer has written but your reader can't see it you probably need to get your write to tell the OS that it's finished.
+[13:43:42] <ChoHag> writer
+[13:44:22] <dave0> meator: did you write the other program? the unix way to share data is with a pipe
+[13:44:39] <dave0> meator: have the other program write to a pipe aswell as the file
+[13:44:47] <dave0> meator: and have your program read from the pipe
+[13:44:59] <dave0> unix will block until there is more data to read
+[13:44:59] <meator> The other program is a text editor.
+[13:45:24] <ChoHag> If you want to use a plain file for IPC there are all sorts of caveats and system dependencies you need to be aware of.
+[13:47:48] <dave0> meator: if you just want to find out if the text editor wrote the file, a (pretty lousy) way to do it is stat() the file from time to time and see if the size or mtime changes
+[13:48:13] <dave0> it's far from robust
+[13:54:57] *** Joins: cart_ (~cart@2a01:4c8:41e:420c:7d43:b43d:bb0:6f14)
+[13:56:20] *** Joins: psycomic (~psycomic@2a01:e0a:18:d0a0:10e6:6f1c:f240:581)
+[13:56:36] *** Quits: dyeplexer (~dyeplexer@user/dyeplexer) (Ping timeout: 240 seconds)
+[13:59:31] *** Quits: psycomic (~psycomic@2a01:e0a:18:d0a0:10e6:6f1c:f240:581) (Client Quit)
+[14:02:09] *** Joins: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net)
+[14:03:44] <meator> Let's say that the entire contents of "file" from the beginning is "firstline\n".
+[14:03:48] <meator> When I run the program and do "echo secondline > file" while it's waiting for input, the program (after pressing enter) prints "secondline", which is correct.
+[14:03:56] <meator> But when I run the program, edit "file" with vim, rewrite the first line to "secondline", save it, check with "cat file" that it's really "secondline" and then do sync just to be sure, my program still prints "firstline" (after pressing enter), not the line I changed with vim.
+[14:04:58] *** Joins: Rounin (~david@84.212.130.215)
+[14:05:43] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[14:05:43] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[14:05:43] *** Joins: wroathe (~wroathe@user/wroathe)
+[14:07:15] <dave0> meator: that could be a thing with vim
+[14:07:48] *** Quits: Murray7501 (~Murray@89.109-247-180.customer.lyse.net) (Quit: leaving)
+[14:08:40] <dave0> meator: it might save your writings into a temporary file, then once it's verified that the temporary file was written correctly, it removes the original file and renames the temporary file to the right name
+[14:09:01] <dave0> for safety
+[14:09:14] <dave0> if there was some write error, you can still recover the original file
+[14:09:45] *** Joins: dyeplexer (~dyeplexer@user/dyeplexer)
+[14:10:07] <dave0> meator: a way to work around that is reopen the file with it's name
+[14:10:22] *** Joins: cosimone (~user@93-47-228-207.ip115.fastwebnet.it)
+[14:10:29] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[14:12:11] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[14:12:16] <dave0> something like    stat("file", &st); int cachesize = st.size, cachemtime = st.mtime; while(1) { sleep(1); stat("file", &st); if(st.size != cachedsize || st.mtime != cachedtime) { f = fopen("name", "r"); fread(f); fclose(f); } }
+[14:12:56] <dave0> it's really quite ugly, and i don't know what features linux provides to do it better
+[14:12:56] *** Joins: Murray7501 (~Murray@89.109-247-180.customer.lyse.net)
+[14:17:11] *** Joins: rnb (~rnb@p200300cd3f19238e1603ff1a46978538.dip0.t-ipconnect.de)
+[14:17:17] *** Quits: dyeplexer (~dyeplexer@user/dyeplexer) (Ping timeout: 256 seconds)
+[14:18:12] <meator> Wait. I feel that I somehow messed this up.
+[14:18:14] <meator> When I run the program I have posted, it actually updates when doing echo a > file and when editing the file with a text editor. But when I use a very similar program that uses stdio instead of raw open https://bpa.st/Z2BA, it will change on echo a > file, but it won't change on editing the file with a text editor.
+[14:18:24] *** Joins: snortie (~snortie@2a02:8308:386:b900:f881:7773:c6f5:7fb8)
+[14:20:00] <ChoHag> You're expecting reliablity and consistency in edge cases and implementation details.
+[14:20:12] *** Quits: alch (~alch@151.68.85.148) (Ping timeout: 240 seconds)
+[14:22:15] *** Joins: alch (~alch@151.34.81.181)
+[14:22:17] *** Quits: cart_ (~cart@2a01:4c8:41e:420c:7d43:b43d:bb0:6f14) (Ping timeout: 240 seconds)
+[14:22:53] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[14:24:25] *** Quits: kenanmarasli (~kenanmara@user/kenanmarasli) (Quit: Leaving)
+[14:25:00] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Ping timeout: 240 seconds)
+[14:25:17] <rnb> Hello, sorry if this is a simple question but I have a string like "abcdefg:hijklmnop" and I want to use ':' as a delimiter. What I want is that I get two strings "abcdefg" and "hijklmnop". What function could I use for this? I already looked at strchr() but I don't quite understand how I can use it.
+[14:26:24] <ChoHag> s2 = strchr(s1, ':'); *s2++ = '\0';
+[14:26:55] <dave0> rnb: you can use strtok
+[14:27:42] <rnb> I will look into it. Thanks
+[14:28:01] <dave0> ,cc char string[] = "abcdefg:hijklmnop"; char *first = strtok(string, ":"); char *second = strtok(0, ""); printf("1 '%s' 2 '%s' ", first, second);
+[14:28:03] <candide> dave0: 1 'abcdefg' 2 'hijklmnop'
+[14:28:53] <dave0> it's a good idea to check that `first` and `second` are not null (which can happen if there was no `:` in your string)
+[14:28:57] *** Quits: Enitin (~Enitin@82.102.22.85) (Ping timeout: 240 seconds)
+[14:29:27] *** Joins: Enitin (~Enitin@82.102.22.85)
+[14:29:35] *** Joins: dyeplexer (~dyeplexer@user/dyeplexer)
+[14:29:58] <meator> rnb: Juts be aware that strtok() modifies its argument to add the '\0', so you can't do strtok("abc:def", ":").
+[14:30:12] <rnb> Okay
+[14:31:09] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[14:31:51] *** Joins: cart_ (~cart@2a01:4c8:41e:420c:ee4:e012:19df:713f)
+[14:32:39] *** Joins: peki (~peki@91.191.14.22)
+[14:34:03] *** Joins: DSee (~DSee@66.115.182.111)
+[14:34:38] *** Joins: joedoe47 (~weechat@c-98-254-188-143.hsd1.fl.comcast.net)
+[14:34:42] *** Quits: joedoe47_ (~weechat@c-98-254-188-143.hsd1.fl.comcast.net) (Ping timeout: 272 seconds)
+[14:37:18] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[14:37:48] *** Quits: iomari891 (~iomari891@105.112.138.38) (Ping timeout: 240 seconds)
+[14:40:24] *** Joins: iomari891 (~iomari891@105.112.138.38)
+[14:40:27] *** Joins: mikoto-chan (~mikoto-ch@213.177.151.239)
+[14:41:20] *** Joins: pooryorick (~pooryoric@87-119-174-173.tll.elisa.ee)
+[14:42:30] *** Quits: byteskeptical (~amnesia@user/byteskeptical) (Ping timeout: 256 seconds)
+[14:43:53] *** Quits: zeenk (~zeenk@2a02:2f04:a30d:1300:51a3:bcfc:6cda:9fc5) (Quit: Konversation terminated!)
+[14:44:50] *** Quits: peki (~peki@91.191.14.22) (Ping timeout: 272 seconds)
+[14:49:48] *** cart_ is now known as cart_man
+[14:50:40] *** Joins: skapata (~Skapata@2804:14c:87b0:9d2e:2d62:2925:5b99:4618)
+[14:50:40] *** Quits: skapata (~Skapata@2804:14c:87b0:9d2e:2d62:2925:5b99:4618) (Changing host)
+[14:50:40] *** Joins: skapata (~Skapata@user/skapata)
+[14:53:35] <meator> I will think about this. The theory of vim moving files around is interesting.
+[14:55:07] *** Quits: vin (~vin@user/crash) (Remote host closed the connection)
+[14:56:03] <mikoto-chan> join #categorytheory
+[14:56:09] <mikoto-chan> oops :P
+[14:56:51] *** Joins: riv (river@tilde.team/user/river)
+[14:58:08] *** Quits: inlight (~thomas@user/inlight) (Ping timeout: 272 seconds)
+[14:59:39] <riv> what's the spec for c23 booleans like?
+[15:00:01] *** Joins: Y4knotiS (~YaknotiS@cpc1-cmbg18-2-0-cust87.5-4.cable.virginm.net)
+[15:00:54] *** Joins: inlight (~thomas@157.35.71.160)
+[15:03:02] *** Joins: tech_exorcist (txrcst@user/tech-exorcist/x-0447479)
+[15:07:50] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Read error: Connection reset by peer)
+[15:08:06] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[15:10:49] <baltazar> meator: try running `inotifywait -m .` in the directory containing your file, it might show the differences between shell redirection and vim
+[15:11:00] *** Quits: inlight (~thomas@157.35.71.160) (Ping timeout: 240 seconds)
+[15:12:13] <baltazar> (it's in the inotify-tools package on arch)
+[15:12:28] <Maxdamantus> afaik, vim doesn't do atomic renames.
+[15:12:34] * Maxdamantus really dislikes how vim handles files.
+[15:12:46] <Maxdamantus> it shouldn't even use fsync.
+[15:14:09] *** Quits: Whatshisface (~jon@catv-178-48-246-132.catv.fixed.vodafone.hu) (Quit: BitchX-1.3-git -- just do it.)
+[15:15:09] <Maxdamantus> and yes, you should really just reopen the file instead of seeking back to the beginng.
+[15:16:08] <Maxdamantus> vim reopens it with O_CREAT, which will replace the existing file with a new one. if you've still got a descriptor pointing to the old file, you'll continue to see that old data.
+[15:18:37] *** Quits: Church (~aleph@pool-98-116-232-112.nycmny.fios.verizon.net) (Ping timeout: 240 seconds)
+[15:22:05] *** Joins: inlight (~thomas@user/inlight)
+[15:22:54] *** Joins: john99 (~johnny@138.62.221.87.dynamic.jazztel.es)
+[15:24:44] *** Quits: skapata (~Skapata@user/skapata) (Remote host closed the connection)
+[15:25:50] *** Quits: hyper_dave (~hyper_dav@2a01:4f9:4a:246c::2) (Read error: Connection reset by peer)
+[15:26:01] *** Joins: hyper_dave (~hyper_dav@2a01:4f9:4a:246c::2)
+[15:30:17] *** Quits: csrf (~csrf@user/csrf) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[15:31:04] *** Joins: csrf (~csrf@user/csrf)
+[15:36:01] *** Quits: supakeen (~user@python/site-packages/supakeen) (Quit: WeeChat 3.4)
+[15:36:30] *** Joins: supakeen (~user@python/site-packages/supakeen)
+[15:38:19] *** Joins: peki (~peki@91.191.14.22)
+[15:42:55] *** Quits: Atque (~Atque@user/atque) (Ping timeout: 240 seconds)
+[15:44:19] *** Quits: _mikey (~mikey@user/mikey/x-4335048) (Remote host closed the connection)
+[15:44:44] *** Joins: _mikey (~mikey@user/mikey/x-4335048)
+[15:46:16] *** Quits: inlight (~thomas@user/inlight) (Ping timeout: 272 seconds)
+[15:47:02] *** Joins: Atque (~Atque@user/atque)
+[15:48:11] *** Joins: orestarod (~orestarod@2a02:2149:8b20:700:2b9d:7f86:7169:61c0)
+[15:48:17] *** Quits: peki (~peki@91.191.14.22) (Quit: Leaving)
+[15:48:48] *** Quits: jfsimon1981 (~jfsimon19@218.96.128.77.rev.sfr.net) (Ping timeout: 256 seconds)
+[15:49:04] *** Joins: peki (~peki@91.191.14.22)
+[15:51:24] *** Joins: jfsimon1981 (~jfsimon19@218.96.128.77.rev.sfr.net)
+[15:51:47] *** Quits: jfsimon1981 (~jfsimon19@218.96.128.77.rev.sfr.net) (Read error: Connection reset by peer)
+[15:52:02] *** Joins: jfsimon1981 (~jfsimon19@218.96.128.77.rev.sfr.net)
+[15:53:23] *** Quits: VoidSync (~sync@user/voidsync) (Remote host closed the connection)
+[15:55:15] *** Joins: Dean (~Dean@user/De4n-Whit3/x-9385125)
+[15:55:19] <Dean> Hello everyone.
+[15:55:47] *** Parts: Franciman (~Franciman@mx1.fracta.dev) (TURBOquit(TM) - the fastest way to get out of awkward situations)
+[15:56:27] *** Joins: random-nick (~random-ni@87.116.179.129)
+[15:57:15] *** Quits: cart_man (~cart@2a01:4c8:41e:420c:ee4:e012:19df:713f) (Remote host closed the connection)
+[15:57:30] *** Joins: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net)
+[15:57:55] *** Joins: fe23 (~fe23@2409:8a34:46c:f80:a066:c7bb:c824:d42a)
+[16:00:46] <peki> Hello!
+[16:05:37] *** Quits: oscurochu (~oscurochu@2603:9000:c202:1034:5991:474:8074:a98a) (Ping timeout: 240 seconds)
+[16:06:36] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Ping timeout: 240 seconds)
+[16:06:38] *** Joins: redalpha (redalpha@gateway/vpn/protonvpn/redalpha)
+[16:08:26] *** Joins: inlight (~thomas@user/inlight)
+[16:08:40] *** Joins: zer0x (~zer0x@42.118.38.224)
+[16:08:46] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[16:10:33] *** Joins: vysn (~vysn@user/vysn)
+[16:10:37] *** Quits: qubes (~qubes@2001:8004:2758:10cc:6ab2:b847:d2b2:ef2c) (Read error: Connection reset by peer)
+[16:12:01] <fizzie> Opening a file with O_CREAT doesn't "replace the existing file with a new one".
+[16:12:08] *** Joins: blindguard (~blindguar@2a02:908:1864:c200::ef3c)
+[16:12:09] <fizzie> POSIX: "O_CREAT: If the file exists, this flag has no effect except as noted under O_EXCL below."
+[16:12:36] *** Quits: Thedarkb1-Deskto (~Thedarkb@2001:bb6:b403:e042:19e8:85b4:7fb1:958e) (Ping timeout: 240 seconds)
+[16:12:43] <fizzie> (The exception being that with O_EXCL, open will fail if the file exists.)
+[16:13:37] *** Quits: inlight (~thomas@user/inlight) (Ping timeout: 240 seconds)
+[16:15:26] *** Quits: adip_ (~adip@dia24.neoplus.adsl.tpnet.pl) (Ping timeout: 256 seconds)
+[16:15:37] *** Quits: dyeplexer (~dyeplexer@user/dyeplexer) (Ping timeout: 240 seconds)
+[16:16:34] *** Quits: adip (~adip@dia24.neoplus.adsl.tpnet.pl) (Ping timeout: 256 seconds)
+[16:17:05] *** Joins: inlight (~thomas@user/inlight)
+[16:28:17] *** Quits: redalpha (redalpha@gateway/vpn/protonvpn/redalpha) (Quit: leaving)
+[16:28:43] *** Quits: Sadale (~Sadale@user/sadale) (Quit: tawa pona!)
+[16:29:00] *** Joins: Sadale (~Sadale@user/sadale)
+[16:30:38] *** Joins: zer0bitz (~zer0bitz@2001:2003:f74d:b800:34e0:8b74:dd2c:1d62)
+[16:30:40] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[16:31:18] *** Quits: inlight (~thomas@user/inlight) (Ping timeout: 256 seconds)
+[16:36:06] *** Quits: oakyy (~oaky@h-155-4-161-203.A518.priv.bahnhof.se) (Quit: Leaving)
+[16:39:53] *** Quits: unlink2 (~unlink@p200300ebcf12830011a7c6fae7585651.dip0.t-ipconnect.de) (Remote host closed the connection)
+[16:42:08] *** Quits: szkl (uid110435@id-110435.uxbridge.irccloud.com) (Quit: Connection closed for inactivity)
+[16:43:02] *** Quits: vysn (~vysn@user/vysn) (Ping timeout: 260 seconds)
+[16:43:12] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Ping timeout: 256 seconds)
+[16:48:37] *** Joins: aniruddha (uid340443@id-340443.ilkley.irccloud.com)
+[16:50:50] *** Quits: john99 (~johnny@138.62.221.87.dynamic.jazztel.es) (Remote host closed the connection)
+[16:51:42] *** Quits: peki (~peki@91.191.14.22) (Quit: Leaving)
+[16:53:35] *** Joins: cart_ (~cart@2a01:4c8:41e:420c:d4ac:632:997a:5dc3)
+[16:53:44] *** Joins: _wovixo_ (~wovixo@128.104.205.49)
+[16:53:53] *** Joins: pert (~pert@fsf/member/pert)
+[16:54:28] *** Joins: peki (~peki@91.191.14.22)
+[16:54:32] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[16:54:43] *** Quits: peki (~peki@91.191.14.22) (Remote host closed the connection)
+[16:57:12] *** Quits: wovixo (~wovixo@128.104.205.49) (Ping timeout: 272 seconds)
+[16:59:28] *** Quits: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net) (Quit: My MacBook Air has gone to sleep. ZZZzzz…)
+[17:00:41] *** cart_ is now known as boo
+[17:01:57] <Dean> when i read data via fread and i want to read the first couple of bites, and then later proceed from that particular index + 1, can I just continued while a while loop to read the data, or will the pointer in the file have been reset?
+[17:02:52] <fizzie> The file position doesn't change unless you do something (rewind/fseek/fsetpos, or just reading more) to change it.
+[17:03:04] <fizzie> (Just don't close the file, obviously.)
+[17:04:48] <Rounin> Though fread does advance the index by the amount you've read, doesn't it? So re-reading would still require an fseek?
+[17:05:02] <Rounin> I guess there might be an fpeek or something... Can't remember right now
+[17:07:08] <fizzie> Yes, but the question was on how to "proceed from that particular index + 1", not on how to re-read.
+[17:07:35] *** Quits: de-facto (~de-facto@user/de-facto) (Ping timeout: 240 seconds)
+[17:07:42] *** Quits: kts (~kts@103.73.237.162) (Quit: Konversation terminated!)
+[17:07:55] <fizzie> Which I at least interpreted as reading from whatever follows immediately after.
+[17:08:08] <Dean> yes, thank you fizzie
+[17:08:15] <Rounin> Yeah, it seems like you have the right of it
+[17:08:15] *** Quits: _mikey (~mikey@user/mikey/x-4335048) (Ping timeout: 240 seconds)
+[17:08:55] *** Quits: kish` (~aqua@user/aqua) (Ping timeout: 240 seconds)
+[17:09:01] <fizzie> (I don't think `FILE *` streams have a read that doesn't affect the file position; POSIX file descriptors do have `pread` / `pwrite`, but you wouldn't generally mix those with stdio streams.)
+[17:09:21] *** Joins: kish` (~aqua@user/aqua)
+[17:09:27] *** Joins: de-facto (~de-facto@user/de-facto)
+[17:09:33] *** Joins: _mikey (~mikey@user/mikey/x-4335048)
+[17:09:45] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[17:10:17] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Client Quit)
+[17:10:22] *** Joins: acerbic (~acerbic@cs-xdata-50-86-55-6.cspire.com)
+[17:10:40] <sham1> I wish GCC or whatever would provide an implementation macro that would tell you how many chars one needs to maximally represent, say an int, in base 10. So basically a compile-time constant for `ceil(log_10(2^32))`, with or without a space for a NULL terminator and a sign
+[17:11:04] <sham1> That can be calculated but meh, sometimes it feels like a slightly magical a number
+[17:11:36] <dave0> sham1: you can get close if you count octal digits
+[17:11:44] <Rounin> Hmm... Well, if you did create that constant, most compilers would proably make it compile-time for you
+[17:12:02] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[17:12:23] *** Quits: zuplex (~zuplex@202.51.76.90) (Ping timeout: 256 seconds)
+[17:12:26] <Dean> I'm trying to change the audio of a wav file. It sounds like an alien is attacking. I'm distorting the hell out of this sound file.
+[17:12:32] <Rounin> You might have to watch out for off-by-one errors, I suppose... Considering how 2³ takes 4 bits etc.
+[17:12:47] <dave0> conservative upper (or lower i dunno which) bound 32/3+1
+[17:12:53] <Rounin> But a -1 here and a +1 there and we might get somewhere
+[17:12:55] <sham1> Sure, I can do a `const size_t BASE_TEN_DIGITS_UINT32 = /* ... */` or a macro, but I still feel like it'd be nice if the compiler could do that
+[17:14:09] *** Joins: Narrat (~omnius@p200300df5f123b4a06ea56fffe2e7cdc.dip0.t-ipconnect.de)
+[17:15:34] <dave0> ,cc printf("%f ", log(10)/log(2));
+[17:15:36] <candide> dave0: 3.321928
+[17:15:37] <fizzie> Incidentally, C23 adds _WIDTH constants (like `INT_WIDTH`) giving the sizes of the types in bits. Still not in decimal digits though. But the octal approximation sounds reasonable.
+[17:15:51] <dave0> 32/3.321928+1
+[17:15:56] <sham1> Yeah, octal one divides by 3
+[17:16:37] *** Joins: NovumDXW (~NovumDXW@2409:8a28:361c:d160:6499:aaab:329a:e347)
+[17:16:39] <Rounin> The constant is the same for any number, though, except for off-by-one problems etc. log(2)/log(10)
+[17:16:47] <dave0> ,cc enum { BASE_TEN_DIGITS_UINT32 = 32/3.321928+1 };
+[17:16:48] <candide> dave0: error: enumerator value for 'BASE_TEN_DIGITS_UINT32' is not an integer constant
+[17:17:01] <dave0> bummer i thought it would automatically convert it to an int
+[17:17:03] <sham1> Yeah, you need a ceil
+[17:17:15] *** Joins: skapata (~Skapata@2804:14c:87b0:9d2e:69b2:1da5:3a92:e9c6)
+[17:17:15] *** Quits: skapata (~Skapata@2804:14c:87b0:9d2e:69b2:1da5:3a92:e9c6) (Changing host)
+[17:17:15] *** Joins: skapata (~Skapata@user/skapata)
+[17:17:24] <Rounin> (Math.log(2.0)/Math.log(10.0))
+[17:17:24] <Rounin> => 0.30102999566398114
+[17:17:26] <sham1> Although that probably doesn't work because it's not compile-time stuff
+[17:17:46] <dave0> floats would be compile time constants, yes?
+[17:18:00] <dave0> ,cc enum { BASE_TEN_DIGITS_UINT32 = (int)(32/3.321928+1.0) };
+[17:18:02] <candide> dave0: [warning: enumerator value for 'BASE_TEN_DIGITS_UINT32' is not an integer constant expression [-Wpedantic]]
+[17:18:15] <sham1> ,cc enum { BASE_TEN_DIGITS_UINT32 = (int)(ceil(32/3.321928+1)) };
+[17:18:17] <dave0> oh wow i was expecting that to work
+[17:18:17] <candide> sham1: Same output.
+[17:19:02] <fizzie> Integer division by N rounding up is just `(x+N-1)/N`, and that's a constant expression.
+[17:19:09] <dave0> if i knew how continued fractions work i could probably get a good approximation
+[17:20:12] <sham1> ,cc enum { BASE_TEN_DIGITS_UINT32 = (int)((32 + 2.321938)/3.321928) }
+[17:20:14] <candide> sham1: warning: enumerator value for 'BASE_TEN_DIGITS_UINT32' is not an integer constant expression [-Wpedantic]  error: expected identifier or '(' before 'return'
+[17:20:23] <sham1> ,cc enum { BASE_TEN_DIGITS_UINT32 = (int)((32 + 2.321938)/3.321928) };
+[17:20:25] <candide> sham1: [warning: enumerator value for 'BASE_TEN_DIGITS_UINT32' is not an integer constant expression [-Wpedantic]]
+[17:20:54] <sham1> So one needs to divide by an integer
+[17:21:01] <Rounin> Hmm... I feel like I almost have it, butnot quite
+[17:21:06] <Rounin> ((Math.log(2.0)/Math.log(10.0))*6).ceil
+[17:21:06] <Rounin> => 2
+[17:21:06] <sham1> ,cc enum { BASE_EIGHT_DIGITS_UINT32 = (int)((32 + 2)/3) };
+[17:21:08] <candide> sham1: No output.
+[17:21:16] <Rounin> Obviously the numbers from 100-127 also have 3 digits, not 2
+[17:21:21] <sham1> ,cc enum { BASE_EIGHT_DIGITS_UINT32 = (int)((32 + 2)/3) }; printf("%d\n", BASE_EIGHT_DIGITS_UINT32);
+[17:21:22] <candide> sham1: 11
+[17:21:49] <Rounin> Perhaps it's n+1 and then floor at the end
+[17:22:01] <riv> ???????????/
+[17:22:18] <sham1> So really what one needs is to be able to have an enum value be calculated from a floating-point expression if one then casts it to an int
+[17:23:03] <fizzie> ,cc printf("%d", (32*100+331)/332); // a slightly closer approximation
+[17:23:05] <candide> fizzie: 10
+[17:23:26] <sham1> Yeah, doing fixed-point arithmetic might do the trick
+[17:23:42] <fizzie> (The above was approximating ceil(32/3.32) to be clear.)
+[17:24:02] <sham1> Mmhm
+[17:24:11] <Rounin> I wonder if ((Math.log(2.0)/Math.log(10.0))*n).ceil works, actually
+[17:24:18] *** Joins: dyeplexer (~dyeplexer@user/dyeplexer)
+[17:24:38] <Rounin> For instance, although 65 is more than 2**6 and less than 2**7, it'd require 7 bits, so you'll get 3 decimal digits
+[17:24:48] <sham1> ,cc -std=c2x printf("%d", (LONG_WIDTH * 100 + 331) / 332);
+[17:24:49] <candide> sham1: 20
+[17:24:58] <sham1> Checks out
+[17:25:13] <fizzie> For a non-constant-expression version, there's of course also just `snprintf(0, 0, "%"PRIu32, UINT32_MAX)`. ;)
+[17:25:29] *** Joins: nyah (~nyah@05453449.skybroadband.com)
+[17:25:52] <Rounin> So really, something like ceil(0.30102999566398114 * digits) should probably do, as long as your floating-point precision is sufficient
+[17:26:03] <Rounin> You could always run a loop of a bunch of numbers and test
+[17:29:54] <sham1> If there was a way for the preprocessor to turn lower-case tokens into uppercase, one could even make a macro like `base10_width(int)` which takes the `int`, makes it `INT`, glues it with `_WIDTH` and then does the calculation
+[17:32:13] <Rounin> I've tested the above function with both a binary number with all ones, one with 10000..., and one with 100....1, and it's correct for all 3, so basically that'll give you the amount of decimal digits
+[17:32:17] *** Joins: plastico (~plastico@neomutt/plastico)
+[17:32:46] <Rounin> Well, the amount of decimal digits for a given bit length... If your input is a number instead, you'd have to get the bit length
+[17:32:59] <Rounin> Giving 1 for 0, and 4 for 8, etc.
+[17:34:13] <Rounin> Hm but for an int... Yeah, that's a bit different... I guess the bit length of a number is ceil(log2(n)) or something like that
+[17:34:38] <sham1> Yeah, that's the amount of binary digits one need to represent a number
+[17:35:07] *** Joins: LordJohn (~lordjohn@l37-194-102-53.novotelecom.ru)
+[17:35:16] <Rounin> Though maybe it's quicker to just loop through the number and find the first 1? I don't know how quick log is
+[17:35:35] <Rounin> (Then again, how quick is  a loop, really)
+[17:35:48] <sham1> Well log2 can be implemented in a handful of machine instructions, at least on x86/amd64
+[17:35:57] *** Quits: boo (~cart@2a01:4c8:41e:420c:d4ac:632:997a:5dc3) (Ping timeout: 240 seconds)
+[17:36:19] <sham1> Because those have an instruction for figuring out the most significant one
+[17:37:19] <sham1> Yeah, you can figure out that with the "count leading zeroes" instruction
+[17:37:37] *** Joins: pulse (~pulse@user/pulse)
+[17:38:13] *** Joins: peki (~peki@91.191.14.22)
+[17:38:38] <fizzie> If you want the (exact) number of digits needed to represent a specific number (rather than all representable numbers of type with width X), you don't want to go number -> bits -> digits, because some numbers that need the same amount of bits need a different amount of digits.
+[17:39:06] *** Joins: korg815 (~korg815@user/korg815)
+[17:39:25] *** Joins: placeb0 (uid283215@id-283215.lymington.irccloud.com)
+[17:40:46] <Rounin> fizzie: Ah, yes... Now that you mention it, the .ceil does make it an overestimate.. Like, it'll return 2 for "9"
+[17:42:01] <sham1> Well it fits at least for my original question/annoyance because what I want is essentially a safe buffer size for a certain amount of bits. Doing an over-estimate isn't all that bad if it's like 1 or 2 chars too big
+[17:42:03] *** Quits: korg815 (~korg815@user/korg815) (Client Quit)
+[17:42:20] *** Joins: korg815 (~korg815@user/korg815)
+[17:42:36] <sham1> Because ofc one could just do char buf[100] but that's a bit large
+[17:42:49] <Rounin> It would be at most 1 too big... There is another problem there, though., which is if you're using a 64-bit float for the multiplication, it might fail with integers greater than 53 bits
+[17:42:57] <Rounin> Since the precision of the calculation might make it skip values
+[17:43:52] *** Joins: inlight (~thomas@user/inlight)
+[17:44:03] <Rounin> Ah, no... That's only if the number of digits in the 64-bit int is more than 53 bits, which it isn't
+[17:44:12] *** Quits: Dean (~Dean@user/De4n-Whit3/x-9385125) (Ping timeout: 240 seconds)
+[17:44:23] <Rounin> No, it should be fine... Anyway, one could write a randomized test for that
+[17:45:17] *** Joins: Dean (~Dean@165-73-119-36.ip.afrihost.capetown)
+[17:46:06] <sham1> Technically the biggest buffer one should need is a 66-char buffer for a negative sign with a 64-bit binary number and a NUL character
+[17:46:15] <sham1> But again, that's a bit big
+[17:47:37] <Rounin> Ah... I would even think 21... (2**63).to_s.length + 2 => 21
+[17:47:52] *** Joins: FluffyMask (~masque@user/fluffymask)
+[17:48:12] <sham1> Well that's true for decimal, good point
+[17:49:13] *** Quits: orthoplex64 (~crm@70.120.0.94) (Ping timeout: 256 seconds)
+[17:50:03] *** Joins: orthoplex64 (~crm@70.120.0.94)
+[17:53:18] <meator> I have a bit more theoretical question this time. How can I efficiently handle error checking and cleanup in C? As the program progresses, there are more and more things that need to be freed, closed, handled... I do "if (request() == -1)" and then 10+ lines cleaning everything up and exiting after every function call I do. Is there a better way?
+[17:53:55] *** Joins: cthi (~cthi@097-082-138-151.res.spectrum.com)
+[17:54:01] *** Joins: Rynn (~rynn@216.30.158.198)
+[17:54:13] <fizzie> There's the `goto cleanup;` way of error handling.
+[17:54:29] <Rounin> meator: It rather depends on why you're doing the cleanup... A modern OS is expected to clean up sockets, file descriptsors, memory etc. by itself, as far as I know
+[17:55:10] <sham1> You should still clean up those resources, especially if the error isn't severe enough to just exit(EXIT_FAILURE) out of
+[17:55:10] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Ping timeout: 256 seconds)
+[17:55:22] <sham1> It's just being a good citizen of the OS
+[17:55:26] <nf> should i call globfree if glob returned an error
+[17:55:31] <peki> meator --> if you're asking how to avoid repetition, I'd make an boolean-like array and reserve one slot for one issue type
+[17:55:43] <peki> int errors[10] = { 0, 0, ... , 0 };
+[17:56:02] <peki> and do error macros
+[17:56:14] <peki> #define ERROR_FILE_OPEN 0
+[17:56:39] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[17:56:44] <peki> then, if an error happened, just make that slot a 1
+[17:56:45] *** Joins: ioxzev1z (~ioxzev1z@user/ioxzev1z)
+[17:57:18] <peki> however, taking what Rounin said into account, some issues may cause the function to not run at all
+[17:57:23] <peki> just return out of that
+[17:58:28] <Rounin> Ah, right... And this isn't just at the exit of the program, but as it runs
+[17:58:32] <Dean> I have a .wav file and I am trying to decrease the volume on it if a user passes "o.5" for example. For increasing the volume the program works fine, but when decreasing the sound gets distorted. Does anyone know why? https://paste.debian.net/1231508/
+[17:58:54] *** Quits: _mikey (~mikey@user/mikey/x-4335048) (Remote host closed the connection)
+[17:59:15] <Rounin> But one can put the 10 lines of cleanup in a method which can be called repeatedly
+[17:59:23] *** Joins: _mikey (~mikey@user/mikey/x-4335048)
+[18:00:18] <Rounin> Dean: What type is sample and what type is factor?
+[18:00:26] <fizzie> nf: "Note that `gl_pathc` and `gl_pathv` have meaning even if `glob()` fails. This allows `glob()` to report partial results in the event of an error." So I'd say yes.
+[18:00:43] <nf> indeed
+[18:00:45] <nf> thanks
+[18:01:07] <Dean> Rounin factor is a float and sample is uint16_t
+[18:01:55] <Rounin> Dean: At any rate, there's no guarantee that the problem is in one of those four lines. Without seeing the code, it's hard to guess what the issue is.
+[18:02:29] <Rounin> Dean: Obviously, a program that uses undefined constants, variables and lack a main() function has bigger problems than distorted samples
+[18:03:57] <Dean> Rounin https://paste.debian.net/1231509/
+[18:04:07] <meator> It is true that the OS can handle these things, but I still consider it a good practise cleaning some things up (but I might be wrong). And then there are things that the OS can't handle, like deleting temporary files etc.
+[18:04:07] *** Joins: CaryHartline (~CaryHartl@cpe-76-185-112-162.tx.res.rr.com)
+[18:04:44] <Rounin> Dean: Ah. I just realized something, though. It might be an endianness issue. If the samples are stored in big-endian, say, and you're multiplying them with the bytes reversed...
+[18:04:55] <peki> it's always a good practice to do memory freeing, meator
+[18:05:07] <peki> it's just one of those "no reason not to do it" situations
+[18:06:30] <peki> just 'cause someone in the far future may port your program to a toaster that can't handle memory cleanup lolz
+[18:06:53] <meator> peki: I don't understand your array. How could I use this?
+[18:07:01] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[18:07:01] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[18:07:01] *** Joins: wroathe (~wroathe@user/wroathe)
+[18:07:17] <peki> it just handles errors without halting the entire program
+[18:07:31] <peki> function* pardon me
+[18:08:24] <peki> and it'd be useful for reading and knowing which errors you had along the runtime
+[18:08:27] <Rounin> Dean: So you might need to read  the samples as char[2]s or something like that, and then go uint16_t sample = array[0] << 8 | array[1];
+[18:08:45] <Rounin> And then write them out in the correct order as well
+[18:08:56] *** Quits: rnb (~rnb@p200300cd3f19238e1603ff1a46978538.dip0.t-ipconnect.de) (Quit: Leaving)
+[18:09:07] <Dean> Hmm ok I'll give it a go! Thanks Rounin
+[18:09:16] <Rounin> so array[0] = changedsample >>8; array[1] = changedsample & 0xFF;
+[18:09:57] *** Quits: dave0 (~davezero@069.d.003.ncl.iprimus.net.au) (Quit: dave's not here)
+[18:10:10] <Rounin> I can't off the top of my head remember what will be least troublesome out of unsigned char and char... One might require you to cast things, and one might give you trouble with strict aliasing rules
+[18:11:33] <Rounin> Dean: If you could also make one wav file with only samples < 256 and one with only samples > 255, you could log the samples to the console and see what you get
+[18:11:35] <peki> by the way, has anyone here made a chess game before?
+[18:11:51] <peki> i'm making a little keyboard-centric chess client using SDL2
+[18:11:57] <Rounin> Though you'd still need to read the numbers as pure byte arrays in order to make your program work on Big-Endian platforms
+[18:12:06] <peki> and i'm in the process of check check mates and batteries
+[18:12:12] <Rounin> Well, on order to work on both, anyway
+[18:12:32] <peki> but i'm struggling with wrapping the idea of how that'd work in my head
+[18:14:48] <Xgc> peki: What do batteries have to do with your question?
+[18:15:41] <peki> Xgc: they're just another thing to think about
+[18:15:49] <peki> if you're aware of what a battery is in chess, at least
+[18:15:54] <Xgc> peki: Checkmate is simply a position where the king is in check and there are no moves which do not leave the kind in check.
+[18:16:18] <meator> I have heard of the goto solution. Using goto is discouraged and as I said, as the program progresses, there will be more things to clean up, so it could look like this: https://bpa.st/PHDA.
+[18:16:32] <peki> Xgc: my only idea on how I'd check that is to check every opposing piece
+[18:16:39] <Xgc> peki: I only played chess in the chess federation.  I may not understand what you think a battery is in chess terms.
+[18:16:54] <peki> and I'm trying to think of more effective methods of checking
+[18:17:32] <Xgc> peki: If you don't check available moves, you can't evaluate checkmate.
+[18:17:36] <peki> Xgc: oh, it's positioning your pieces so that you deliver a check, but also so that the king can't eat that piece 'cause it's defended by another piece
+[18:18:05] <peki> think of a queen next to a king with a rook behind her
+[18:18:11] <Xgc> peki: Who made up that term?  That's just a protected piece.
+[18:18:24] <peki> Xgc: makes sense
+[18:18:39] <peki> Xgc: I just heard it being very commonly used on Chess.com competitions
+[18:18:44] <Rounin> peki: By its very nature, though, checkmate is a position in which checking every legal move should be very quick
+[18:18:53] <Xgc> peki: It's not.
+[18:18:53] <fizzie> Dean: WAV file samples are signed, not unsigned. Scaling them by 0.5 as if they were unsigned is likely to end up badly. For example, -10000 would be interpreted as 55536, scaled to 27768, and end up being 27768 instead of -5000.
+[18:19:12] <Rounin> peki: After all, the king is threatened, so either the king must move, or something must move to a square protecting the king, or eliminating the piece that threatens the king
+[18:19:20] <peki> Xgc: https://en.wikipedia.org/wiki/Battery_(chess)
+[18:19:24] <Rounin> peki: So it should be easy enough to just bruteforce
+[18:19:30] <fizzie> Dean: (The 16-bit ones, that is. The 8-bit ones are unsigned. I'ts a bit weird.)
+[18:19:39] <Dean> fizzie / Rounin I managed to fix the issue. It's for a small sample file from class so we won't ever modify any other audio files. https://paste.debian.net/1231510/
+[18:19:51] *** Joins: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net)
+[18:20:10] <peki> Rounin: yup, it won't be much of an issue in coding terms
+[18:20:17] <Dean> sizeof(int16_t) as opposed to hardcoding my size. I think i used the wrong size.
+[18:20:25] <peki> I was just wondering if there is a more optimized route to take
+[18:20:40] *** Quits: alch (~alch@151.34.81.181) (Ping timeout: 256 seconds)
+[18:20:57] *** Quits: jusski (~user@78-63-85-123.static.zebra.lt) (Ping timeout: 256 seconds)
+[18:20:57] <Xgc> peki: There are a few ways to look at evaluation.  From any position, find the list of valid moves.  If your list of valid moves is pruned so that it contains no invalid moves, if your move list is empty and you're currently in check, that's mate.
+[18:21:20] <peki> makes sense
+[18:21:38] <Rounin> peki: I suppose several pieces could threaten the king at once fom different directions, which would increase the complexity... Because then one would have to find the square that would eliminate all threats again, or move the king, and detect that eliminating all threats by capturing them would be impossible... But still
+[18:22:34] *** Joins: alch (~alch@151.82.63.19)
+[18:22:47] <peki> I was genuinely shocked by how fast C was for the task
+[18:22:48] <Rounin> But yeah, that's a good point... Any move where the king is still in check gets removed from the list, and the depth of the check is just 1 move, so it doesn't even branch out
+[18:22:56] <peki> I tried the same thing in Godot a little while ago
+[18:23:11] <peki> but C & SDL2 are lightning fast
+[18:23:22] <Xgc> peki: All the complexity is gone if you just use that approach.  That takes care of multiple checks, exposed checks, interposing to stop check, etc.  Just find the list of valid moves.  If that is empty, you are either stalemated or checkmated, depending on whether you are currently in check or not.
+[18:23:50] <peki> will do! sounds like a terrific approach :)
+[18:24:18] <peki> after I develop the idea a bit more on paper, I'll have a firmer grasp on everything you've just listed as possibilities
+[18:25:26] *** Quits: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net) (Quit: Ex-Chat)
+[18:26:04] *** Joins: mahmutov (~mahmutov@37.155.70.125)
+[18:26:31] *** Quits: NovumDXW (~NovumDXW@2409:8a28:361c:d160:6499:aaab:329a:e347) (Read error: Connection reset by peer)
+[18:27:26] *** Quits: oliverwood (~waldo@node-1w7jra27sm79kkq86do9ek6jm.ipv6.telus.net) (Quit: WeeChat 3.4)
+[18:27:31] *** Joins: AmR (~AmREiSa@156.199.14.65)
+[18:27:44] *** Quits: inlight (~thomas@user/inlight) (Remote host closed the connection)
+[18:28:22] *** Joins: inlight (~thomas@user/inlight)
+[18:30:11] *** Quits: kish` (~aqua@user/aqua) (Remote host closed the connection)
+[18:30:12] *** Joins: aqua (~aqua@user/aqua)
+[18:30:30] *** Quits: aqua (~aqua@user/aqua) (Remote host closed the connection)
+[18:30:50] *** Joins: aqua (~aqua@user/aqua)
+[18:31:24] *** Quits: peki (~peki@91.191.14.22) (Ping timeout: 240 seconds)
+[18:32:03] *** aqua is now known as kish`
+[18:33:08] *** Joins: jusski (~user@78-63-85-123.static.zebra.lt)
+[18:33:42] *** Quits: korg815 (~korg815@user/korg815) (Ping timeout: 256 seconds)
+[18:33:48] *** Quits: zer0x (~zer0x@42.118.38.224) (Ping timeout: 240 seconds)
+[18:34:59] <meator> In situations like these I would really like having destructors.
+[18:36:24] <Rounin> meator: You can just write a destructor, though, except what would have been "this" is your first parameter
+[18:37:01] <Rounin> void free(complex_struct thestruct) { if(thestruct.thing_one != null) { free(thestruct.thing_one) ...
+[18:37:33] <Rounin> Well, you'd better not call it "free", but still
+[18:39:56] *** Quits: inlight (~thomas@user/inlight) (Ping timeout: 256 seconds)
+[18:40:06] <meator> I think the goto approach is better than making a function that just frees things. I don't have to specify the things I want to free with goto and a freeing function would only have side effects.
+[18:40:57] *** Quits: pulse (~pulse@user/pulse) (Quit: Look behind you, a three headed monkey!)
+[18:41:01] *** Joins: HaMsTeRs (~Thunderbi@210.3.213.4)
+[18:41:49] *** Joins: inlight (~thomas@user/inlight)
+[18:41:52] <meator> And the reason destructors are cool is that they are called automatically.
+[18:42:30] *** Joins: kitsunenokenja (~kitsunech@68.91.220.96)
+[18:42:37] <Rounin> Ah... When the object goes out of scope, say? Presumably, for heap-allocated objects, they wouldn't be called
+[18:43:25] *** Quits: CaryHartline (~CaryHartl@cpe-76-185-112-162.tx.res.rr.com) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[18:43:45] *** Joins: pulse (~pulse@user/pulse)
+[18:43:55] *** Joins: Cleverness (~Clevernes@pool-108-54-152-186.nycmny.fios.verizon.net)
+[18:44:52] *** Quits: jtmusky (~jtmusky@104-1-122-97.lightspeed.okcbok.sbcglobal.net) (Ping timeout: 272 seconds)
+[18:45:06] *** Joins: X-Scale` (~ARM@135.232.28.37.rev.vodafone.pt)
+[18:45:10] *** Joins: cvmn (~caveman@gateway/tor-sasl/caveman)
+[18:47:00] *** Quits: dogbert2 (~Bill@ip68-227-25-62.lv.lv.cox.net) (Remote host closed the connection)
+[18:47:15] *** Joins: dogbert2 (~Bill@ip68-227-25-62.lv.lv.cox.net)
+[18:47:25] *** Joins: peki (~peki@91.191.14.22)
+[18:47:35] *** Quits: X-Scale (~ARM@31.22.160.17) (Ping timeout: 256 seconds)
+[18:47:35] *** X-Scale` is now known as X-Scale
+[18:48:05] <wroathe> That's a gateway drug to wanting GC.
+[18:48:06] *** Joins: masoudd (~masoudd@user/masoudd)
+[18:48:52] <Rounin> Yes... One minute you're using destructors, and the next you're snorting shadow DOMs and shooting React into your eyes
+[18:50:25] <wroathe> A vicious cycle indeed
+[18:50:53] *** Quits: peki (~peki@91.191.14.22) (Client Quit)
+[18:51:13] <Dean> Thank you Rounin and fizzie for the help earlier. I appreciate it. Borderline amnesia wasn't sure if I thanked you two.
+[18:51:53] *** Quits: euandreh (~euandreh@2804:14c:33:9fe5:41b:9f3:a75a:9b8b) (Ping timeout: 256 seconds)
+[18:53:25] *** Joins: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com)
+[18:53:43] *** Joins: euandreh (~euandreh@2804:14c:33:9fe5:41b:9f3:a75a:9b8b)
+[18:54:11] *** Quits: Sadale (~Sadale@user/sadale) (Quit: tawa pona!)
+[18:54:15] *** Joins: kenanmarasli (~kenanmara@user/kenanmarasli)
+[18:54:25] *** Joins: Sadale (~Sadale@user/sadale)
+[18:54:26] *** Quits: ckdCreations (~ckdCreati@147.55.133.138) (Read error: Connection reset by peer)
+[18:54:41] *** Joins: ckdCreations (~ckdCreati@c-73-140-151-116.hsd1.wa.comcast.net)
+[18:55:35] *** Quits: Sadale (~Sadale@user/sadale) (Client Quit)
+[18:56:09] *** Joins: Thedarkb-Desktop (~Thedarkb@2001:bb6:b403:e042:108a:7490:94e9:7e0d)
+[18:57:05] *** Quits: Rynn (~rynn@216.30.158.198) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[18:57:57] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 240 seconds)
+[18:58:36] *** Joins: Sadale (~Sadale@user/sadale)
+[19:03:12] *** Quits: inlight (~thomas@user/inlight) (Ping timeout: 250 seconds)
+[19:05:06] *** Joins: vysn (~vysn@user/vysn)
+[19:06:35] *** Quits: cvmn (~caveman@gateway/tor-sasl/caveman) (Ping timeout: 240 seconds)
+[19:07:24] *** Joins: X-Scale` (~ARM@46.50.5.75)
+[19:09:34] *** Quits: X-Scale (~ARM@135.232.28.37.rev.vodafone.pt) (Ping timeout: 272 seconds)
+[19:09:35] *** X-Scale` is now known as X-Scale
+[19:12:25] *** Joins: nwulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[19:15:10] <Rounin> Dean: Ah, NP... Hope you have success with your program
+[19:15:48] *** Quits: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 240 seconds)
+[19:16:12] *** Quits: Jong (~Jong@2620:10d:c090:400::5:b24b) (Ping timeout: 240 seconds)
+[19:17:41] *** Joins: _LordJohn (~lordjohn@l37-194-102-53.novotelecom.ru)
+[19:18:55] *** Quits: _mikey (~mikey@user/mikey/x-4335048) (Remote host closed the connection)
+[19:19:22] *** Joins: _mikey (~mikey@user/mikey/x-4335048)
+[19:21:00] *** Quits: LordJohn (~lordjohn@l37-194-102-53.novotelecom.ru) (Ping timeout: 240 seconds)
+[19:25:00] *** Quits: Inline (~Inline@2a02:908:1252:7a80::1aa) (Ping timeout: 252 seconds)
+[19:26:41] *** Quits: acerbic (~acerbic@cs-xdata-50-86-55-6.cspire.com) (Read error: Connection reset by peer)
+[19:28:34] *** Quits: kitsunenokenja (~kitsunech@68.91.220.96) (Ping timeout: 272 seconds)
+[19:39:31] <Dean> Thank you Rounin.
+[19:39:57] *** justGhost is now known as justAstache
+[19:42:41] *** Joins: nuxil (~nuxil@141.195.51.213)
+[19:44:24] *** Quits: _nuxil_ (~nuxil@141.195.51.213) (Ping timeout: 272 seconds)
+[19:45:53] *** Quits: Klinda (~superleag@user/klinda) (Quit: Konversation terminated!)
+[19:49:00] *** Quits: placeb0 (uid283215@id-283215.lymington.irccloud.com) (Quit: Connection closed for inactivity)
+[19:49:11] *** Joins: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[19:50:36] *** Joins: nwulfe_ (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[19:51:06] *** Joins: mrgz (~mrgz@201-42-0-191.dsl.telesp.net.br)
+[19:51:13] *** Quits: nwulfe_ (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Read error: Connection reset by peer)
+[19:51:31] *** Joins: nwulfe_ (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[19:52:12] *** Quits: nwulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 240 seconds)
+[19:54:44] *** Quits: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 256 seconds)
+[19:57:26] *** Joins: cvmn (~caveman@gateway/tor-sasl/caveman)
+[19:59:30] *** Joins: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[20:01:15] *** Joins: cuppajoe (~joe@ip70-171-93-122.no.no.cox.net)
+[20:01:59] *** Quits: cuppajoe (~joe@ip70-171-93-122.no.no.cox.net) (Client Quit)
+[20:03:14] *** Quits: nwulfe_ (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 256 seconds)
+[20:04:35] *** Joins: oscurochu (~oscurochu@2603:9000:c202:1034:5991:474:8074:a98a)
+[20:13:36] *** Joins: Jong (~Jong@2620:10d:c090:400::5:b24b)
+[20:13:57] *** Quits: oscurochu (~oscurochu@2603:9000:c202:1034:5991:474:8074:a98a) (Ping timeout: 240 seconds)
+[20:17:32] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[20:17:32] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[20:17:32] *** Joins: wroathe (~wroathe@user/wroathe)
+[20:17:44] *** Joins: korg815 (~korg815@user/korg815)
+[20:20:09] *** Joins: Sheilong (uid293653@id-293653.ilkley.irccloud.com)
+[20:21:14] *** Quits: myon98 (~myon98@user/myon98) (Ping timeout: 250 seconds)
+[20:21:48] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 240 seconds)
+[20:27:36] *** Joins: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net)
+[20:31:11] *** Quits: snortie (~snortie@2a02:8308:386:b900:f881:7773:c6f5:7fb8) (Ping timeout: 245 seconds)
+[20:32:24] *** Joins: adip (~adip@user-188-33-226-1.play-internet.pl)
+[20:33:15] *** Joins: adip_ (~adip@user-188-33-226-1.play-internet.pl)
+[20:36:24] *** Quits: _LordJohn (~lordjohn@l37-194-102-53.novotelecom.ru) (Read error: Connection reset by peer)
+[20:38:51] *** Joins: reset (~reset@user/reset)
+[20:42:21] *** Joins: cuppajoe (~joe@ip70-171-93-122.no.no.cox.net)
+[20:43:22] <cuppajoe> Which C standard is used most often in the real world? C89, C99, etc.? I am particularly interested in Linux development, but I'm not sure which standard to look at more closely.
+[20:46:35] *** Joins: strajder (~strajder@user/strajder)
+[20:46:48] *** Quits: simpl_e (~user@user/simpl-e/x-8589812) (Remote host closed the connection)
+[20:47:14] <NRK> linux doesn't even use ISO C
+[20:47:29] <NRK> they use GNUC
+[20:48:25] <cuppajoe> so its nonstandard? Is there a resource that documents GNUC like they do for ISO C?
+[20:49:18] <gnoo> they have html and info documents, maybe there's one in your system already, see `info libc'
+[20:52:43] *** Quits: soapsudsxx (~soapsudsx@141.193.188.140) (Remote host closed the connection)
+[20:53:43] *** Quits: cuppajoe (~joe@ip70-171-93-122.no.no.cox.net) (Ping timeout: 256 seconds)
+[20:53:52] *** Joins: soapsudsxx (~soapsudsx@141.193.188.140)
+[20:57:55] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[20:58:00] *** Joins: MrRed (~MrRed@ec2-35-183-11-46.ca-central-1.compute.amazonaws.com)
+[20:58:04] *** Parts: MrRed (~MrRed@ec2-35-183-11-46.ca-central-1.compute.amazonaws.com) (WeeChat 2.3)
+[20:58:20] *** Joins: xlowen (~xlowen@143.255.160.222)
+[20:59:14] <xlowen> Hey all! I've just learned IRC is still alive and well and was wondering if this would be a good place for some newbie C questions?
+[21:00:10] <Rounin> I woooould think so, or at least if not, then we've misunderstood the channel in the same way
+[21:00:39] *** Joins: KoiShadow (~Shadow@2409:4072:6195:9cf2::2748:88a0)
+[21:01:01] *** Joins: acerbic (~acerbic@cs-xdata-50-86-55-6.cspire.com)
+[21:01:06] <xlowen> Rounin lol
+[21:02:03] *** Parts: KoiShadow (~Shadow@2409:4072:6195:9cf2::2748:88a0) (Leaving)
+[21:02:28] *** Quits: Jong (~Jong@2620:10d:c090:400::5:b24b) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[21:02:41] *** Joins: SymbioticFemale (~Symbiotic@user/SymbioticFemale)
+[21:02:57] *** Joins: Jong (~Jong@2620:10d:c090:400::5:b24b)
+[21:03:41] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[21:03:42] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[21:03:42] *** Joins: wroathe (~wroathe@user/wroathe)
+[21:04:11] <sham1> Linux the kernel uses GNUC1999 with some stylistic stuff from C1989 like putting all variable declarations at top of functions
+[21:06:32] *** Quits: fe23 (~fe23@2409:8a34:46c:f80:a066:c7bb:c824:d42a) (Quit: fe23)
+[21:06:49] <xlowen> So I'll shoot. I'm taking the cs50 course and there was this lab where we have to change the volume of a .wav file using C. There are probably some more fancy ways of doing this but with the info we've been given, we had to copy the contents of an input.wav file in an output.wav file that would have its volume changed by a factor the user would
+[21:06:50] <xlowen> input in the command line argument.
+[21:06:50] <xlowen> In order to do this we copy the 44bytes header file first, for the file information and after that we copy the 2 byte samples 1 by 1 multiplying these values by the ammount we want to change the volume.
+[21:06:51] <xlowen> we're doing all that through the usage of fread and fwrite functions in the stdio lib.
+[21:06:51] <xlowen> My question is. How does the computer know that the first 44 bytes I tell it to copy over are the first ones, and how does it know the next 2 byte pieces I'm checking are the ones after the initial 44 bytes. It doesnt seem to be told that. (long story is long)
+[21:06:52] *** ChanServ sets mode: +o candide
+[21:06:52] *** candide sets mode: +b *!~xlowen@143.255.*
+[21:06:53] <sham1> Or is it GNUC1989, I can't tell
+[21:07:26] *** Quits: acerbic (~acerbic@cs-xdata-50-86-55-6.cspire.com) (Read error: Connection reset by peer)
+[21:08:12] *** candide sets mode: -b *!~xlowen@143.255.*
+[21:08:22] *** Quits: HaMsTeRs (~Thunderbi@210.3.213.4) (Quit: HaMsTeRs)
+[21:08:38] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 272 seconds)
+[21:13:29] <kevinsjoberg> Yes, people do compete on that too. In fact, many puzzles are written in such a way that the naïve approach isn't good enough (e.g., makes the program run forever).
+[21:13:34] *** Joins: pucara (~i@host14.181-1-101.telecom.net.ar)
+[21:13:46] <kevinsjoberg> Wrong chat. My bad.
+[21:14:50] *** Joins: jjido (~Denis@2a02:c7f:5c91:e700:852c:c89f:7cdd:a935)
+[21:15:28] <kurahaupo> xlowen: when you opena file for reading or writing (or both), the current position is always the start of the file
+[21:16:55] <kurahaupo> xlowen: Files intentionally mimic a stream of bytes, so you can treat a file, a pipe, or a device interchangeably.
+[21:16:57] *** Quits: nabaiste^ (~nabaiste@50.233.120.162) (Ping timeout: 240 seconds)
+[21:20:26] *** Joins: Betal (~Betal@user/betal)
+[21:22:39] <xlowen> @kurahaupoOk so when I run fread(..) then fwrite(...) the first time, it would just transfer over those bytes I have declared. once I run fread(...) and fwrite(...) again in the code it will resume from where I stopped before, as to read the first byte after the last one that has been read in the first time the function fread(...) was called?
+[21:22:49] <xlowen> Thanks for replying btw :)
+[21:23:59] *** Joins: snortie (~snortie@2a02:970:1186:1800:f881:7773:c6f5:7fb8)
+[21:25:42] <ioxzev1z> xlowen, yes
+[21:26:10] <ioxzev1z> If you specifically want the first 44 bytes, fread that amount and do something with it
+[21:26:13] <ioxzev1z> Then read more, etc
+[21:26:13] <fizzie> Heh, sounds like that must be exactly the same course the other person did.
+[21:27:30] <xlowen> ioxzev1z I think I got it! ty!
+[21:28:25] *** Quits: aniruddha (uid340443@id-340443.ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[21:28:48] *** Quits: iomari891 (~iomari891@105.112.138.38) (Ping timeout: 256 seconds)
+[21:29:49] *** Joins: nabaiste^ (~nabaiste@50.233.120.162)
+[21:30:50] *** Joins: Akuli (~Akuli@82-203-167-37.bb.dnainternet.fi)
+[21:31:32] <Rounin> xlowen: Ah. We just had someone else working on the same assignment here earlier.
+[21:32:03] <fizzie> Remember that the samples are signed, not unsigned. ;)
+[21:32:14] <Rounin> Yeah, and also byte order, potentially :D
+[21:32:15] <fizzie> (I doubt that really counts as a spoiler.)
+[21:35:06] *** Quits: ZedHedTed (~ZedHedTed@user/zedhedted) (Quit: leaving)
+[21:35:10] <xlowen> Rounin I see... guess you will be hearing more from us in the coming weeks?
+[21:35:10] <xlowen> I've already solved this one, I kinda tried it, didnt have my head wrapped about the whole concept but it worked, then I came here to try and get more technical about how it actually works.. In this course the things just move in a way where you have to go hunt for outside information.
+[21:35:11] <xlowen> They go like this. "Hey all this is how you open a file in C, to read and write these files you can check functions in this library stdio.h, NOW -> write a program in C that converts this Mozzart song to a Metallica hit." (its how I feel, dunno others)
+[21:36:39] *** Joins: Torr (~Torr@user/torr)
+[21:38:36] <Rounin> Hehe... Sounds like the same C class I took once... Thankfully I sort of knew it already
+[21:39:56] <xlowen> I'm completely new to all of this so it is rather cryptic
+[21:40:20] <xlowen> Its a roller coaster of feeling dumb then smart when you solve and understand it
+[21:40:47] *** Quits: magic_ninja (~sparkie1@2600:1700:3ab0:e9f0:d591:28fb:7093:57e8) (Remote host closed the connection)
+[21:40:49] <xlowen> though I'm feeling dumb most of the time LOL since this is stuff that people have known for ages now
+[21:41:25] *** Joins: seninha (~chatzilla@user/seninha)
+[21:42:29] <Rounin> Hehe... There is a lot to learn, though... Even besides the memory accesses and low-level stuff, C comes with its own host of rules and strangeness
+[21:43:10] <ioxzev1z> xlowen, most people learn because they have a goal that's slightly beyond their capability, so they go searching for how to do something and learn stuff on the way there
+[21:44:11] <ioxzev1z> That's my approach anyway
+[21:45:06] *** Joins: oakyy (~oaky@h-155-4-161-203.A518.priv.bahnhof.se)
+[21:45:16] <ioxzev1z> Been a good day of learning when I end up closing 20 SO tabs on my browser
+[21:45:30] *** Joins: libc (~archer@user/tessio)
+[21:45:36] <libc> good evening
+[21:46:07] <Rounin> Wow, it's not every day that libc itself joins the channel
+[21:46:38] *** Quits: korg815 (~korg815@user/korg815) (Ping timeout: 272 seconds)
+[21:46:45] <markand> N2680 is lovely
+[21:46:51] <markand> I think we all wanted this
+[21:47:06] <xlowen> Ah yeah well I'm a brazillian dude who wants to work in IT and is changing careers.. thought cs50 would be a good start and boy has it been a ride. I still dont know if I'll be into developing stuff, so far coding has been fun but a bit overwhelming
+[21:48:17] *** libc is now known as subzero
+[21:48:32] *** subzero is now known as scorpion
+[21:48:56] *** scorpion is now known as goodfella
+[21:49:16] <goodfella> ok
+[21:49:39] <goodfella> xlowen: don't give up ...
+[21:52:25] <xlowen> goodfella I won't... I endured 5 years of law 4 years of postgraduate, 3 years of teaching at a uni, earning a shit salary, and watching our currency melt and make more money through nft gaming than actually working in my country, I'm pretty sure I can survive
+[21:52:27] *** Joins: magic_ninja (~sparkie1@2600:1700:3ab0:e9f0:a375:4df:5846:3a7f)
+[21:53:12] <goodfella> yeah gaming is brazil is pretty solid ...
+[21:53:36] <goodfella> i especially fond of FalleN
+[21:53:55] <sham1> markand: makes me question why that wasn't made a thing ever since C1999 when fixed-width types were introduced. Why did we have to do this inttypes.h nonsense with macros?
+[21:54:04] <xlowen> Oh you mean pro gaming... yeah Brazil is getting known for its FPS players :)
+[21:54:33] <markand> :-)
+[21:54:50] <goodfella> xlowen: i believe you are the raising name in programmign
+[21:54:57] <goodfella> programming
+[21:56:07] <xlowen> Boy would I be happy to be the raising name in a USD paid remote entry IT job! idk about programming yet but it sure is fun :D
+[21:56:24] *** Joins: inlight (~n0ise@user/inlight)
+[21:57:09] <sham1> I like the idea of "%w32d" more than "%" PRId32
+[21:57:48] *** Parts: goodfella (~archer@user/tessio) (WeeChat 3.4)
+[21:57:50] *** Joins: goodfella (~archer@user/tessio)
+[21:58:33] *** Quits: Akuli (~Akuli@82-203-167-37.bb.dnainternet.fi) (Ping timeout: 256 seconds)
+[21:58:55] *** Joins: Akuli (~Akuli@87-94-111-226.bb.dnainternet.fi)
+[22:00:26] *** Joins: jtmusky (~jtmusky@104-1-122-97.lightspeed.okcbok.sbcglobal.net)
+[22:02:01] *** Quits: Atque (~Atque@user/atque) (Remote host closed the connection)
+[22:03:10] *** Joins: Atque (~Atque@user/atque)
+[22:03:23] *** Quits: goodfella (~archer@user/tessio) (Quit: WeeChat 3.4)
+[22:06:39] *** Quits: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[22:07:48] *** Quits: jusski (~user@78-63-85-123.static.zebra.lt) (Ping timeout: 250 seconds)
+[22:07:55] *** Quits: cvmn (~caveman@gateway/tor-sasl/caveman) (Ping timeout: 240 seconds)
+[22:08:39] *** Quits: Thedarkb2 (~Thedarkb@2001:bb6:b403:e042:b812:bb3f:25c8:9173) (Ping timeout: 250 seconds)
+[22:10:30] *** Joins: goodfella (~archer@user/tessio)
+[22:11:07] *** Joins: rgrinberg (~textual@2806:101e:7:70b6:1da8:8bb8:7aff:3b18)
+[22:11:29] *** Quits: dyeplexer (~dyeplexer@user/dyeplexer) (Remote host closed the connection)
+[22:16:59] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[22:19:46] *** Joins: auk (auk@gateway/vpn/protonvpn/auk)
+[22:19:57] *** Quits: alch (~alch@151.82.63.19) (Ping timeout: 240 seconds)
+[22:20:19] *** Quits: auk (auk@gateway/vpn/protonvpn/auk) (Max SendQ exceeded)
+[22:20:48] *** Joins: auk (auk@gateway/vpn/protonvpn/auk)
+[22:21:29] *** Quits: Dotz0cat (~Dotz0cat@98.19.251.149) (Read error: Connection reset by peer)
+[22:21:54] *** Joins: alch (~alch@151.82.56.205)
+[22:22:55] *** Joins: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com)
+[22:24:17] *** Quits: adip (~adip@user-188-33-226-1.play-internet.pl) (Ping timeout: 240 seconds)
+[22:24:38] *** Quits: adip_ (~adip@user-188-33-226-1.play-internet.pl) (Ping timeout: 272 seconds)
+[22:25:16] *** Joins: Dotz0cat (~Dotz0cat@h87.94.187.173.dynamic.ip.windstream.net)
+[22:25:37] *** Quits: TonyStone (~TonyStone@2603-7080-8607-c36a-b0ed-1a92-719b-f6c2.res6.spectrum.com) (Ping timeout: 240 seconds)
+[22:26:14] *** Joins: adip (~adip@aeiw26.neoplus.adsl.tpnet.pl)
+[22:26:18] *** Joins: adip_ (~adip@aeiw26.neoplus.adsl.tpnet.pl)
+[22:28:56] *** Joins: HaMsTeRs (~Thunderbi@210.3.213.4)
+[22:29:01] *** Quits: kurahaupo (~kurahaupo@115.69.27.211) (Read error: Connection reset by peer)
+[22:29:24] *** Quits: rgrinberg (~textual@2806:101e:7:70b6:1da8:8bb8:7aff:3b18) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[22:29:32] *** Joins: wroathe (~wroathe@user/wroathe)
+[22:29:45] *** Joins: kurahaupo (~kurahaupo@115.69.27.211)
+[22:29:59] *** Joins: rgrinberg (~textual@2806:101e:7:70b6:1da8:8bb8:7aff:3b18)
+[22:31:22] *** Quits: rcf (rcf@sdf.org) (Remote host closed the connection)
+[22:31:31] *** Joins: cvmn (~caveman@gateway/tor-sasl/caveman)
+[22:31:35] *** Quits: caveman (~caveman@gateway/tor-sasl/caveman) (Ping timeout: 240 seconds)
+[22:34:15] *** Quits: SymbioticFemale (~Symbiotic@user/SymbioticFemale) (Ping timeout: 240 seconds)
+[22:34:46] *** Quits: seninha (~chatzilla@user/seninha) (Ping timeout: 272 seconds)
+[22:34:48] *** Quits: noarb- (~noarb@user/noarb) (Quit: ZNC 1.8.2 - https://znc.in)
+[22:35:00] *** Quits: geowiesnot (~user@5-51-190-244.abo.bbox.fr) (Ping timeout: 240 seconds)
+[22:35:20] *** Joins: SymbioticFemale (~Symbiotic@user/SymbioticFemale)
+[22:35:41] *** Joins: ZedHedTed (~ZedHedTed@user/zedhedted)
+[22:36:12] *** Joins: vms14 (~user@29.red-79-153-202.dynamicip.rima-tde.net)
+[22:40:46] *** Quits: inlight (~n0ise@user/inlight) (Ping timeout: 256 seconds)
+[22:41:18] *** Joins: caveman (~caveman@gateway/tor-sasl/caveman)
+[22:44:00] *** Joins: inlight (~n0ise@user/inlight)
+[22:44:35] *** Quits: cvmn (~caveman@gateway/tor-sasl/caveman) (Ping timeout: 240 seconds)
+[22:44:37] *** Quits: inlight (~n0ise@user/inlight) (Max SendQ exceeded)
+[22:45:17] *** Joins: crashrep (~crashrep@user/crashrep)
+[22:45:18] *** Joins: inlight (~n0ise@user/inlight)
+[22:52:28] *** Quits: markb1 (~markb1@2600:1700:eb40:7ecf:8bd6:62f1:1b52:da20) (Quit: Leaving)
+[22:54:42] *** Joins: sonde (~sonde@user/sonde)
+[22:55:15] *** Quits: crashrep (~crashrep@user/crashrep) (Ping timeout: 240 seconds)
+[22:56:27] *** Quits: CaryHartline (~CaryHartl@2603-8080-6a0e-8d88-ec93-a79e-a5f0-138c.res6.spectrum.com) (Quit: My iMac has gone to sleep. ZZZzzz…)
+[22:56:47] *** Quits: inlight (~n0ise@user/inlight) (Quit: WeeChat 3.3)
+[22:58:17] *** Joins: CaryHartline (~CaryHartl@cpe-76-185-112-162.tx.res.rr.com)
+[23:00:06] *** Quits: Enitin (~Enitin@82.102.22.85) (Ping timeout: 272 seconds)
+[23:02:21] *** Joins: seninha (~chatzilla@user/seninha)
+[23:03:24] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 240 seconds)
+[23:03:47] *** Joins: TonyStone (~TonyStone@cpe-74-76-51-197.nycap.res.rr.com)
+[23:04:11] *** Joins: Enitin (~Enitin@82.102.22.85)
+[23:05:02] *** Joins: Inline (~Inline@2a02:908:1252:7a80::175)
+[23:06:53] *** candide sets mode: -o candide
+[23:08:36] *** Quits: Dotz0cat (~Dotz0cat@h87.94.187.173.dynamic.ip.windstream.net) (Ping timeout: 240 seconds)
+[23:09:15] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[23:09:15] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[23:09:15] *** Joins: wroathe (~wroathe@user/wroathe)
+[23:10:33] *** Joins: geowiesnot (~user@5-51-190-244.abo.bbox.fr)
+[23:11:30] *** Quits: boB_K7IQ (~boB_K7IQ@ip72-201-138-188.ph.ph.cox.net) (Ping timeout: 272 seconds)
+[23:11:39] *** Quits: poprocks (~logan@user/poprocks) (Ping timeout: 256 seconds)
+[23:11:59] *** Joins: boB_K7IQ (~boB_K7IQ@ip72-201-138-188.ph.ph.cox.net)
+[23:12:58] *** Joins: Lord_of_Life_ (~Lord@user/lord-of-life/x-2819915)
+[23:13:41] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 245 seconds)
+[23:14:12] *** Quits: Lord_of_Life (~Lord@user/lord-of-life/x-2819915) (Ping timeout: 256 seconds)
+[23:14:13] *** Lord_of_Life_ is now known as Lord_of_Life
+[23:18:52] *** Quits: Dean (~Dean@165-73-119-36.ip.afrihost.capetown) (Changing host)
+[23:18:52] *** Joins: Dean (~Dean@user/De4n-Whit3/x-9385125)
+[23:19:05] <Dean> hi
+[23:19:34] *** Quits: slidercrank (~slidercra@user/slidercrank) (Read error: Connection reset by peer)
+[23:20:45] *** Joins: jusski (~user@78-63-85-123.static.zebra.lt)
+[23:23:22] *** Joins: slidercrank (~slidercra@user/slidercrank)
+[23:26:48] <vms14> hi Dean
+[23:27:18] *** Joins: acerbic (~acerbic@cs-xdata-50-86-55-6.cspire.com)
+[23:27:24] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Ping timeout: 240 seconds)
+[23:27:45] *** Quits: HaMsTeRs (~Thunderbi@210.3.213.4) (Quit: HaMsTeRs)
+[23:28:53] <goodfella> Dean
+[23:29:04] *** Joins: fikran (~fikran@user/fikran)
+[23:29:14] <ChoHag> goodfella.
+[23:29:23] *** Joins: crashrep (~crashrep@user/crashrep)
+[23:29:47] <fikran> Hi all! I'm doing some kernel stuff (I suck at this) and I noticed that the freebsd headers do not have the idiom #ifndef SOMETHING \n #define SOMETHING. However, they do not have the cyclical include problem.
+[23:30:11] <goodfella> ChoHag
+[23:30:31] <ChoHag> The other way to not have a cyclic include problem than include header blocks is to not have a cyclical include problem.
+[23:30:51] <ChoHag> "Include header blocks"? Stupid name but those things, you know what I mean.
+[23:31:23] <ChoHag> fikran: They have simply arranged their header files to not be cyclic.
+[23:31:27] <goodfella> i could have swear they called include guards
+[23:31:33] <ChoHag> goodfella: Yeah them.
+[23:31:49] <fikran> ChoHag: hm..I wonder how...I'm trying to copy that and running into the same issue
+[23:32:01] <ChoHag> Exquisite care.
+[23:33:26] <goodfella> not having include guards doesn't mean cyclic include problem .. but having them means someone at least try to avoid them
+[23:33:55] *** Quits: crashrep (~crashrep@user/crashrep) (Ping timeout: 240 seconds)
+[23:34:17] <sham1> Include guards
+[23:35:43] <fikran> I'm wrong. They use ifndef's. Carry on.
+[23:35:55] <goodfella> fikran: at least you doing some kernel stuff ... i still try to debug simple exercise in KnR
+[23:36:33] <goodfella> but im also in a ccnp course ... so i try to save some hair's for that
+[23:37:21] <ChoHag> fikran: The key to programming is attention to deatil.
+[23:37:27] * goodfella is not going to broadcast anymore technological impotancy in this channel
+[23:37:36] <fikran> goodfella: eh, its the same thing
+[23:38:01] <ChoHag> goodfella: How else are you supposed to learn?
+[23:38:11] <ChoHag> Noobs are hardly likely to exude competence are they?
+[23:38:16] <fikran> goodfella: what are you learning C for?
+[23:38:39] <fikran> I'm a little rusty (no pun intended) with C.
+[23:38:41] <goodfella> for learning computers
+[23:39:52] <ChoHag> And anyway you can hardly broadcast worse technological impotancy than literally all of the major tech companies currently in existence.
+[23:42:32] *** Joins: wootehfoot (~wootehfoo@user/wootehfoot)
+[23:42:53] <fikran> goodfella: that's a reasonable goal, but have something more specific
+[23:43:06] <fikran> I learned C cuz my computer in the late 90s sucked
+[23:43:06] <ChoHag> Why?
+[23:43:10] <fikran> and cuz I was a Unix fanboy
+[23:43:25] <goodfella> i just like to know what's going on ... that's it
+[23:43:25] <ChoHag> Why something more specific, that is.
+[23:43:32] <ChoHag> That is a noble goal.
+[23:43:48] <fikran> because it gives you a goal, a target
+[23:43:57] <ChoHag> C is a reasonable angle for figuring that out.
+[23:44:34] <sham1> Eh, I'm not really sure that C is the way to go if one wants to "learn computers" because C is still quite abstracted away from the computer in many ways
+[23:44:48] <ChoHag> I said it's a reasonable angle.
+[23:45:12] <ChoHag> You could do a lot worse than learning the platform on which 99% of the world runs.
+[23:46:06] <ChoHag> (A lot of that 99% isn't C per se but that's irrelevant at that level)
+[23:47:36] <ChoHag> FWIW I didn't learn C until I already knew computers comfortably well.
+[23:48:26] <goodfella> well im not completely ignorant about how computers work ...
+[23:49:10] <goodfella> i just think there is something special about being able to play with what you know
+[23:51:32] <fikran> what aspect of computers are you trying to learn?
+[23:51:54] <goodfella> when it comes to C you learn everything you have interaction with whether you like it or not
+[23:52:41] <goodfella> for example,  a couple of days ago i didn't understood why putchar() is not printeing immediately the characters
+[23:53:00] <goodfella> and i did quiet a fuss about it ...
+[23:53:45] *** Quits: nabaiste^ (~nabaiste@50.233.120.162) (Remote host closed the connection)
+[23:53:52] <goodfella> fikran: you don't have that experience in python for example
+[23:54:00] <goodfella> you just do something and you believe you know what you doing
+[23:54:01] *** Quits: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net) (Remote host closed the connection)
+[23:54:07] <goodfella> but you don't
+[23:54:11] *** Quits: synthmeat (~synthmeat@user/synthmeat) (Quit: WeeChat 3.0)
+[23:54:24] *** Joins: synthmeat (~synthmeat@user/synthmeat)
+[23:54:24] *** Quits: Enitin (~Enitin@82.102.22.85) (Ping timeout: 250 seconds)
+[23:55:24] *** Joins: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net)
+[23:55:48] <goodfella> i find it facinatign and for me that's enough for learning C
+[23:55:51] <goodfella> facinating
+[23:56:04] <goodfella> but maybe im wierd ... lol
+[23:57:10] <ChoHag> goodfella: Keep on truckin'.
+[23:57:19] *** Quits: boB_K7IQ (~boB_K7IQ@ip72-201-138-188.ph.ph.cox.net) (Ping timeout: 256 seconds)
+[23:57:37] *** Joins: boB_K7IQ (~boB_K7IQ@ip72-201-138-188.ph.ph.cox.net)
+[23:57:47] <ChoHag> Keep on asking "dumb" questions.
+[23:57:53] *** Joins: Guest88 (~Guest88@202.142.79.145)
+[23:57:57] <ChoHag> The only thing dumber than a dumb question is not knowing the answer.
+[23:58:17] <ChoHag> "Not finding out", sorry. Bit drunk.
+[23:58:31] *** Quits: cosimone (~user@93-47-228-207.ip115.fastwebnet.it) (Remote host closed the connection)
+[23:58:41] *** Parts: Guest88 (~Guest88@202.142.79.145) ()
+[23:59:23] <pragma-> goodfella: Plenty of C "programmers" treat C like Python and trial-test different things until their program works and then they assume that's how it's done everywhere, not realizing the pitfalls of undefined behavior and implementation-specific code.
+[23:59:51] <pragma-> "My program works! It must be correct!"
+[23:59:59] <goodfella> exactly ...

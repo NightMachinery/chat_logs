@@ -1,0 +1,265 @@
+[00:03:15] <companion_cube> sure, bytes can live in the minor heap, for a start
+[00:03:39] <companion_cube> bigstring is good for long lived buffers that need to be passed to C (because they won't move)
+[00:04:09] <companion_cube> in particular it's important for async IO, because you give a buffer to C and then you yield to another fiber/lwt/promise that can still allocate, call the GC, and move your buffer
+[00:04:19] <companion_cube> … unless the buffer is a immovable bigstring.
+[00:11:01] *** Joins: Anarchos (~Anarchos@88.168.112.216)
+[00:16:39] *** Quits: mro (~mro@port-92-195-155-39.dynamic.as20676.net) (Remote host closed the connection)
+[00:18:08] *** Joins: mro (~mro@port-92-195-155-39.dynamic.as20676.net)
+[00:19:57] *** Quits: gravicappa (~gravicapp@145.255.1.142) (Ping timeout: 240 seconds)
+[00:28:15] <d_bot> <VPhantom> Well, it was fun while it lasted. The OCaml 5 note on bytes is interesting. Above my pay grade though.
+[00:30:21] <companion_cube> it just makes an even stronger case, which is weird?
+[00:30:30] <companion_cube> it means bytes is even better for buffers… :/
+[00:34:04] <d_bot> <Et7f3> Where do you see it ? It should be a fast syscall with vdso
+[00:43:33] *** Quits: wyrd (~wyrd@gateway/tor-sasl/wyrd) (Ping timeout: 276 seconds)
+[00:44:12] <d_bot> <Butanium (@me on answer)> `caml_sys_time_include_children_unboxed`
+[00:44:44] <d_bot> <Butanium (@me on answer)> is 86% of time spent in the most called function
+[01:04:15] *** Quits: mro (~mro@port-92-195-155-39.dynamic.as20676.net) (Ping timeout: 250 seconds)
+[01:19:48] *** Quits: Serpent7776 (~Serpent77@90-156-31-193.internetia.net.pl) (Quit: leaving)
+[01:24:54] *** Joins: oriba (~oriba@dynamic-089-014-172-069.89.14.pool.telefonica.de)
+[01:30:57] *** Quits: rgrinberg (~textual@2806:101e:7:6bed:3054:7040:b02f:2be9) (Ping timeout: 240 seconds)
+[01:37:26] *** Quits: Anarchos (~Anarchos@88.168.112.216) (Quit: Vision[]: i've been blurred!)
+[01:38:38] <d_bot> <Et7f3> Is it cumulative time
+[01:52:21] <d_bot> <joris> @companion_cube fwiw I totally agree that buffer is only half useful without access to internal, and I totally agree cstruct is a the wrong answer
+[01:52:37] <d_bot> <joris> And I always end up either using lwt or coding my own too
+[01:53:20] <d_bot> <joris> Cstruct is good for c binding and for low allocation rate, but low allocation rate means super smart code
+[01:53:56] <d_bot> <joris> I don't like smart code, I don't like having to deal with buffer cache or stuff like this
+[01:59:13] <companion_cube> @joris btw i need to pick your brain about CCVector, if you still use it
+[02:01:17] <d_bot> <Butanium (@me on answer)> My code is 5 times faster with less Sys.time() and replaced by Unix
+[02:02:36] <d_bot> <joris> Ah yes I didn't use it recently because I had bad memory about it but yes can discuss
+[02:05:30] <d_bot> <Et7f3> A fast function used multiple time will take a big amount of time
+[02:07:56] <d_bot> <joris> There are various way to get time in Linux from getimeofday to clock_gettime to instruction with various level of performance and precision
+[02:08:15] <d_bot> <joris> I kind of remember Unix implementation being changed.
+[02:09:36] <d_bot> <joris> I don't know what it is currently but last time I checked non of the standard way to get time in ocaml allowed to get low precision time counter for profiling you had to use custom bindings. That might have changed now. I
+[02:18:40] <companion_cube> You could use mtime or ptime
+[02:18:55] <companion_cube> Forget which is the right one for that
+[02:19:58] <companion_cube> @joris re-reading the code it seems that the growth policy is a bit high, I'm thinking of decreasing it to x1.5 ish
+[02:21:37] <d_bot> <undu> to measure spans you want mtime (m is for monotonic)
+[02:23:45] *** Quits: azimut_ (~azimut@gateway/tor-sasl/azimut) (Remote host closed the connection)
+[02:24:10] *** Joins: azimut (~azimut@gateway/tor-sasl/azimut)
+[02:26:55] <d_bot> <Anurag> a growth factor of 1.5 is what i've also seen in some C++ stdlib alternatives (the vector implementation in facebook's folly library uses 1.5 for example)
+[02:26:58] *** Joins: azimut_ (~azimut@gateway/tor-sasl/azimut)
+[02:29:03] <companion_cube> Yeah, there's less waste
+[02:29:38] <companion_cube> I tend to use x1.5 + c with c a
+[02:29:45] <companion_cube> Small constant
+[02:29:49] *** Joins: rgrinberg (~textual@2806:101e:7:6bed:4db1:e3b:c0ba:c184)
+[02:29:58] <companion_cube> Deals with the initial case
+[02:30:48] *** Quits: azimut (~azimut@gateway/tor-sasl/azimut) (Ping timeout: 276 seconds)
+[02:34:07] <d_bot> <mseri> Sorry, I can no longer do it. Re-running the job made it disappear. I got a couple of random cache failures in other jobs. Maybe it is related from what you say
+[02:45:57] <d_bot> <mseri> Why not 1.618? Can’t remember where, but I remember it popping up on some paper on optimality of array growth in c++, making a pun with the golden mean. I’ll link it tomorrow if ai can find it
+[02:46:28] <companion_cube> :D seems weirdly specific but well
+[02:47:01] *** Joins: bobo_ (~bobo@37.170.190.175)
+[02:47:13] *** Quits: spip (~bobo@37.164.93.43) (Ping timeout: 256 seconds)
+[02:52:57] *** Quits: cedric (~cedric@2a01:cb11:821:7c00:9d5c:62a8:fd4f:5327) (Quit: Konversation terminated!)
+[02:59:44] *** Joins: wyrd (~wyrd@gateway/tor-sasl/wyrd)
+[03:16:21] *** Quits: Haudegen (~quassel@178.115.237.87.static.drei.at) (Ping timeout: 256 seconds)
+[03:24:04] *** Quits: ouestbillie (~gallup@192-222-138-215.qc.cable.ebox.net) (Quit: leaving)
+[03:42:08] <GreaseMonkey> if ~1.618 is optimal then maybe the choice of 1.5 was chosen on the basis that it's old+(old lsr 1) which is quick to compute
+[03:43:11] *** Joins: humasect (~humasect@2001:1970:57e0:4100::1ae0)
+[03:44:33] <companion_cube> I do like `old + (old lsr 1) + 5` or sth like that
+[03:44:41] <companion_cube> give a little extra kick at the beginning
+[03:44:44] <companion_cube> maybe it's a bit too much
+[03:57:41] <d_bot> <Et7f3> https://github.com/ocaml/ocaml/blob/001997e81342fd0d321fd877b73608150601e7d9/runtime/sys.c#L556 it allocate
+[03:57:57] <d_bot> <Et7f3> Why it is in noalloc and still allocate ????
+[03:58:23] <d_bot> <Et7f3> (Do you see reply on IRC ?)
+[04:07:41] *** Quits: olle (~olle@i5E866D84.versanet.de) (Ping timeout: 256 seconds)
+[04:16:40] *** Quits: oriba (~oriba@dynamic-089-014-172-069.89.14.pool.telefonica.de) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[04:44:17] *** Quits: humasect (~humasect@2001:1970:57e0:4100::1ae0) (Ping timeout: 240 seconds)
+[04:46:24] *** Quits: vicfred (~vicfred@user/vicfred) (Quit: Leaving)
+[04:48:49] *** Quits: rgrinberg (~textual@2806:101e:7:6bed:4db1:e3b:c0ba:c184) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[04:48:51] <energizer> i am on irc and i see it
+[04:49:09] <energizer> well, i see <Et7f3> (Do you see reply on IRC ?)
+[04:49:36] <d_bot> <NULL> You see nothing related to the fact that I replied to your previous message, right ?
+[04:50:32] <energizer> right
+[04:51:28] <energizer> so i guess the answer is no, i dont see it
+[04:53:09] *** Joins: rgrinberg (~textual@2806:101e:7:6bed:4db1:e3b:c0ba:c184)
+[05:06:16] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4)
+[05:06:57] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[05:43:02] *** Joins: TakinOver (~quassel@96.44.191.138)
+[05:44:38] *** Quits: brettgilio (~brettgili@x-node.gq) (Ping timeout: 268 seconds)
+[05:59:50] *** Quits: chrisz (ctgsfjujn6@55d43e0c.access.ecotel.net) (Ping timeout: 260 seconds)
+[06:01:41] *** Joins: chrisz (kw4q0n8zm2@55d4d49d.access.ecotel.net)
+[06:02:45] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4)
+[06:03:25] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[06:08:33] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4)
+[06:09:53] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[06:40:23] *** Quits: unyu (~pyon@user/pyon) (Quit: brb)
+[06:57:47] *** Joins: humasect (~humasect@2001:1970:57e0:4100::1ae0)
+[06:58:49] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Ping timeout: 256 seconds)
+[07:14:02] *** Quits: terrorjack (~terrorjac@2a01:4f8:1c1e:509a::1) (Quit: The Lounge - https://thelounge.chat)
+[07:16:05] *** Joins: terrorjack (~terrorjac@2a01:4f8:1c1e:509a::1)
+[07:19:22] *** Joins: mbuf (~Shakthi@122.174.58.23)
+[07:30:34] *** Quits: williewillus (~williewil@user/williewillus) (Quit: The Lounge - https://thelounge.chat)
+[07:31:33] *** Joins: thelounge78 (~williewil@user/williewillus)
+[07:31:48] *** Quits: thelounge78 (~williewil@user/williewillus) (Remote host closed the connection)
+[07:32:56] *** Quits: humasect (~humasect@2001:1970:57e0:4100::1ae0) (Quit: Leaving...)
+[07:33:14] *** Joins: thelounge78 (~williewil@user/williewillus)
+[07:38:52] *** Quits: thelounge78 (~williewil@user/williewillus) (Quit: The Lounge - https://thelounge.chat)
+[07:39:17] *** Quits: hackinghorn (~hackingho@user/hackinghorn) (Quit: Leaving)
+[07:45:17] *** Joins: thelounge78 (~williewil@user/williewillus)
+[08:15:49] *** Quits: rgrinberg (~textual@2806:101e:7:6bed:4db1:e3b:c0ba:c184) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[08:27:03] *** Joins: gravicappa (~gravicapp@145.255.1.142)
+[08:31:03] *** Joins: Haudegen (~quassel@178.115.237.87.static.drei.at)
+[08:38:23] *** Joins: zebrag (~chris@user/zebrag)
+[08:46:34] *** Quits: zebrag (~chris@user/zebrag) (Quit: Konversation terminated!)
+[10:19:34] *** Joins: Serpent7776 (~Serpent77@90-156-31-193.internetia.net.pl)
+[10:46:57] *** Quits: kaph (~kaph@net-2-47-208-144.cust.vodafonedsl.it) (Ping timeout: 240 seconds)
+[10:48:42] *** Quits: wyrd (~wyrd@gateway/tor-sasl/wyrd) (Ping timeout: 276 seconds)
+[10:54:47] *** Joins: wyrd (~wyrd@gateway/tor-sasl/wyrd)
+[11:03:21] *** Joins: shawnw (~shawn_w@c-73-225-121-73.hsd1.wa.comcast.net)
+[12:03:48] *** Joins: olle (~olle@i5E866D86.versanet.de)
+[12:20:34] <d_bot> <darrenldl> @glennsl working on test suite now, new version of timedesc should be up soon
+[12:39:53] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4)
+[12:41:17] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[13:15:33] *** Quits: xgqt (~xgqt@gentoo/developer/xgqt) (Ping timeout: 256 seconds)
+[13:15:54] *** Joins: mro (~mro@port-92-195-204-131.dynamic.as20676.net)
+[13:16:10] *** Joins: xgqt (~xgqt@gentoo/developer/xgqt)
+[13:18:49] *** Quits: mro (~mro@port-92-195-204-131.dynamic.as20676.net) (Remote host closed the connection)
+[13:31:12] *** Joins: mro (~mro@port-92-195-204-131.dynamic.as20676.net)
+[13:33:50] *** Joins: gwizon (~gwizon@ool-45798eff.dyn.optonline.net)
+[13:43:57] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4)
+[13:44:25] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[13:50:47] *** Joins: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4)
+[14:21:09] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4)
+[14:22:25] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[14:28:24] *** Quits: wyrd (~wyrd@gateway/tor-sasl/wyrd) (Ping timeout: 276 seconds)
+[14:30:11] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4)
+[14:33:35] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[14:42:28] *** Quits: mro (~mro@port-92-195-204-131.dynamic.as20676.net) (Remote host closed the connection)
+[14:46:59] <d_bot> <Jektrix> Finally got around to playing with timere today
+[14:47:11] <d_bot> <Jektrix> just in utop
+[14:47:17] *** Quits: bobo_ (~bobo@37.170.190.175) (Ping timeout: 240 seconds)
+[14:47:22] *** Joins: spip (~bobo@37.172.50.228)
+[14:47:27] <d_bot> <Jektrix> looks like the sexp to_string and of_string will be key for me so I can store it in my database
+[15:00:40] <rwmjones> menhir has broken everything :-(
+[15:01:39] <rwmjones> does anyone know why you can no longer pass a terminal to a function, as here:
+[15:01:40] <rwmjones> http://git.annexia.org/?p=goals.git;a=blob;f=src/parser.mly;h=9b1a91247767be286ec48f691b1c54bca8432837;hb=HEAD#l100
+[15:01:52] <rwmjones> File "src/parser.mly", line 102, characters 33-37:
+[15:01:53] <rwmjones> Error: Unbound value file
+[15:05:02] <d_bot> <darrenldl> @Jektrix yeah not a bad idea - they are stable and lossless
+[15:05:47] <d_bot> <darrenldl> except when you change time zone db drastically i guess, pulling the rug underneath oneself
+[15:08:17] <d_bot> <Jektrix> Sounds like you speak from experience there
+[15:08:23] <d_bot> <Jektrix> in what circumstances would you change timezone db
+[15:10:31] <d_bot> <darrenldl> uh...corrupted time zone db on OS i guess
+[15:10:51] <d_bot> <darrenldl> though timedesc doesnt use the OS copy of tzdb
+[15:11:17] <d_bot> <darrenldl> so not really an occurrence unless you ship your own tzdb
+[15:13:14] <d_bot> <darrenldl> just closer to a technical limitation than anything to be expected in practice
+[15:13:47] <d_bot> <darrenldl> since the only alternative is to attach the full copy of tzdb to every timere expression for them to be 100% lossless
+[15:14:01] <octachron_> rwmjones, I am not sure if that was intended to work before? It sounds like the best path is to either have a look at the generated code, or to use a hook that is patched to be `file` after the fact.
+[15:23:28] <octachron_> rwmjones, it looks like it the type inference that is failing, did you try to define a dummy `let file: ... = assert false` in the header?
+[15:27:27] *** Quits: mbuf (~Shakthi@122.174.58.23) (Quit: Leaving)
+[15:29:37] <rwmjones> it certainly did work before, and it works with --code-ancient
+[15:29:45] <rwmjones> I will try ...
+[15:32:06] *** Joins: gopcode (~gopcode@137.132.212.138)
+[15:42:57] *** Joins: unyu (~pyon@user/pyon)
+[15:47:37] *** Quits: gwizon (~gwizon@ool-45798eff.dyn.optonline.net) (Ping timeout: 240 seconds)
+[15:57:53] *** Joins: salkin-mada (~salkin@84.212.156.62)
+[15:59:10] *** Quits: salkin-mada (~salkin@84.212.156.62) (Client Quit)
+[16:22:19] *** Quits: gravicappa (~gravicapp@145.255.1.142) (Ping timeout: 256 seconds)
+[16:46:28] *** Quits: Haudegen (~quassel@178.115.237.87.static.drei.at) (Quit: Bin weg.)
+[17:02:27] *** Quits: gopcode (~gopcode@137.132.212.138) (Quit: Client closed)
+[17:24:18] <d_bot> <joris> I finally found why doc generation of module indices was broken for me ! https://github.com/ocaml/odoc/pull/819
+[17:24:29] <d_bot> <joris> i was becoming crazy
+[17:25:03] *** Joins: bartholin (~bartholin@158.110.70.210)
+[17:41:17] *** Quits: TakinOver (~quassel@96.44.191.138) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[17:45:41] *** Joins: Haudegen (~quassel@91.114.49.10)
+[17:54:31] *** Joins: mro (~mro@2002:5cc3:cc83:0:d037:ddda:4102:33dd)
+[18:07:52] *** Joins: salkin-mada (~salkin@84.212.156.62)
+[18:10:38] *** Joins: kaph (~kaph@net-2-47-208-144.cust.vodafonedsl.it)
+[18:11:30] *** Joins: hackinghorn (~hackingho@user/hackinghorn)
+[18:11:36] *** Joins: humasect (~humasect@2001:1970:57e0:4100::1ae0)
+[18:12:19] *** Joins: bobo_ (~bobo@37.172.50.228)
+[18:12:49] *** Quits: spip (~bobo@37.172.50.228) (Ping timeout: 256 seconds)
+[18:29:42] *** Quits: Serpent7776 (~Serpent77@90-156-31-193.internetia.net.pl) (Read error: Connection reset by peer)
+[18:30:02] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Quit: WeeChat 3.4)
+[18:35:14] *** Joins: Serpent7776 (~Serpent77@90-156-31-193.internetia.net.pl)
+[18:36:23] *** Quits: salkin-mada (~salkin@84.212.156.62) (Quit: salkin-mada)
+[18:36:39] *** Joins: salkin-mada (~salkin@84.212.156.62)
+[18:36:50] *** Quits: salkin-mada (~salkin@84.212.156.62) (Client Quit)
+[18:38:53] *** Quits: shawnw (~shawn_w@c-73-225-121-73.hsd1.wa.comcast.net) (Ping timeout: 256 seconds)
+[18:46:37] *** Quits: olle (~olle@i5E866D86.versanet.de) (Ping timeout: 240 seconds)
+[18:49:05] *** Joins: zebrag (~chris@user/zebrag)
+[18:51:42] *** Quits: Soni (~quassel@autistic.space) (Ping timeout: 260 seconds)
+[19:14:12] *** Joins: gwizon (~gwizon@ool-45798eff.dyn.optonline.net)
+[19:19:15] *** Quits: humasect (~humasect@2001:1970:57e0:4100::1ae0) (Quit: Leaving...)
+[19:35:03] *** Quits: bartholin (~bartholin@158.110.70.210) (Quit: Leaving)
+[19:42:01] *** Quits: gwizon (~gwizon@ool-45798eff.dyn.optonline.net) (Ping timeout: 256 seconds)
+[19:45:12] *** Joins: gravicappa (~gravicapp@145.255.1.142)
+[19:45:18] *** Quits: mro (~mro@2002:5cc3:cc83:0:d037:ddda:4102:33dd) (Remote host closed the connection)
+[19:47:53] *** Joins: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4)
+[19:54:33] <d_bot> <cemerick> Looks like there's no deriving plugin for data-encoding yet?
+[19:55:12] <d_bot> <joris> what do you mean by data encoding ?
+[19:58:43] <companion_cube> it's a library I think?
+[20:01:12] *** Joins: mro (~mro@port-92-195-204-131.dynamic.as20676.net)
+[20:06:03] <d_bot> <cemerick> indeed; I created an issue to see if it's on the docket at all https://gitlab.com/nomadic-labs/data-encoding/-/issues/45 @joris
+[20:06:47] <d_bot> <cemerick> I currently use `Marshal` in certain corners, but wouldn't mind moving to something safer
+[20:07:21] *** Quits: Corbin (~Corbin@c-73-67-140-116.hsd1.or.comcast.net) (Ping timeout: 268 seconds)
+[20:08:15] *** Joins: humasect (~humasect@2001:1970:57e0:4100::1ae0)
+[20:10:34] <d_bot> <joris> i see. First time i see it. If there is something we don't like, it is serialization framework 😄
+[20:11:34] <d_bot> <cemerick> the bytes must flow
+[20:13:31] *** Quits: mro (~mro@port-92-195-204-131.dynamic.as20676.net) (Ping timeout: 256 seconds)
+[20:14:07] *** octachron_ is now known as octachron
+[20:18:24] *** Joins: rgrinberg (~textual@2806:101e:7:6bed:4db1:e3b:c0ba:c184)
+[20:19:10] *** Quits: Haudegen (~quassel@91.114.49.10) (Quit: Bin weg.)
+[20:19:58] <companion_cube> heh, a hot topic today
+[20:44:28] *** Quits: rgrinberg (~textual@2806:101e:7:6bed:4db1:e3b:c0ba:c184) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[20:59:56] *** Joins: mro (~mro@port-92-195-204-131.dynamic.as20676.net)
+[21:04:09] *** Quits: mro (~mro@port-92-195-204-131.dynamic.as20676.net) (Ping timeout: 250 seconds)
+[21:12:27] *** Joins: Soni (~quassel@autistic.space)
+[21:39:30] *** Joins: Haudegen (~quassel@178.115.237.87.static.drei.at)
+[21:43:51] *** Quits: humasect (~humasect@2001:1970:57e0:4100::1ae0) (Quit: Leaving...)
+[21:48:43] *** Joins: mro (~mro@2002:5cc3:cc83:0:d037:ddda:4102:33dd)
+[21:49:55] *** Joins: salkin-mada (~salkin@84.212.156.62)
+[21:50:54] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Ping timeout: 260 seconds)
+[21:52:11] *** Joins: waleee (~waleee@h-98-128-229-110.NA.cust.bahnhof.se)
+[21:53:29] *** Quits: hackinghorn (~hackingho@user/hackinghorn) (Ping timeout: 256 seconds)
+[21:53:34] *** Quits: mro (~mro@2002:5cc3:cc83:0:d037:ddda:4102:33dd) (Ping timeout: 250 seconds)
+[22:01:41] *** Joins: rgrinberg (~textual@2806:101e:7:6bed:4db1:e3b:c0ba:c184)
+[22:13:00] *** Quits: salkin-mada (~salkin@84.212.156.62) (Quit: salkin-mada)
+[22:13:13] *** Joins: salkin-mada (~salkin@84.212.156.62)
+[22:18:21] *** Joins: salkin_mada (~salkin@84.212.156.62)
+[22:20:16] *** Joins: salkinmada (~salkin@84.212.156.62)
+[22:20:50] *** Joins: mro (~mro@port-92-195-204-131.dynamic.as20676.net)
+[22:21:55] *** Joins: keyboard (~salkin@84.212.156.62)
+[22:25:05] *** Joins: gwizon (~gwizon@ool-45798eff.dyn.optonline.net)
+[22:25:47] *** Quits: mro (~mro@port-92-195-204-131.dynamic.as20676.net) (Ping timeout: 256 seconds)
+[22:26:49] *** Joins: keyboard_ (~salkin@84.212.156.62)
+[22:27:18] *** Joins: mro (~mro@port-92-195-204-131.dynamic.as20676.net)
+[22:27:24] *** Quits: keyboard_ (~salkin@84.212.156.62) (Client Quit)
+[22:28:11] *** Joins: olle (~olle@i5E866D86.versanet.de)
+[22:28:31] *** Quits: salkin (~salkin@84.212.156.62) (Quit: salkin)
+[22:30:26] *** Joins: qwr (~qwr@6-44-46-176.dyn.estpak.ee)
+[22:31:50] *** Joins: salkin (~salkin@84.212.156.62)
+[22:32:26] *** Joins: keyboard_ (~salkin@84.212.156.62)
+[22:33:45] *** Quits: keyboard_ (~salkin@84.212.156.62) (Client Quit)
+[22:33:51] *** Quits: salkinmada (~salkin@84.212.156.62) (Quit: salkinmada)
+[22:33:55] *** Quits: salkin_mada (~salkin@84.212.156.62) (Quit: salkin_mada)
+[22:33:59] *** Quits: salkin (~salkin@84.212.156.62) (Client Quit)
+[22:34:14] *** Quits: salkin-mada (~salkin@84.212.156.62) (Quit: salkin-mada)
+[22:35:10] <d_bot> <d4hines> I have an `Lwt_io.input Lwt_io.channel` that I'd like to read a JSON value from. What's the best way to do this? We're using `yojson` already which provides functions to do this for `Stdlb.channel`'s, but I'm not sure how to compose this with `Lwt`.
+[22:35:54] <companion_cube> is your input a single json value?
+[22:36:57] *** Quits: keyboard (~salkin@84.212.156.62) (Quit: keyboard)
+[22:37:22] <d_bot> <d4hines> One process is sending a json value every now and then over a unix pipe to another process. So there are multiple JSON values over time, but only one at a time is sent.
+[22:37:22] *** Quits: Serpent7776 (~Serpent77@90-156-31-193.internetia.net.pl) (Read error: Connection reset by peer)
+[22:37:56] *** Joins: salkin (~salkin@84.212.156.62)
+[22:38:05] *** Joins: Serpent7776 (~Serpent77@90-156-31-193.internetia.net.pl)
+[22:38:31] <d_bot> <orbitz> You need some sort of delimiter between json values. Then you can just read , split in delim, and consume with yojson
+[22:39:11] *** Quits: salkin (~salkin@84.212.156.62) (Client Quit)
+[22:39:24] *** Joins: salkin (~salkin@84.212.156.62)
+[22:39:40] <d_bot> <d4hines> What would an appropriate delimiter be, considering I don't know the content of the JSON (it could have arbitrary strings)? Wouldn't this involve essentially writing a JSON parser?
+[22:39:51] <companion_cube> delimiter, or length prefix
+[22:40:48] <d_bot> <orbitz> Many people use new line as a delimiter, that requires the guarantee that your JSON is produced in a way without new lines
+[22:41:03] <d_bot> <d4hines> So, first send "Hey, this is how many bytes I'm sending you", and then send the payload?
+[22:41:18] <d_bot> <orbitz> Yes
+[22:41:31] <companion_cube> that's one way, yes
+[22:41:50] <d_bot> <orbitz> Both require you have control over the sender
+[22:41:50] <companion_cube> for example, json-rpc (as used in LSP), uses http-style headers to get `content-length: <n>`
+[22:41:55] <companion_cube> followed by n bytes of json
+[22:42:36] <d_bot> <d4hines> I have control over the sender in this case, so I can do that.
+[22:59:35] *** Joins: Anarchos (~Anarchos@88.168.112.216)
+[23:00:16] *** Joins: vicfred (~vicfred@user/vicfred)
+[23:04:33] *** Quits: Soni (~quassel@autistic.space) (Quit: http://quassel-irc.org - Chat comfortably. Anywhere.)
+[23:05:14] *** Joins: szkl (uid110435@id-110435.uxbridge.irccloud.com)
+[23:05:58] *** Joins: Soni (~quassel@autistic.space)
+[23:41:09] *** Quits: kaph (~kaph@net-2-47-208-144.cust.vodafonedsl.it) (Read error: Connection reset by peer)
+[23:45:25] *** Quits: mro (~mro@port-92-195-204-131.dynamic.as20676.net) (Quit: Leaving...)
+[23:48:29] *** Joins: kaph (~kaph@net-2-47-208-144.cust.vodafonedsl.it)

@@ -1,0 +1,164 @@
+[00:15:56] *** Joins: makomo (~makomo@user/makomo)
+[00:18:26] *** Quits: Cherrybark (~Cherrybar@47-223-60-37.tyrmcmtk04.res.dyn.suddenlink.net) (Quit: Client closed)
+[00:28:28] *** Quits: makomo (~makomo@user/makomo) (Quit: WeeChat 3.2)
+[00:39:11] <borodust> |3b|: I also thinking about adding libGLESv3 to library.lisp for :android platform
+[00:39:26] <borodust> |3b|: it's interface is GL4 compatible anyway
+[00:40:14] <borodust> from https://developer.android.com/ndk/guides/stable_apis : "To use OpenGL ES 3.x, link your native module to libGLESv3" 
+[00:43:23] <|3b|> i'm not sure they are 100%, seem to remember some random bit that doesn't match in the xml spec files (though that could be a bug, and probably doesn't matter in practice either way)
+[00:43:39] <|3b|> and i think it is more that gl4 is es compatible 
+[00:44:02] <|3b|> es3 is a superset of es2 (and i'm not sure the xml spec files distinguish es2 and 3)
+[00:45:16] <|3b|> i wonder if it actually matters which you link against on android?
+[00:46:11] <|3b|> like can you link against v3, and still run v2 code on hardware that doesn't support v3
+[00:46:23] <borodust> idk, that what docs recommend 
+[00:46:37] <|3b|> or if you link against v2, will it not give you entrypoints for v3 functions if you query them
+[00:46:45] <borodust> on linux it doesn't matter
+[00:47:00] <borodust> i can link against GLESv2 and get 3.2 context no probs
+[00:47:09] <|3b|> or does it require you to use symbols from the .so instead of querying them or whatever, so you would need th v3 lib to see them
+[00:48:10] <borodust> Android is such a diversified system, that if something is not in the docs it is doomed not to work with some vendors
+[00:48:30] <borodust> it might work on my device, but the one next to mine might behave differently
+[00:48:59] <|3b|> yeah :/
+[00:51:09] <borodust> on the upside, i finally was able to run my cl 3d game on android, yay!
+[00:51:15] <|3b|> :)
+[00:52:35] *** Quits: aeth (~aeth@user/aeth) (Ping timeout: 268 seconds)
+[00:52:56] <|3b|> i'm not sure about putting es libs in library.lisp, i'd rather users be specific about whether they want GL or GLES
+[00:53:30] <|3b|> for one thing, i'm pretty sure i've had android devices with libgl, and using that when you expected gles might be odd
+[00:53:39] <Icefoz> Note that desktop GPU drivers won't always necessarily support GLES even if they could.  But if you ask for GLES 3.0 and if it can't do that ask for GL 4 then you should be fine.
+[00:53:47] <|3b|> but also the high-level parts of cl-opengl might at some point want to distinguish between gl and gles
+[00:54:02] *** Joins: aeth (~aeth@user/aeth)
+[00:54:05] <Icefoz> Alternatively, some drivers will lie to you and give you whatever they think you want if they can't give you what you ask for.
+[00:54:23] <Icefoz> idk how things work on Android though.
+[00:55:28] <|3b|> though maybe high-level parts of cl-opengl should just go away anyway, in which case that becomes someone else's problem :p (though probably still me since if i did that i'd probably still maintain both)
+[00:55:46] <borodust> |3b|: so would it be okay if i do smth like (:android (:or "libGLESv3.so" "libGL.so")) ?
+[00:56:19] <borodust> i'm a bit hesitant about cl-opengl gles part, cuz it seems more or less for v2
+[00:56:46] <|3b|> cl-opengl gles is for gles2 including gles3.x
+[00:57:31] <|3b|> same way core gl in desktop gl is 3.x+ or whatever it is
+[00:57:32] <borodust> okay, i'll check if gles part would work for my usecase
+[00:58:49] <|3b|> pretty much only difference between cl-opengl and cl-opengl/es2 is that /es2 loads libglesv2 instead of libgl, and drops anything that is in gles1 or gl but not in gles2+
+[00:59:13] <|3b|> so it should save you some tiny amount of ram by skipping some definitions
+[00:59:32] <|3b|> (though if you are using some fancy commercial cl maybe tree shakers gets those anyway)
+[01:03:02] <|3b|> actually i guess it skips about 15kloc of function defs, so might be noticeable if tree shaker isn't catching those
+[01:11:50] <borodust> hmm
+[01:12:38] <borodust> alright, lets see if asdf magic would accidentally work xD
+[01:42:05] *** Joins: bcasiello (~bcasiello@066-189-087-112.biz.spectrum.com)
+[01:44:20] <borodust> |3b|: okay es2 this seems to work, I'll just add GLESv3 option to library-gles2
+[01:46:23] <|3b|> yeah, trying both is reasonable there
+[01:47:00] <|3b|> though android users probably should be loading something specific to match what they are putting in their manifests and API versions and whatever random things need to match to make android happy
+[01:47:23] <|3b|> not sure if anyone else has a GLESv3 lib
+[01:47:57] <borodust> i have no experience with that so i'm not sure
+[01:48:49] <borodust> but if gles3 is really a pure superset, it might not actually matter API-wise (gl package)
+[01:49:49] <borodust> as my personal opinion goes, blobs and their loading is really not what bindings should conerns themselves with :)
+[01:50:30] <|3b|> well, i think some OS/impl combinations don't like defining foreign functions that don't match an open lib :/
+[01:51:28] <borodust> maybe
+[01:51:56] <borodust> makes sense even
+[01:52:32] <borodust> i would manually preload blobs for that particular systems i guess
+[01:52:42] <|3b|> though possibly i'm misremembering
+[01:53:03] <borodust> what i actually do rn is i have system with blobs and system with bindings
+[01:53:11] <borodust> bindings basically depend on blob system
+[01:53:21] <borodust> through asdf dependencies
+[01:53:22] <|3b|> but i think it is reasonable to load system libs by default for most cases
+[01:54:02] <|3b|> with options for cases like yours where that causes problems, or for picking other libs
+[01:54:02] <borodust> for most cases that don't plan to ship
+[01:54:12] <|3b|> even for shipping
+[01:54:26] <borodust> libraries should be manually unloaded then
+[01:54:35] <|3b|> if it might move, users can unload it and reload it manually
+[01:54:40] <|3b|> right
+[01:54:46] <borodust> that what i did, basically
+[01:55:01] <borodust> until i tried to deliver android apk
+[01:55:24] <borodust> which involves cross compilation and preloading is just not feaseble
+[01:55:59] <borodust> but that's only because i was bit several times
+[01:56:03] <|3b|> yeah, that's a legitimate reason to not load it, so cl-opengl will support that at some point :)
+[01:56:08] <borodust> i mean, i know to close foreign libs before shipping :)
+[01:56:30] <borodust> because users weren't able to run my crap
+[01:57:42] <borodust> not that loading manually would have saved me from that problem..
+[01:58:02] <|3b|> any noticeable size difference using the /es2 system?
+[01:58:44] <borodust> not sure, i didn't kept previous build ;p
+[01:58:49] <borodust> *keep
+[01:59:48] <borodust> i don't think it would be very noticeable in my case anyway - i ship shit ton of foreign libraries with CL code
+[02:00:28] <|3b|> i meant more in the sense of "enough to measure" rather than being a large fraction of the final package :)
+[02:00:59] <borodust> ah, well, i don't have numbers, my apologies
+[02:01:20] <|3b|> probably less than 1MB (very rough estimate on sbcl/x8664 says ~1/4MB), so not huge difference, but phone people still care about that stuff a bit :)
+[02:01:36] <|3b|> probably compresses well though, so less than that in final package anyway
+[02:01:50] <|3b|> no problem, was just curious :)
+[02:02:36] <borodust> tbh, phone ppl do care indeed, but sorta tolerant to few gigabyte games
+[02:02:51] <borodust> these days
+[02:03:27] <|3b|> yeah, also depends on which phone people... lots of people with access to cheap bandwidth, but also lots without :/
+[02:03:28] <borodust> like, what current mobile devs are doing is optimizing for first download ;p
+[02:03:49] <borodust> smth Mb to First Screen :)
+[02:04:01] <|3b|> yeah
+[02:04:51] <borodust> but then it gets all the crap required from internets
+[02:05:12] <borodust> alright, i guess it's enough hairly experimentation for me for today
+[02:05:30] * |3b| should probably go back to fixing my spline code too :)
+[02:06:11] <borodust> good night! and good luck :)
+[02:07:54] <|3b|> actually i guess back to fixing spline visualization code so i can use that to fix the spline code :p
+[02:14:37] *** Quits: dthompson (~user@pool-96-230-58-118.bstnma.fios.verizon.net) (Ping timeout: 268 seconds)
+[02:19:08] *** Joins: phantomics (~phantomic@71-218-252-43.hlrn.qwest.net)
+[02:25:42] *** Quits: bcasiello (~bcasiello@066-189-087-112.biz.spectrum.com) (Ping timeout: 268 seconds)
+[02:26:57] *** Quits: Inline (~Inline@2a02:908:1252:7a80:edec:c289:e267:dbb7) (Ping timeout: 268 seconds)
+[02:43:19] *** Joins: bcasiello (~bcasiello@066-189-087-112.biz.spectrum.com)
+[03:10:21] *** Quits: sjl (~sjl@cpe-66-66-5-59.rochester.res.rr.com) (Quit: WeeChat 2.2-dev)
+[03:21:06] *** Quits: yewscion (~yewscion@72-21-198-66.amazon.com) (Ping timeout: 260 seconds)
+[03:23:58] *** Joins: flatwhatson (~flatwhats@110-174-24-103.tpgi.com.au)
+[04:44:32] *** Joins: azimut_ (~azimut@gateway/tor-sasl/azimut)
+[04:44:41] *** Quits: madnificent (~madnifice@static.210.74.63.178.clients.your-server.de) (Ping timeout: 245 seconds)
+[04:44:55] *** Joins: madnificent (~madnifice@static.210.74.63.178.clients.your-server.de)
+[04:44:57] *** Quits: azimut (~azimut@gateway/tor-sasl/azimut) (Ping timeout: 276 seconds)
+[04:54:33] *** Quits: mfiano (~user@2603-7081-2d02-95bd-0250-b6ff-fef3-da40.res6.spectrum.com) (Remote host closed the connection)
+[05:35:42] *** Joins: X-Scale` (~ARM@165.201.137.78.rev.vodafone.pt)
+[05:36:16] *** Quits: X-Scale (~ARM@46.50.0.1) (Ping timeout: 268 seconds)
+[05:37:24] *** X-Scale` is now known as X-Scale
+[06:33:44] *** Joins: bilegeek (~bilegeek@2600:1008:b00f:bd9f:b35d:f157:9cec:ab62)
+[07:13:42] *** Quits: aeth (~aeth@user/aeth) (Ping timeout: 268 seconds)
+[07:15:28] *** Joins: aeth (~aeth@user/aeth)
+[07:15:53] *** Joins: peterhil` (~user@dsl-hkibng32-54fb56-2.dhcp.inet.fi)
+[07:32:49] *** Quits: rtypo (~alex@user/rtypo) (Ping timeout: 268 seconds)
+[07:39:38] *** Quits: peterhil` (~user@dsl-hkibng32-54fb56-2.dhcp.inet.fi) (Ping timeout: 260 seconds)
+[07:54:07] *** Joins: namasteaks (~pink@75.172.55.0)
+[08:36:28] *** Quits: defaultxr (~defaultxr@99-138-110-241.lightspeed.cicril.sbcglobal.net) (Remote host closed the connection)
+[08:40:52] *** Joins: defaultxr (~defaultxr@99-138-110-241.lightspeed.cicril.sbcglobal.net)
+[10:00:01] *** Quits: bilegeek (~bilegeek@2600:1008:b00f:bd9f:b35d:f157:9cec:ab62) (Quit: Leaving)
+[10:07:45] *** Joins: retropikzel (~retropikz@dsl-trebng22-54f932-93.dhcp.inet.fi)
+[10:08:29] *** Quits: retropikzel (~retropikz@dsl-trebng22-54f932-93.dhcp.inet.fi) (Remote host closed the connection)
+[10:24:19] *** Joins: mfiano (~user@2603-7081-2d02-95bd-0250-b6ff-fef3-da40.res6.spectrum.com)
+[10:31:08] *** Quits: mfiano (~user@2603-7081-2d02-95bd-0250-b6ff-fef3-da40.res6.spectrum.com) (Remote host closed the connection)
+[12:49:10] *** Joins: rando25892 (~user@user/rando25892)
+[12:51:17] <peterhil> |3b|: cool, what kind of splines?
+[12:52:56] <peterhil> I have tried to implement clothoid splines for some time. The last time I found a good approximation.
+[12:58:01] <peterhil> And today I found this awesome visualisation of how Bezier curves work: https://ciechanow.ski/curves-and-surfaces/
+[12:59:50] <peterhil> Clothoid splines have the nice property that the control points are ON the curve. And adding a congtrol point does not change the shape.
+[14:16:44] *** Joins: dthompson (~user@pool-96-230-58-118.bstnma.fios.verizon.net)
+[14:16:44] *** ChanServ sets mode: +o dthompson
+[15:31:56] *** Joins: ln43 (~ln43@user/ln43)
+[16:03:21] *** Quits: ln43 (~ln43@user/ln43) (Quit: Connection closed)
+[16:42:54] *** Joins: ln43 (~ln43@user/ln43)
+[16:54:34] *** Joins: rtypo (~alex@user/rtypo)
+[17:23:26] *** Quits: X-Scale (~ARM@165.201.137.78.rev.vodafone.pt) (Ping timeout: 260 seconds)
+[17:24:49] *** Joins: X-Scale` (~ARM@83.223.227.196)
+[17:26:04] *** X-Scale` is now known as X-Scale
+[18:28:40] *** Quits: ln43 (~ln43@user/ln43) (Quit: Connection closed)
+[19:22:25] *** Joins: Inline (~Inline@2a02:908:1252:7a80:7f0a:96b3:48d4:853a)
+[19:30:41] *** Joins: mfiano (~user@2603-7081-2d02-95bd-0250-b6ff-fef3-da40.res6.spectrum.com)
+[19:50:03] <dto> hey peterhil 
+[20:29:24] *** Joins: aeth_ (~aeth@user/aeth)
+[20:30:06] *** Quits: aeth (~aeth@user/aeth) (Ping timeout: 260 seconds)
+[20:31:38] *** aeth_ is now known as aeth
+[20:47:47] <peterhil> dto: Hi!
+[20:48:18] <peterhil> I have been trying to fix and reinstall a broken Mac OS X system on my work laptop...
+[20:50:20] <peterhil> But the SSD drive seems to be broken, as it is so old.
+[21:00:28] <dto> yeah i saw your other message. hope that goes ok...
+[21:08:44] <peterhil> I came to the conclusion that it's hopeless after I got Mountain Lion installed. It was so unstable, that obviously the SSD is bad.
+[21:10:04] <dto> oh man :(
+[21:11:56] <dto> i've been hacking on Danceball trying to tighten up the puzzle generation to avoid generating large open spaces.
+[21:13:59] <dto> i also added zoomer arrows to help the player get around
+[21:15:16] <peterhil> Great! It sounds it is starting to form into a playable game.
+[21:16:13] <dto> oh yeah. did you see the video with the zooms? 
+[21:16:35] <dto> https://www.youtube.com/watch?v=UkP3UVC_jNQ
+[21:16:39] <dto> i put in some DDR music for fun :)
+[21:17:57] <dto> this video shows too much open space areas but i'm working on that
+[21:36:00] *** Joins: peterhil` (~user@dsl-hkibng32-54fb56-2.dhcp.inet.fi)
+[21:45:03] *** Quits: Inline (~Inline@2a02:908:1252:7a80:7f0a:96b3:48d4:853a) (Ping timeout: 268 seconds)
+[21:57:03] *** Parts: peterhil (~user@dsl-hkibng32-54fb56-2.dhcp.inet.fi) (ERC (IRC client for Emacs 26.3))
+[21:57:48] *** Joins: peterhil (~peterhil@dsl-hkibng32-54fb56-2.dhcp.inet.fi)
+[22:10:42] *** Quits: peterhil (~peterhil@dsl-hkibng32-54fb56-2.dhcp.inet.fi) (Quit: Leaving)
+[22:10:54] *** Joins: peterhil (~peterhil@dsl-hkibng32-54fb56-2.dhcp.inet.fi)
+[23:22:42] *** Joins: Inline (~Inline@2a02:908:1252:7a80:ae5d:7719:e7f1:5947)
+[23:58:17] <|3b|> peterhil: just normal 2d bezier (quadratic and cubics), specifically their intersections

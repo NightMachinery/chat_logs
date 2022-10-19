@@ -1,0 +1,58 @@
+[01:54:44] <lopex[m]> headius: how good can it be in winter :P
+[01:55:49] <lopex[m]> headius: but after job change it's better, more new things
+[03:14:23] *** Quits: subbu (~subbu@user/subbu) (Quit: Leaving)
+[07:13:13] <headius> lopex: oh what are you working on now?
+[12:30:07] *** Quits: andreimaxim[m] (~andreimax@2001:470:69fc:105::1:6099) (Quit: You have been kicked for being idle)
+[19:18:42] *** Joins: MateuszFryc[m] (~lirimaery@2001:470:69fc:105::1:3640)
+[19:20:44] <MateuszFryc[m]> hi all, I have come across issue, where it seems that after terminating ScriptingContainer and doing FullGC there are still Ruby runtimes present in a memory. Though it happens only if I do not setError and Output Writers on ScriptingContainer. This is present in jruby 9.3.1.0 Is there something more that I should do apart calling terminate on Scriptingcontainer? Shoudln't calling this method close IO streams?
+[19:24:00] <MateuszFryc[m]> Basically I am evaluating some ruby code in some context, amongst other things I call setError and setStdout methods. When I invoke them then it looks that after termination of SC something still keeps Ruby runtime in memory, while when commenting out completely setError and setStdout works fine: https://pastebin.com/v5aAxzs2
+[19:25:29] <MateuszFryc[m]> I have submitted similar issues in the past for ruby 1.7, and it was partially fixed in ruby 1.7 AFAIR there was an issue with some static map, where IO handles were kept. After migrating to Jruby 9.3.1.0 this issue seems to show up again.
+[19:26:33] <MateuszFryc[m]> Any ideas, whether there should be something more done, apart from #terminate method calling on ScriptingContainer to make Ruby runtime GC releasable?
+[19:27:15] <MateuszFryc[m]> There is of course a mistake, it should be "It happens only if I do setError and/or setOutput" :)
+[22:03:14] <headius> It's possible this regressed so we should start with an issue and go from there. It wouldn't be too difficult to run a heap dump and see what's holding on to the remaining runtimes
+[22:03:42] <headius> Mateusz Fryc: could you open an issue and we can start working through it?
+[22:04:31] <headius> In general, as long as threads are not being started by the runtime, terminate should be able to shut it down and make it available for garbage collection
+[22:12:16] <MateuszFryc[m]> If I understand correctly what I see in eclipse memory analyzer all instances of org.jruby.Ruby are kept by ThreadContext which in turn is kept rhough SoftReference by java.lang.ThreadLocal.ThreadLocalMap.Entry or java.lang.ref.Finalizer, of course GC roots varies..
+[22:12:50] <MateuszFryc[m]> perhaps this is all fine, I do not have that much experience in heap dump analysis
+[22:21:35] <MateuszFryc[m]> Some screens
+[22:21:36] <MateuszFryc[m]> https://i.imgur.com/Y6ih4fy.png
+[22:21:41] <MateuszFryc[m]> https://i.imgur.com/MMyCZLH.png
+[22:21:56] <MateuszFryc[m]> https://i.imgur.com/i4gyh7q.png
+[22:22:10] <MateuszFryc[m]> https://i.imgur.com/XAEhgUw.png
+[22:22:29] <headius> If they are only held alive by soft references it may be okay. Soft references are only cleared after they have been unreferenced for a certain amount of time which is configurable at the JVM level
+[22:23:12] <MateuszFryc[m]> ok, so there is not enough big pressure on the memory, and that is why they are kept still in memory, right ?
+[22:23:23] <headius> We use soft references there to keep ThreadContext alive longer for threads from outside of JRuby, so that those same threads don't constantly create a new context every time they enter into Ruby code
+[22:23:37] <headius> Yes that is how I would describe it
+[22:25:50] <headius> https://www.baeldung.com/java-soft-references
+[22:25:53] <MateuszFryc[m]> I was just amazed at first glance, when I saw in histogram of memory objects (jmap), that after all my queries finished (and for each scripting container I called terminate method), Ruby objects were still in memory, usage of SoftReferences there probably would explain this observation.
+[22:25:57] <headius> That seems like a fairly straightforward article describing it
+[22:27:23] <headius> If they are not being evacuated quickly enough you may consider reusing them rather than creating and throwing them away quickly, but I'm not sure if that's appropriate for your app or not
+[22:27:35] <headius> If you see this continue over a longer period of time then we should dig a little deeper and make sure nothing else is referencing those runtimes
+[22:28:49] <MateuszFryc[m]> you mean reusing org.jruby.Ruby objects ? (I call them runtimes) 
+[22:29:15] <headius>  My understanding of that configuration is that it will wait up to (MB heap) * (LRU time) before clearing such soft references
+[22:30:18] <headius> Yes, runtimes, Ruby instances, ScriptingContainer instances, We also refer to them as runtimes usually
+[22:30:19] <headius> Correct
+[22:30:19] <MateuszFryc[m]> ok, so after sufficiently big amount of time, they should be cleaned by GC ?, right ?
+[22:30:50] <headius> Assuming we have done our job right 😀
+[22:33:13] <MateuszFryc[m]> ok, so probably that was a false alarm, with 1.7 jruby After some time it always ended up with OOME (only after some ad hoc patch it worked well for my case at least), but for version 9.3..1.0 my servers seems to work stable, I just didn't know right away that the reason for which when there was no queries running I had some number of these runtimes... but fact that you usae soft references speaks for itself
+[22:35:12] <headius> Oh sure, yeah I wouldn't sound the alarm just yet but definitely let us know if you do see memory errors
+[22:37:09] <MateuszFryc[m]> BTW,  I am not sure if you remember, some time ago I submitted an issue with C2 compiling of some method, which probably by accident happen to be a method from jruby, the bug was submitted and I got id for it 8277738, however it is not available in java bug database, I also got information that it was potentialy fixed in java 18 build 15, also there is no information about what was changed in build 15, as if it was hidden for some
+[22:37:10] <MateuszFryc[m]> reasons (security?)..
+[22:38:31] <MateuszFryc[m]> I have not received also information whether this is going to be backported to LTS java 17, do you know if there is some way to check it out ? You mentioned you are a developer, perhaps you have a better idea about the whole process and how and from where to fetch that information ;)
+[22:39:44] <MateuszFryc[m]> by saying you are a developer, I meant you have a status of a developer in Java JDK, so probably you have an access to more data, but maybe because of you being more acquainted with the environment have also some tips for me, so I could dig by myself ;)
+[22:43:25] <headius> Yeah it's possible I can dig up more information. Can you link me the JRuby issue or the JVM issue and I'll see what I can find?
+[22:44:03] <headius> If there's no public information about the fix then you may be right that it was security related
+[22:44:55] <MateuszFryc[m]> I was given following link: https://bugs.java.com/bugdatabase/view_bug.do?bug_id=JDK-8277738
+[22:46:33] <headius> Ah ok
+[22:47:51] <headius> https://bugs.openjdk.java.net/browse/JDK-8277738
+[22:50:01] <headius> There's a ton of text there but at the bottom it suggests trying 18 to see if it has fixed the problem
+[22:50:13] <MateuszFryc[m]> Ok, so I was given link by automatic sender to other site where there was no more information, ehh I I am not much acquainted with java development methodology and sites.. :)
+[22:50:27] <MateuszFryc[m]> yeah I read also, that it might be fixed in 17.02
+[22:50:58] <headius> Yeah that's pretty weird, that other site hasn't been used for years and is only active to redirect old bugs to the new tracker
+[22:51:12] <headius> Sounds like whatever processed you use has some issues
+[22:51:20] <headius> Process
+[22:51:28] <headius> Seems like good news though!
+[22:57:33] <MateuszFryc[m]> yeah :)
+[22:58:28] <MateuszFryc[m]> Probably I will update to 17.0.2 and remove excluding compilation of this method from jvm options, what I did temporarily as you suggested 
+[22:59:05] <MateuszFryc[m]> Thank you for directing me to that site.
+[23:18:57] <headius> Sure, good luck!

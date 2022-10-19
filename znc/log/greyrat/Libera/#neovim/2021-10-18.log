@@ -1,0 +1,872 @@
+[00:00:40] <kylo252[m]> does `vim.diagnostic.get()` have a write-through cache behavior? or how is it intended to work?
+[00:01:04] *** Joins: kamui[m] (~kamuitchn@2001:470:69fc:105::1:1c71)
+[00:03:08] <kylo252[m]> I don't get why this check is done so late: 
+[00:03:08] <kylo252[m]> https://github.com/neovim/neovim/blob/649b3160a10f0053747383f0703b0a5a94548570/runtime/lua/vim/diagnostic.lua#L723
+[00:04:45] *** kamui[m] is now known as Kamui[m]
+[00:05:22] *** Parts: Kamui (~kamui-ren@2001:470:69fc:105::f74) ()
+[00:09:19] <gpanders[m]> that check can probably be moved into the `add` function tbh
+[00:09:24] <gpanders[m]> s/the//, s/function//
+[00:10:24] <mjlbach[m]> Doesn't add get called more than show?
+[00:10:31] <mjlbach[m]> esp if you have more diagnostic sources?
+[00:10:41] <mjlbach[m]> Also excuse tone on my comments haha
+[00:10:48] <mjlbach[m]> * comments haha, I'm happy with that PR
+[00:10:54] <mjlbach[m]> * comments haha, I'm happy with that PR, just being nitpicky
+[00:11:08] <kylo252[m]> I was thinking about it yesterday and it bothered me that you can use `get()` for positional arguments but still need to clamp them. 
+[00:11:21] *** Quits: mahlon (~mahlon@martini.nu) (Ping timeout: 245 seconds)
+[00:11:33] <mjlbach[m]> It shouldn't
+[00:11:34] <mjlbach[m]> we clamp them for display purposes
+[00:11:47] <gpanders[m]> mjlbach[m]: by `add` I'm referring to https://github.com/neovim/neovim/blob/649b3160a10f0053747383f0703b0a5a94548570/runtime/lua/vim/diagnostic.lua#L691-L695
+[00:11:50] <mjlbach[m]> we need to keep the cache state in line with the servers notion of where diagnostics are
+[00:11:57] <mjlbach[m]> Oh got it
+[00:11:58] <mjlbach[m]> my b
+[00:12:04] <mjlbach[m]> +1
+[00:12:32] <kylo252[m]> I'm not even sure what this clamp does. I figured it throws away now-invalid diagnostics 
+[00:12:56] <mjlbach[m]> I know 1 way to figure out what it does
+[00:13:01] <mjlbach[m]> :) 
+[00:14:39] <kylo252[m]> I was actually going to move that filter_diagnostics into `add`. I wanted to carve out the predicate from it and then we can use it, but I feel like that function is checking for way too many things, so I felt a bit overwhelmed by it lol
+[00:15:14] *** Quits: teclator (~quassel@85.155.180.70.dyn.user.ono.com) (Remote host closed the connection)
+[00:17:09] <kylo252[m]> I still stand by my rename of `diagnostic_line` -> `diagnostics_per_line` btw 
+[00:17:09] <kylo252[m]> that name is pretty confusing, I skipped past that function a few times before I understood what it's supposed to do. 
+[00:18:19] <mjlbach[m]> I don't
+[00:18:28] <mjlbach[m]> I like the way it is in the current PR
+[00:18:47] <kylo252[m]> you mean the current state*
+[00:19:07] <zq_> mjlbach[m]: just posted the PR for noting stdio in :h lsp, fyi
+[00:19:08] <kylo252[m]> I don't think the new PR has done anything to that function 
+[00:19:36] <mjlbach[m]> I would get rid of TCP support planned
+[00:19:49] <mjlbach[m]> "Communication with language servers is currently limited to stdio"
+[00:19:52] <mjlbach[m]> * to stdio."
+[00:20:36] <mjlbach[m]> "Currently, neovim only supports communications with servers over stdio."
+[00:21:35] <kylo252[m]> this sort_severity between min and max is pretty cool yet super niche 😅
+[00:21:35] <kylo252[m]> but I guess too late to take it back. although the overhead is pretty minimal anyway
+[00:21:58] <mjlbach[m]> Feel free to write benchmarks
+[00:23:10] <kylo252[m]> no I meant it's about taking out the predicate out of the function, it just adds "overhead" there https://github.com/neovim/neovim/blob/649b3160a10f0053747383f0703b0a5a94548570/runtime/lua/vim/diagnostic.lua#L42
+[00:25:54] <kylo252[m]> there's a semi dumb way to avoid writing new code for this, we can just call it like this:... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/9c6e06689d0bfdd3e9a0b1433c5e82ef0e5880d2)
+[00:28:09] <gpanders[m]> filtering the diagnostics at the end of `get()` is pretty simple and easy to grok, doing it inline is more complex and would need some compelling evidence that the performance gain is worth it
+[00:28:49] * kylo252[m] sent a diff code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/5c2f550a65dbc41d0c4bf39d79b17119823e6967
+[00:29:53] <mjlbach[m]> gpanders: I've wanted to create a synthetic benchmark for vim.diagnostic (nee vim.lsp.diagnostic) for awhile 
+[00:30:39] <zq_> mjlbach[m]: updated
+[00:31:05] *** Quits: blaklistd (~blaklistd@user/blaklistd) (Quit: The Lounge - https://thelounge.chat)
+[00:32:26] <mjlbach[m]> it's just not been a historic issue, as there was other latency in the client
+[00:33:11] <kylo252[m]> <gpanders[m]> "filtering the diagnostics at the..." <- yeah I do think this is better left for benchmarks, I sadly don't know of any good way to do it. It's just look odd from a logical point of view to add diagnostics, or allocate memory for something you don't need.
+[00:33:11] <kylo252[m]> in the worst case scenario, a sensitive linting configuration will throw X number of debug warnings that you don't even care about. 
+[00:33:11] <kylo252[m]> keep in mind that at the end of day, you're not giving back that memory back with that filter function, regardless how many errors we're talking about here
+[00:33:14] <gpanders[m]> kylo252: that works but now you're making N calls to filter_by_severity and creating N new tables. Do you think that's any faster than just filtering in bulk at the end?
+[00:33:37] *** Joins: blaklistd (~blaklistd@user/blaklistd)
+[00:33:39] <kylo252[m]> gpanders[m]: hence, semi-dumb 😄
+[00:33:52] <mjlbach[m]> Julian (Julian Berman)sim Chris Kipp fyi please let me know if there are 0.6 things you want for lsp
+[00:34:10] <gpanders[m]> this is what I tried:... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/7205de3daa2c9de41e25d2be4d023227dac483d0)
+[00:34:12] <mjlbach[m]> I just finished my conference responsibilities for ICCV so I have a few weeks of bandwidth
+[00:34:28] <gpanders[m]> but that's a lot of extra code and again who knows if it's even worth it?
+[00:34:48] <gpanders[m]> I prefer to KISS unless there is a good reason to do otherwise :)
+[00:35:39] <kylo252[m]> gpanders[m]: that's why my aim is just to refactor filter_by_severity, take out the condition/predicate and re-use it outside. that will make it so that you can call that anywhere you want 
+[00:35:56] <sim[m]> mjlbach[m]: The opt thing for vim.ui.* is all that I can think of
+[00:35:56] <mjlbach[m]> gpanders[m]: yes
+[00:36:05] <mjlbach[m]> sim[m]: I think I added that to the project board
+[00:36:26] <mjlbach[m]> yup
+[00:36:30] <mjlbach[m]> cool cool
+[00:37:04] *** Quits: oddmunds (~oddmunds@81.0.173.254) (Ping timeout: 265 seconds)
+[00:37:43] <kylo252[m]> anyways, it's not a big deal
+[00:37:43] <kylo252[m]> I'm really only concerned that we can get some persistent options for show/preview/popup/whatever-its-gonna-be-called
+[00:39:09] *** Joins: hololeap_ (~hololeap@user/hololeap)
+[00:39:31] <sim[m]> Also can any mac bois test this please? https://github.com/simrat39/desktop-notify.nvim it works on linux but I don't have a mac and I made something by searching on stackoverflow but idk
+[00:39:36] *** Quits: hololeap (~hololeap@user/hololeap) (Ping timeout: 276 seconds)
+[00:39:46] *** Joins: oddmunds (~oddmunds@81.0.173.254)
+[00:43:24] *** hololeap_ is now known as hololeap
+[00:45:25] <clason[m]> I'm not a "mac boi", but it works
+[00:47:51] <sim[m]> Thanks 
+[00:48:51] *** Quits: Ilyu (~quassel@166.215.82.79.rev.sfr.net) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[00:50:26] *** Quits: FlyingWaffle (FlyingWaff@gateway/vpn/protonvpn/flyingwaffle) (Quit: Quit)
+[00:53:59] <phaazon[m]> I am slowly transitioning back to neovim all my emacs setup
+[00:54:07] <phaazon[m]> it started with a very small plugin today 😀 https://github.com/phaazon/mind.nvim
+[00:54:27] <phaazon[m]> I will probably update that when the picker API is ready
+[00:54:37] <phaazon[m]> (right now it depends on telescope for the fuzzy searching part)
+[00:54:50] <phaazon[m]> also, I want to support features that I don’t have with org-roam, like generating an index
+[00:55:17] <phaazon[m]> the reason I had to transition back to Markdown is that I have ~90 org-roam nodes at work and colleagues asked me to share my knowledge nodes
+[00:55:18] <phaazon[m]> and… I can’t really share org-roam things 😀
+[00:55:25] *** Quits: oddmunds (~oddmunds@81.0.173.254) (Ping timeout: 260 seconds)
+[00:55:30] <phaazon[m]> with this plugin it should be easily sharable via github
+[00:56:25] *** Quits: cottoneyejim (~cottoneye@2a01:261:3f6:5800:ea6a:64ff:fe4f:b643) (Ping timeout: 252 seconds)
+[00:57:03] <mjlbach[m]> Can you not dump org-roam?
+[00:57:06] <mjlbach[m]> Sorry
+[00:57:09] <mjlbach[m]> clarfication
+[00:57:10] <mjlbach[m]> to plaintext*
+[00:57:18] <phaazon[m]> I don’t understand
+[00:57:20] <phaazon[m]> ah
+[00:57:26] <phaazon[m]> from org-roam?
+[00:57:28] <phaazon[m]> surprisingly, no
+[00:57:28] <mjlbach[m]> Like with a GHA hook or something
+[00:57:33] <mjlbach[m]> weird
+[00:57:33] <phaazon[m]> you can still do an org-mode export
+[00:57:38] <mjlbach[m]> well welcome back
+[00:57:40] <phaazon[m]> but it won’t work with roam: links
+[00:57:54] *** Quits: hololeap (~hololeap@user/hololeap) (Read error: Connection reset by peer)
+[00:58:12] <phaazon[m]> maybe there is a way, I haven’t really dug a lot that topic
+[00:58:24] <mjlbach[m]> if you can repro your HLS/rust analyzer issues I'll fix them
+[00:58:30] <mjlbach[m]> * fix them before 0.6
+[00:58:32] <phaazon[m]> which issues again?
+[00:58:37] <mjlbach[m]> Idk you tell me haha
+[00:58:38] <phaazon[m]> the frozen neovim?
+[00:58:46] <phaazon[m]> I haven’t had that in a while
+[00:58:48] <mjlbach[m]> nice
+[00:58:57] <mjlbach[m]> Maybe they were dumping large json for some reason
+[00:58:58] <phaazon[m]> now I want inlay hints 😀
+[00:59:05] <mjlbach[m]> soon
+[00:59:08] <phaazon[m]> with anticonceal, of course
+[00:59:25] <phaazon[m]> oh I got a segfault yesterday, I’ll try to see if I can reproduce that
+[00:59:33] <phaazon[m]> but my neovim on this laptop is probably pretty old
+[00:59:49] <phaazon[m]> 0.5.1, it’s a stable version
+[00:59:49] <bfredl> maybe for 0.7 👀
+[01:00:12] <phaazon[m]> 🙂
+[01:00:44] <bfredl> multiple virt_text blocks now works in manual testing, but not in functional tests
+[01:00:45] <bfredl> :D
+[01:00:48] <phaazon[m]> at some point mjlbach I think I’m going to write my own package manager, with SemVer support
+[01:00:53] <clason[m]> what, virtual lines not good enough for you? now you want virtual columns, too? what's next? :]
+[01:01:07] <phaazon[m]> clason: I thought I wouldn’t like them
+[01:01:09] <phaazon[m]> but I have to admit
+[01:01:12] <mjlbach[m]> 3d virtual text with compositing
+[01:01:13] <phaazon[m]> I’m used to them too much now
+[01:01:31] <bfredl> at least vim already have virtual buffers, sort of (BufRead/WriteCmd)
+[01:01:38] <phaazon[m]> writing a lambda and having the type of the arguments inserted while I type
+[01:01:43] <phaazon[m]> it’s like galaxybrain
+[01:02:40] <bfredl> mjlbach[m]: in principletheory the virtual texts could be a separate grid overlay from the main window in multigrid mode
+[01:02:50] <bfredl> then the GUI could do as much 3D as you like
+[01:03:08] *** Joins: cotko2 (~cotko@188-230-251-153.dynamic.t-2.net)
+[01:03:08] <clason[m]> ooh, textcube!
+[01:03:21] <mjlbach[m]> phaazon: I do want you to finish poesie haha
+[01:03:22] <mjlbach[m]> that would solve so many issues
+[01:03:38] <mjlbach[m]> idk if you saw my meme plugin but https://github.com/mjlbach/baby.nvim
+[01:04:09] <mjlbach[m]> I want there to be a "declarative + installs plugins for you type thing"
+[01:04:33] *** Joins: oddmunds (~oddmunds@81.0.173.254)
+[01:07:07] *** Joins: hololeap_ (~hololeap@user/hololeap)
+[01:08:35] *** Joins: mahlon (~mahlon@martini.nu)
+[01:13:25] *** Joins: cjb (~cjb@user/cjb)
+[01:20:29] <jan[m]123456> mjlbach: Just saw your post on Reddit regarding 0.6 🎉... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/5949b2318f4a9b7eaeb159bddf7526462730ba2e)
+[01:20:47] <mjlbach[m]> Hmm
+[01:20:49] <mjlbach[m]> is it a big repo?
+[01:21:14] <mjlbach[m]> But sure, it would be especially useful if you can repo in my test container
+[01:21:28] <mjlbach[m]> `podman run --rm -it docker.io/mjlbach/try.nvim:slim`
+[01:21:37] <mjlbach[m]> has pyright and an example python repo set up
+[01:21:43] <jan[m]123456> Not really. Just a Django toy project.
+[01:22:19] <jan[m]123456> mjlbach[m]: Nice. Thanks. I‘ll check it out tomorrow then👍
+[01:22:39] <mjlbach[m]> Yeah but if so file the report, I use pyright pretty often and haven't noticed anything 
+[01:23:46] <mjlbach[m]> I do notice sometimes pyright "freezes" and stops responding to request on certain projects
+[01:23:54] <mjlbach[m]> but I'm able to repro that without neovim
+[01:25:32] <phaazon[m]> mjlbach: yeah, poesie will eventually be something
+[01:25:38] <phaazon[m]> I just need to spend time on it 😀
+[01:26:47] <phaazon[m]> your `baby.nvim` is of bad taste :smh:
+[01:27:46] <mjlbach[m]> phaazon[m]: yes
+[01:28:56] <bfredl> should have used submodules at least smh
+[01:29:28] <mjlbach[m]> bfredl: I actually did lmao
+[01:29:33] <mjlbach[m]> packer doesn't support them yet
+[01:29:54] <mjlbach[m]> https://github.com/wbthomason/packer.nvim/issues/99
+[01:30:03] <phaazon[m]> mjlbach: that’s the main issue with poesie; bootstrapping it is a pain
+[01:30:06] <bfredl> and yet I include packer.nvim in my config as a submodule
+[01:30:07] <bfredl> how curios
+[01:30:14] <bfredl>  * how curious
+[01:30:40] <mjlbach[m]> phaazon[m]: Yeah that's why it's probably going to have to include a package manager component, or packer would need to add support
+[01:30:44] *** Quits: bodetxyz (~ma@ip-204.net-89-2-75.rev.numericable.fr) (Remote host closed the connection)
+[01:30:54] <mjlbach[m]> (wonder if wbthomason has thoughts)
+[01:30:56] <phaazon[m]> or I will write my own 🙂
+[01:31:32] <phaazon[m]> at this point I don’t really care honestly, the current code has a front-end and packer is just a backend
+[01:31:35] <mjlbach[m]> really what I wanted to do with baby is have package "meta" groups
+[01:31:45] <mjlbach[m]> so users don't have to list 4 packages
+[01:31:48] <phaazon[m]> like Doom Emacs?
+[01:32:01] <phaazon[m]> (I actually think it’s a very good idea)
+[01:32:09] <mjlbach[m]> Sorta, but more integrated with packer
+[01:32:19] <mjlbach[m]> The issue is packer takes git urls which is simple and makes sense
+[01:32:34] <phaazon[m]> you like it when things don’t make sense?
+[01:32:39] <mjlbach[m]> No ofc not
+[01:32:42] <mjlbach[m]> this isn't for me
+[01:32:49] <phaazon[m]> 😀
+[01:33:22] <mjlbach[m]> There are some people for whom typing out 4 urls in the package list to install is too much work/"bloat"
+[01:33:30] *** Quits: gxt (~gxt@gateway/tor-sasl/gxt) (Remote host closed the connection)
+[01:33:58] *** Joins: gxt (~gxt@gateway/tor-sasl/gxt)
+[01:35:20] <mjlbach[m]> I guess one option, I haven't explored yet, is if a package could internally call the package manager API to install additional dependencies
+[01:36:28] *** hololeap_ is now known as hololeap
+[01:46:20] *** Quits: towb (~bwot@user/towb) (Quit: WeeChat 3.3)
+[01:59:31] *** Quits: blaklistd (~blaklistd@user/blaklistd) (Read error: Connection reset by peer)
+[02:00:23] *** Joins: ooGoop9_ (~ooGoop9@user/oogoop9)
+[02:00:40] *** Quits: ooGoop9_ (~ooGoop9@user/oogoop9) (Remote host closed the connection)
+[02:07:09] <mcepl[m]> Sean Dewar: BTW, thank you for pointing me to uncrustify. It helped a lot with https://github.com/neovim/neovim/pull/16047 (now hopefully truly ready for merge).
+[02:08:00] *** Joins: d34df00d (~d34df00d@2600:1700:8c60:3a10::48)
+[02:08:07] <d34df00d> Hi folks!
+[02:08:15] <mcepl[m]> * @seandewar: care
+[02:08:39] <mcepl[m]> s/seandewar/Sean Dewar/
+[02:09:31] <d34df00d> I'm writing my first nontrivial plugin for neovim, so I'll probably have a lot of silly questions. Firstly, what's the preferred way to display a status message for a long-running process?
+[02:09:40] <d34df00d> I've looked at https://github.com/nvim-lua/lsp-status.nvim , but it's not entirely obvious to me.
+[02:11:45] <clason[m]> `vim.notify`, I'd say
+[02:11:55] <clason[m]> and let user config worry about how to display it
+[02:12:47] *** Quits: YellowSuB (~YellowSuB@user/yellowsub) (Ping timeout: 250 seconds)
+[02:12:55] <SeanDewar[m]> <mcepl[m]> "Sean Dewar: BTW, thank you for..." <- Np - - most of the credit goes to dundargoc  for his work on getting uncrustify set up for nvim 👌
+[02:13:15] *** Quits: rtur (~weechat@mail.rtur.org) (Ping timeout: 265 seconds)
+[02:13:33] *** Quits: mestre (~mestre@191.177.175.57) (Quit: Lost terminal)
+[02:14:56] *** Joins: YellowSuB (~YellowSuB@user/yellowsub)
+[02:16:55] <SeanDewar[m]> I'll try to have a look tomorrow but janlazo has the final say when it comes to patches usually 👍  
+[02:17:12] <mcepl[m]> It wasn’t 100% perfect, but I don’t think I can blame any software for not being able to deal with this junk https://github.com/neovim/neovim/blob/cedbf2f1bbcb04cd91cce929c6f3912fba07b2f3/src/nvim/edit.c#L4300
+[02:20:05] <mcepl[m]> Jan Edmund Lazo: ^^^ then. Thank you.
+[02:20:40] *** Joins: mestre (~mestre@191.177.175.57)
+[02:23:09] <ChipSenkbeil[m]> mjlbach: Demo of the new release to showcase not needing a server and native ssh authentication: https://www.youtube.com/watch?v=wVAsbpByQ3o
+[02:23:58] <mjlbach[m]> Watching now
+[02:24:33] <mjlbach[m]> One thing this reminds me is the default highlight groups/characters for single borders are not great haha
+[02:24:44] *** Joins: tektik (~said@68.33.69.0)
+[02:25:07] * mjlbach[m] uploaded an image: (34KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/VhpzyCMqxTpiDERGPUMxqyCF/image.png >
+[02:25:23] <mjlbach[m]> default being core not distant
+[02:25:47] <ChipSenkbeil[m]> Ha ha, I didn't want to mess with making it prettier like some plugins have
+[02:26:16] <mjlbach[m]> Yeah, I personally don't use borders
+[02:26:17] <mjlbach[m]> but
+[02:26:18] <mjlbach[m]> https://github.com/mjlbach/defaults.nvim/pull/27/files
+[02:26:23] <mjlbach[m]> that's the chars/highlight groups
+[02:27:46] *** Quits: mattf (mattf@2600:3c03::f03c:92ff:fea6:56a4) (Quit: ZNC 1.7.5+deb4 - https://znc.in)
+[02:29:40] *** Joins: Torr (~Torr@user/torr)
+[02:32:48] *** Joins: mattf (~mattf@li908-138.members.linode.com)
+[02:35:27] *** Quits: mestre (~mestre@191.177.175.57) (Quit: Lost terminal)
+[02:37:35] *** Quits: oddmunds (~oddmunds@81.0.173.254) (Ping timeout: 264 seconds)
+[03:03:41] *** Joins: Bowuigi[m] (~bowuigi--@2001:470:69fc:105::1:1c91)
+[03:07:35] *** Quits: nyah (~nyah@bcdcb6e3.skybroadband.com) (Ping timeout: 264 seconds)
+[03:11:02] <Bowuigi[m]> Hello everyone
+[03:11:37] <Cobra[m]> hello bowuigi
+[03:11:40] <Bowuigi[m]> Oh look you are here too
+[03:11:49] <Cobra[m]> i am everywhere*
+[03:11:59] <Bowuigi[m]> Makes sense
+[03:12:29] <Bowuigi[m]> Can someone point me to a "make a plugin starter guide" kind of thing?
+[03:12:44] <Bowuigi[m]> I have a lot of experience with Lua, but not with Neovim plugins
+[03:13:00] <mjlbach[m]> !guide
+[03:13:04] <nvim-bot[m]> https://github.com/nanotee/nvim-lua-guide
+[03:13:12] <mjlbach[m]> That has some of it
+[03:13:16] <Bowuigi[m]> Whoa
+[03:13:24] <Bowuigi[m]> Thanks
+[03:15:25] <mjlbach[m]> :) 
+[03:16:23] *** Joins: oddmunds (~oddmunds@81.0.173.254)
+[03:17:00] <Torr> Hey
+[03:17:07] <Torr> What snippet engine do you use?
+[03:18:15] <Bowuigi[m]> `nil`
+[03:21:59] *** Quits: oddmunds (~oddmunds@81.0.173.254) (Ping timeout: 264 seconds)
+[03:23:55] *** Quits: alban771 (~alban@37.172.5.191) (Quit: WeeChat 3.3)
+[03:24:28] *** Quits: sudoforge (~sudoforge@wireguard/tunneler/sudoforge) (Quit: 404)
+[03:25:26] *** Quits: dsrt^ (~dsrt@70.166.66.234) (Remote host closed the connection)
+[03:28:01] <mh72[m]> Would anyone know the following regarding lspconfig? I am trying to have neovim not show linting errors such as when I use 'import pandas', not to show "pandas not accessed" when I don't use it. I have tried different things, such as setting "	"reportUnusedImport": "none"," in my pyrightconfig.json (and when I inspect the lsp.log, it says it's using that config file) as well as the following in my config: 
+[03:28:13] * mh72[m] sent a require code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/837e3e17f8627c18953ffdb5aba78958f5dff6bb
+[03:28:19] <mh72[m]> but noone of these seem to be effective
+[03:29:07] <mh72[m]> The latter I got from a suggestion on github at https://github.com/neovim/nvim-lspconfig/issues/441
+[03:29:40] <mh72[m]> but perhaps I am using old syntax...
+[03:31:19] <mh72[m]>  * ```... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/ee2d14afd9f22095f7b27322fbf047243e39f5c8)
+[03:32:53] <mjlbach[m]> It's not an lspconfig thing, it's a pyright thing
+[03:32:55] *** Joins: caef^ (~caef@70.166.66.234)
+[03:33:25] <mjlbach[m]> I would check upstream to see if their options changed
+[03:33:42] <mjlbach[m]> pyright should respect the pyrightconfig.json
+[03:34:55] <wbthomason[m]> <d34df00d> "I've looked at https://github...." <- lsp-status just sets a variable for inclusion in a status line. I'm also not sure it should be considered an example of Lua plugin best practices anymore; the ecosystem and APIs are very different now than they were when I wrote that
+[03:35:30] <wbthomason[m]> <mjlbach[m]> "I guess one option, I haven't..." <- Could you give an example of the meta-group UX you want? I think this is already possible, but I'm not entirely clear on what you're trying to do
+[03:36:13] <mjlbach[m]> wbthomason[m]: Sure, mostly I want to install something like `mjlbach/lspeasy.git` with packer, but then when that is installed, internally in the plugin declare dependencies for packer to install
+[03:36:21] <mjlbach[m]> so instead of having users add nvim-cmp, the plugin does it for them
+[03:36:54] <mh72[m]> mjlbach:  Alright will do, thank you. Btw, thanks so much for all your work on lsp in neovim, such a tremenduous pleasure to work with. I use it every day now as well as your defaults nvim config. Slow switching my workflow from emacs to neovim when it comes to coding. 
+[03:37:05] <mjlbach[m]> That's wonderful :) 
+[03:37:17] <mjlbach[m]> I can look into it
+[03:37:19] <wbthomason[m]> <mjlbach[m]> "(wonder if wbthomason has..." <- Happy to add support for submodules. Tbh all packer work right now is slow because I'm just trying to climb out from under all the existing issue reports, etc., which eats up all my maintenance time these days. There are a bunch of exciting features I want to get to...
+[03:37:25] <mh72[m]> I think your files and Henrik's Doom are the ones I consult most! 
+[03:37:36] <mjlbach[m]> wbthomason: no worries haha, I know you busy
+[03:37:53] <mjlbach[m]> just trying to address the reddit crowd
+[03:39:12] <wbthomason[m]> mjlbach[m]: Ah, gotcha - right now this is possible if you run install again after the initial installation (b/c packer doesn't check for new things to install after loading an installed plugin - this would be easy and useful to add, though), just by calling packer.use within some runtime-sourced file in your plugin
+[03:39:24] <mjlbach[m]> Yeah exactly ^^^
+[03:39:49] <mjlbach[m]> > just by calling packer.use within some runtime-sourced file in your plugin
+[03:40:08] <mjlbach[m]> Do you want to see my genius solution to using packer in dockerfiles?
+[03:40:34] <mjlbach[m]> https://github.com/mjlbach/try.nvim/blob/0b79cdb84be27aedf9b58e4361481c0e063615f3/slim/init.lua#L44-L46
+[03:40:37] *** Joins: chenqisu1 (~xirndc@183.217.203.91)
+[03:40:51] <wbthomason[m]> <phaazon[m]> "at some point mjlbach I think I..." <- If we can get plugin authors to agree on a format for version specifications, I would love to add this to packer. There's a very old discussion on the repo in this direction, on a proposal I had for a "requirements.lua" format
+[03:41:46] <wbthomason[m]> mjlbach[m]: Lol beautiful
+[03:45:00] <Bowuigi[m]> <phaazon[m]> "at some point mjlbach I think I..." <- That is pretty cool, good luck
+[03:48:33] <mjlbach[m]> gpanders: do you find it kinda weird that opts.severity only lets you select a single severity value?
+[03:48:46] <mjlbach[m]> so you can do underline.severity = 3 but not underline.severity = {1,2,3}?
+[03:48:59] <mjlbach[m]> Oh
+[03:48:59] <mjlbach[m]> hm
+[03:49:03] <mjlbach[m]> it's not clear it takes a table, but it does
+[03:50:44] <mjlbach[m]> severity seems to be broken when taking a table
+[03:51:09] <mjlbach[m]> mh72:  you *should* be able to on 0.6 do something like
+[03:51:12] * mjlbach[m] sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/939ff9ea22f380f0ab44a129e04455aa81c1a5e5
+[03:51:16] <mjlbach[m]> it's currently not working though
+[03:52:13] <mjlbach[m]> mh72: see: https://github.com/microsoft/pyright/issues/2307
+[03:54:09] <mjlbach[m]> Ohhh
+[03:55:40] <mjlbach[m]> mh72: 
+[03:55:44] * mjlbach[m] sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/f7ffd5d2b4d8854f7701a78fab782333230a487c
+[03:56:00] <mjlbach[m]> that will "hide" info which is what pyright sends for unused imports
+[03:56:16] <mh72[m]> Ah, thanks so much!
+[03:56:22] <mjlbach[m]> note this is global
+[03:56:31] <mjlbach[m]> and also the update_in_insert is unnecessary
+[03:56:58] <mjlbach[m]> You can play around with HINT, INFO, WARN, and ERROR to see the minimum level that's right for you
+[03:57:52] <mjlbach[m]> pyright sends these as "hint" so you can do INFO instead of what I pasted above
+[03:57:52] <mh72[m]> 0.6 is neovim 0.6 right?
+[03:57:58] <mjlbach[m]> yes, unreleased
+[03:58:17] <mjlbach[m]> you can do something similar on 0.5.1 but I forget how 😅
+[04:00:29] <mh72[m]> Great, thanks! I tried updating lately after reading the reddit thread on the lsp speed improvements, very cool! Just ran into some issues with the nightly and neovide, going to look deeper into that now. 
+[04:01:32] <mjlbach[m]> womp
+[04:14:55] *** Joins: js3z (~js3z@146.115.76.107)
+[04:16:22] *** Quits: troyt (troyt@2601:681:4100:d591:44dd:acff:fe85:9c8e) (Ping timeout: 268 seconds)
+[04:17:11] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Ping timeout: 245 seconds)
+[04:19:42] *** Joins: troyt (troyt@2601:681:4100:d591:44dd:acff:fe85:9c8e)
+[04:22:21] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[04:31:14] *** Quits: tektik (~said@68.33.69.0) (Quit: Leaving)
+[04:32:44] *** Quits: case84 (~case@user/case84) (Quit: The Lounge - https://thelounge.chat)
+[04:44:30] *** Quits: brw (~bas@static.66.39.12.49.clients.your-server.de) (Quit: The Lounge - https://thelounge.chat)
+[04:47:25] *** Joins: brw (~bas@static.66.39.12.49.clients.your-server.de)
+[04:47:35] *** Quits: rgrinberg (~textual@ip235-44-15-186.ct.co.cr) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[05:06:48] *** Quits: arkurious (~arkurious@user/arkurious) (Quit: Leaving)
+[05:19:26] *** Joins: rgrinberg (~textual@ip235-44-15-186.ct.co.cr)
+[05:19:36] *** Quits: brw (~bas@static.66.39.12.49.clients.your-server.de) (Quit: The Lounge - https://thelounge.chat)
+[05:20:23] *** Joins: brw (~bas@static.66.39.12.49.clients.your-server.de)
+[05:25:35] *** Quits: FluffyMask (~masque@user/fluffymask) (Quit: WeeChat 3.3)
+[05:27:59] *** Quits: emf (~emf@2620:10d:c090:400::5:35f6) (Ping timeout: 264 seconds)
+[05:31:47] *** Joins: utraciss (~utraciss@118.100.247.27)
+[05:35:52] *** Joins: gggpkm (~gggpkm@li2015-124.members.linode.com)
+[05:37:06] *** Quits: tar_xvf (~tar@ec2-3-136-243-174.us-east-2.compute.amazonaws.com) (Quit: ZNC 1.7.5+deb4 - https://znc.in)
+[05:41:27] *** Joins: tar_xvf (~tar@ip-115-87.wireless.oberlin.edu)
+[05:42:13] *** Quits: tar_xvf (~tar@ip-115-87.wireless.oberlin.edu) (Client Quit)
+[05:43:43] *** Joins: tar_xvf (~tar@ip-115-87.wireless.oberlin.edu)
+[05:44:09] *** Quits: tar_xvf (~tar@ip-115-87.wireless.oberlin.edu) (Client Quit)
+[05:44:56] *** Joins: tar_xvf (~tar_xvf@ec2-3-136-243-174.us-east-2.compute.amazonaws.com)
+[05:59:08] *** Quits: Torr (~Torr@user/torr) (Quit: leaving)
+[06:12:01] <windwp[m]> how do i run nvim --headless with different width. the default width is 80. i want to run some testcase with a bigger width 
+[06:16:12] *** Quits: js3z (~js3z@146.115.76.107) (Quit: WeeChat 3.3)
+[06:20:30] *** Joins: oddmunds (~oddmunds@81.0.173.254)
+[06:25:19] *** Quits: oddmunds (~oddmunds@81.0.173.254) (Ping timeout: 252 seconds)
+[06:37:44] *** Quits: amigan (dramoray@dtvax.dynatron.me) (Quit: WeeChat 3.3)
+[06:46:31] *** Quits: nahtjona (~nahtjona@190.19.22.16) (Quit: connection reset by purr)
+[06:49:34] *** Quits: rgrinberg (~textual@ip235-44-15-186.ct.co.cr) (Ping timeout: 265 seconds)
+[06:51:55] *** Joins: oddmunds (~oddmunds@81.0.173.254)
+[06:55:05] *** Joins: rgrinberg (~textual@ip235-44-15-186.ct.co.cr)
+[06:56:49] *** Quits: oddmunds (~oddmunds@81.0.173.254) (Ping timeout: 265 seconds)
+[06:58:49] *** Quits: ikex (~ash@user/ikex) (Ping timeout: 252 seconds)
+[06:59:00] *** Joins: ikex1 (~ash@user/ikex)
+[06:59:39] *** ikex1 is now known as ikex
+[07:02:03] *** Quits: caef^ (~caef@70.166.66.234) (Remote host closed the connection)
+[07:06:03] <muniter[m]> windwp:  Does `set lines` and `set columns` work?
+[07:10:46] *** Quits: DixieFlatline (~soryuu@pool-173-61-70-58.cmdnnj.fios.verizon.net) (Remote host closed the connection)
+[07:16:34] *** Joins: tddrs^ (~tddrs@70.166.66.234)
+[07:22:45] *** Quits: zsoltiv_ (~zsoltiv@fibhost-67-12-35.fibernet.hu) (Ping timeout: 260 seconds)
+[07:24:30] *** Joins: oddmunds (~oddmunds@81.0.173.254)
+[07:29:54] *** Joins: kronicmage (user3131@neotame.csclub.uwaterloo.ca)
+[07:30:19] *** Joins: amigan (dramoray@dtvax.dynatron.me)
+[07:32:06] *** Quits: oddmunds (~oddmunds@81.0.173.254) (Ping timeout: 265 seconds)
+[07:33:00] *** Quits: rgrinberg (~textual@ip235-44-15-186.ct.co.cr) (Remote host closed the connection)
+[07:33:57] *** Joins: rgrinberg (~textual@ip235-44-15-186.ct.co.cr)
+[07:38:32] <kronicmage> hey folks, any idea how I can trouble shoot or profile slow typing speed w/ lspconfig?
+[07:38:50] <kronicmage> in particular, typing in haskell files w/ hls is quite sluggish in comparison to, say, typing in python files w/ pyright
+[07:39:44] *** Joins: Carp (~rue@1-162-45-75.dynamic-ip.hinet.net)
+[07:39:51] *** Joins: Unulan (~Unulan@88.244.94.240)
+[07:45:31] *** Quits: mahlon (~mahlon@martini.nu) (Remote host closed the connection)
+[07:45:43] *** Joins: mahlon (~mahlon@martini.nu)
+[07:55:08] *** Joins: blapwgl (~blapwgl@c-174-55-23-68.hsd1.pa.comcast.net)
+[07:59:47] *** Quits: blapwgl (~blapwgl@c-174-55-23-68.hsd1.pa.comcast.net) (Ping timeout: 264 seconds)
+[08:00:37] *** Quits: ks_ (~kevin@nyc-0.mil.lat) (*.net *.split)
+[08:00:37] *** Quits: swimmer (~swimmer@user/swimmer) (*.net *.split)
+[08:00:37] *** Quits: foxtrot (~foxtrot@user/foxtrot) (*.net *.split)
+[08:00:37] *** Quits: esran (~esran@2a06:8ec0:3::1:7574) (*.net *.split)
+[08:00:37] *** Quits: phryk (~totallyno@user/phryk) (*.net *.split)
+[08:00:37] *** Quits: icy (~icy@user/icy) (*.net *.split)
+[08:00:37] *** Quits: hbjy (~hbjy@rockylinux/web/hbjy) (*.net *.split)
+[08:00:37] *** Quits: hasenov_ (~root@ip70-188-7-100.rn.hr.cox.net) (*.net *.split)
+[08:01:10] *** Joins: swimmer (~swimmer@82-161-253-212.ip.xs4all.nl)
+[08:01:10] *** Joins: esran (~esran@vps.conical-effort.net)
+[08:01:11] *** Joins: icy (~icy@user/icy)
+[08:01:15] *** Quits: swimmer (~swimmer@82-161-253-212.ip.xs4all.nl) (Signing in (swimmer))
+[08:01:15] *** Joins: swimmer (~swimmer@user/swimmer)
+[08:01:16] *** Joins: hasenov_ (~root@ip70-188-7-100.rn.hr.cox.net)
+[08:01:29] *** Joins: hbjy (~hbjy@rockylinux/web/hbjy)
+[08:01:30] *** Joins: phryk (~totallyno@user/phryk)
+[08:01:31] *** Joins: southey (~foxtrot@user/foxtrot)
+[08:01:42] *** Joins: ks_ (~kevin@nyc-0.mil.lat)
+[08:05:32] *** Joins: blapwgl (~blapwgl@c-174-55-23-68.hsd1.pa.comcast.net)
+[08:06:32] <mjlbach[m]> Hmm no autocomplete?
+[08:10:06] *** Quits: _xor (~xor@72.49.199.147) (Read error: Connection reset by peer)
+[08:10:11] *** Quits: blapwgl (~blapwgl@c-174-55-23-68.hsd1.pa.comcast.net) (Ping timeout: 258 seconds)
+[08:10:34] *** Joins: _xor (~xor@72.49.199.147)
+[08:12:48] *** Joins: blapwgl (~blapwgl@c-174-55-23-68.hsd1.pa.comcast.net)
+[08:14:06] *** Quits: Carp (~rue@1-162-45-75.dynamic-ip.hinet.net) (Quit: WeeChat 3.3)
+[08:14:26] *** Joins: Carp (~rue@1-162-45-75.dynamic-ip.hinet.net)
+[08:16:02] *** Joins: blaklistd (~blaklistd@user/blaklistd)
+[08:16:17] <muniter[m]> I heard something about treesitter on Haskell being slow, looking to improve, if you have it maybe disabling it is a good idea.
+[08:16:32] *** Quits: Carp (~rue@1-162-45-75.dynamic-ip.hinet.net) (Client Quit)
+[08:16:51] *** Joins: Carp (~rue@1-162-45-75.dynamic-ip.hinet.net)
+[08:17:28] *** Quits: blapwgl (~blapwgl@c-174-55-23-68.hsd1.pa.comcast.net) (Remote host closed the connection)
+[08:18:06] <kronicmage> i'm using coq.nvim for autocomplete, but I notice the effect even turning that off
+[08:18:13] <kronicmage> let me try turning off treesitter
+[08:19:14] <kronicmage> holy smokes yeah it was definitely the treesitter parser
+[08:19:22] <kronicmage> so snappy now w/ that turned off
+[08:19:59] <kronicmage> it didn't even offer that much functionality lol. definitely needs work
+[08:20:07] <kronicmage> thanks @muniter[m] !
+[08:21:09] <windwp[m]> muniter:  thank it work :) i try to override nvim_win_get_width but your solution is better.
+[08:21:47] <mjlbach[m]> womp
+[08:21:55] <mjlbach[m]> I need to remember this, thanks muniter
+[08:22:01] <muniter[m]> Yeah, hence still in an experimental face, co stang improvement.
+[08:22:24] <muniter[m]> s/co/constant/, s/stang//
+[08:22:39] *** Quits: cjb (~cjb@user/cjb) ()
+[08:23:11] *** Quits: jangho (~jangho@121.165.8.28) (Quit: znc)
+[08:23:56] *** Joins: blapwgl (~blapwgl@c-174-55-23-68.hsd1.pa.comcast.net)
+[08:24:35] *** Joins: yeirr (~yeirr@user/yeirr)
+[08:39:04] *** Quits: zwr (~zwr@2804:d45:b966:fb00:433c:7503:c491:fd59) (Quit: leaving)
+[08:39:16] *** Joins: zwr (~zwr@2804:d45:b966:fb00:433c:7503:c491:fd59)
+[08:39:28] *** Joins: jangho (~jangho@121.165.8.28)
+[08:43:07] *** Joins: brian__ (~brianc@46.7.105.181)
+[08:45:16] *** Quits: tddrs^ (~tddrs@70.166.66.234) (Remote host closed the connection)
+[08:45:34] *** Quits: brian_ (~brianc@46.7.105.181) (Ping timeout: 265 seconds)
+[08:46:30] *** Joins: oddmunds (~oddmunds@81.0.173.254)
+[08:51:23] *** Quits: oddmunds (~oddmunds@81.0.173.254) (Ping timeout: 264 seconds)
+[08:56:23] *** Quits: blapwgl (~blapwgl@c-174-55-23-68.hsd1.pa.comcast.net) (Remote host closed the connection)
+[09:00:02] *** Quits: tent405 (~tent405@107-214-50-180.lightspeed.bcvloh.sbcglobal.net) (Remote host closed the connection)
+[09:00:10] *** Quits: xenrox (~xenrox@user/xenrox) (Remote host closed the connection)
+[09:02:00] *** Joins: tent405 (~tent405@107-214-50-180.lightspeed.bcvloh.sbcglobal.net)
+[09:02:29] *** Joins: xenrox (~xenrox@user/xenrox)
+[09:06:16] *** Quits: rgrinberg (~textual@ip235-44-15-186.ct.co.cr) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[09:23:35] *** Quits: gggpkm (~gggpkm@li2015-124.members.linode.com) (Remote host closed the connection)
+[09:24:26] *** Joins: gggpkm (~gggpkm@li2015-124.members.linode.com)
+[09:28:05] *** Quits: gggpkm (~gggpkm@li2015-124.members.linode.com) (Remote host closed the connection)
+[09:28:28] *** Joins: gggpkm (~gggpkm@li2015-124.members.linode.com)
+[09:28:54] *** Quits: yeirr (~yeirr@user/yeirr) (Ping timeout: 260 seconds)
+[09:39:12] *** Joins: SilentStalker[m] (~silentsta@2001:470:69fc:105::1:1cbc)
+[09:42:35] *** Quits: gggpkm (~gggpkm@li2015-124.members.linode.com) (Remote host closed the connection)
+[09:43:03] *** Quits: tent405 (~tent405@107-214-50-180.lightspeed.bcvloh.sbcglobal.net) (Quit: Leaving)
+[09:48:32] *** Joins: tent405 (~tent405@104.244.211.182)
+[10:06:30] *** Joins: guido (~guido@2001:b07:6455:ac4f:3641:5dff:fe55:2a8f)
+[10:06:42] *** Joins: yeirr (~yeirr@user/yeirr)
+[10:08:21] *** Joins: teclator (~quassel@85.155.180.70.dyn.user.ono.com)
+[10:19:24] *** Quits: teclator (~quassel@85.155.180.70.dyn.user.ono.com) (Remote host closed the connection)
+[10:19:37] *** Quits: carlavilla (~carlavill@2a0c:5a84:3607:2f00:221:6bff:fe3b:cee4) (Ping timeout: 252 seconds)
+[10:23:46] *** Joins: teclator (~quassel@85.155.180.70.dyn.user.ono.com)
+[10:26:29] *** Quits: fartyfoam (~fartyfoam@178-118-118-2.access.telenet.be) (Ping timeout: 264 seconds)
+[10:32:22] *** Joins: oddmunds (~oddmunds@81.0.173.254)
+[10:34:00] *** Joins: szymon (~ugh@staticline-31-183-183-95.toya.net.pl)
+[10:36:54] *** Quits: bubbler (~bubbler@2a02:810d:8cc0:3fa0::df5a) (Quit: WeeChat 3.3)
+[10:41:07] *** Joins: cottoneyejim (~cottoneye@2a01:261:369:4e00:ea6a:64ff:fe4f:b643)
+[10:49:18] *** Quits: szymon (~ugh@staticline-31-183-183-95.toya.net.pl) (Remote host closed the connection)
+[10:49:42] *** Joins: szymon (~ugh@staticline-31-183-183-95.toya.net.pl)
+[10:56:54] *** Joins: Ilyu (~quassel@78.202.228.230)
+[10:58:19] *** Quits: szymon (~ugh@staticline-31-183-183-95.toya.net.pl) (Quit: szymon)
+[11:07:26] *** Quits: dre (~dre@120.156.30.159) (Remote host closed the connection)
+[11:11:54] *** Joins: iomari891 (~iomari891@105.112.138.38)
+[11:26:22] *** Quits: ishan (~ishan@li2028-175.members.linode.com) (Remote host closed the connection)
+[11:26:39] *** Joins: ishan (~ishan@li2028-175.members.linode.com)
+[11:33:03] *** Joins: darkstarx (~darkstard@2601:1c2:300:c8a0::6c32)
+[11:33:18] *** Quits: darkstardevx (~darkstard@2601:1c2:300:c8a0::6c32) (Remote host closed the connection)
+[11:33:26] *** Quits: jemoka_ (~jemoka@user/jemoka) (Ping timeout: 245 seconds)
+[11:33:26] *** Quits: LyndsySimon (sid34452@lymington.irccloud.com) (Ping timeout: 245 seconds)
+[11:33:26] *** Quits: abg (sid494643@lymington.irccloud.com) (Ping timeout: 245 seconds)
+[11:33:26] *** Quits: fuzzfox (~gizzard@saturn.whatbox.ca) (Ping timeout: 245 seconds)
+[11:33:50] *** Joins: LyndsySimon (sid34452@id-34452.lymington.irccloud.com)
+[11:33:51] *** Quits: SanchayanMaity (sid478177@hampstead.irccloud.com) (Ping timeout: 245 seconds)
+[11:33:51] *** Quits: r0bby (r0bby@user/r0bby) (Ping timeout: 245 seconds)
+[11:33:51] *** Quits: hide (sid299131@helmsley.irccloud.com) (Ping timeout: 245 seconds)
+[11:33:51] *** Joins: abg (sid494643@id-494643.lymington.irccloud.com)
+[11:33:58] *** Joins: bailon (~gizzard@saturn.whatbox.ca)
+[11:34:00] *** Joins: jemoka (~jemoka@user/jemoka)
+[11:34:15] *** Joins: SanchayanMaity (sid478177@id-478177.hampstead.irccloud.com)
+[11:34:20] *** Joins: hide (sid299131@id-299131.helmsley.irccloud.com)
+[11:34:28] *** Joins: r0bby (r0bby@user/r0bby)
+[11:36:08] *** Quits: cotko2 (~cotko@188-230-251-153.dynamic.t-2.net) (Quit: Konversation terminated!)
+[11:37:58] *** Quits: iomari891 (~iomari891@105.112.138.38) (Quit: WeeChat 3.3)
+[11:41:18] *** Joins: ixil (~ixil@mpp-cp1-natpool-2-143.ethz.ch)
+[11:47:53] *** Quits: xaltsc (~xaltsc@user/xaltsc) (Ping timeout: 246 seconds)
+[11:50:50] *** Joins: logistic-bot (~school@pop.92-184-102-49.mobile.abo.orange.fr)
+[11:50:55] *** Joins: fartyfoam (~fartyfoam@178-118-118-2.access.telenet.be)
+[11:51:21] *** Quits: logistic-bot (~school@pop.92-184-102-49.mobile.abo.orange.fr) (Remote host closed the connection)
+[11:55:58] *** Joins: logistic-bot (~school@pop.92-184-102-49.mobile.abo.orange.fr)
+[11:56:50] *** Joins: ogistic-botl (~school@pop.92-184-102-49.mobile.abo.orange.fr)
+[11:58:33] *** Quits: logistic-bot (~school@pop.92-184-102-49.mobile.abo.orange.fr) (Remote host closed the connection)
+[11:58:33] *** Quits: ogistic-botl (~school@pop.92-184-102-49.mobile.abo.orange.fr) (Remote host closed the connection)
+[12:01:15] *** Joins: gospodin_horoshi (~gospodinh@2001:470:69fc:105::1:1ccc)
+[12:07:27] *** Quits: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb) (Quit: elastic_dog)
+[12:08:32] *** Joins: elastic_dog (~elastic_d@2a01:118f:822:9c00:f583:aa51:9ad4:d4fb)
+[12:15:07] *** Quits: tent405 (~tent405@104.244.211.182) (Quit: Leaving)
+[12:22:33] *** Joins: iomari891 (~iomari891@105.112.138.38)
+[12:28:52] *** Joins: towb (~bwot@user/towb)
+[12:30:08] *** Quits: mrhedgehog0[m] (~mrhedgeho@2001:470:69fc:105::d28b) (Quit: You have been kicked for being idle)
+[12:30:08] *** Quits: apoc[m] (~akjonesma@2001:470:69fc:105::fa75) (Quit: You have been kicked for being idle)
+[12:30:08] *** Quits: huntiep[m] (~huntiepma@2001:470:69fc:105::fa95) (Quit: You have been kicked for being idle)
+[12:32:56] *** Joins: nehsou^ (~nehsou@70.166.66.234)
+[12:41:39] *** Quits: iomari891 (~iomari891@105.112.138.38) (Quit: WeeChat 3.3)
+[12:54:49] *** Joins: henices[m] (~henicesma@2001:470:69fc:105::1:1cd6)
+[13:06:47] * tmerse[m] uploaded an image: (30KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/DwJIVaguHySAPcbEUFNwNEMz/image.png >
+[13:07:10] <tmerse[m]> Anyone knows, how I get this sort of shaded background for diagnostic messages working? The background is always a variation of the actual textcolor:
+[13:07:10] <tmerse[m]> Screenshot is taken from https://github.com/folke/tokyonight.nvim but I have seen this more often elsewhere.
+[13:10:37] <swimmer> hmm all in a sudden the entries in my nvim-cmp popup window are coloured. Did I miss something?
+[13:11:13] <clason[m]> yep, they implemented a new PUM based on floating windows
+[13:12:34] <swimmer> but that's already in place since a couple of weeks isn't it?
+[13:13:30] <clason[m]> not sure; I lose track of time easily...
+[13:15:27] <swimmer> I thought it was introduced here -> https://github.com/hrsh7th/nvim-cmp/pull/310
+[13:15:42] *** Quits: cottoneyejim (~cottoneye@2a01:261:369:4e00:ea6a:64ff:fe4f:b643) (Ping timeout: 258 seconds)
+[13:16:25] *** Joins: cottoneyejim (~cottoneye@2a01:261:369:4e00:ea6a:64ff:fe4f:b643)
+[13:18:14] <bfredl> no this is quite different
+[13:18:32] <bfredl> a complete reimplementation of the PUM based on "ordinary" floating windows
+[13:23:37] *** Quits: teclator (~quassel@85.155.180.70.dyn.user.ono.com) (Quit: http://quassel-irc.org - Chat comfortably. Anywhere.)
+[13:29:43] *** Joins: teclator (~quassel@85.155.180.70.dyn.user.ono.com)
+[13:30:25] *** Joins: arkurious (~arkurious@user/arkurious)
+[13:36:10] <swimmer> when did that happen? I haven't change anything in my nvim-cmp configuration and noticed just today the coloured entries ...
+[13:37:32] *** Joins: bubbler (~bubbler@2a02:810d:8cc0:3fa0::df5a)
+[13:37:48] <elianiva[m]> 10 days ago according to this
+[13:37:48] <elianiva[m]> https://github.com/hrsh7th/nvim-cmp/pull/224
+[13:40:54] <hrsh7th[m]> swimmer: You can set cmp.setup { experimental = { native_menu = true } }
+[13:40:54] <hrsh7th[m]> BTW, You should create issue for nvim-cmp. Please do not ask here.
+[13:43:27] <swimmer> hrsh7th[m]: thanks for chiming in 👍 I didn't feel the need to create an issue - I was just surprised to see it all in a sudden and was wondering whether others experience the same. 
+[13:46:54] *** Joins: iomari891 (~iomari891@105.112.138.38)
+[13:50:39] *** Joins: scoobydoob (~scooby@user/scoobydoo)
+[13:50:49] *** Quits: scoobydoo (~scooby@user/scoobydoo) (Ping timeout: 252 seconds)
+[13:50:55] *** scoobydoob is now known as scoobydoo
+[13:54:51] <swimmer> and if I use another colorscheme it looks really nice! Thanks for all your efforts 🙏
+[14:03:40] <phaazon[m]> I just realised that Hop colors are not the default ones when using edge, the colorscheme
+[14:04:10] <phaazon[m]> And I saw they added support for Hop directly in the colorscheme 😱
+[14:04:25] <phaazon[m]> Hop is more famous than I thought lol
+[14:06:40] <BorweBrianOrwe[m> Was :Explore and 😖explore removed from neovim 0.5.1+ or something?
+[14:07:15] <clason[m]> no
+[14:07:44] <BorweBrianOrwe[m> Keep getting `E492: Not an editor command :Explore` for example.
+[14:08:00] <clason[m]> probably borked install (runtime files missing)
+[14:08:08] <clason[m]> works here
+[14:08:32] <Binx[m]> I have seen many people use nvim-tree, and disable it. Maybe that's the case for you?
+[14:09:13] <Binx[m]> s/it/netrw/
+[14:09:26] <BorweBrianOrwe[m> Yeah I added nvim-tree, but can't figure out for the life of me how to use it LOL. could it be somehow removing those commands?
+[14:10:12] <BorweBrianOrwe[m> The only line from it I have in my init.lua is
+[14:10:12] <BorweBrianOrwe[m> `paq 'kyazdani42/nvim-tree.lua'`
+[14:11:15] <BorweBrianOrwe[m> How to remove system commands? Should that even be possible?
+[14:11:40] <Binx[m]> I think nvim-tree disabled netrw by default, try putting this in your config:... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/81a2f977e711dce6c977097b697b691da98d2493)
+[14:11:48] <Binx[m]>  * I think nvim-tree disables netrw by default, try putting this in your config:... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/dbc0a99b75b1678b75aa079cc7522e598f01f860)
+[14:12:04] <Binx[m]>  * I think nvim-tree disables netrw by default, try putting this in your config:... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/dfb70b6d188ecbb74ae401c025449b74d62ef079)
+[14:14:52] <BorweBrianOrwe[m> > I think nvim-tree disables netrw by default, try putting this in your config:... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/a89adb7b3e1df0f7b5a25f8a0d306c01b4acc95a)
+[14:18:01] *** Quits: Ilyu (~quassel@78.202.228.230) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[14:18:20] *** Quits: swimmer (~swimmer@user/swimmer) (Quit: WeeChat 3.4-dev)
+[14:20:27] *** Joins: swimmer (~swimmer@user/swimmer)
+[14:41:47] *** Quits: mx08 (~mx08@user/mx08) (Ping timeout: 240 seconds)
+[14:42:43] *** Joins: mx08 (~mx08@user/mx08)
+[14:54:20] *** Quits: guido (~guido@2001:b07:6455:ac4f:3641:5dff:fe55:2a8f) (Quit: WeeChat 3.3)
+[14:56:44] *** Joins: ixil_ (~ixil@mpp-cp1-natpool-1-192.ethz.ch)
+[14:59:58] *** Quits: ixil (~ixil@mpp-cp1-natpool-2-143.ethz.ch) (Ping timeout: 258 seconds)
+[15:08:10] *** Quits: iomari891 (~iomari891@105.112.138.38) (Ping timeout: 260 seconds)
+[15:09:08] *** Joins: iomari891 (~iomari891@105.112.138.38)
+[15:12:26] *** Quits: xenrox (~xenrox@user/xenrox) (Remote host closed the connection)
+[15:14:46] *** Joins: xenrox (~xenrox@user/xenrox)
+[15:18:59] *** Quits: cottoneyejim (~cottoneye@2a01:261:369:4e00:ea6a:64ff:fe4f:b643) (Ping timeout: 264 seconds)
+[15:22:13] <p00f[m]> > <@tmerse:matrix.org> Anyone knows, how I get this sort of shaded background for diagnostic messages working? The background is always a variation of the actual textcolor:
+[15:22:13] <p00f[m]> > Screenshot is taken from https://github.com/folke/tokyonight.nvim but I have seen this more often elsewhere.
+[15:22:13] <p00f[m]> it's just hardcoded i think
+[15:22:56] <p00f[m]> if you frequently change your theme then you can calcluate bg separately by dimming r,g and b equally and use that
+[15:24:06] <p00f[m]> :h hlID to get colors
+[15:24:14] <p00f[m]> where's the bot
+[15:24:17] <p00f[m]> `:h hlID`
+[15:24:22] <nvim-bot[m]> Links to referenced help pages:
+[15:24:22] <nvim-bot[m]> * [`hlID`](https://neovim.io/doc/user/eval.html#hlID) in *eval.txt*
+[15:25:09] <tmerse[m]> Thank you!
+[15:31:35] *** Quits: yeirr (~yeirr@user/yeirr) (Ping timeout: 264 seconds)
+[15:39:42] *** Quits: chenqisu1 (~xirndc@183.217.203.91) (Quit: Leaving)
+[15:53:13] *** Joins: ixil (~ixil@mpp-cp1-natpool-1-192.ethz.ch)
+[15:53:54] *** Quits: ixil_ (~ixil@mpp-cp1-natpool-1-192.ethz.ch) (Ping timeout: 260 seconds)
+[16:07:25] *** Joins: yeirr (~yeirr@user/yeirr)
+[16:09:45] *** Joins: Guest15 (~Guest15@146.56.100.202)
+[16:10:26] *** Joins: koevet (~koevet@ip5b4113de.dynamic.kabel-deutschland.de)
+[16:14:23] *** Joins: guido (~guido@host-79-56-253-164.retail.telecomitalia.it)
+[16:16:50] *** Joins: nahtjona (~nahtjona@190.19.22.16)
+[16:17:40] *** Joins: oldgurang[m] (~oldgurang@2001:470:69fc:105::d244)
+[16:25:33] *** Quits: guido (~guido@host-79-56-253-164.retail.telecomitalia.it) (Read error: Connection reset by peer)
+[16:25:36] *** Joins: guidoc (~guido@host-79-56-253-164.retail.telecomitalia.it)
+[16:25:39] *** Quits: guidoc (~guido@host-79-56-253-164.retail.telecomitalia.it) (Client Quit)
+[16:28:35] *** Quits: oddmunds (~oddmunds@81.0.173.254) (Ping timeout: 264 seconds)
+[16:41:59] *** Joins: oddmunds (~oddmunds@81.0.173.254)
+[16:43:36] *** Joins: guido (~guido@host-79-56-253-164.retail.telecomitalia.it)
+[17:05:21] *** Quits: Guest15 (~Guest15@146.56.100.202) (Quit: Client closed)
+[17:06:22] *** Joins: vpoat (~vpoat@2001:ee0:249:c921:6656:9403:4549:2c11)
+[17:11:21] *** Joins: nyah (~nyah@bcdcb6e3.skybroadband.com)
+[17:18:10] *** Quits: vpoat (~vpoat@2001:ee0:249:c921:6656:9403:4549:2c11) (Ping timeout: 252 seconds)
+[17:20:13] *** Joins: SirJitsu1 (~SirJitsu@162-231-111-175.lightspeed.livnmi.sbcglobal.net)
+[17:28:24] *** Joins: rgrinberg (~textual@ip235-44-15-186.ct.co.cr)
+[17:35:26] *** Quits: Unulan (~Unulan@88.244.94.240) (Quit: Client closed)
+[17:45:29] *** Joins: nub (~yourname@161.35.39.170)
+[17:47:29] *** Joins: meator (~meator@user/meator)
+[17:48:34] *** Quits: gxt (~gxt@gateway/tor-sasl/gxt) (Remote host closed the connection)
+[17:48:44] <nub> hey! does anyone have a tldr on native lsp vs coc.nvim? i keep running into performance issues with coc.nvim and am wondering if it's worth switching it, but am finding surprisingly little info online
+[17:49:02] *** Joins: gxt (~gxt@gateway/tor-sasl/gxt)
+[17:49:25] *** Quits: koevet (~koevet@ip5b4113de.dynamic.kabel-deutschland.de) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[17:49:54] <clason[m]> https://github.com/neovim/nvim-lspconfig/wiki/Comparison-to-other-LSP-ecosystems-(CoC,-vim-lsp,-etc.)
+[17:50:55] <clason[m]> smolck: ☝️ can we have a `!coc` command for this?
+[17:51:12] <vigoux[m]> Nah, `!lsp`
+[17:51:22] <vigoux[m]> I don't want to see `coc` everywhere
+[17:51:47] <nub> oh neat, that's exactly what i was looking for
+[17:51:49] <nub> thanks!
+[17:53:15] <clason[m]> but `!lsp` should link to something about LSP (like TJs presentation)...
+[17:53:43] <clason[m]> but, fair, so how about `!🐓`?
+[17:54:42] *** Quits: iomari891 (~iomari891@105.112.138.38) (Quit: WeeChat 3.3)
+[17:54:48] <vigoux[m]> Sounds great to my french
+[17:54:56] <clason[m]> I knew it would :)
+[17:55:18] *** Joins: iomari891 (~iomari891@105.112.138.38)
+[17:55:25] <nub> what's wrong with `coc` anyway? xD
+[17:58:45] <smolck[m]> clason[m]: lol
+[17:58:49] *** Joins: Julian (~tos9@python/site-packages/Julian)
+[18:00:15] <clason[m]> (might be nice to keep it as an easter egg -- get it? :P -- but `!lsp-comparison` is probably the better command in general)
+[18:02:50] <leiserfg[m]> cocparison
+[18:03:57] *** Joins: cottoneyejim (~cottoneye@2a01:261:369:4e00:ea6a:64ff:fe4f:b643)
+[18:06:49] *** Joins: maromau (~mauro@151.62.228.166)
+[18:07:40] <Famiu[m]> 🐓
+[18:07:54] * saltrocklamp[m] uploaded an image: (279KiB) < https://libera.ems.host/_matrix/media/r0/download/salt-rock-lamp.ems.host/ef8774023e1f36104582478f447c10585ef6ca1d/Screen%20Shot%202021-10-18%20at%2010.37.39.png >
+[18:08:09] <saltrocklamp[m]> oops
+[18:08:12] <Famiu[m]> Name the command `!kronk`
+[18:08:17] <saltrocklamp[m]> is that huge for other element users?
+[18:08:20] <Famiu[m]> I applaud whoever gets the reference
+[18:08:24] <clason[m]> yep
+[18:08:55] <saltrocklamp[m]> my question was: is there some way to "pin" the window on the bottom (which already as `winfixheight` set) such that commands like `<c-w> _` leave it as-is, while modifying the other windows as normal?
+[18:08:57] *** Joins: koevet (~koevet@ip5b4113de.dynamic.kabel-deutschland.de)
+[18:09:43] <saltrocklamp[m]> or would i have to have an autocmd that re-positions and re-sizes the window whenever something tries to change its size?
+[18:16:45] *** Joins: rostero (uid236576@id-236576.lymington.irccloud.com)
+[18:17:22] *** Joins: szgy (~szgy@2800:810:549:11e7::1)
+[18:18:25] <rostero> I'm using lsp(config) with treesitter.  for the first couple of saves everything is fine, but after a while i'll create a syntax error.  then neovim just shows a bunch of errors, even on those lines i corrected.  it's like it doesn't get re-run.  i have to quit nvim and restart.
+[18:18:28] <rostero> any ideas?
+[18:20:34] <clason[m]> needs a minimal reproducing example (including -- but not limited to -- the exact server and tree-sitter parser)
+[18:21:12] <rostero> good point.  typescript's tserver.  i'll see if i can get that
+[18:22:02] <Julian> rostero: IME that usually means your parser is out of date and neovim gets confused with a query or something -- so you could try `:TSUpdate tsx` or whichever before trying to put together a MWE
+[18:22:17] <rostero> typescript-language-server actually
+[18:22:52] <rostero> I got parsers are up to date, and the errors persist
+[18:22:52] <clason[m]> vi
+[18:23:17] <clason[m]> and you cannot reproduce without tree-sitter?
+[18:23:43] <rostero> i haven't tried
+[18:24:38] <clason[m]> well, that would be the first thing, then, right?
+[18:24:41] <clason[m]> :)
+[18:24:45] *** Joins: tj_allemaal (~tj_allema@17-14-122.cgnat.fonira.net)
+[18:24:55] <rostero> :LspRestart seemed to fix the issue
+[18:25:17] *** Joins: Ilyu (~quassel@78.202.228.230)
+[18:25:17] <clason[m]> "fix" as in "doesn't reoccur"?
+[18:27:11] <rostero> i created a syntax error.  i got 150 errors, which i corrected, but it was still showing 150 errors.  I typed :LspRestart and all the errors went away and lsp is running normally.
+[18:27:48] <tj_allemaal> hey guys, i’m trying to establish a workflow to compile latex documents in neovim. so far my minimal example works. other examples don’t . i’m using vimtex also. where do i put additional packages? does vimtex have to load the packages, or is it latexmk? … i just wann add packages and see if that’s the reason some tex file dont compile. cheers
+[18:28:16] <clason[m]> you should best ask that at #vimtex-chat_community:gitter.im 
+[18:28:29] <tj_allemaal> woah 
+[18:28:32] <tj_allemaal> k thx
+[18:28:42] <clason[m]> (vimtex uses `kpsewhere`, so anywhere latex looks, vimtex does)
+[18:37:16] *** Quits: szgy (~szgy@2800:810:549:11e7::1) (Remote host closed the connection)
+[18:43:15] <saltrocklamp[m]> rostero: that happens to me sometimes, it seems like the tree sitter state just breaks after a while and the buffer needs to be reloaded. i haven't been able to construct a MWE or reliably reproduce, not sure if it's just tree sitter or some interaction between tree sitter and LSP
+[18:43:59] <rostero> good to know i'm not alone
+[18:49:20] *** Joins: tstirrat (~tstirrat@97-122-237-182.hlrn.qwest.net)
+[18:51:39] <drocan> I have multiple lines of "- text (date time)", is there a plugin that can display how old that (date time) is as virtual text at end of line?
+[18:53:06] *** Quits: guido (~guido@host-79-56-253-164.retail.telecomitalia.it) (Read error: Connection reset by peer)
+[18:53:31] *** Joins: TannerStirrat[m] (~yetitwoma@2001:470:69fc:105::1:1d19)
+[18:53:46] *** TannerStirrat[m] is now known as yetitwo[m]
+[18:54:07] *** Joins: mrchu001[m] (~mrchu001m@2001:470:69fc:105::1:1d1a)
+[18:54:30] <drewolson> is there a way to enable a provider (python3) for only a single filetype?
+[18:54:39] * yetitwo[m] uploaded an image: (84KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/UfBfsHwZyrysIxsmYxIHiDOT/image.png >
+[18:54:41] <yetitwo[m]> i'm using coc-eslint with a dark theme in neovim, and when it highlights an error, it uses this eye-bleeding red: 
+[18:54:51] <drewolson> having the provider generally enabled _massively_ slows down opening even empty python files
+[18:54:55] <yetitwo[m]> which setting changes that highlight color?
+[18:55:53] <yetitwo[m]> so far i've tried a bunch of the `:hi Coc*` settings and `:hi Pmenu`
+[18:57:36] <mrchu001[m]> made it 👋 mjlbach 
+[18:57:42] <mjlbach[m]> hi!
+[18:58:27] <mrchu001[m]> hows it going?
+[18:58:36] <mrchu001[m]> had any better luck than me yet? lol
+[18:58:49] <mjlbach[m]> Oh I only tried once
+[18:59:01] <mjlbach[m]> wait sorry, what specific thing did you try to get references for?
+[19:00:15] <mrchu001[m]> the Feature component in "./libs/feature/src/lib/Feature.tsx"
+[19:00:51] <mrchu001[m]> the actual reference to where it's used is in "./apps/webapp/src/app/app.tsx"
+[19:02:43] <mrchu001[m]> if I just load Feature.tsx with nothing else in my buffer list, i don't see all the references I should
+[19:02:47] *** Quits: koevet (~koevet@ip5b4113de.dynamic.kabel-deutschland.de) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[19:02:54] <mrchu001[m]> if I load main.tsx into my buffers, it starts picking it up
+[19:06:22] <mjlbach[m]> Ah
+[19:06:26] <mjlbach[m]> I think this may be tsserver side
+[19:06:48] <mjlbach[m]> coc isn't a good test case as the server is slightly different but you could try
+[19:07:07] <mjlbach[m]> Oh hmm
+[19:09:20] <mrchu001[m]> 🤔
+[19:09:26] <mjlbach[m]> think I found something
+[19:09:56] <mrchu001[m]> what'd you find?
+[19:11:20] *** Joins: VikasRaj[m] (~numtostrm@2001:470:69fc:105::1:1d1e)
+[19:13:32] <mjlbach[m]> Ok, so with the default root pattern of lspconfig it doesn't get the monorepo root right, there's not a good way to distinguish in this case IMO
+[19:13:42] <mjlbach[m]> But I've reproduced your issue
+[19:15:28] <mjlbach[m]> So it's definitely the server
+[19:15:32] * mjlbach[m] sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/e23b6c93719759d10571c41f1ee9454ae8f7ec33
+[19:15:43] <mjlbach[m]> But
+[19:15:50] <mjlbach[m]> There could be some things we aren't doing 
+[19:17:08] <mrchu001[m]> fwiw, i'm using nvim-lsp-installer. but you're right, the default root pattern doesn't work well for that kind of repo.
+[19:17:38] <mrchu001[m]> which i was able to change (https://github.com/mattleong/dotfiles/blob/lsp/nvim/lua/nv-core/lsp/providers/lspconfig.lua#L36)
+[19:20:39] <mrchu001[m]> so the project root seems fine to me once that's set as far as i can tell
+[19:21:17] *** Quits: Ilyu (~quassel@78.202.228.230) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[19:22:13] <mjlbach[m]> Maybe it's an initialization option we could send? N
+[19:22:14] <mjlbach[m]> s/Maybe it's an initialization option we could send? N/Maybe it's an initialization option we could send? /
+[19:24:23] <mrchu001[m]> what do you mean?
+[19:28:11] *** Quits: cmbengue (~Thunderbi@207.191.249.160) (Quit: Thanks, see you later.)
+[19:28:12] <VikasRaj[m]> I wanted to ask, which is api is better suited for updating some chars on a line? nvim_buf_set_text or nvim_buf_set_line?
+[19:28:48] *** VikasRaj[m] is now known as numToStr[m]
+[19:28:55] *** Quits: tj_allemaal (~tj_allema@17-14-122.cgnat.fonira.net) (Quit: tj_allemaal)
+[19:29:33] <mjlbach[m]> I think we prefer set_text now
+[19:29:39] <mjlbach[m]> not sure
+[19:29:43] <mjlbach[m]> Oops sorry thought this was the dm
+[19:29:52] *** Quits: thing (~thing@user/thing) (Remote host closed the connection)
+[19:30:00] *** Joins: cmbengue (~Thunderbi@207.191.249.160)
+[19:30:00] <mjlbach[m]>                 This is recommended over nvim_buf_set_lines when only
+[19:30:00] <mjlbach[m]>                 modifying parts of a line, as extmarks will be preserved on
+[19:30:00] <mjlbach[m]>                 non-modified parts of the touched lines.
+[19:30:07] *** Quits: goolord[m] (~goolordma@2001:470:69fc:105::facf) (Quit: You have been kicked for being idle)
+[19:30:07] *** Quits: dophin2009[m] (~dophin200@2001:470:69fc:105::c046) (Quit: You have been kicked for being idle)
+[19:30:07] *** Quits: DanielFortes[m] (~dfortesma@2001:470:69fc:105::f95b) (Quit: You have been kicked for being idle)
+[19:30:08] *** Quits: obrit[m] (~obritmatr@2001:470:69fc:105::f814) (Quit: You have been kicked for being idle)
+[19:30:15] *** Joins: thing (~thing@user/thing)
+[19:31:22] <numToStr[m]> Yeah I saw that but I also thought that I could also somehow preserve mark on that line but it doesn't.
+[19:31:25] *** Joins: FluffyMask (~masque@user/fluffymask)
+[19:31:42] <numToStr[m]> s/Yeah I saw that but I also thought that I could also somehow preserve mark on that line but it doesn't./Yeah I saw that but I also thought that It could also somehow will preserve mark on that line but it doesn't./
+[19:33:16] <mjlbach[m]> I think it will if you don't change the particular text range
+[19:33:30] <mjlbach[m]> * text range in which the extmark exists
+[19:33:45] <mjlbach[m]> mrchu001: filed an issue
+[19:33:47] <mjlbach[m]> https://github.com/typescript-language-server/typescript-language-server/issues/271
+[19:34:01] <bfredl> set_text preserves extmarks on non-changed parts of the line
+[19:34:13] <bfredl> not ordinary marks after the change tho
+[19:34:41] <mrchu001[m]> mjlbach: 🙏
+[19:35:54] <numToStr[m]>  I just wanted to fix this 😃 https://github.com/numToStr/Comment.nvim/issues/24
+[19:37:44] <mjlbach[m]> mrchu001: Please feel free to update/comment on it, I send the appropriate rpc requests we are making so hopefully that is enough info for them, although that repo is not particularly active
+[19:39:03] <sim[m]> mjlbach one thing I forgot when you asked about the lsp stuff, will the file watcher thingies be implemented? They're pretty useful in web dev/flutter projects 
+[19:39:16] <mjlbach[m]> Sure, client-side?
+[19:39:24] <mjlbach[m]> You can making a tracking issue
+[19:39:53] <mrchu001[m]> Will do. Thanks a bunch mjlbach 
+[19:40:02] <mrchu001[m]> If anything it feels great to know I'm not crazy lol
+[19:40:03] <sim[m]> mjlbach[m]: Yeah some servers support it 
+[19:40:13] <sim[m]> mjlbach[m]: Alright I'll do that
+[19:40:31] <mjlbach[m]> But yes, I've wanted to do file watcher support for awhile
+[19:40:41] <mjlbach[m]> there was discussion whether or not to make it require an external plugin though
+[19:40:47] <mjlbach[m]> because watchman is the best choice
+[19:40:47] <sim[m]> I'm pretty sure libuv can do the filesystem watching so cross platform shouldn't be an issue 
+[19:40:51] <mjlbach[m]> otherwise we'd have to write a ton of stuff with luv
+[19:41:07] <mjlbach[m]> luv can but there are a ton of limitations around remote files/mounts
+[19:41:46] <sim[m]> Ah, then we can have an external plugin till it's stable enough to move it into core if needed
+[19:41:54] *** Quits: Julian (~tos9@python/site-packages/Julian) (Quit: leaving)
+[19:42:02] <sim[m]> It's still a pretty niche feature 
+[19:42:30] <mjlbach[m]> Yeah but I think it's why omnisharp is borked
+[19:45:35] <sim[m]> Has anyone made a file watcher plugin yet? I can try something today with watchman if it hasn't been done already
+[19:46:30] *** Joins: emf (~emf@2620:10d:c090:400::5:75e7)
+[19:46:36] <mjlbach[m]> oberblastmeister started but I think he's left us for helixier pastures
+[19:46:49] <mjlbach[m]> (all the best ofc :) )
+[19:47:01] <Mathias[m]> I was just thinking about the file watching stuff again today (have been switching branches a lot today and got annoyed by LSP not refreshing correctly without me opening some files manually) 
+[19:47:01] <Mathias[m]> I think using luv as a start could be an option - degrade to not having the functionality if there is remote fs involved or something like that
+[19:47:45] <mjlbach[m]> Yeah
+[19:47:57] <mjlbach[m]> I think we should do luv in core, but have it pluggable so watchman can drop in and provide elevated functionality
+[19:48:40] <sim[m]> What does vscode use? Watchman or their own api
+[19:48:45] <mjlbach[m]> but sim it's entirely possible due to the built-in client model to have a filewatcher plugin
+[19:49:00] <mjlbach[m]> they use a javascript filewatcher with optional watchman support AFAIk
+[19:49:01] <mjlbach[m]> s/AFAIk/AFAIK/
+[19:49:21] <mjlbach[m]> so we'd basically do the same but using luv (which is what the JS filewatcher uses I think, libuv primitives)
+[19:49:37] <sim[m]> mjlbach[m]: Yep it's just have notify the server that something changed
+[19:49:42] <mjlbach[m]> But yes, make the tracking issue
+[19:49:54] <mjlbach[m]> I think other than semantic tokens this is the only important thing unimplemented
+[19:50:50] *** Quits: tstirrat (~tstirrat@97-122-237-182.hlrn.qwest.net) (Quit: WeeChat 3.0.1)
+[19:52:06] *** Joins: ikex1 (~ash@user/ikex)
+[19:52:35] *** Quits: ikex (~ash@user/ikex) (Ping timeout: 264 seconds)
+[19:52:43] *** ikex1 is now known as ikex
+[19:55:04] *** Joins: tent405 (~tent405@107-214-50-180.lightspeed.bcvloh.sbcglobal.net)
+[20:05:19] *** Joins: Unulan (~Unulan@88.244.94.240)
+[20:06:29] * sim[m] uploaded an image: (134KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/HGpmPxbkQQZodxDjcPtNHsLg/image.png >
+[20:06:34] <sim[m]> mjlbach: does this look good?
+[20:06:58] <mjlbach[m]> Yup
+[20:07:15] <mjlbach[m]> isn't there a didChange
+[20:07:22] <mjlbach[m]> * a didChange other than textdocument
+[20:07:58] <mjlbach[m]> nvm
+[20:08:07] *** Joins: ooGoop9_ (~ooGoop9@user/oogoop9)
+[20:08:15] *** Quits: ooGoop9_ (~ooGoop9@user/oogoop9) (Remote host closed the connection)
+[20:08:24] <sim[m]> theres didOpen didClose and didChange but those are different things ig
+[20:09:36] <mjlbach[m]> yeah we already send those
+[20:09:45] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[20:10:36] <oberblastmeister> mjlbach I didn't leave 😄
+[20:11:10] <clason[m]> \o/
+[20:11:34] <sim[m]> https://github.com/neovim/neovim/issues/16075
+[20:13:46] <mjlbach[m]> great, ty
+[20:13:53] <mjlbach[m]> oberblastmeister: in that case guess who is getting assigned an issue
+[20:14:26] <mjlbach[m]> (just kidding)
+[20:14:48] <oberblastmeister> lol
+[20:15:12] *** Quits: utraciss (~utraciss@118.100.247.27) (Quit: %quit from znc%)
+[20:26:21] *** Parts: d34df00d (~d34df00d@2600:1700:8c60:3a10::48) ()
+[20:26:33] *** Joins: tj_allemaal (~tj_allema@17-14-122.cgnat.fonira.net)
+[20:34:02] *** Joins: arthurpbs (~arthurpbs@168.121.98.124)
+[20:39:25] *** Quits: hololeap (~hololeap@user/hololeap) (Remote host closed the connection)
+[20:40:56] *** Joins: hololeap (~hololeap@user/hololeap)
+[20:50:55] <dmc> https://github.com/williamboman/nvim-lsp-installer/pull/176
+[20:53:35] *** Quits: hololeap (~hololeap@user/hololeap) (Remote host closed the connection)
+[20:54:56] *** Joins: hololeap (~hololeap@user/hololeap)
+[21:00:53] *** Joins: Ilyu (~quassel@166.215.82.79.rev.sfr.net)
+[21:02:31] *** Quits: deepy (deepy@user/deepy) (Quit: meow)
+[21:03:02] *** Joins: deepy (deepy@user/deepy)
+[21:06:24] *** Quits: rostero (uid236576@id-236576.lymington.irccloud.com) (Quit: Connection closed for inactivity)
+[21:33:57] *** Quits: holgersson (~quassel@user/holgersson) (Quit: “Format C:........[Done]“)
+[21:34:37] *** Quits: tj_allemaal (~tj_allema@17-14-122.cgnat.fonira.net) (Quit: tj_allemaal)
+[21:36:26] *** Joins: holgersson (~quassel@user/holgersson)
+[21:39:18] *** Quits: meator (~meator@user/meator) (Quit: Leaving)
+[21:40:35] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Quit: No Ping reply in 180 seconds.)
+[21:41:57] *** Joins: koevet (~koevet@ip5b4113de.dynamic.kabel-deutschland.de)
+[21:42:18] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[21:46:22] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Client Quit)
+[21:46:32] *** Joins: pocon_ (~pocon@2607:fea8:ea2:4800::dd90)
+[21:47:02] *** Joins: tj_allemaal (~tj_allema@17-14-122.cgnat.fonira.net)
+[21:48:23] *** Quits: pocon_ (~pocon@2607:fea8:ea2:4800::dd90) (Client Quit)
+[21:53:15] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[21:58:47] *** Quits: maromau (~mauro@151.62.228.166) (Quit: Konversation terminated!)
+[21:59:58] *** Joins: xaltsc (~xaltsc@user/xaltsc)
+[22:18:11] *** Joins: guido (~guido@host-79-56-253-164.retail.telecomitalia.it)
+[22:18:23] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Ping timeout: 264 seconds)
+[22:19:38] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[22:20:01] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Read error: Connection reset by peer)
+[22:20:31] *** Quits: koevet (~koevet@ip5b4113de.dynamic.kabel-deutschland.de) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[22:24:11] *** Joins: koevet (~koevet@ip5b4113de.dynamic.kabel-deutschland.de)
+[22:24:19] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[22:45:45] *** Quits: cottoneyejim (~cottoneye@2a01:261:369:4e00:ea6a:64ff:fe4f:b643) (Ping timeout: 265 seconds)
+[22:48:14] *** Quits: Ilyu (~quassel@166.215.82.79.rev.sfr.net) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[22:53:23] *** Quits: oddmunds (~oddmunds@81.0.173.254) (Ping timeout: 258 seconds)
+[23:01:10] *** Joins: jaykelly450 (~vagrant@c-73-82-49-38.hsd1.ga.comcast.net)
+[23:04:36] <YorickPeterse[m]> God I hate GitHub's Markdown line wrapping
+[23:04:42] <YorickPeterse[m]> spend 20 minutes writing up an issue, and GH makes it look like 💩
+[23:06:05] <sim[m]> mjlbach: so looks like i had some confusion, the did/will stuff only needs to be triggered when the client does stuff, so support should mostly be in nvim-tree or whatever, but would need them in workspace edits which add/delete/rename a file
+[23:06:15] <clason[m]> looks OK on GH?
+[23:06:23] <mjlbach[m]> Yeah I was confused, there are two things we could support
+[23:06:30] *** Quits: scoobydoo (~scooby@user/scoobydoo) (Ping timeout: 260 seconds)
+[23:06:33] <mjlbach[m]> * are two (sets of) things we
+[23:06:36] <mjlbach[m]> sorry busy morning
+[23:09:08] <sim[m]> oke i updated the issue, should make sense now
+[23:09:21] <Bowuigi[m]> YorickPeterse[m]: That is a normal markdown thing, I think it was so you can hard wrap at 80 characters without issues
+[23:09:42] <Bowuigi[m]> It hits you when you less expect it to happen
+[23:10:29] <YorickPeterse[m]> Bowuigi: No, IIRC GH deviates from the standard
+[23:10:36] <YorickPeterse[m]> "standard" markdown doesn't care about line wrapping
+[23:10:47] <YorickPeterse[m]> But GH made it so a line wrap translates into a `<br>`
+[23:11:02] <YorickPeterse[m]> So every time you carefully write something in nvim and save it, it looks like shit
+[23:20:02] *** Quits: yeirr (~yeirr@user/yeirr) (Remote host closed the connection)
+[23:28:31] *** Quits: tj_allemaal (~tj_allema@17-14-122.cgnat.fonira.net) (Quit: tj_allemaal)
+[23:32:41] <ChipSenkbeil[m]> Is there a way in neovim to have it produce a new pty and provide access to the master for lua to manipulate while having neovim still managing the slave? I ask because one of the next large items for distant.nvim is providing a shell and what I'd like to do is have the plugin manage the master like ssh does.
+[23:33:23] *** Joins: scoobydoo (~scooby@user/scoobydoo)
+[23:34:01] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Ping timeout: 258 seconds)
+[23:35:07] * sim[m] uploaded a video: (744KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/QbLrlLydwJKexycjSUqkjgsy/willRename-2021-10-18_13.03.35.mp4 >
+[23:35:19] <mjlbach[m]> You could use something like nvim remote or run with -c
+[23:35:19] <sim[m]> got it working with a few changes to nvim-tree 
+[23:35:43] <mjlbach[m]> sim: so cool
+[23:35:58] <mjlbach[m]> is there anything we should put in core to facilitate this?
+[23:36:15] <sim[m]> only if apply_workspace_edits rename something
+[23:36:33] * sim[m] uploaded an image: (21KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix.org/sSViPVXCfVRluVvZTcApQqRZ/image.png >
+[23:36:39] <sim[m]> maybe these but its not a big thing
+[23:37:42] <mjlbach[m]> hmm do we support renames with apply_workspace_edits?
+[23:37:53] <sim[m]> core has to support this https://microsoft.github.io/language-server-protocol/specifications/specification-current/#workspace_didChangeWatchedFiles but idk if any language server uses these
+[23:38:06] <mjlbach[m]> Yeah that was what I thought you were originally asking for
+[23:38:39] <sim[m]> ig i was asking for the auto import change
+[23:38:42] <sim[m]> idk what this does practically lol
+[23:41:01] *** Joins: tj_allemaal (~tj_allema@17-14-122.cgnat.fonira.net)
+[23:41:09] *** Joins: emf_ (~emf@2620:10d:c090:400::5:a662)
+[23:41:47] *** Quits: tj_allemaal (~tj_allema@17-14-122.cgnat.fonira.net) (Client Quit)
+[23:43:18] <mjlbach[m]> Which auto import change? Do you mean the nvim-tree integration?
+[23:43:30] <sim[m]> yes
+[23:43:42] <mjlbach[m]> Hmm
+[23:43:53] <mjlbach[m]> I'm surprised textDocument/didOpen was not enough
+[23:44:01] *** Quits: Carp (~rue@1-162-45-75.dynamic-ip.hinet.net) (Quit: WeeChat 3.3)
+[23:44:11] *** Quits: emf (~emf@2620:10d:c090:400::5:75e7) (Ping timeout: 264 seconds)
+[23:44:25] <sim[m]> i think rust analyzer uses didChangeWatchedFiles to run cargo whatever, not sure
+[23:44:43] <mjlbach[m]> Yeah, omnisharp uses it for adding files to the project IIRC
+[23:46:33] *** Quits: guido (~guido@host-79-56-253-164.retail.telecomitalia.it) (Read error: Connection reset by peer)
+[23:47:16] <sim[m]> https://github.com/neovim/neovim/blob/master/runtime/lua/vim/lsp/util.lua#L771
+[23:47:28] <sim[m]> looks like apply workspace edits does rename/create/delete
+[23:51:48] *** Quits: towb (~bwot@user/towb) (Quit: WeeChat 3.3)
+[23:51:53] *** Quits: teclator (~quassel@85.155.180.70.dyn.user.ono.com) (Quit: http://quassel-irc.org - Chat comfortably. Anywhere.)
+[23:51:58] <Mathias[m]> sim[m]: Yep, I  think it was even in 0.5 already
+[23:52:37] <mjlbach[m]> Do we need to send the notification when the server requests those operations though?
+[23:52:48] <sim[m]> it says so in the spec
+[23:52:50] <mjlbach[m]> I thought it was if the client performed clientside edits
+[23:53:19] <mjlbach[m]> > The did rename files notification is sent from the client to the server when files were renamed from within the client.
+[23:53:34] <mjlbach[m]> Hm
+[23:53:42] <mjlbach[m]> I can check vscode later
+[23:53:43] <sim[m]> The will rename files request is sent from the client to the server before files are actually renamed as long as the rename is triggered from within the client either by a user action or by applying a workspace edit
+[23:54:06] <Mathias[m]> I think the open/ close events happen anyways based on the buffer creation/deletion 
+[23:54:16] <mjlbach[m]> Yes
+[23:54:37] <mjlbach[m]> Vim doesn't really have rename
+[23:54:41] <mjlbach[m]> it has save and delete
+[23:55:03] <mjlbach[m]> so it should trigger didOpen on the new file anyways
+[23:57:05] *** Quits: ixil (~ixil@mpp-cp1-natpool-1-192.ethz.ch) (Remote host closed the connection)
+[23:57:55] <sim[m]> mhm but language servers still use the rename thingy with oldUri and newUri to change imports for example
+[23:59:00] *** Joins: Betal (~Betal@user/betal)
+[23:59:42] <mjlbach[m]> hm ok
+[23:59:52] <mjlbach[m]> maybe split the issue into two, and we'll track didChangeWatchedFiles separately

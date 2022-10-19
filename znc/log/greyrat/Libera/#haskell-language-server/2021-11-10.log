@@ -1,0 +1,126 @@
+[03:00:45] <shapr> wz1000: hi! I heard from isovector that you understand the ghc rebuild costs with template haskell involved?
+[03:01:58] <shapr> isovector told me "you want to push template haskell to the leaves of the module graph" and explained "without TH in the module, the default behavior is rebuild when a specific imported function has changed" where TH in the module was "rebuild whenever mtime changes"
+[03:03:31] <shapr> and said that was originally from wz1000
+[03:04:03] <shapr> do you have any citations? I'd like to reduce our rebuild times at work, and that would be useful to know.
+[07:13:59] *** Quits: shapr (~user@pool-100-36-247-68.washdc.fios.verizon.net) (Ping timeout: 246 seconds)
+[09:17:53] *** Joins: arrowd (~arr@2.93.55.66)
+[09:45:53] *** Quits: ServerStatsDisco (~serversta@2001:470:69fc:105::1a) (Quit: Client limit exceeded: 20000)
+[11:23:14] *** Joins: lortabac (~lortabac@2a01:e0a:541:b8f0:54fc:9972:155c:27b0)
+[11:44:39] *** Quits: hololeap (~hololeap@user/hololeap) (Ping timeout: 276 seconds)
+[13:36:53] *** Joins: hololeap (~hololeap@user/hololeap)
+[13:50:08] *** Quits: hololeap (~hololeap@user/hololeap) (Remote host closed the connection)
+[13:51:51] *** Joins: hololeap (~hololeap@user/hololeap)
+[15:31:11] *** Quits: hololeap (~hololeap@user/hololeap) (Read error: Connection reset by peer)
+[15:32:41] *** Joins: hololeap (~hololeap@user/hololeap)
+[15:33:03] <jneira[m]> https://github.com/haskell/haskell-language-server/pull/2337 needs to be merged to unblock ci, anyone to stamp it? pepeiborra ?
+[15:33:30] <jneira[m]> sorry for the inconveniences :-/ 
+[15:35:45] <fendor[m]> jneira: stamped!
+[15:36:14] <jneira[m]> nice, thanks
+[15:37:18] <jneira[m]> unfortunately 2 prs has been merged without green ci but i think both were green before merge with master commits
+[15:38:44] <jneira[m]> well mine at last was green at some point
+[16:06:06] *** Quits: arrowd (~arr@2.93.55.66) ()
+[17:11:36] *** Joins: arrowd (~arr@2.93.55.66)
+[17:14:39] *** Joins: shapr (~user@pool-100-36-247-68.washdc.fios.verizon.net)
+[17:43:32] <wz1000> hey shapr 
+[17:43:32] *** Joins: ServerStatsDisco (~serversta@2001:470:69fc:105::1a)
+[18:07:21] <shapr> wz1000: Hi! I read through that ticket, I need to read through it again to absorb everything
+[18:07:41] <shapr> I think it'll help reduce recompilation time at work
+[18:07:57] <shapr> I started working on a blog post on reducing recompilation time for production Haskell
+[18:08:04] <wz1000> shapr: recompilation avoidance with TH should also be much improved in GHC HEAD
+[18:08:10] <shapr> oh that's good to hear
+[18:08:17] <wz1000> will hopefully make its way into 9.4
+[18:08:17] <shapr> what changed? any citations?
+[18:08:31] <expipiplus1> 9.4 sounds like eons away :(
+[18:08:45] <wz1000> it uses essentially the same scheme I detailed in the HLS PR
+[18:08:48] <wz1000> https://gitlab.haskell.org/ghc/ghc/-/merge_requests/5661
+[18:09:43] <shapr> I made up the idea of a "recompilation score" last night, and with the help of isovector I think it's mostly figured out
+[18:09:46] <wz1000> expipiplus1: 6 months from now if we can stick by the schedule this time
+[18:09:59] <shapr> oooh, sooner than I expected
+[18:10:49] <michaelpj[m]> shapr: have you read https://www.parsonsmatt.org/2019/11/27/keeping_compilation_fast.html and https://www.parsonsmatt.org/2021/07/12/template_haskell_performance_tips.html ?
+[18:10:58] <wz1000> meanwhile you can use HLS (with my patch) as your GHC :)
+[18:11:15] <shapr> I think the big idea of a recompilation score is to sum all of the dependencies for each package in the monorepo, and then have some way to express packages that are siblings and can be rebuilt in parallel
+[18:11:40] <shapr> michaelpj[m]: no, but I will now :-)
+[18:12:15] <shapr> at work we have 125-150 packages in our monorepo, and I want some way of expressing an increasing or decreasing recompilation score
+[18:12:44] <shapr> So I figure, each package has its own set of deps, and that's the recompilation score for that package, so you sum all of those
+[18:13:11] <shapr> but I haven't yet figured out how to express the idea that long chains will cost more time, where a bunch of children can be built in parallel
+[18:13:18] <shapr> seems like this should be a simple graph theory thing, but I dunno what
+[18:14:05] <shapr> also, isovector helped lots, poked holes in things I got wrong and suggested things that I missed
+[18:14:25] <michaelpj[m]> 150 pacakges? holy shit
+[18:14:26] <wz1000> what do you want to use this for?
+[18:14:28] <shapr> wz1000: ooh, is your patched HLS coming up soon?
+[18:14:46] <wz1000> https://github.com/haskell/haskell-language-server/pull/2316
+[18:14:47] <michaelpj[m]> shapr: sounds like this should be some standard parallelism thingy, surely?
+[18:14:49] <shapr> wz1000: we have enough packages at work that there's an entire channel dedicated to reducing recompilation times
+[18:15:07] <shapr> michaelpj[m]: we went from 250kloc to 500kloc in the two years I've been at SimSpace
+[18:15:26] <shapr> some of that was created for really good reasons, some not :-)
+[18:15:39] <michaelpj[m]> we also have a lot of packages, but they're spread out over lots of repos. Which I kind of hate, but does help in that bits lower down don't change often during "normal" work
+[18:15:52] <wz1000> shapr: how are you using HLS? Do you smush all the packages together into a single component?
+[18:16:01] <shapr> michaelpj[m]: yeah, I should check a list of parallelism thingies, that's a good idea
+[18:16:26] <shapr> wz1000: the monorepo is mostly structured with top level directories that each have a package or three inside of them
+[18:17:01] <shapr> I've heard from kadena and some other companies that HLS fails on 250kloc single package monorepos
+[18:17:35] <shapr> so I'm glad we have things broken up into mostly mid sized packages.
+[18:17:49] <shapr> We still have two really old crufty monster packages, and those are the ones that crash HLS
+[18:17:51] <wz1000> I think fb is bigger than that, and they use it. But they have a bunch of custom integration with their build system
+[18:18:02] <shapr> I'd like to hear about that custom integration, any info?
+[18:18:19] <shapr> michaelpj[m]: yeah, good and bad points to packages split across many repos
+[18:18:46] <shapr> The downside of all our packages in a single repo is that it's okay for solving a ticket to required changes to six or seven packages.
+[18:18:49] <wz1000> pepeiborra would be the one to ask. He will be giving a talk at the upcoming haskell exchange, but I don't think it'll delve into the custom stuff much
+[18:18:50] <shapr> I'd rather that were not the case
+[18:19:20] <shapr> oh exciting
+[18:19:40] <shapr> I think I'll write a blog post on this idea and ask for feedback or suggestions for improvement
+[18:20:16] <shapr> I want some way to estimate whether a change in dependencies is likely to increase or decrease overall rebuild times.
+[18:21:25] <shapr> wz1000: was that enough info on how we use HLS?
+[18:21:25] <wz1000> mpickering has a prototype for multiple home units (basically loading multiple packages into the same GHC session) which might help
+[18:22:09] <shapr> yeah, we've used stack for ghci things, but its "smash it together no matter what" approach causes collisions because we often name things the same across packages.
+[18:22:54] <shapr> do you know where I might look for that prototype?
+[18:22:58] <wz1000> yeah, multiple home units is a more principled approach which should avoid those kinds of problems
+[18:23:24] <wz1000> https://gitlab.haskell.org/ghc/ghc/-/merge_requests/6805
+[18:23:39] <shapr> thank you!
+[18:24:14] <shapr> isovector also suggested trying to switch to generic-lens to reduce recompilation times
+[18:24:30] <wz1000> that could help.
+[18:24:52] <shapr> but I want to write a blog post on the why for all these things :-)
+[18:24:57] *** Joins: adamCS (~adamCS@ec2-34-207-160-255.compute-1.amazonaws.com)
+[18:24:59] <wz1000> I'm not sure though, because compiling generics is also slow, especially with optimisation enabled
+[18:25:11] <wz1000> You will have less recompilation though, that is true
+[18:25:14] <shapr> do you have any suggestions?
+[18:25:32] <wz1000> Specifically to make HLS faster or normal builds?
+[18:25:41] <shapr> both :-)
+[18:25:45] <shapr> but I'll take anything I can get
+[18:26:15] <wz1000> well, for HLS my patch should help a lot
+[18:26:48] <shapr> cool, I'll keep track of that patch
+[18:26:58] <shapr> and re-read it for the blog post
+[18:27:19] <shapr> wz1000: thanks for your help!
+[18:27:48] <michaelpj[m]> I think multiple home units might actually be bad if you have a lot of packages? because then HLS will presumably try and keep the whole graph in memory, rather than having compiled deps only for the package you're looking at
+[18:28:21] <wz1000> michaelpj[m]: HLS implements multiple home units in a hacky way already
+[18:28:38] <wz1000> presumably when it is properly integrated, you only try to load units if some file is open
+[18:28:43] <wz1000> which is how it works now
+[18:29:25] <michaelpj[m]> sure, but if you have A -> B -> ... -> Z, and you open a file in A, will it load the units for B-Z? at the moment I thought it actually got cabal to compile B and then just loaded that
+[18:29:53] <wz1000> no, it will only load the units if you open a file from B-Z
+[18:30:13] <wz1000> otherwise they will go into the EPS as usual
+[18:30:47] *** Quits: adamCS (~adamCS@ec2-34-207-160-255.compute-1.amazonaws.com) (Ping timeout: 250 seconds)
+[18:33:16] <shapr> right now ghci is nearly unusable in the work codebase, it's my hope that support for multiple home units would help
+[18:33:53] <shapr> also, I've gotten so much benefit from HLS, I gotta send more money
+[18:35:33] *** Joins: adamCS (~adamCS@ec2-34-207-160-255.compute-1.amazonaws.com)
+[18:45:06] * shapr signs up for $20 a month
+[18:53:59] <expipiplus1> I guess that most projects could run well with just munging everything into one fake superunit
+[18:53:59] <mpickering> shapr: Do you already know about `-ddump-hi-diffs`? 
+[18:54:34] <mpickering> Demo of multiple home units: https://asciinema.org/a/446437
+[18:54:36] <shapr> no! what is that?
+[18:54:43] <mpickering> It tells you why a file is being recompiled
+[18:54:49] * shapr is surprised
+[18:55:20] <shapr> I gotta try that.
+[18:55:34] <mpickering> A good idea to avoid recompilation as well is `-fomit-interface-pragmas` (if you're not using -O0 already)
+[18:55:54] * shapr searches for that next
+[18:57:08] <mpickering> Which GHC version are you using?
+[18:57:38] <shapr> 8.10.7
+[19:03:36] <mpickering> ok, I have been working on recompilation checking a lot but most stuff will only be in 9.4
+[19:05:41] <shapr> those ghc command line options will certainly help me
+[19:18:07] <mpickering> I have also been working on reducing compile times in GHC
+[19:18:17] <mpickering> but for your code base there might be totally different issues
+[20:08:34] *** Quits: lortabac (~lortabac@2a01:e0a:541:b8f0:54fc:9972:155c:27b0) (Quit: WeeChat 2.8)
+[22:38:27] *** Quits: arrowd (~arr@2.93.55.66) ()
+[23:35:02] *** Quits: juhp (~juhp@128.106.188.220) (Ping timeout: 240 seconds)
+[23:37:14] *** Joins: juhp (~juhp@128.106.188.220)
+[23:48:48] *** Quits: hololeap (~hololeap@user/hololeap) (Remote host closed the connection)
+[23:50:16] *** Joins: hololeap (~hololeap@user/hololeap)
+[23:58:22] *** Quits: hololeap (~hololeap@user/hololeap) (Read error: Connection reset by peer)

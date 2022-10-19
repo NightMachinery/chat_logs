@@ -1,0 +1,1400 @@
+[00:00:35] *** Quits: Guest7398 (~Guest@host28.190-137-37.telecom.net.ar) (Remote host closed the connection)
+[00:00:43] *** Quits: kevr (~kevr@user/kevr) (Remote host closed the connection)
+[00:01:03] *** Joins: kevr (~kevr@user/kevr)
+[00:01:48] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[00:06:32] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Ping timeout: 240 seconds)
+[00:06:49] <CarloWood> I should know this... but
+[00:08:12] <CarloWood> if thread A stores to a variable x using std::memory_order::relaxed, and thread B keeps loading x with std::memory_order::relaxed until it sees the value that A did write (which it does only once),
+[00:08:46] *** Quits: proller (~p@2a02:6b8:0:40c:d670:d4d4:112e:82b6) (Ping timeout: 260 seconds)
+[00:09:00] <CarloWood> then thread C obtains a mutex that previously was locked by B - feels like a memory barrier no?
+[00:09:32] <CarloWood> Is it then guaranteed that thread C also will see the same value that B did see when reading x with std::memory_order::relaxed?
+[00:10:35] *** Quits: RoKenn (~RoKenn@user/rokenn) (Quit: NSA proxy service interrupted)
+[00:11:28] <CarloWood> I think it has to be the case - because the reading in C is theoretically identical to thread B reading it; that should be guaranteed by using the critical area; so if B saw a value then C can't see a value from before that (in the past).
+[00:11:35] *** Quits: GNUmoon (~GNUmoon@gateway/tor-sasl/gnumoon) (Ping timeout: 240 seconds)
+[00:12:12] *** Joins: Brainium (~brainium@user/brainium)
+[00:12:27] <ville> thread C could be on a different cpu/core/whatnot?
+[00:12:34] <CarloWood> yes
+[00:14:18] <ville> so wondering if that could change the reasoning here
+[00:14:21] <CarloWood> Reading relaxed is the same as non-atomic I think.  So the situation is:  B: { std::lock_guard lk; int r = x; assert(r == expected); } happened before C: { std::lock_guard lk; int r = x; assert(r == expected); }
+[00:14:39] <CarloWood> Given that the first assert holds - the second also much hold I think.
+[00:15:05] <CarloWood> where x is non-atomic or atomic and read with relaxed, doesn't matter no?
+[00:15:30] <RandomReader> why would reading in C be identical to reading in B?
+[00:15:56] <CarloWood> because C obtained the mutex after B released it
+[00:16:24] *** Quits: PlasmaHH (~PlasamaHH@user/plasmahh) (Ping timeout: 272 seconds)
+[00:16:45] <RandomReader> why would that guarantee anything about the read?
+[00:17:03] <CarloWood> We know what B saw...
+[00:17:14] <CarloWood> How could C be allowed to see a previous value?
+[00:17:17] *** Joins: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net)
+[00:17:24] <RandomReader> because B didn't store it, why would the mutex synchronize it?
+[00:18:04] *** Quits: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net) (Remote host closed the connection)
+[00:18:06] <ville> A and B ran on same level of the cache hierarchy, C needed it to propagate to a higher level and back down to see the value
+[00:18:14] <CarloWood> I think the unlock works as a release and the lock as an acquire - so anything written by B would be visible by C; in this case B doesn't write anything, but it loops until it sees a certain value - that is the same thing imho
+[00:18:24] *** Joins: RoKenn (~RoKenn@2001:a61:35b1:ca01:7630:55e8:b663:9893)
+[00:18:24] *** Quits: RoKenn (~RoKenn@2001:a61:35b1:ca01:7630:55e8:b663:9893) (Changing host)
+[00:18:24] *** Joins: RoKenn (~RoKenn@user/rokenn)
+[00:18:58] <RandomReader> the synchronization modeling is usually about the chain "store here -> load here", but I don't know that it says anything about loads directly
+[00:19:13] <CarloWood> RandomReader: that is true and the source of my uncertainty :/
+[00:19:19] <RandomReader> a store and a load are definitely not the same things, you'd need something more specific to make that leap
+[00:19:47] <RandomReader> in particular you're not actually doing anything that guarantees a particular original store will be observed by B, as in there's nothing being synchronized
+[00:19:55] <RandomReader> so there's no particular reason for that same non-synchronized thing to appear in C
+[00:20:00] <CarloWood> by C you mean?
+[00:20:05] <RandomReader> no, by B
+[00:20:17] <RandomReader> you're looping and checking observation, but not *synchronizing*
+[00:20:21] <CarloWood> It is just a given that B reads the right value.
+[00:20:29] <CarloWood> yes
+[00:20:50] <RandomReader> you're asserting that by outside knowledge that isn't part of the system model
+[00:21:10] <CarloWood> Well... I agree it might just not work... But it is SOOOO hard to test it with the available tools :(
+[00:21:13] <RandomReader> if it's not part of the system model, why would it be synchronized?  is the question to answer
+[00:21:52] <RandomReader> as far as I know there isn't a rule that guarantees it, which is about the only thing you can answer .. other than maybe that memory model tool
+[00:22:03] <RandomReader> a practical test would be a non-answer, so not useful
+[00:22:29] <CarloWood> Not a practical test
+[00:22:34] *** Quits: sweetsymph (uid509475@id-509475.lymington.irccloud.com) (Quit: Connection closed for inactivity)
+[00:23:07] <CarloWood> Using a tool to verify it against the memory model
+[00:24:27] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[00:24:37] <CarloWood> I think it would take me 24 hours to verify this :/. I don't have time for that sigh
+[00:25:56] <RandomReader> it's possible some of the dependency ordering would answer this, but IIRC that model is still "broken" in some way
+[00:34:25] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Ping timeout: 256 seconds)
+[00:34:32] *** Joins: c4017w_ (~c4017@209.52.68.8)
+[00:37:03] *** Joins: sss123next[m] (~sss123nex@2001:470:69fc:105::1:ceac)
+[00:37:37] *** Quits: c4017w__ (~c4017@209.52.68.8) (Ping timeout: 240 seconds)
+[00:39:17] *** Joins: PlasmaHH (~PlasamaHH@user/plasmahh)
+[00:39:58] *** Quits: RoKenn (~RoKenn@user/rokenn) (Quit: NSA proxy service interrupted)
+[00:40:57] *** Joins: karakedi (~eAC53C340@user/karakedi)
+[00:41:49] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[00:42:29] *** Joins: ibenn (~ibenn@2a02:8071:45af:1700:5519:93b:fe80:4c46)
+[00:42:33] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[00:43:08] *** Joins: RoKenn (~RoKenn@user/rokenn)
+[00:44:29] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[00:44:45] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[00:45:02] *** Quits: magla (~gelignite@55d4a4ec.access.ecotel.net) (Quit: Stay safe!)
+[00:45:44] *** Joins: sweetsymph (uid509475@id-509475.lymington.irccloud.com)
+[00:46:09] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[00:46:29] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[00:46:39] *** Quits: Munnu (~timo@81-197-122-250.elisa-laajakaista.fi) (Ping timeout: 250 seconds)
+[00:46:46] *** Quits: Angs (~Angs@2.69.51.226.mobile.tre.se) (Quit: Leaving)
+[00:49:28] *** Joins: ik (uid540109@id-540109.uxbridge.irccloud.com)
+[00:53:01] *** Joins: mags_ (~mags@096-042-013-246.res.spectrum.com)
+[00:54:24] *** Quits: mags_ (~mags@096-042-013-246.res.spectrum.com) (Client Quit)
+[00:56:36] *** Joins: mags_ (~mags@096-042-013-246.res.spectrum.com)
+[00:57:10] *** Quits: mags_ (~mags@096-042-013-246.res.spectrum.com) (Client Quit)
+[00:58:08] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[00:58:52] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[00:59:43] *** Quits: Raziel (~Raziel@user/raziel) (Read error: Connection reset by peer)
+[01:00:35] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[01:00:48] *** Joins: Null_A (~null_a@c-98-210-133-39.hsd1.ca.comcast.net)
+[01:00:57] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[01:01:10] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[01:02:28] *** Quits: mags (~mags@097-091-082-103.res.spectrum.com) (Quit: leaving)
+[01:02:36] *** Quits: Tokamak (~Tokamak@172.58.188.134) (Ping timeout: 240 seconds)
+[01:02:49] *** Joins: mags (~mags@097-091-082-103.res.spectrum.com)
+[01:02:58] *** Quits: extropiator (~admin@user/extropiator) (Quit: leaving)
+[01:03:11] *** Quits: RoKenn (~RoKenn@user/rokenn) (Quit: NSA proxy service interrupted)
+[01:03:14] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[01:03:20] *** Joins: Yruama (~Yruama@2a01:cb15:8128:c100:6c61:6a53:9bf0:64ca)
+[01:03:29] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[01:03:57] *** Quits: Serpent7776 (~Serpent77@90-156-31-193.internetia.net.pl) (Quit: leaving)
+[01:05:04] *** Joins: Tokamak (~Tokamak@172.58.188.181)
+[01:06:09] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[01:07:12] *** Quits: moose (~moose@user/moose) (Quit: Hopping)
+[01:09:16] *** Quits: ibenn (~ibenn@2a02:8071:45af:1700:5519:93b:fe80:4c46) (Quit: Leaving)
+[01:09:30] *** Quits: mags (~mags@097-091-082-103.res.spectrum.com) (Quit: leaving)
+[01:09:33] *** Joins: moose (~moose@user/moose)
+[01:09:49] *** Joins: mags (~mags@097-091-082-103.res.spectrum.com)
+[01:10:18] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Read error: Connection reset by peer)
+[01:10:37] *** Quits: Null_A (~null_a@c-98-210-133-39.hsd1.ca.comcast.net) (Remote host closed the connection)
+[01:11:19] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[01:12:08] *** Quits: jplejacq (~jplejacq@24.224.90.176) (Ping timeout: 272 seconds)
+[01:12:49] *** Quits: mags (~mags@097-091-082-103.res.spectrum.com) (Client Quit)
+[01:15:05] *** Joins: mags (~mags@097-091-082-103.res.spectrum.com)
+[01:15:53] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Ping timeout: 252 seconds)
+[01:16:46] *** Joins: kuuuk (~kuuuk@86.228.71.37.rev.sfr.net)
+[01:16:59] <kuuuk> Hello guys I would like to learn about high performance C++
+[01:17:03] <kuuuk> Any videos or links ?
+[01:17:21] *** Quits: SGautam (uid286066@id-286066.ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[01:17:25] *** Quits: rgrinberg (~textual@2806:101e:7:70b6:e06b:7369:9241:49f9) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[01:17:33] *** Quits: sa02irc (~mbax@155-079-043-212.ip-addr.inexio.net) (Remote host closed the connection)
+[01:17:37] <kalven> mr kuk
+[01:18:36] *** Joins: AbleBacon_ (~AbleBacon@user/AbleBacon)
+[01:20:29] <kuuuk> kalven Yes Mr kalven
+[01:20:53] *** Joins: rgrinberg (~textual@2806:101e:7:70b6:45b0:edfc:f5a8:e5cf)
+[01:21:00] *** Quits: jellie (~luv_panda@user/jellie) (Ping timeout: 272 seconds)
+[01:21:32] *** Quits: Vadim__ (~Vadim@37.203.10.4) (Ping timeout: 240 seconds)
+[01:21:32] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Ping timeout: 240 seconds)
+[01:25:34] *** Quits: spaceangel (~spaceange@ip-78-102-216-202.net.upcbroadband.cz) (Remote host closed the connection)
+[01:29:57] *** Quits: kuuuk (~kuuuk@86.228.71.37.rev.sfr.net) (Quit: Client closed)
+[01:30:08] *** Quits: ik (uid540109@id-540109.uxbridge.irccloud.com) (Quit: Updating details, brb)
+[01:30:16] *** Joins: ik (uid540109@id-540109.uxbridge.irccloud.com)
+[01:30:45] *** Quits: rendar (~rendar@user/rendar) (Quit: Leaving)
+[01:33:06] *** Joins: jplejacq (~jplejacq@68.71.169.160)
+[01:33:15] *** Parts: jplejacq (~jplejacq@68.71.169.160) ()
+[01:35:07] *** Joins: c4017w__ (~c4017@209.52.68.8)
+[01:36:54] *** Quits: ivii (~ivan@user/ivii) (Read error: Connection reset by peer)
+[01:37:42] *** Joins: hashfunc133c (~user@2601:5c0:c280:7090:8c1e:afa3:b36b:39be)
+[01:38:12] *** Quits: c4017w_ (~c4017@209.52.68.8) (Ping timeout: 240 seconds)
+[01:39:21] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[01:41:02] *** Joins: proller (~p@80.240.216.69)
+[01:42:35] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[01:43:02] *** Joins: Kohe (~Kohe@46.12.214.37.dsl.dyn.forthnet.gr)
+[01:43:11] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[01:43:16] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[01:43:23] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[01:43:24] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[01:43:24] *** ChanServ sets mode: +v npaperbot
+[01:44:07] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[01:44:15] *** Quits: mags (~mags@097-091-082-103.res.spectrum.com) (Quit: leaving)
+[01:45:23] *** Joins: unlink2 (~unlink@p200300ebcf3e190012b7094ba83de7f3.dip0.t-ipconnect.de)
+[01:45:47] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[01:46:10] *** Joins: mags (~mags@097-091-082-103.res.spectrum.com)
+[01:49:00] *** Quits: lxsameer (~lxsameer@user/lxsameer) (Ping timeout: 240 seconds)
+[01:50:12] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Ping timeout: 240 seconds)
+[01:52:03] *** Quits: cosimone (~user@93-47-229-38.ip115.fastwebnet.it) (Ping timeout: 256 seconds)
+[01:52:04] <CarloWood> RandomReader: I gave it a stab: https://bpa.st/NTKA
+[01:52:09] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[01:52:21] <CarloWood> You have to write the test in C unfortunately, but the memory model is the same.
+[01:52:25] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[01:52:32] <CarloWood> Tested it with https://github.com/MPI-SWS/genmc
+[01:52:46] <CarloWood> That prints all combinations, also 1 1 0
+[01:53:06] <CarloWood> So - I guess no syncing, unless I did something stupid in the test itself :/.
+[01:53:40] *** Joins: badone (~badone@209.132.189.152)
+[01:54:12] *** Quits: skapata (~Skapata@user/skapata) (Ping timeout: 240 seconds)
+[01:55:02] <CarloWood> This so annoying :P
+[01:55:07] *** Joins: skapata (~Skapata@2804:14c:87b0:9d2e:88a7:1068:8c94:c172)
+[01:55:07] *** Quits: skapata (~Skapata@2804:14c:87b0:9d2e:88a7:1068:8c94:c172) (Changing host)
+[01:55:07] *** Joins: skapata (~Skapata@user/skapata)
+[01:55:48] *** Quits: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it) (Read error: Connection reset by peer)
+[01:55:52] <CarloWood> I want thread A to generate something one-time and write it to a variable. After that that variable will only read - ever, the rest of the execution of the program.
+[01:56:20] <CarloWood> I refuse to lock a mutex every time I access it to read it (that's the whole reason I'm caching it there in the first place)
+[01:56:50] <CarloWood> So, I want one thread to write to it - and assure that all other threads will read what that thread wrote WITHOUT using a mutex ;)
+[01:57:54] <CarloWood> Now, what I *can* do ('easily') is check that the variable was written with thread B - but that is then a thread of a "task" object, a random thread of a thread pool.
+[01:58:11] <CarloWood> So, the next time that 'task' runs it could be a different thread (thread C).
+[01:58:12] <CarloWood> :/
+[01:59:44] <CarloWood> In practice no synchronization will be needed I think - but I HATE races - even if they don't happen in practice.  I mean - I could write to it and sleep for 10 ms. But that isn't good enough for me :/. I want it officially correct.
+[02:00:23] *** Joins: extropiator (~admin@user/extropiator)
+[02:00:32] *** Joins: jellie (~luv_panda@user/jellie)
+[02:02:28] *** Joins: yhirose (~yhirose@89.100.43.157)
+[02:03:17] <kalven> https://preshing.com/20111118/locks-arent-slow-lock-contention-is/
+[02:04:14] *** Quits: yhirose (~yhirose@89.100.43.157) (Changing host)
+[02:04:14] *** Joins: yhirose (~yhirose@user/yhirose3)
+[02:04:14] *** yhirose is now known as yhirose3
+[02:04:51] *** Joins: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it)
+[02:07:27] *** Quits: gh34 (~textual@cpe-184-58-181-106.wi.res.rr.com) (Quit: Textual IRC Client: www.textualapp.com)
+[02:07:46] *** Quits: extropiator (~admin@user/extropiator) (Quit: leaving)
+[02:07:48] *** Quits: Kohe (~Kohe@46.12.214.37.dsl.dyn.forthnet.gr) (Ping timeout: 240 seconds)
+[02:08:30] *** Joins: GNUmoon (~GNUmoon@gateway/tor-sasl/gnumoon)
+[02:09:46] *** Quits: pulse (~pulse@user/pulse) (Ping timeout: 272 seconds)
+[02:10:37] *** Quits: jellie (~luv_panda@user/jellie) (Ping timeout: 240 seconds)
+[02:12:13] *** Joins: peoliye (~peoliye@54-240-198-33.amazon.com)
+[02:12:37] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[02:12:46] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Client Quit)
+[02:12:55] *** Joins: foobaz21248 (~foobaz212@152.37.103.80)
+[02:15:32] *** Quits: GreenResponse (~tomek@r-45-155-148-237.gpon.bialnet.pl) (Quit: Leaving)
+[02:17:13] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[02:18:13] <AmR> Hello
+[02:18:40] <AmR> Can I test if file exists without if or bool ?
+[02:18:50] <BurumaSerafuku> how you gonna check?
+[02:21:03] *** Joins: Viewday116 (~Viewday@user/viewday)
+[02:22:05] <AmR> I don't know, for that I'm asking.
+[02:22:20] *** Quits: Viewday11 (~Viewday@user/viewday) (Read error: Connection reset by peer)
+[02:22:20] *** Viewday116 is now known as Viewday11
+[02:23:08] *** Joins: xkuru (~xkuru@user/xkuru)
+[02:24:52] *** Quits: LucaTM (~LucaTM@user/lucatm) (Quit: Textual IRC Client: www.textualapp.com)
+[02:25:07] <BurumaSerafuku> maybe you want something that throws an exception
+[02:27:37] *** Quits: Spirit532 (~Spirit532@user/Spirit532) (Killed (NickServ (GHOST command used by Spirit5329)))
+[02:27:38] *** Joins: Spirit532 (~Spirit532@user/Spirit532)
+[02:33:41] *** Quits: pizdets_ (~pizdets@183.182.111.173) (Ping timeout: 245 seconds)
+[02:33:49] *** Joins: pizdets (~pizdets@183.182.110.54)
+[02:33:59] *** Quits: PlasmaHH (~PlasamaHH@user/plasmahh) (Ping timeout: 256 seconds)
+[02:35:35] *** Joins: c4017w_ (~c4017@209.52.68.8)
+[02:37:35] *** Quits: rgrinberg (~textual@2806:101e:7:70b6:45b0:edfc:f5a8:e5cf) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[02:39:32] *** Quits: c4017w__ (~c4017@209.52.68.8) (Ping timeout: 272 seconds)
+[02:42:38] *** Quits: foobaz21248 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[02:42:44] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[02:42:51] *** Joins: foobaz21248 (~foobaz212@152.37.103.80)
+[02:45:13] <Alipha> AmR: why not an if or bool?
+[02:47:24] *** Quits: evangeline (~Eleanor@178.79.105.181) (Ping timeout: 240 seconds)
+[02:48:04] *** Quits: yhirose3 (~yhirose@user/yhirose3) (Quit: WeeChat 2.8)
+[02:48:37] <ville> while(file_exists()) {} see no if
+[02:51:57] *** Joins: hiroshi_ (~freedom@151.35.151.47)
+[02:53:29] *** Joins: pulse (~pulse@user/pulse)
+[02:54:26] *** Quits: Burgundy (~NA@86.121.143.206) (Ping timeout: 260 seconds)
+[02:55:25] *** Joins: Munnu (~timo@81-197-122-250.elisa-laajakaista.fi)
+[02:56:33] *** Quits: great_taste (~great_tas@user/great-taste/x-5798414) (Quit: Client closed)
+[02:57:20] <Alipha> And then put a break at the end
+[02:57:33] *** Quits: c2f00 (~dogverflo@ip1f10d710.dynamic.kabel-deutschland.de) (Ping timeout: 256 seconds)
+[02:58:09] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[02:58:11] <PJBoy> file_exists() is a bool
+[02:58:14] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[02:58:28] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[02:58:54] <Alipha> It could return an int or void* or such :-)
+[02:58:57] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[02:59:08] *** Quits: Flonk (~Flonk@vps-zap441517-1.zap-srv.com) (Quit: The Lounge - https://thelounge.chat)
+[02:59:10] <PJBoy> would be contextually converted to a bool then :)
+[03:00:26] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 272 seconds)
+[03:00:29] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[03:00:38] <PJBoy> exception is the only approach I see
+[03:00:43] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[03:01:32] *** Joins: Flonk (~Flonk@vps-zap441517-1.zap-srv.com)
+[03:02:04] <PJBoy> { try { ifstream in("file"); in.exceptions(ios::failbit); } catch (const exception&) { cout << "no such file"; } }
+[03:02:05] <geordi> no such file
+[03:02:05] <Alipha> But you need an if to decide to throw an exception
+[03:02:17] *** AbleBacon_ is now known as AbleBacon
+[03:06:13] *** Quits: plastico (~plastico@neomutt/plastico) (Quit: WeeChat 3.4)
+[03:06:26] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[03:06:26] *** Joins: ferdna (~ferdna@user/ferdna)
+[03:07:08] *** Joins: great_taste (~great_tas@user/great-taste/x-5798414)
+[03:07:25] *** Quits: samuelbernardo (~samuelber@nata01.lip.pt) (Ping timeout: 256 seconds)
+[03:08:14] *** Joins: samuelbernardo (~samuelber@nata02.lip.pt)
+[03:09:55] *** Quits: TheHermann (~TheHerman@gateway/tor-sasl/thehermann) (Quit: Leaving)
+[03:10:30] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[03:11:00] *** Quits: Flonk (~Flonk@vps-zap441517-1.zap-srv.com) (Quit: The Lounge - https://thelounge.chat)
+[03:11:13] *** Joins: Null_A (~null_a@2601:645:8700:2290:c864:fc8b:2d0b:834a)
+[03:11:23] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Ping timeout: 256 seconds)
+[03:11:30] *** Quits: pulse (~pulse@user/pulse) (Quit: Look behind you, a three headed monkey!)
+[03:12:23] *** Quits: hiroshi_ (~freedom@151.35.151.47) (Quit: hiroshi_)
+[03:13:31] *** Quits: Null_A (~null_a@2601:645:8700:2290:c864:fc8b:2d0b:834a) (Remote host closed the connection)
+[03:13:47] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[03:16:05] *** Joins: pulse (~pulse@user/pulse)
+[03:16:50] *** Quits: pulse (~pulse@user/pulse) (Client Quit)
+[03:17:11] *** Joins: pulse (~pulse@user/pulse)
+[03:17:17] *** Quits: hashfunc133c (~user@2601:5c0:c280:7090:8c1e:afa3:b36b:39be) (Ping timeout: 240 seconds)
+[03:17:32] *** Joins: soman (~yaaic@83.139.179.68)
+[03:18:42] *** Quits: jfsimon1981 (~jfsimon19@218.96.128.77.rev.sfr.net) (Ping timeout: 260 seconds)
+[03:21:38] *** Quits: soman (~yaaic@83.139.179.68) (Quit: Yaaic - Yet another Android IRC client - http://www.yaaic.org)
+[03:23:14] *** Quits: proller (~p@80.240.216.69) (Ping timeout: 272 seconds)
+[03:23:32] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[03:24:15] *** Joins: Null_A (~null_a@c-98-210-133-39.hsd1.ca.comcast.net)
+[03:26:14] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[03:26:25] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[03:28:36] *** Quits: Null_A (~null_a@c-98-210-133-39.hsd1.ca.comcast.net) (Ping timeout: 240 seconds)
+[03:31:08] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[03:31:29] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[03:32:15] *** Joins: jfsimon1981 (~jfsimon19@195.66.6.84.rev.sfr.net)
+[03:33:15] *** Joins: quartz (~quartz@user/quartz)
+[03:35:31] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[03:36:06] *** Quits: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net) (Remote host closed the connection)
+[03:36:18] *** Joins: c4017w__ (~c4017@209.52.68.8)
+[03:37:02] *** Quits: peoliye (~peoliye@54-240-198-33.amazon.com) (Quit: Client closed)
+[03:37:22] *** Quits: sobkas (~sobkas@95.175.17.217) (Quit: sobkas)
+[03:37:54] *** Quits: pulse (~pulse@user/pulse) (Quit: pulse)
+[03:38:19] *** Quits: constxo (~brad@142.134.79.191) (Ping timeout: 256 seconds)
+[03:38:41] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[03:39:48] *** Quits: c4017w_ (~c4017@209.52.68.8) (Ping timeout: 250 seconds)
+[03:42:58] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 260 seconds)
+[03:43:09] *** Quits: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net) (Quit: Going offline, see ya! (www.adiirc.com))
+[03:43:50] <AmR> What about that " https://stackoverflow.com/questions/21995355/eliminating-if-statement-using-bitwise-operators "
+[03:43:52] <AmR> ?
+[03:44:17] *** Joins: extropiator (~admin@user/extropiator)
+[03:44:33] *** Quits: AmR (~AmREiSa@197.42.112.70) (Quit: Konversation terminated!)
+[03:45:28] *** Joins: pulse (~pulse@user/pulse)
+[03:46:12] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[03:46:55] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[03:51:14] *** Quits: hackkitten (~hackkitte@94.31.104.136) (Read error: Connection reset by peer)
+[03:51:37] *** Joins: hackkitten (~hackkitte@94.31.104.136)
+[03:52:12] *** Joins: ssbr (~ssbr@python/site-packages/ssbr)
+[03:53:42] <PJBoy> all of answers have a bool in them
+[03:54:16] <PJBoy> except the static_cast one that's just wrong
+[03:54:32] <PJBoy> and they don't need to do anything based on the result
+[03:56:29] *** Quits: ssbr (~ssbr@python/site-packages/ssbr) (Read error: Connection reset by peer)
+[03:56:54] *** Quits: miklcct (~quassel@vps.miklcct.com) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[03:57:25] *** Joins: miklcct (~quassel@vps.miklcct.com)
+[03:58:11] *** Joins: ssbr (~ssbr@python/site-packages/ssbr)
+[03:58:40] *** Joins: dextaa9 (~DV@user/dextaa)
+[03:59:26] *** Joins: Inline__ (~Inline@p200300cd4710a900587aa636b2d58f82.dip0.t-ipconnect.de)
+[03:59:29] *** Quits: dextaa (~DV@user/dextaa) (Ping timeout: 250 seconds)
+[03:59:29] *** dextaa9 is now known as dextaa
+[03:59:35] *** Quits: GNUmoon (~GNUmoon@gateway/tor-sasl/gnumoon) (Ping timeout: 240 seconds)
+[03:59:53] *** Quits: Inline (~Inline@p200300cd4710a900587aa636b2d58f82.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[04:00:11] *** Joins: GNUmoon (~GNUmoon@gateway/tor-sasl/gnumoon)
+[04:00:27] *** Quits: slidercrank (~slidercra@user/slidercrank) (Ping timeout: 256 seconds)
+[04:03:45] *** Quits: extropiator (~admin@user/extropiator) (Quit: leaving)
+[04:04:19] *** Joins: lh_mouse (~lh_mouse@mingw-w64/developer/lhmouse)
+[04:06:17] *** Joins: raekye (~raekye@creatifcubed.com)
+[04:07:02] *** Joins: MacroHard (~MacroHard@103.236.247.40)
+[04:07:27] *** Parts: MacroHard (~MacroHard@103.236.247.40) ()
+[04:07:38] *** Quits: ssbr (~ssbr@python/site-packages/ssbr) (Read error: Connection reset by peer)
+[04:07:49] *** Joins: sbrothy (~sbrothy@192038128240.mbb.telenor.dk)
+[04:08:39] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[04:17:19] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[04:18:03] *** Joins: Null_A (~null_a@c-98-210-133-39.hsd1.ca.comcast.net)
+[04:19:19] *** Joins: Kohe (~Kohe@46.12.214.37.dsl.dyn.forthnet.gr)
+[04:19:50] *** Quits: foobaz21248 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[04:20:04] *** Joins: foobaz21248 (~foobaz212@152.37.103.80)
+[04:21:00] *** Quits: raekye (~raekye@creatifcubed.com) (Remote host closed the connection)
+[04:21:00] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[04:22:47] *** Quits: Null_A (~null_a@c-98-210-133-39.hsd1.ca.comcast.net) (Ping timeout: 256 seconds)
+[04:25:35] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[04:27:48] *** Quits: TonyStone (~TonyStone@cpe-74-76-51-197.nycap.res.rr.com) (Ping timeout: 240 seconds)
+[04:31:19] *** Joins: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net)
+[04:31:50] *** Joins: constxo (~brad@142.134.78.128)
+[04:33:25] *** Joins: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse)
+[04:36:04] *** Quits: sh00p (~z@89-253-71-70.customers.ownit.se) (Ping timeout: 272 seconds)
+[04:36:45] *** Joins: c4017w_ (~c4017@209.52.68.8)
+[04:37:59] *** Quits: karakedi (~eAC53C340@user/karakedi) (Remote host closed the connection)
+[04:39:41] *** Quits: mad_enz (~mad_enz@lnsm4-toronto12-50-101-118-206.internet.virginmobile.ca) (Read error: Connection reset by peer)
+[04:39:48] *** Quits: c4017w__ (~c4017@209.52.68.8) (Ping timeout: 240 seconds)
+[04:39:53] *** Joins: TonyStone (~TonyStone@cpe-74-76-51-197.nycap.res.rr.com)
+[04:40:27] *** Quits: TonyStone (~TonyStone@cpe-74-76-51-197.nycap.res.rr.com) (Remote host closed the connection)
+[04:40:38] *** Quits: bebyx (~Thunderbi@user/bebyx) (Read error: Connection reset by peer)
+[04:40:49] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[04:45:34] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 272 seconds)
+[04:49:17] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[04:50:02] *** Joins: karakedi (~eAC53C340@user/karakedi)
+[04:50:29] *** Quits: foobaz21248 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[04:50:45] *** Joins: foobaz21248 (~foobaz212@152.37.103.80)
+[04:51:36] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Ping timeout: 245 seconds)
+[04:51:59] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[04:55:39] *** Quits: foobaz21248 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[04:59:06] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 250 seconds)
+[05:00:10] *** Joins: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net)
+[05:03:27] *** Quits: drbeco (~beco@user/beco) (Quit: Leaving)
+[05:05:10] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[05:07:42] *** Quits: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net) (Quit: Going offline, see ya! (www.adiirc.com))
+[05:13:48] *** Quits: KAHR-Alpha (~Alpha@2a01cb0d024a66005ce39336c7474e23.ipv6.abo.wanadoo.fr) (Ping timeout: 240 seconds)
+[05:17:18] *** Quits: jfsimon1981 (~jfsimon19@195.66.6.84.rev.sfr.net) (Ping timeout: 250 seconds)
+[05:21:45] *** Quits: Yruama (~Yruama@2a01:cb15:8128:c100:6c61:6a53:9bf0:64ca) (Remote host closed the connection)
+[05:25:16] *** Joins: rgrinberg (~textual@2806:101e:7:70b6:25dd:c2a6:b3b9:c5f4)
+[05:26:32] *** Quits: m_tadeu (~quassel@bl7-240-233.dsl.telepac.pt) (Ping timeout: 240 seconds)
+[05:30:32] *** Quits: Kohe (~Kohe@46.12.214.37.dsl.dyn.forthnet.gr) (Ping timeout: 272 seconds)
+[05:30:36] *** Quits: sbrothy (~sbrothy@192038128240.mbb.telenor.dk) (Read error: Connection reset by peer)
+[05:34:15] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[05:37:05] *** Joins: c4017w__ (~c4017@209.52.68.8)
+[05:38:20] *** Joins: vicfred (~vicfred@user/vicfred)
+[05:38:37] *** Quits: pulse (~pulse@user/pulse) (Quit: Look behind you, a three headed monkey!)
+[05:40:40] *** Quits: c4017w_ (~c4017@209.52.68.8) (Ping timeout: 272 seconds)
+[05:41:44] *** Joins: jfsimon1981 (~jfsimon19@155.105.201.77.rev.sfr.net)
+[05:43:16] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[05:43:24] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[05:43:24] *** ChanServ sets mode: +v npaperbot
+[05:45:42] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[05:49:23] *** Quits: Brainium (~brainium@user/brainium) (Quit: Konversation terminated!)
+[05:49:54] *** Joins: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net)
+[05:50:19] *** Joins: mad_enz (~mad_enz@lnsm4-toronto12-50-101-118-206.internet.virginmobile.ca)
+[05:50:33] *** Quits: quartz (~quartz@user/quartz) (Quit: WeeChat 3.4)
+[05:51:03] *** Quits: Tobbi (~Tobbi@2a02:8108:1240:48ec:cc2b:fb51:4740:6209) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[05:52:56] *** Quits: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net) (Client Quit)
+[05:53:55] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[05:53:55] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Ping timeout: 240 seconds)
+[05:56:18] *** Joins: leduyquang753 (~leduyquan@user/leduyquang753)
+[05:56:26] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[05:56:54] *** Quits: sprout_ (~quassel@2a02:a467:ccd6:1:84ab:e3a9:1ea3:da7a) (Ping timeout: 260 seconds)
+[05:58:44] *** Praise- is now known as Praise
+[05:59:35] *** Joins: sprout (~quassel@2a02:a467:ccd6:1:84ab:e3a9:1ea3:da7a)
+[06:00:43] *** Joins: CodePoint (~CodePoint@2600:1700:3070:3790:d907:53e4:549e:c64e)
+[06:00:51] *** Quits: CodePoint (~CodePoint@2600:1700:3070:3790:d907:53e4:549e:c64e) (Remote host closed the connection)
+[06:04:55] *** Joins: foobaz21248 (~foobaz212@152.37.103.80)
+[06:06:04] *** Quits: vicfred (~vicfred@user/vicfred) (Quit: Leaving)
+[06:10:27] *** Quits: foobaz21248 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[06:11:05] *** Joins: sonny (~sonny@bras-base-london1483w-grc-39-65-95-42-231.dsl.bell.ca)
+[06:15:54] *** Joins: aqnote (~aqnote@42.120.75.174)
+[06:17:49] *** Joins: CodePoint (~CodePoint@2600:1700:3070:3790::11)
+[06:17:57] *** Quits: PJBoy (~PJBoy@user/pjboy) (Ping timeout: 240 seconds)
+[06:18:02] *** Parts: CodePoint (~CodePoint@2600:1700:3070:3790::11) ()
+[06:18:13] *** Joins: CodePoint (~CodePoint@2600:1700:3070:3790::11)
+[06:19:45] *** Joins: Inline (~Inline@p200300cd470c380061a83d28f03bd1ae.dip0.t-ipconnect.de)
+[06:22:12] *** Quits: Inline__ (~Inline@p200300cd4710a900587aa636b2d58f82.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[06:22:26] *** Quits: Viewday11 (~Viewday@user/viewday) (Ping timeout: 245 seconds)
+[06:22:45] *** Joins: Viewday11 (~Viewday@user/viewday)
+[06:23:40] *** Joins: CodePoint_ (~CodePoint@2600:1700:3070:3790:d907:53e4:549e:c64e)
+[06:23:44] *** Joins: khole (~khole@217.146.83.196)
+[06:23:54] *** Quits: CodePoint_ (~CodePoint@2600:1700:3070:3790:d907:53e4:549e:c64e) (Remote host closed the connection)
+[06:24:37] *** Quits: sonny (~sonny@bras-base-london1483w-grc-39-65-95-42-231.dsl.bell.ca) (Ping timeout: 256 seconds)
+[06:25:51] *** Quits: grep_xtrange (~x@ac255238.ppp.asahi-net.or.jp) (Quit: Quitting)
+[06:26:13] *** Joins: z8z (~x@ac255238.ppp.asahi-net.or.jp)
+[06:27:53] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[06:28:36] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[06:31:37] *** Joins: Carbonflux (~Carbonflu@c-66-235-54-179.sea.wa.customer.broadstripe.net)
+[06:32:36] *** Quits: msk (~Thunderbi@89.205.124.59) (Quit: msk)
+[06:32:53] *** Joins: msk (~Thunderbi@89.205.124.39)
+[06:33:08] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Ping timeout: 250 seconds)
+[06:34:15] *** Joins: mattallmill (~mattallmi@ip68-103-130-85.ks.ok.cox.net)
+[06:36:31] *** Quits: llh (~UPP@user/llh) (Ping timeout: 256 seconds)
+[06:37:36] *** Joins: c4017w_ (~c4017@209.52.68.8)
+[06:38:44] *** Joins: llh (~UPP@user/llh)
+[06:41:00] *** Quits: c4017w__ (~c4017@209.52.68.8) (Ping timeout: 240 seconds)
+[06:41:48] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[06:42:57] *** Quits: CodePoint (~CodePoint@2600:1700:3070:3790::11) (Quit: CodePoint)
+[06:43:18] *** Joins: CodePoint (~CodePoint@2600:1700:3070:3790::11)
+[06:44:12] *** Joins: TonyStone (~TonyStone@cpe-74-76-51-197.nycap.res.rr.com)
+[06:44:52] *** Joins: frost (~frost@user/frost)
+[06:45:43] *** Joins: zer0x_ (~zer0x@58.186.216.56)
+[06:45:52] *** Quits: frost (~frost@user/frost) (Read error: Connection reset by peer)
+[06:46:28] *** Joins: quartz (~quartz@user/quartz)
+[06:47:19] *** Joins: sonny (~sonny@bras-base-london1483w-grc-39-65-95-42-231.dsl.bell.ca)
+[06:49:56] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[06:50:07] *** Joins: frost (~frost@user/frost)
+[06:52:03] *** Joins: lllh (~UPP@198.48.244.21)
+[06:53:56] *** Quits: frost (~frost@user/frost) (Client Quit)
+[06:55:02] *** Quits: llh (~UPP@user/llh) (Ping timeout: 240 seconds)
+[06:55:33] *** Quits: quartz (~quartz@user/quartz) (Quit: WeeChat 3.4)
+[06:55:41] *** Quits: CodePoint (~CodePoint@2600:1700:3070:3790::11) (Quit: CodePoint)
+[06:55:44] *** Quits: khole (~khole@217.146.83.196) (Quit: Leaving)
+[06:56:08] *** Joins: frost (~frost@user/frost)
+[06:57:36] *** Quits: vdamewood (~vdamewood@fedora/vdamewood) (Read error: Connection reset by peer)
+[06:58:23] *** Joins: vdamewood (~vdamewood@fedora/vdamewood)
+[06:59:24] *** Quits: rgrinberg (~textual@2806:101e:7:70b6:25dd:c2a6:b3b9:c5f4) (Ping timeout: 240 seconds)
+[07:03:15] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[07:03:53] *** Joins: khole (~khole@217.146.83.196)
+[07:04:44] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[07:08:14] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[07:09:07] *** Joins: _aqnote (~aqnote@42.120.75.174)
+[07:11:14] *** Quits: mrgz (~mrgz@201-42-0-191.dsl.telesp.net.br) (Ping timeout: 272 seconds)
+[07:11:25] *** Quits: aqnote (~aqnote@42.120.75.174) (Ping timeout: 240 seconds)
+[07:11:50] *** Joins: ironman (~ironman@2405:201:1010:b033:bad0:8910:44c9:da61)
+[07:12:10] *** Quits: _aqnote (~aqnote@42.120.75.174) (Client Quit)
+[07:12:41] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) (Read error: Connection reset by peer)
+[07:18:21] *** Quits: vdamewood (~vdamewood@fedora/vdamewood) (Read error: Connection reset by peer)
+[07:18:58] *** Joins: vdamewood (~vdamewood@fedora/vdamewood)
+[07:24:41] *** Quits: jfsimon1981 (~jfsimon19@155.105.201.77.rev.sfr.net) (Ping timeout: 256 seconds)
+[07:24:58] *** Joins: jfsimon1981 (~jfsimon19@25.82.75.86.rev.sfr.net)
+[07:27:14] *** Joins: khole_ (~khole@217.146.83.196)
+[07:27:34] *** Quits: khole_ (~khole@217.146.83.196) (Remote host closed the connection)
+[07:27:38] *** Quits: khole (~khole@217.146.83.196) (Quit: Leaving)
+[07:29:15] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[07:37:18] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[07:37:47] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[07:38:19] *** Joins: c4017w__ (~c4017@209.52.68.8)
+[07:42:00] *** Quits: c4017w_ (~c4017@209.52.68.8) (Ping timeout: 252 seconds)
+[07:47:41] *** Quits: sreve (~quassel@p549d70f6.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[07:48:00] *** Joins: sreve (~quassel@p549d72b1.dip0.t-ipconnect.de)
+[07:49:16] *** Joins: Garbanzo_ (~Garbanzo@2602:304:6eac:dc10::43)
+[07:49:54] *** pikapika_lunar is now known as pikapika
+[07:54:17] *** Joins: Prof_Dumbledore (~Prof_Dumb@2409:4042:e13:495d:d86f:118f:d2e1:a82f)
+[07:56:21] *** Joins: hinata (~hinata@2409:4042:d16:67df:183a:b5c4:b9c4:159b)
+[07:57:35] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[08:00:44] *** Joins: hashfunc107e (~user@2601:5c0:c280:7090:78e9:5f82:1899:8c96)
+[08:06:20] *** Quits: mattallmill (~mattallmi@ip68-103-130-85.ks.ok.cox.net) (Ping timeout: 272 seconds)
+[08:06:31] *** Joins: foobaz21248 (~foobaz212@152.37.103.80)
+[08:11:43] *** Quits: foobaz21248 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[08:18:56] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[08:19:39] *** Joins: Null_A (~null_a@c-98-210-133-39.hsd1.ca.comcast.net)
+[08:21:31] *** Quits: Null_A (~null_a@c-98-210-133-39.hsd1.ca.comcast.net) (Remote host closed the connection)
+[08:21:47] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[08:21:48] *** Quits: hinata (~hinata@2409:4042:d16:67df:183a:b5c4:b9c4:159b) (Ping timeout: 240 seconds)
+[08:23:31] *** Joins: hinata (~hinata@157.33.3.3)
+[08:25:10] *** Quits: hinata (~hinata@157.33.3.3) (Remote host closed the connection)
+[08:25:24] *** Joins: hinata (~hinata@2409:4042:d16:67df:183a:b5c4:b9c4:159b)
+[08:27:04] *** Quits: hinata (~hinata@2409:4042:d16:67df:183a:b5c4:b9c4:159b) (Remote host closed the connection)
+[08:33:52] *** Joins: lh_cat (~lh_mouse@mingw-w64/developer/lhmouse)
+[08:37:22] *** Quits: lh_mouse (~lh_mouse@mingw-w64/developer/lhmouse) (Ping timeout: 272 seconds)
+[08:39:01] *** Joins: c4017w_ (~c4017@209.52.68.8)
+[08:39:51] *** Quits: vdamewood (~vdamewood@fedora/vdamewood) (Quit: My MacBook Pro has gone to sleep. ZZZzzz…)
+[08:42:17] *** Quits: c4017w__ (~c4017@209.52.68.8) (Ping timeout: 240 seconds)
+[08:44:21] *** Joins: hinata (~hinata@2409:4042:d16:67df:183a:b5c4:b9c4:159b)
+[08:46:53] *** Joins: TOB_CyxoB (~TOB_CyxoB@gateway/tor-sasl/tobcyxob/x-83841022)
+[08:47:27] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[08:48:10] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[08:49:55] *** Quits: skapata (~Skapata@user/skapata) (Remote host closed the connection)
+[08:52:51] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Ping timeout: 256 seconds)
+[08:53:48] *** Joins: arch-angel (~arch-ange@user/arch-angel)
+[08:54:28] *** Quits: great_taste (~great_tas@user/great-taste/x-5798414) (Quit: Client closed)
+[08:54:42] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[09:00:49] *** Quits: moose (~moose@user/moose) (Ping timeout: 272 seconds)
+[09:01:18] *** Parts: sonny (~sonny@bras-base-london1483w-grc-39-65-95-42-231.dsl.bell.ca) ()
+[09:05:00] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[09:06:11] *** Quits: svm_invictvs (~svm_invic@user/svm-invictvs/x-6696469) (Remote host closed the connection)
+[09:07:28] *** Joins: slidercrank (~slidercra@user/slidercrank)
+[09:12:51] *** Quits: rahl- (rahl@otaku.sdf.org) (Quit: leaving)
+[09:13:17] *** Quits: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse) (Ping timeout: 240 seconds)
+[09:13:44] *** Joins: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse)
+[09:15:37] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[09:17:39] *** Joins: ferdna (~ferdna@user/ferdna)
+[09:18:39] *** Quits: ferdna (~ferdna@user/ferdna) (Remote host closed the connection)
+[09:21:44] *** Joins: jsbach (~jsbach@2a01:c23:64c8:ff00:8062:461e:f6a0:9313)
+[09:22:13] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Ping timeout: 240 seconds)
+[09:22:21] *** Quits: badone (~badone@209.132.189.152) (Quit: ZNC 1.7.5 - https://znc.in)
+[09:27:53] *** Quits: jkl (~jkl@user/jkl) (Quit: Gone.)
+[09:28:07] *** Joins: raekye (~raekye@creatifcubed.com)
+[09:28:18] *** Joins: jkl (~jkl@user/jkl)
+[09:29:39] *** Quits: moberg (~moberg@luke.millenniumfalcon.org) (Quit: quit)
+[09:30:12] *** Joins: moberg (~moberg@luke.millenniumfalcon.org)
+[09:31:03] *** Quits: TOB_CyxoB (~TOB_CyxoB@gateway/tor-sasl/tobcyxob/x-83841022) (Quit: Leaving)
+[09:31:23] <mattf> how can i change a variable configure and generate like i do with ccmake using commands instead?
+[09:31:28] *** Joins: rgrinberg (~textual@2806:101e:7:70b6:803c:58f5:1152:3843)
+[09:32:23] *** Joins: ElectronApps (~ElectronA@user/electronapps)
+[09:40:42] *** Quits: zer0x_ (~zer0x@58.186.216.56) (Ping timeout: 272 seconds)
+[09:41:35] *** Quits: GNUmoon (~GNUmoon@gateway/tor-sasl/gnumoon) (Ping timeout: 240 seconds)
+[09:43:17] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[09:43:24] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[09:43:24] *** ChanServ sets mode: +v npaperbot
+[09:44:59] *** Joins: Kohe (~Kohe@46.12.214.37.dsl.dyn.forthnet.gr)
+[09:45:57] *** Quits: cncr04s (~cncr04s@afxr.net) (Ping timeout: 240 seconds)
+[09:47:22] *** Joins: cncr04s (~cncr04s@afxr.net)
+[09:49:13] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[09:51:57] *** Joins: Dumbledore (~Prof_Dumb@2409:4042:2e2e:8ed7:4b04:9ac6:25c7:42b7)
+[09:53:15] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[09:53:16] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 245 seconds)
+[09:53:17] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Read error: Connection reset by peer)
+[09:53:32] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[09:54:12] *** Quits: Prof_Dumbledore (~Prof_Dumb@2409:4042:e13:495d:d86f:118f:d2e1:a82f) (Ping timeout: 240 seconds)
+[10:00:41] *** Quits: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao) (Remote host closed the connection)
+[10:02:28] *** Joins: Pr_Dumbledore (~Prof_Dumb@2409:4042:2c9a:9656:644c:a641:e67f:89)
+[10:03:44] *** Quits: scoobydoo (~scooby@user/scoobydoo) (Ping timeout: 250 seconds)
+[10:04:48] *** Joins: LiaoTao (~LiaoTao@gateway/tor-sasl/liaotao)
+[10:05:00] *** Quits: Dumbledore (~Prof_Dumb@2409:4042:2e2e:8ed7:4b04:9ac6:25c7:42b7) (Ping timeout: 240 seconds)
+[10:05:05] *** Quits: Pr_Dumbledore (~Prof_Dumb@2409:4042:2c9a:9656:644c:a641:e67f:89) (Client Quit)
+[10:05:12] *** Joins: Serpent7776 (~Serpent77@90-156-31-193.internetia.net.pl)
+[10:05:17] *** Joins: Prof_Dumbledore (~Prof_Dumb@2409:4042:2c9a:9656:644c:a641:e67f:89)
+[10:06:40] *** Joins: |7| (~seachdamh@user/seachdamh)
+[10:06:58] *** Joins: Dumbledore (~Prof_Dumb@2409:4042:2e2e:8ed7:6f10:d93a:f0b4:6b90)
+[10:07:37] *** Joins: foobaz21248 (~foobaz212@152.37.103.80)
+[10:09:14] *** Quits: Dumbledore (~Prof_Dumb@2409:4042:2e2e:8ed7:6f10:d93a:f0b4:6b90) (Remote host closed the connection)
+[10:09:27] *** Joins: Dumbledore (~Prof_Dumb@2409:4042:2e2e:8ed7:aef7:f8f5:eea8:c304)
+[10:09:48] *** Quits: Prof_Dumbledore (~Prof_Dumb@2409:4042:2c9a:9656:644c:a641:e67f:89) (Ping timeout: 240 seconds)
+[10:11:13] *** Quits: rgrinberg (~textual@2806:101e:7:70b6:803c:58f5:1152:3843) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[10:11:37] *** Quits: Garbanzo_ (~Garbanzo@2602:304:6eac:dc10::43) (Ping timeout: 240 seconds)
+[10:11:42] *** Joins: dyeplexer (~dyeplexer@user/dyeplexer)
+[10:12:25] *** Quits: foobaz21248 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[10:27:31] *** Quits: leduyquang753 (~leduyquan@user/leduyquang753) (Quit: Gotta go, see you guys later.)
+[10:29:01] *** Quits: the_lanetly_052_ (~the_lanet@194.135.152.253) (Ping timeout: 240 seconds)
+[10:32:04] *** Joins: zer0x_ (~zer0x@58.186.216.56)
+[10:32:55] *** Quits: Kohe (~Kohe@46.12.214.37.dsl.dyn.forthnet.gr) (Remote host closed the connection)
+[10:33:17] *** Joins: Kohe (~Kohe@46.12.214.37.dsl.dyn.forthnet.gr)
+[10:33:35] *** Joins: JohnMS_WORK (~kvirc@89-64-70-205.dynamic.chello.pl)
+[10:37:16] *** Joins: c4017w__ (~c4017@209.52.68.8)
+[10:40:11] *** Quits: Kohe (~Kohe@46.12.214.37.dsl.dyn.forthnet.gr) (Ping timeout: 256 seconds)
+[10:41:05] *** Quits: c4017w_ (~c4017@209.52.68.8) (Ping timeout: 256 seconds)
+[10:46:14] *** Quits: ville (~ville@user/ville) (Quit: ville)
+[10:48:18] *** Quits: bitmask (~bitmask@c-73-215-237-27.hsd1.nj.comcast.net) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[10:50:36] *** Quits: kstatz12 (~pi@205.178.87.116) (Ping timeout: 240 seconds)
+[10:50:51] *** Joins: kstatz12 (~pi@205.178.87.116)
+[10:51:37] *** Joins: ville (~ville@user/ville)
+[10:56:43] *** Joins: evangeline (~Eleanor@178.79.105.181)
+[10:59:37] *** Joins: svm_invictvs (~svm_invic@user/svm-invictvs/x-6696469)
+[11:01:31] *** Quits: Cyp (~cyp@213.237.85.100) (Read error: Connection reset by peer)
+[11:03:04] *** Joins: wolf2k_ouch (~wolfman20@2600:1700:3211:4140:5466:554d:d1cb:c430)
+[11:04:30] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[11:05:26] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[11:06:36] *** Quits: wolf2k_huh (~wolfman20@2600:1700:3211:4140:9c97:f09a:df14:6b21) (Ping timeout: 240 seconds)
+[11:10:17] *** Quits: dld (~davidlowr@2601:197:600:1210:7c23:245c:3a8b:a0db) (Ping timeout: 240 seconds)
+[11:12:33] *** Joins: dld (~davidlowr@73.61.9.48)
+[11:14:23] *** Joins: wib_jonas (~wib_jonas@cst2-26-227.cust.vodafone.cz)
+[11:15:02] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[11:17:10] *** Joins: GNUmoon (~GNUmoon@gateway/tor-sasl/gnumoon)
+[11:19:12] *** Joins: rendar (~rendar@user/rendar)
+[11:19:24] *** Joins: sh00p (~z@89-253-71-70.customers.ownit.se)
+[11:24:02] *** Joins: sord937 (~sord937@gateway/tor-sasl/sord937)
+[11:27:39] *** Joins: Tobbi (~Tobbi@2a02:8108:1240:48ec:ec7a:c710:284d:4802)
+[11:28:10] *** Quits: Dumbledore (~Prof_Dumb@2409:4042:2e2e:8ed7:aef7:f8f5:eea8:c304) (Quit: Leaving)
+[11:30:37] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 256 seconds)
+[11:30:55] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[11:31:40] *** Joins: Vadim__ (~Vadim@37.203.10.4)
+[11:32:19] *** Quits: jadew (~rcc@2a02:2f0a:b302:d600:ca2a:14ff:fe58:c8c0) (Ping timeout: 250 seconds)
+[11:35:20] *** Quits: daswf852 (~daswf852@user/daswf852) (Ping timeout: 272 seconds)
+[11:35:37] *** Quits: CalamityBlue (~CalamityB@user/CalamityBlue) (Ping timeout: 240 seconds)
+[11:36:15] *** Joins: c2f00 (~dogverflo@ip1f10d710.dynamic.kabel-deutschland.de)
+[11:36:42] *** Joins: CalamityBlue (~CalamityB@user/CalamityBlue)
+[11:37:58] *** Joins: c4017w_ (~c4017@209.52.68.8)
+[11:41:11] *** Quits: Vadim__ (~Vadim@37.203.10.4) (Quit: Leaving)
+[11:41:23] *** Quits: ac_slater (~ac_slater@c-67-168-6-19.hsd1.wa.comcast.net) (Ping timeout: 256 seconds)
+[11:41:41] *** Quits: c4017w__ (~c4017@209.52.68.8) (Ping timeout: 256 seconds)
+[11:42:23] *** Joins: spaceangel (~spaceange@ip-78-102-216-202.net.upcbroadband.cz)
+[11:43:40] *** Joins: ac_slater (~ac_slater@c-67-168-6-19.hsd1.wa.comcast.net)
+[11:44:10] *** Joins: gentooclimax (~gentoocli@2a02-8440-3141-a12f-e37b-616c-4757-cbab.rev.sfr.net)
+[11:45:50] *** Joins: jadew (~rcc@2a02:2f0a:b216:3e00:ca2a:14ff:fe58:c8c0)
+[11:47:17] *** Joins: MajorBiscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e)
+[11:48:04] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[11:49:11] *** Joins: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net)
+[11:49:21] *** Joins: Null_A (~null_a@2601:645:8700:2290:c864:fc8b:2d0b:834a)
+[11:49:54] *** Joins: Prof_Dumbledore (~Prof_Dumb@2409:4042:2e2e:8ed7:aef7:f8f5:eea8:c304)
+[11:50:11] *** Quits: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net) (Remote host closed the connection)
+[11:50:33] *** Joins: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net)
+[11:52:05] *** Joins: nwulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[11:53:12] *** Joins: Cyp (~cyp@213.237.85.100)
+[11:54:11] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[11:56:14] *** Quits: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 272 seconds)
+[11:56:38] *** Joins: interop_madness (~interop_m@user/interop-madness/x-0950004)
+[11:56:49] *** Joins: caramel (~caramel@user/caramel)
+[11:57:54] *** Quits: Null_A (~null_a@2601:645:8700:2290:c864:fc8b:2d0b:834a) (Remote host closed the connection)
+[11:58:08] *** Quits: jadew (~rcc@2a02:2f0a:b216:3e00:ca2a:14ff:fe58:c8c0) (Ping timeout: 250 seconds)
+[12:01:08] *** Joins: jellie (~luv_panda@user/jellie)
+[12:04:37] *** Joins: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[12:05:09] *** Quits: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au) ()
+[12:08:32] *** Joins: foobaz21248 (~foobaz212@152.37.103.80)
+[12:08:50] *** Quits: nwulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 260 seconds)
+[12:11:56] *** Joins: jadew (~rcc@2a02:2f0a:b204:3b00:ca2a:14ff:fe58:c8c0)
+[12:12:51] *** Quits: jellie (~luv_panda@user/jellie) (Ping timeout: 256 seconds)
+[12:13:02] *** Quits: ac_slater (~ac_slater@c-67-168-6-19.hsd1.wa.comcast.net) (Ping timeout: 260 seconds)
+[12:13:07] *** Quits: foobaz21248 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[12:14:22] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[12:14:29] *** Joins: jellie (~luv_panda@user/jellie)
+[12:15:10] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[12:15:23] *** Quits: unixpro1970 (~unixpro19@c-73-181-185-205.hsd1.wa.comcast.net) (Ping timeout: 256 seconds)
+[12:15:27] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[12:16:15] *** Quits: sord937 (~sord937@gateway/tor-sasl/sord937) (Ping timeout: 240 seconds)
+[12:19:46] *** Joins: sord937 (~sord937@gateway/tor-sasl/sord937)
+[12:25:01] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[12:26:22] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[12:30:10] *** Quits: treeshateorcs[m] (~treeshate@2001:470:69fc:105::1:41c4) (Quit: You have been kicked for being idle)
+[12:37:38] *** Joins: LucaTM (~LucaTM@user/lucatm)
+[12:37:50] *** Joins: drbeco (~beco@user/beco)
+[12:38:39] *** Joins: c4017w__ (~c4017@209.52.68.8)
+[12:40:19] *** Joins: bobb_ (~bobb_@dslb-092-074-246-082.092.074.pools.vodafone-ip.de)
+[12:41:18] *** Quits: hinata (~hinata@2409:4042:d16:67df:183a:b5c4:b9c4:159b) (Quit: Leaving)
+[12:41:56] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[12:42:01] *** Quits: c4017w_ (~c4017@209.52.68.8) (Ping timeout: 256 seconds)
+[12:42:17] *** Joins: AmR (~AmREiSa@197.42.112.70)
+[12:42:41] *** gentooclimax is now known as climax
+[12:46:36] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Ping timeout: 240 seconds)
+[12:47:10] <AmR> Can I use this way to remove if from my code " https://stackoverflow.com/questions/21995355/eliminating-if-statement-using-bitwise-operators " ?
+[12:47:32] *** Quits: bobb_ (~bobb_@dslb-092-074-246-082.092.074.pools.vodafone-ip.de) (Quit: Client closed)
+[12:49:44] *** Joins: PlasmaHH (~PlasamaHH@user/plasmahh)
+[12:52:05] *** Joins: millido (~millido@84.210.150.128)
+[12:52:26] *** sweetsymph is now known as Thelma
+[12:54:28] *** Quits: MajorBiscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e) (Ping timeout: 250 seconds)
+[12:54:30] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[12:54:53] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[12:56:38] *** Joins: MajorBiscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e)
+[12:58:32] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 240 seconds)
+[12:59:21] <GyrosGeier> AmR, removing branches is different from removing if statements
+[13:00:28] <GyrosGeier> the reason people want to avoid branches is that they cost performance, and may be a security issue if they depend on secret data
+[13:01:12] <GyrosGeier> but "bool x = (a == b);" can use a branch or not, depending on the architecture
+[13:01:53] <GyrosGeier> in the same way "if(a == b) x = true; else x = false;" can use a branch or not depending on the architecture
+[13:02:27] <ville> also if this is still in the context of doing something with the filesystem then branch here or ten branches there is not going to register compared to the cost of hitting the filesystem
+[13:02:49] *** Joins: Raziel (~Raziel@user/raziel)
+[13:02:51] *** Joins: ivii (~ivan@user/ivii)
+[13:03:02] *** Quits: MajorBiscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e) (Ping timeout: 240 seconds)
+[13:04:28] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[13:04:58] *** Joins: MajorBiscuit (~MajorBisc@86-88-79-148.fixed.kpn.net)
+[13:10:55] *** climax is now known as gentooclimax
+[13:10:57] *** Joins: plastico (~plastico@neomutt/plastico)
+[13:13:48] *** Joins: lxsameer (~lxsameer@user/lxsameer)
+[13:16:14] <zz> GyrosGeier: and all the while, branches may turn out to be cheaper as a whole, because of data dependencies when going "branchless"
+[13:19:03] *** Joins: spaceangel_ (~spaceange@ip-78-102-216-202.net.upcbroadband.cz)
+[13:19:13] *** Quits: gdd (~gdd@129.199.146.230) (Ping timeout: 272 seconds)
+[13:19:33] *** Joins: aLeSD[m] (~alambicco@2001:470:69fc:105::1:452a)
+[13:19:45] <aLeSD[m]> hi there C++ world
+[13:20:22] *** Joins: Null_A (~null_a@c-98-210-133-39.hsd1.ca.comcast.net)
+[13:20:56] <aLeSD[m]> I had a couple of years into goLang world and I come with a question ? Is composition design better that inheritance one ?
+[13:21:27] *** Quits: ivii (~ivan@user/ivii) (Ping timeout: 256 seconds)
+[13:21:56] *** Joins: ivii (~ivan@user/ivii)
+[13:22:08] <zz> there is no "better". you use the one that's appropriate for a given task.
+[13:22:27] *** gentooclimax is now known as climax
+[13:22:30] <Raziel> something something can of worms
+[13:22:39] <Raziel> for what it's worth, I'm enjoying composition quite a bit at the moment :p
+[13:23:07] *** Quits: spaceangel (~spaceange@ip-78-102-216-202.net.upcbroadband.cz) (Ping timeout: 256 seconds)
+[13:23:08] <aLeSD[m]> that mean using lots of interfaces, right ?
+[13:23:28] <Raziel> well, in my case I just use an ECS framework, for the most part.
+[13:23:45] <urdh> composition is usually what you want in my experience
+[13:25:23] *** Quits: Null_A (~null_a@c-98-210-133-39.hsd1.ca.comcast.net) (Ping timeout: 256 seconds)
+[13:26:11] *** Joins: unixpro1970 (~unixpro19@c-67-168-187-106.hsd1.wa.comcast.net)
+[13:27:40] *** Joins: whupdup (~whupdup@pool-173-76-128-81.bstnma.fios.verizon.net)
+[13:34:43] *** Quits: wib_jonas (~wib_jonas@cst2-26-227.cust.vodafone.cz) (Ping timeout: 256 seconds)
+[13:37:14] *** climax is now known as gentooclimax
+[13:37:38] *** Quits: gentooclimax (~gentoocli@2a02-8440-3141-a12f-e37b-616c-4757-cbab.rev.sfr.net) (Quit: Konversation terminated!)
+[13:38:31] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[13:38:37] <ville> aLeSD[m]: to answer questions that contain words such as "better" or "best" would require people to first agree on what to measure, how it is measured and so on
+[13:39:19] *** Joins: c4017w_ (~c4017@209.52.68.8)
+[13:39:39] <fiesh> aLeSD[m]: https://en.wikipedia.org/wiki/Composition_over_inheritance
+[13:40:50] <mitch0> https://www.youtube.com/watch?v=4yG0QE9ce3U
+[13:42:36] *** Quits: c4017w__ (~c4017@209.52.68.8) (Ping timeout: 240 seconds)
+[13:43:17] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[13:43:25] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[13:43:25] *** ChanServ sets mode: +v npaperbot
+[13:45:05] *** Joins: ac_slater (~ac_slater@c-73-221-73-144.hsd1.wa.comcast.net)
+[13:46:27] *** Quits: MajorBiscuit (~MajorBisc@86-88-79-148.fixed.kpn.net) (Quit: WeeChat 3.4)
+[13:47:44] *** Joins: gentooclimax (~gentoocli@173.15.23.93.rev.sfr.net)
+[13:51:51] *** Joins: MajorBiscuit (~MajorBisc@c-001-023-033.client.tudelft.eduvpn.nl)
+[13:52:05] *** Quits: gentooclimax (~gentoocli@173.15.23.93.rev.sfr.net) (Client Quit)
+[13:52:22] *** Quits: bzyx (~quassel@89-69-20-238.dynamic.chello.pl) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[13:54:14] *** Quits: Flannel (~flannel@cpe-76-175-193-181.socal.res.rr.com) (Read error: Connection reset by peer)
+[13:54:19] *** Joins: Burgundy (~NA@86.121.143.206)
+[13:58:44] *** Joins: foobaz21248 (~foobaz212@152.37.103.80)
+[13:59:59] *** Joins: Flannel (~flannel@cpe-76-175-193-181.socal.res.rr.com)
+[14:07:23] *** Quits: millido (~millido@84.210.150.128) (Quit: ZNC 1.8.2 - https://znc.in)
+[14:09:24] *** Quits: hashfunc107e (~user@2601:5c0:c280:7090:78e9:5f82:1899:8c96) (Ping timeout: 240 seconds)
+[14:11:24] *** Quits: dyeplexer (~dyeplexer@user/dyeplexer) (Quit: Leaving)
+[14:11:41] *** Joins: dyeplexer (~dyeplexer@user/dyeplexer)
+[14:13:17] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 240 seconds)
+[14:20:56] *** Joins: Viewday113 (~Viewday@user/viewday)
+[14:21:04] *** Joins: millido (~millido@84.210.150.128)
+[14:22:32] *** Quits: hackkitten (~hackkitte@94.31.104.136) (Read error: Connection reset by peer)
+[14:22:39] <aLeSD[m]> @ville I miss c++ people so much
+[14:22:46] *** Quits: Viewday11 (~Viewday@user/viewday) (Read error: Connection reset by peer)
+[14:22:47] *** Viewday113 is now known as Viewday11
+[14:23:10] <aLeSD[m]> just facts
+[14:24:08] *** Joins: hackkitten (~hackkitte@94.31.104.136)
+[14:24:09] <Raziel> yeah, we're very agile and unpredictable, so it makes us hard to hit
+[14:24:26] *** Quits: sh00p (~z@89-253-71-70.customers.ownit.se) (Ping timeout: 272 seconds)
+[14:28:52] *** Quits: Tempesta (~Tempesta@user/tempesta) (Read error: Connection reset by peer)
+[14:31:11] *** Joins: akuma (~i.am@user/marlboro)
+[14:34:04] *** Joins: hinata (~hinata@2409:4042:d16:67df:183a:b5c4:b9c4:159b)
+[14:37:24] *** Quits: jellie (~luv_panda@user/jellie) (Ping timeout: 240 seconds)
+[14:39:25] *** Quits: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse) (Ping timeout: 240 seconds)
+[14:39:37] *** Joins: jellie (~luv_panda@user/jellie)
+[14:39:49] *** Joins: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse)
+[14:40:04] *** Joins: c4017w__ (~c4017@209.52.68.8)
+[14:41:19] <GyrosGeier> wait
+[14:42:06] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[14:42:20] <GyrosGeier> if I have uint16_t x = 0x8000; auto y = x << 16; and int is 32 bit, don't promotion rules make this UB?
+[14:43:24] *** Quits: c4017w_ (~c4017@209.52.68.8) (Ping timeout: 240 seconds)
+[14:44:48] <PJBoy> nah
+[14:46:09] <PJBoy> uint16_t(0x8000) gets promoted to int32_t(0x00008000), shifted left as if into uint32_t(0x80000000) and converted to int32_t(0x80000000)
+[14:46:42] <GyrosGeier> it's a shift of a signed value into the signbit, no?
+[14:46:46] <PJBoy> where the conversion to signed at the end is implementation defined
+[14:46:51] <PJBoy> prior to C++20
+[14:46:54] <PJBoy> well defined in C++20
+[14:46:55] *** Quits: spithash (~spithash@user/spithash) (Ping timeout: 240 seconds)
+[14:47:08] <PJBoy> yeah it's fine to shift into the sign bit
+[14:47:33] *** Joins: zeenk (~zeenk@2a02:2f04:a30d:1300:51a3:bcfc:6cda:9fc5)
+[14:47:39] <PJBoy> shifting into the sign bit is what makes the conversion to signed at the end implementation defined prior to C++20
+[14:48:11] *** Joins: spithash (~spithash@user/spithash)
+[14:50:05] <PJBoy> also we can check for UB with constexpr
+[14:50:27] <PJBoy> geordi --2017 { constexpr int x = f(); } constexpr int f() { return 0x8000 << 17; }
+[14:50:27] <geordi> error: shift expression '(32768 << 17)' overflows
+[14:50:37] <PJBoy> geordi --2017 { constexpr int x = f(); } constexpr int f() { return 0x8000 << 16; }
+[14:50:38] <geordi>  
+[14:50:43] <PJBoy> see, compiler's happy
+[14:51:03] <PJBoy> and then interestingly, in C++20 that first test isn't an error anymore
+[14:51:41] <PJBoy> bits get shifted out of the integer and the language doesn't care
+[14:51:59] *** Joins: m_tadeu (~quassel@bl7-240-233.dsl.telepac.pt)
+[14:52:58] *** Joins: zer0bitz (~zer0bitz@dsl-hkibng32-54fb4d-184.dhcp.inet.fi)
+[14:52:59] <PJBoy> for further evidence that it's well defined to shift into the sign bit: https://cplusplus.github.io/CWG/issues/1457.html
+[14:53:20] <PJBoy> there was a change made specifically made to allow doing that a long time ago
+[14:57:48] *** Quits: jellie (~luv_panda@user/jellie) (Ping timeout: 240 seconds)
+[15:01:42] <GyrosGeier> hmmm
+[15:02:27] *** Joins: the_lanetly_052_ (~the_lanet@194.135.152.253)
+[15:03:07] <GyrosGeier> I get a warning -Wsign-conversion for "(x << 16) & 0xf0000000", because that forces a promotion of the lhs to unsigned int
+[15:03:23] <GyrosGeier> it'd be really cool if there was a way to say "remain unsigned"
+[15:09:53] <PJBoy> I mean
+[15:10:02] <urdh> x << 16u not good enough?
+[15:10:04] <PJBoy> unsigned(x) << 16 & 0xF0000000
+[15:11:15] <PJBoy> x will still get promoted to int in `x << 16u`
+[15:12:16] <urdh> will it? not always, surely
+[15:12:18] <urdh> !resulttypes
+[15:12:20] <nolyc> Result types of arithmetic operations are easy, just memorize http://eel.is/c++/resulttypes.png and you'll be fine!
+[15:12:45] <urdh> ah right, the small types are stupid
+[15:12:46] <PJBoy> > Integral promotions are performed on both operands
+[15:12:51] <PJBoy> yeah
+[15:13:07] <PJBoy> was going to link https://en.cppreference.com/w/cpp/language/operator_arithmetic#Bitwise_shift_operators
+[15:13:46] *** Joins: jellie (~luv_panda@user/jellie)
+[15:14:14] <PJBoy> << TYPE(x << 16u), TYPE(unsigned(x) << 16); uint16_t x = 0x8000;
+[15:14:15] <geordi> prvalue int, prvalue unsigned int
+[15:15:08] <PJBoy> I don't think the signedness of the RHS matters in any way
+[15:21:45] *** Quits: unixpro1970 (~unixpro19@c-67-168-187-106.hsd1.wa.comcast.net) (Remote host closed the connection)
+[15:22:09] *** Joins: unixpro1970 (~unixpro19@c-67-168-187-106.hsd1.wa.comcast.net)
+[15:22:22] <urdh> that does seem to be what the png implies
+[15:26:02] *** Joins: yhirose3 (~yhirose3@user/yhirose3)
+[15:28:25] <PJBoy> I don't trust the char16_t and char32_t promotions in that image
+[15:33:43] *** Quits: jellie (~luv_panda@user/jellie) (Ping timeout: 256 seconds)
+[15:37:01] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 245 seconds)
+[15:37:52] *** Joins: bzyx (~quassel@89-69-20-238.dynamic.chello.pl)
+[15:40:33] *** Joins: c4017w_ (~c4017@209.52.68.8)
+[15:43:55] *** Quits: c4017w__ (~c4017@209.52.68.8) (Ping timeout: 256 seconds)
+[15:45:31] *** Quits: Carbonflux (~Carbonflu@c-66-235-54-179.sea.wa.customer.broadstripe.net) (Quit: When all you have are solutions, everything is a problem.)
+[15:48:43] *** Joins: mrgz (~mrgz@201-42-0-191.dsl.telesp.net.br)
+[15:50:17] *** Quits: Prof_Dumbledore (~Prof_Dumb@2409:4042:2e2e:8ed7:aef7:f8f5:eea8:c304) (Ping timeout: 240 seconds)
+[15:51:57] *** Joins: proller (~p@2a02:6b8:0:408:eafc:afff:fec7:a7a3)
+[15:52:59] *** Quits: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse) (Ping timeout: 256 seconds)
+[15:53:24] *** Joins: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse)
+[15:55:10] *** Joins: zer0bitz_ (~zer0bitz@2001:2003:f74d:b800:71e5:4f52:ed0e:7b4e)
+[15:55:28] *** Joins: Prof_Dumbledore (~Prof_Dumb@2409:4042:2e2e:8ed7:297c:2613:609a:b1fa)
+[15:56:41] *** Quits: zer0bitz (~zer0bitz@dsl-hkibng32-54fb4d-184.dhcp.inet.fi) (Ping timeout: 256 seconds)
+[15:59:55] *** Joins: Atque (~Atque@user/atque)
+[16:01:17] *** Quits: Prof_Dumbledore (~Prof_Dumb@2409:4042:2e2e:8ed7:297c:2613:609a:b1fa) (Ping timeout: 240 seconds)
+[16:02:51] *** Joins: jellie (~luv_panda@user/jellie)
+[16:06:57] *** Joins: Prof_Dumbledore (~Prof_Dumb@2409:4042:2e2e:8ed7:db4c:6e54:ec1b:aae7)
+[16:09:22] *** Quits: unlink2 (~unlink@p200300ebcf3e190012b7094ba83de7f3.dip0.t-ipconnect.de) (Remote host closed the connection)
+[16:13:25] *** Joins: zer0bitz (~zer0bitz@2001:2003:f74d:b800:71e5:4f52:ed0e:7b4e)
+[16:14:46] *** Quits: zer0bitz_ (~zer0bitz@2001:2003:f74d:b800:71e5:4f52:ed0e:7b4e) (Ping timeout: 260 seconds)
+[16:21:06] *** Quits: CatCow (~wtf_over@c-73-96-109-206.hsd1.or.comcast.net) (Quit: Textual IRC Client: www.textualapp.com)
+[16:21:13] *** Joins: mattallmill (~mattallmi@ip68-103-130-85.ks.ok.cox.net)
+[16:21:29] *** Joins: Viewday111 (~Viewday@user/viewday)
+[16:21:36] *** Quits: Viewday11 (~Viewday@user/viewday) (Read error: Connection reset by peer)
+[16:21:36] *** Viewday111 is now known as Viewday11
+[16:22:03] *** Quits: mlaogd^ (~mlaogd@207.243.108.170) (Remote host closed the connection)
+[16:26:12] *** Joins: pulse (~pulse@user/pulse)
+[16:30:49] *** Joins: scoobydoo (~scooby@user/scoobydoo)
+[16:39:29] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[16:40:36] *** Quits: lxsameer (~lxsameer@user/lxsameer) (Ping timeout: 272 seconds)
+[16:41:14] *** Joins: c4017w__ (~c4017@209.52.68.8)
+[16:42:08] *** Joins: lxsameer (lxsameer@user/lxsameer)
+[16:44:12] *** Joins: Flonk (~Flonk@vps-zap441517-1.zap-srv.com)
+[16:44:36] *** Quits: c4017w_ (~c4017@209.52.68.8) (Ping timeout: 240 seconds)
+[16:47:42] *** Quits: lh_ideapad (~lh_mouse@mingw-w64/developer/lhmouse) (Remote host closed the connection)
+[16:55:30] *** Joins: evlc (~evlc@l37-193-63-15.novotelecom.ru)
+[16:56:32] *** Quits: krzych (krzych@nroot.pl) (Read error: Connection reset by peer)
+[16:58:21] *** Joins: skapata (~Skapata@2804:14c:87b0:9d2e:8151:9b0d:b8cd:32c4)
+[16:58:21] *** Quits: skapata (~Skapata@2804:14c:87b0:9d2e:8151:9b0d:b8cd:32c4) (Changing host)
+[16:58:21] *** Joins: skapata (~Skapata@user/skapata)
+[17:00:00] *** Joins: j0hn_mc_clane (~j0hn_mc_c@ptr-fqhhm12iua58a0gd4hj.18120a2.ip6.access.telenet.be)
+[17:01:04] *** Quits: Prof_Dumbledore (~Prof_Dumb@2409:4042:2e2e:8ed7:db4c:6e54:ec1b:aae7) (*.net *.split)
+[17:01:04] *** Quits: proller (~p@2a02:6b8:0:408:eafc:afff:fec7:a7a3) (*.net *.split)
+[17:01:04] *** Quits: the_lanetly_052_ (~the_lanet@194.135.152.253) (*.net *.split)
+[17:01:04] *** Quits: hinata (~hinata@2409:4042:d16:67df:183a:b5c4:b9c4:159b) (*.net *.split)
+[17:01:04] *** Quits: spaceangel_ (~spaceange@ip-78-102-216-202.net.upcbroadband.cz) (*.net *.split)
+[17:01:04] *** Quits: Cyp (~cyp@213.237.85.100) (*.net *.split)
+[17:01:04] *** Quits: CalamityBlue (~CalamityB@user/CalamityBlue) (*.net *.split)
+[17:01:04] *** Quits: jsbach (~jsbach@2a01:c23:64c8:ff00:8062:461e:f6a0:9313) (*.net *.split)
+[17:01:04] *** Quits: slidercrank (~slidercra@user/slidercrank) (*.net *.split)
+[17:01:04] *** Quits: lh_cat (~lh_mouse@mingw-w64/developer/lhmouse) (*.net *.split)
+[17:01:04] *** Quits: jfsimon1981 (~jfsimon19@25.82.75.86.rev.sfr.net) (*.net *.split)
+[17:01:04] *** Quits: miklcct (~quassel@vps.miklcct.com) (*.net *.split)
+[17:01:04] *** Quits: Spirit532 (~Spirit532@user/Spirit532) (*.net *.split)
+[17:01:04] *** Quits: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it) (*.net *.split)
+[17:01:04] *** Quits: Tokamak (~Tokamak@172.58.188.181) (*.net *.split)
+[17:01:04] *** Quits: kapil (~kapil@2a01:4f9:c010:c9c3::1) (*.net *.split)
+[17:01:04] *** Quits: KimK (~KimK@2600:8803:740b:4700:4a5b:39ff:fe0b:57d2) (*.net *.split)
+[17:01:04] *** Quits: tobs (~tobs@taboege.de) (*.net *.split)
+[17:01:04] *** Quits: Techcable (~Techcable@168.235.93.147) (*.net *.split)
+[17:01:04] *** Quits: FAT1337 (~IceChat78@user/fat1337) (*.net *.split)
+[17:01:04] *** Quits: shailangsa (~shailangs@host86-186-133-59.range86-186.btcentralplus.com) (*.net *.split)
+[17:01:04] *** Quits: Sadale (~Sadale@user/sadale) (*.net *.split)
+[17:01:04] *** Quits: nightstrike (uid487@id-487.uxbridge.irccloud.com) (*.net *.split)
+[17:01:04] *** Quits: DrMax__ (~DrMax@132.215.96.30) (*.net *.split)
+[17:01:04] *** Quits: lmat (~Lmat@c-73-102-193-68.hsd1.in.comcast.net) (*.net *.split)
+[17:01:04] *** Quits: russruss (~russruss@my.russellmcc.com) (*.net *.split)
+[17:01:04] *** Quits: HvszrStykp (~X@81.171.62.82) (*.net *.split)
+[17:01:04] *** Quits: yano (~yano@ircpuzzles/staff/yano) (*.net *.split)
+[17:01:04] *** Quits: packet_lozenge (~packet_lo@user/packet-lozenge/x-7125090) (*.net *.split)
+[17:01:04] *** Quits: CodeAgain (~codeagain@user/CodeAgain) (*.net *.split)
+[17:01:04] *** Quits: kristjansson (sid126207@id-126207.tinside.irccloud.com) (*.net *.split)
+[17:01:04] *** Quits: kfv (~kfv@mail.kfv.io) (*.net *.split)
+[17:01:04] *** Quits: qwedfg (~qwedfg@user/qwedfg) (*.net *.split)
+[17:01:04] *** Quits: ElPresidente (~ElPreside@2600:1700:3d10:4870:aaa1:59ff:fe3c:ddb4) (*.net *.split)
+[17:01:04] *** Quits: Impulsif (impulsif@impulsif.us2.ircnow.org) (*.net *.split)
+[17:01:04] *** Quits: notevil (~notevil@user/notevil) (*.net *.split)
+[17:01:04] *** Quits: Manouchehri (sid384576@id-384576.hampstead.irccloud.com) (*.net *.split)
+[17:01:04] *** Quits: xq (~xq@user/xq) (*.net *.split)
+[17:01:04] *** Quits: Nitrousoxide (~msdos@user/nitrousoxide) (*.net *.split)
+[17:01:04] *** Quits: NiKaN (sid385034@id-385034.helmsley.irccloud.com) (*.net *.split)
+[17:01:04] *** Quits: zoraj_ (~zoraj@209.126.81.159) (*.net *.split)
+[17:01:04] *** Quits: MrC (Ben@mrbenc.net) (*.net *.split)
+[17:01:04] *** Quits: BtbN (btbn@ffmpeg/developer/btbn) (*.net *.split)
+[17:01:04] *** Quits: akacrs (k7f@user/akacrs) (*.net *.split)
+[17:01:04] *** Quits: Xark (~Xark@47.156.11.28) (*.net *.split)
+[17:01:04] *** Quits: Albright (~Albright@149.28.13.173) (*.net *.split)
+[17:01:04] *** Quits: m42e (~m42e@pb42.de) (*.net *.split)
+[17:01:04] *** Quits: dv^_^ (~dv@eclipse.oxfordfun.com) (*.net *.split)
+[17:01:04] *** Quits: Svitkona (~Svitkona@157.245.38.135) (*.net *.split)
+[17:01:04] *** Quits: timmot (~timmot@207.148.85.201) (*.net *.split)
+[17:01:04] *** Quits: deepy (deepy@user/deepy) (*.net *.split)
+[17:01:04] *** Quits: obiwahn (~heini@user/obiwahn) (*.net *.split)
+[17:01:04] *** Quits: geordi (~geordi@tinodidriksen.com) (*.net *.split)
+[17:01:04] *** Quits: lloda (~user@11-206-127-185.static.world-connect.ch) (*.net *.split)
+[17:01:04] *** Quits: alex88 (~alex88@ip72-207-140-105.lv.lv.cox.net) (*.net *.split)
+[17:01:04] *** Quits: kaichiuchu (~mike@user/kaichiuchu) (*.net *.split)
+[17:02:30] *** Joins: Prof_Dumbledore (~Prof_Dumb@2409:4042:2e2e:8ed7:db4c:6e54:ec1b:aae7)
+[17:02:30] *** Joins: proller (~p@2a02:6b8:0:408:eafc:afff:fec7:a7a3)
+[17:02:30] *** Joins: the_lanetly_052_ (~the_lanet@194.135.152.253)
+[17:02:30] *** Joins: hinata (~hinata@2409:4042:d16:67df:183a:b5c4:b9c4:159b)
+[17:02:30] *** Joins: spaceangel_ (~spaceange@ip-78-102-216-202.net.upcbroadband.cz)
+[17:02:30] *** Joins: Cyp (~cyp@213.237.85.100)
+[17:02:30] *** Joins: CalamityBlue (~CalamityB@user/CalamityBlue)
+[17:02:30] *** Joins: jsbach (~jsbach@2a01:c23:64c8:ff00:8062:461e:f6a0:9313)
+[17:02:30] *** Joins: slidercrank (~slidercra@user/slidercrank)
+[17:02:30] *** Joins: lh_cat (~lh_mouse@mingw-w64/developer/lhmouse)
+[17:02:30] *** Joins: jfsimon1981 (~jfsimon19@25.82.75.86.rev.sfr.net)
+[17:02:30] *** Joins: miklcct (~quassel@vps.miklcct.com)
+[17:02:30] *** Joins: Spirit532 (~Spirit532@user/Spirit532)
+[17:02:30] *** Joins: kaph (~kaph@net-109-116-124-149.cust.vodafonedsl.it)
+[17:02:30] *** Joins: Tokamak (~Tokamak@172.58.188.181)
+[17:02:30] *** Joins: kapil (~kapil@2a01:4f9:c010:c9c3::1)
+[17:02:30] *** Joins: KimK (~KimK@2600:8803:740b:4700:4a5b:39ff:fe0b:57d2)
+[17:02:30] *** Joins: tobs (~tobs@taboege.de)
+[17:02:30] *** Joins: Techcable (~Techcable@168.235.93.147)
+[17:02:30] *** Joins: FAT1337 (~IceChat78@user/fat1337)
+[17:02:30] *** Joins: shailangsa (~shailangs@host86-186-133-59.range86-186.btcentralplus.com)
+[17:02:30] *** Joins: Sadale (~Sadale@user/sadale)
+[17:02:30] *** Joins: nightstrike (uid487@id-487.uxbridge.irccloud.com)
+[17:02:30] *** Joins: DrMax__ (~DrMax@132.215.96.30)
+[17:02:30] *** Joins: lmat (~Lmat@c-73-102-193-68.hsd1.in.comcast.net)
+[17:02:30] *** Joins: russruss (~russruss@my.russellmcc.com)
+[17:02:30] *** Joins: Impulsif (impulsif@impulsif.us2.ircnow.org)
+[17:02:30] *** Joins: HvszrStykp (~X@81.171.62.82)
+[17:02:30] *** Joins: yano (~yano@ircpuzzles/staff/yano)
+[17:02:30] *** Joins: packet_lozenge (~packet_lo@user/packet-lozenge/x-7125090)
+[17:02:30] *** Joins: kristjansson (sid126207@id-126207.tinside.irccloud.com)
+[17:02:30] *** Joins: kfv (~kfv@mail.kfv.io)
+[17:02:30] *** Joins: qwedfg (~qwedfg@user/qwedfg)
+[17:02:30] *** Joins: ElPresidente (~ElPreside@2600:1700:3d10:4870:aaa1:59ff:fe3c:ddb4)
+[17:02:30] *** Joins: notevil (~notevil@user/notevil)
+[17:02:30] *** Joins: Manouchehri (sid384576@id-384576.hampstead.irccloud.com)
+[17:02:30] *** Joins: xq (~xq@user/xq)
+[17:02:30] *** Joins: Nitrousoxide (~msdos@user/nitrousoxide)
+[17:02:30] *** Joins: NiKaN (sid385034@id-385034.helmsley.irccloud.com)
+[17:02:30] *** Joins: zoraj_ (~zoraj@209.126.81.159)
+[17:02:30] *** Joins: MrC (Ben@mrbenc.net)
+[17:02:30] *** Joins: BtbN (btbn@ffmpeg/developer/btbn)
+[17:02:30] *** Joins: akacrs (k7f@user/akacrs)
+[17:02:30] *** Joins: Xark (~Xark@47.156.11.28)
+[17:02:30] *** Joins: Albright (~Albright@149.28.13.173)
+[17:02:30] *** Joins: m42e (~m42e@pb42.de)
+[17:02:30] *** Joins: dv^_^ (~dv@eclipse.oxfordfun.com)
+[17:02:30] *** Joins: Svitkona (~Svitkona@157.245.38.135)
+[17:02:30] *** Joins: timmot (~timmot@207.148.85.201)
+[17:02:30] *** Joins: deepy (deepy@user/deepy)
+[17:02:30] *** Joins: obiwahn (~heini@user/obiwahn)
+[17:02:30] *** Joins: geordi (~geordi@tinodidriksen.com)
+[17:02:30] *** Joins: lloda (~user@11-206-127-185.static.world-connect.ch)
+[17:02:30] *** Joins: alex88 (~alex88@ip72-207-140-105.lv.lv.cox.net)
+[17:02:30] *** Joins: kaichiuchu (~mike@user/kaichiuchu)
+[17:02:30] *** erbium.libera.chat sets mode: +v geordi
+[17:02:56] *** Quits: ironman (~ironman@2405:201:1010:b033:bad0:8910:44c9:da61) (Quit: Leaving)
+[17:03:16] *** Quits: Techcable (~Techcable@168.235.93.147) (Max SendQ exceeded)
+[17:03:16] *** Quits: qwedfg (~qwedfg@user/qwedfg) (Max SendQ exceeded)
+[17:03:16] *** Quits: shailangsa (~shailangs@host86-186-133-59.range86-186.btcentralplus.com) (Max SendQ exceeded)
+[17:03:16] *** Quits: deepy (deepy@user/deepy) (Max SendQ exceeded)
+[17:03:16] *** Quits: Manouchehri (sid384576@id-384576.hampstead.irccloud.com) (Max SendQ exceeded)
+[17:03:24] *** Joins: caramel_ (~caramel@user/caramel)
+[17:03:24] *** Joins: Techcable (~Techcable@168.235.93.147)
+[17:04:07] *** Joins: deepy (deepy@user/deepy)
+[17:04:29] *** Joins: Manouchehri (sid384576@id-384576.hampstead.irccloud.com)
+[17:04:36] *** Joins: meandrain (~meandrain@2a02:2f0e:f70f:6e00:3dba:87f4:782d:e764)
+[17:05:17] *** Joins: qwedfg (~qwedfg@user/qwedfg)
+[17:05:56] *** Quits: c4017w__ (~c4017@209.52.68.8) (Ping timeout: 272 seconds)
+[17:06:57] *** Quits: NiKaN (sid385034@id-385034.helmsley.irccloud.com) (Ping timeout: 240 seconds)
+[17:07:02] *** Quits: Zogatribe (Zogatribe@user/zogatribe) (Ping timeout: 260 seconds)
+[17:07:12] *** Quits: caramel (~caramel@user/caramel) (Ping timeout: 272 seconds)
+[17:08:10] *** Joins: shailangsa (~shailangs@host86-186-133-59.range86-186.btcentralplus.com)
+[17:08:24] *** Joins: c4017w__ (~c4017@209.52.68.8)
+[17:08:39] *** Joins: NiKaN (sid385034@id-385034.helmsley.irccloud.com)
+[17:11:24] *** Quits: lxsameer (lxsameer@user/lxsameer) (Ping timeout: 240 seconds)
+[17:11:44] *** Quits: hinata (~hinata@2409:4042:d16:67df:183a:b5c4:b9c4:159b) (Quit: Leaving)
+[17:13:15] *** Joins: jplejacq (~jplejacq@24.224.90.176)
+[17:13:31] *** Joins: lxsameer (~lxsameer@user/lxsameer)
+[17:16:43] *** Joins: Kohe (~Kohe@46.12.214.37.dsl.dyn.forthnet.gr)
+[17:18:16] *** Joins: zer0bitz_ (~zer0bitz@2001:2003:f74d:b800:71e5:4f52:ed0e:7b4e)
+[17:20:17] *** Quits: Prof_Dumbledore (~Prof_Dumb@2409:4042:2e2e:8ed7:db4c:6e54:ec1b:aae7) (Ping timeout: 240 seconds)
+[17:20:46] *** Quits: zer0bitz (~zer0bitz@2001:2003:f74d:b800:71e5:4f52:ed0e:7b4e) (Ping timeout: 245 seconds)
+[17:21:04] *** Quits: evlc (~evlc@l37-193-63-15.novotelecom.ru) (Quit: WeeChat 3.4)
+[17:23:16] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[17:24:57] *** Quits: shailangsa (~shailangs@host86-186-133-59.range86-186.btcentralplus.com) ()
+[17:27:39] *** Quits: |7| (~seachdamh@user/seachdamh) (Quit: KVIrc 5.0.0 Aria http://www.kvirc.net/)
+[17:28:21] *** Joins: wakeup (~wakeup@user/wakeup)
+[17:28:25] <wakeup> hello
+[17:28:35] <wakeup> if I have this statement
+[17:28:38] <wakeup> b[--c[a[i]]] = a[i];
+[17:28:47] <wakeup> remind me what is the order of the execution of the operations
+[17:28:55] <wakeup> in particular, when is the pre-increment executed
+[17:29:00] <GyrosGeier> geordi --precedence b[--c[a[i]]] = a[i];
+[17:29:00] <geordi> error: Unexpected `;` after ` = a[i]`. Expected postfix operator, binary operator, ternary operator, or end of code.
+[17:29:04] <GyrosGeier> geordi --precedence b[--c[a[i]]] = a[i]
+[17:29:04] <geordi> (b[--(c[a[i]])]) = (a[i])
+[17:29:18] *** Joins: zen_coder (~zen_coder@2a02:8109:a280:2d8d:2d9b:5b3e:4e6b:74da)
+[17:29:40] <GyrosGeier> the predecrement is a normal unary operator
+[17:29:44] <wakeup> that doesn't clarify much
+[17:29:49] *** Joins: shailangsa (~shailangs@host86-186-133-59.range86-186.btcentralplus.com)
+[17:30:02] <wakeup> is -- executed after or before the assignment?
+[17:30:27] <GyrosGeier> the assignment needs the lhs resolved fully
+[17:30:54] <wakeup> what does that mean? does it mean that it is executed before the assignment?
+[17:31:01] <GyrosGeier> the assignment is the outermost expression
+[17:31:09] <GyrosGeier> so it will be executed last
+[17:31:16] <wakeup> so the operations are
+[17:31:30] <wakeup> decrement c[a[i]]
+[17:31:32] <wakeup> then assign?
+[17:31:33] *** Quits: drbeco (~beco@user/beco) (Quit: Leaving)
+[17:31:49] <wakeup> c[a[i]]--;
+[17:32:05] <wakeup> then b[c[a[i]]] = a[i]
+[17:32:22] <GyrosGeier> yes
+[17:32:55] <GyrosGeier> but I'm not sure there is a sequence point there, so if c[a[i]] aliases something else, that might still be undefined
+[17:33:28] <yhirose3> where's a good place to find interview questions/practice?
+[17:34:00] <wakeup> it depends on what type of interview and company, of course
+[17:34:12] *** Joins: krzych (krzych@nroot.pl)
+[17:34:54] <yhirose3> wakeup: say the big ones: Google, Apple, Facebook
+[17:38:41] *** Quits: ivii (~ivan@user/ivii) (Remote host closed the connection)
+[17:38:58] *** Joins: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net)
+[17:39:24] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Ping timeout: 240 seconds)
+[17:39:44] *** Joins: ivii (~ivan@user/ivii)
+[17:41:03] *** Quits: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net) (Client Quit)
+[17:41:17] *** Quits: proller (~p@2a02:6b8:0:408:eafc:afff:fec7:a7a3) (Ping timeout: 240 seconds)
+[17:42:07] <CarloWood> RandomReader: Are you here?
+[17:43:16] *** Quits: martiert (~martiert@ti0185q160-2775.bb.online.no) (Quit: leaving)
+[17:43:18] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[17:43:27] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[17:43:27] *** ChanServ sets mode: +v npaperbot
+[17:43:36] *** Joins: Guest4217 (~martiert@ti0185q160-2775.bb.online.no)
+[17:43:38] *** Guest4217 is now known as martiert
+[17:45:40] <CarloWood> RandomReader: I did a new/better test. I think my previous test was wrong: https://bpa.st/IIGA
+[17:46:20] <CarloWood> This shows that I believe that there IS synchronization, as a result of the critical area mutex.
+[17:46:36] <CarloWood> This shows, I believe, that*
+[17:48:14] <CarloWood> The only unclear thing left is that I'm using a RMW operation to determine the order in which B and C run :/. That could have some influence, not 100% sure.
+[17:49:41] *** Joins: cheetahw26 (~cheetahw2@14.150-pool-xdsl-mi.sccoast.net)
+[17:51:10] *** Joins: zer0bitz (~zer0bitz@2001:2003:f74d:b800:71e5:4f52:ed0e:7b4e)
+[17:51:57] <cheetahw26> Having some brain block or something, trying to use this code point_in_polygon to see if a point is in a polygon using Eigen, https://github.com/anirudhtopiwala/OpenSource_Problems/blob/master/Point_In_Polygon/src/point_in_polygon.cpp
+[17:52:10] *** Quits: mattallmill (~mattallmi@ip68-103-130-85.ks.ok.cox.net) (Ping timeout: 272 seconds)
+[17:52:29] *** Quits: zer0bitz_ (~zer0bitz@2001:2003:f74d:b800:71e5:4f52:ed0e:7b4e) (Ping timeout: 252 seconds)
+[17:52:35] *** Joins: undephin3d (~undephin3@158.181.83.107)
+[17:52:56] <cheetahw26> I need to be able to pass the point or vertices from C#, i can use array of int, but not sure how to create the std::vector<Eigen::Vector2d> vertices from that int array
+[17:53:39] <cheetahw26> I could pass gdiplus.Point too
+[17:54:04] <CarloWood> I replaced the fetch_add with a load and store (inside critical area anyway) and it has no effect. So it works definitely.
+[17:54:04] <cheetahw26> but not sure how to convert that type
+[17:54:31] *** Joins: artok (~azo@193.210.8.114)
+[17:54:37] *** Joins: proller (~p@2001:6d0:8000:105:2f5b:3e33:40c1:6a44)
+[17:56:01] <ville> CarloWood: posix/pthread or your cpu arch may define guarantees that are not available on other platforms
+[17:56:04] <CarloWood> cheetahw26: what is exactly the problem?
+[17:56:17] *** Quits: MajorBiscuit (~MajorBisc@c-001-023-033.client.tudelft.eduvpn.nl) (Ping timeout: 256 seconds)
+[17:56:36] <CarloWood> ville: has nothing to do with my CPU - genmc test the memory model
+[17:57:07] <CarloWood> Neither with the use of pthread - it just happens that they (genmc) use that as interface.
+[17:59:31] <cheetahw26> me., haha...  I have 10 points { {385,124}, {400,123}, {408,123} ...  they represent a polygon. and I'm trying to send those points from C# to a C++ dll, where I want to convert into type std::vector<Eigen::Vector2d> vertices, so I can then run function Is_point_inside_convex_polygon
+[17:59:42] <CarloWood> ville: it "runs" the program using every possible execution that is consistent with the memory model; so if there is ANY way the program would ever produce certain results, it executes that and you get to see multiple printf's.
+[17:59:43] *** Quits: ivii (~ivan@user/ivii) (Remote host closed the connection)
+[17:59:51] *** Joins: Tempesta (~Tempesta@user/tempesta)
+[18:00:18] <CarloWood> cheetahw26: I don't know C# - you have to ask a C++ question.
+[18:00:52] *** Joins: MajorBiscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e)
+[18:00:53] <cheetahw26> it is C++,  trying to convert an int array to the std::vector<Eigen::Vector2d>
+[18:01:38] <CarloWood> So you have std::vector<int> in = { 385, 124, 400, 123, 408, 123, ... }; ?
+[18:02:23] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[18:02:27] <cheetahw26> no... I just have an,  int arr[]
+[18:02:34] *** Quits: Thelma (uid509475@id-509475.lymington.irccloud.com) (Quit: Connection closed for inactivity)
+[18:02:46] <CarloWood> You know the number of points, or the size of the array?
+[18:02:53] <cheetahw26> yes, both
+[18:06:29] <CarloWood> for (int i = 0; i < number_of_points; ++i) { int x = arr[2 * i]; int y = arr[2 * i + 1]; Eigen::Vector2d p(x, y); }
+[18:06:32] <CarloWood> That would work no?
+[18:06:46] <CarloWood> I mean - Vector2d has a constructor like that?
+[18:06:58] <cheetahw26> I'm not sure, I can try
+[18:07:03] *** Quits: pulse (~pulse@user/pulse) (Ping timeout: 256 seconds)
+[18:07:09] <cheetahw26> thank you
+[18:07:20] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Remote host closed the connection)
+[18:07:51] <CarloWood> Then if you have std::vector<Eigen::Vector2d> out;  you can do:  out.emplace_back(x, y);
+[18:08:25] *** Joins: Null_A (~null_a@c-98-210-133-39.hsd1.ca.comcast.net)
+[18:09:08] *** Joins: c4017w_ (~c4017@209.52.68.8)
+[18:12:50] *** Quits: c4017w__ (~c4017@209.52.68.8) (Ping timeout: 260 seconds)
+[18:12:57] *** Quits: Null_A (~null_a@c-98-210-133-39.hsd1.ca.comcast.net) (Ping timeout: 256 seconds)
+[18:16:43] *** Quits: elkalamar (elkalamar@gateway/vpn/airvpn/elkalamar) (Quit: Leaving)
+[18:19:24] *** Quits: proller (~p@2001:6d0:8000:105:2f5b:3e33:40c1:6a44) (Ping timeout: 240 seconds)
+[18:19:47] *** Joins: proller (~p@2a02:6b8:0:408:eafc:afff:fec7:a7a3)
+[18:20:48] *** Joins: Viewday112 (~Viewday@user/viewday)
+[18:20:50] <CarloWood> ville: even better version, using __VERIFIER_assume: https://bpa.st/MD5Q
+[18:22:09] *** Joins: nwulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[18:22:19] *** Quits: Viewday11 (~Viewday@user/viewday) (Read error: Connection reset by peer)
+[18:22:20] *** Viewday112 is now known as Viewday11
+[18:23:09] *** Quits: zer0x_ (~zer0x@58.186.216.56) (Ping timeout: 256 seconds)
+[18:24:14] *** Quits: zer0bitz (~zer0bitz@2001:2003:f74d:b800:71e5:4f52:ed0e:7b4e) (Ping timeout: 250 seconds)
+[18:24:35] *** Quits: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 256 seconds)
+[18:25:35] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[18:25:49] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[18:32:04] *** Quits: artok (~azo@193.210.8.114) (Ping timeout: 272 seconds)
+[18:32:22] *** Joins: the_lanetly_052 (~the_lanet@185.30.91.173)
+[18:33:37] *** Quits: the_lanetly_052_ (~the_lanet@194.135.152.253) (Ping timeout: 240 seconds)
+[18:36:17] *** Quits: slidercrank (~slidercra@user/slidercrank) (Ping timeout: 240 seconds)
+[18:37:31] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[18:37:46] *** Quits: JohnMS_WORK (~kvirc@89-64-70-205.dynamic.chello.pl) (Ping timeout: 272 seconds)
+[18:38:51] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[18:39:03] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[18:39:51] *** Joins: gproto23 (~gproto23@user/gproto23)
+[18:40:54] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[18:41:01] *** Quits: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net) (Ping timeout: 256 seconds)
+[18:41:11] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Remote host closed the connection)
+[18:41:33] *** Joins: TheHermann (~TheHerman@gateway/tor-sasl/thehermann)
+[18:41:37] *** Joins: pulse (~pulse@user/pulse)
+[18:41:45] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[18:42:12] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 272 seconds)
+[18:42:34] *** Quits: lh_cat (~lh_mouse@mingw-w64/developer/lhmouse) (Read error: Connection reset by peer)
+[18:45:24] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Ping timeout: 240 seconds)
+[18:47:17] <ville> CarloWood: i am not familiar with that particular tool
+[18:50:13] *** Quits: rvalue (~rvalue@user/rvalue) (Read error: Connection reset by peer)
+[18:50:27] *** Joins: rvalue (~rvalue@user/rvalue)
+[18:52:11] *** Quits: martiert (~martiert@ti0185q160-2775.bb.online.no) (Quit: WeeChat 3.3)
+[18:53:32] *** Quits: mackal (~mackal@pool-96-237-249-63.bstnma.fios.verizon.net) (Quit: BE VIGILANT.)
+[18:54:24] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[18:55:29] *** Joins: martiert (~martiert@ti0185q160-2775.bb.online.no)
+[18:57:49] *** Joins: zer0bitz (~zer0bitz@2001:2003:f74d:b800:71e5:4f52:ed0e:7b4e)
+[18:58:13] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[18:58:32] *** Joins: rpnx-phone (rpnx-phone@gateway/vpn/protonvpn/rpnx)
+[18:58:51] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 256 seconds)
+[19:00:41] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[19:00:43] *** Joins: AmR| (~AmREiSa@156.199.197.9)
+[19:01:35] *** Quits: AmR (~AmREiSa@197.42.112.70) (Ping timeout: 268 seconds)
+[19:02:41] *** Joins: mackal (~mackal@pool-96-237-249-63.bstnma.fios.verizon.net)
+[19:06:00] *** Quits: rpnx-phone (rpnx-phone@gateway/vpn/protonvpn/rpnx) (Read error: Connection reset by peer)
+[19:06:13] *** Joins: bitmask (~bitmask@c-73-215-237-27.hsd1.nj.comcast.net)
+[19:06:19] *** Joins: rpnx-phone (rpnx-phone@gateway/vpn/protonvpn/rpnx)
+[19:09:50] *** Joins: c4017w__ (~c4017@209.52.68.8)
+[19:11:49] *** Joins: GreenResponse (~tomek@r-45-155-148-237.gpon.bialnet.pl)
+[19:13:35] *** Quits: c4017w_ (~c4017@209.52.68.8) (Ping timeout: 256 seconds)
+[19:16:40] *** Joins: Viewday118 (~Viewday@user/viewday)
+[19:18:25] *** Quits: Viewday11 (~Viewday@user/viewday) (Ping timeout: 256 seconds)
+[19:18:26] *** Viewday118 is now known as Viewday11
+[19:19:40] *** Quits: wakeup (~wakeup@user/wakeup) (Quit: Client closed)
+[19:25:40] *** Joins: rgrinberg (~textual@2806:101e:7:70b6:8c10:b1d6:1961:9a70)
+[19:25:49] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[19:27:01] *** Quits: Viewday11 (~Viewday@user/viewday) (Ping timeout: 245 seconds)
+[19:27:06] *** Quits: interop_madness (~interop_m@user/interop-madness/x-0950004) (Quit: Leaving)
+[19:27:21] *** Quits: bebyx (~Thunderbi@user/bebyx) (Read error: Connection reset by peer)
+[19:27:33] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[19:28:00] *** Joins: Viewday11 (~Viewday@user/viewday)
+[19:28:06] *** Quits: jbalint (~jbalint@071-090-119-177.res.spectrum.com) (Read error: Connection reset by peer)
+[19:29:05] *** Joins: Electron (~ElectronA@user/electronapps)
+[19:29:30] *** Quits: ElectronApps (~ElectronA@user/electronapps) (Read error: Connection reset by peer)
+[19:30:03] <Alipha> AmR|: why do you want to remove if statements from your code?
+[19:30:15] *** Joins: jbalint (~jbalint@2600:6c44:117f:e98a:816a:9488:fb1:7b7)
+[19:30:38] *** Joins: vicfred (~vicfred@user/vicfred)
+[19:32:37] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 256 seconds)
+[19:35:04] *** Quits: Electron (~ElectronA@user/electronapps) (Remote host closed the connection)
+[19:35:08] <acidtonic_> I am blending a C library into a C++ class and must provide a raw char array to the library which used to be a global, I'm now using a class member but now must be careful about moving that memory, is it safe enough to declare the class uncopyable or should I stop moving too? If I wanted to make a move constructor to keep that memory in the same place, could I do so with placement new or something tricky?
+[19:35:51] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[19:36:39] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[19:38:02] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[19:38:34] *** Quits: mitch0 (~mitch@178-164-190-49.pool.digikabel.hu) (Ping timeout: 272 seconds)
+[19:39:12] *** Quits: baltazar (~baltazar@178-164-190-49.pool.digikabel.hu) (Ping timeout: 272 seconds)
+[19:39:26] <welder> well just make the raw array be a member of the class, initialize it in constructor. Copying the class would copy the data to the new instance
+[19:40:09] *** Joins: mitch0 (~mitch@176-241-40-35.pool.digikabel.hu)
+[19:40:11] <welder> making the class uncopyable would work, but do you need to place that restriction?
+[19:40:21] *** Joins: baltazar (~baltazar@176-241-40-35.pool.digikabel.hu)
+[19:42:37] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 240 seconds)
+[19:43:12] *** Quits: akuma (~i.am@user/marlboro) (Quit: a pentium 100 "running" windows 11 trying to play Last of Us II at ps4emu... that's my brain trying understand 0->R->R->R/2R->0)
+[19:43:16] *** Quits: c2f00 (~dogverflo@ip1f10d710.dynamic.kabel-deutschland.de) (Remote host closed the connection)
+[19:46:23] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[19:48:09] <acidtonic_> welder, no the C library uses other threads to then read/write that array so if it changes address the copy never gets touched by the C lib. So it can't move I think. But I'd like to see if there is a way to use a move constructor to keep the address the same upon move for that array
+[19:50:50] *** Joins: magla (~gelignite@d53619a1.access.ecotel.net)
+[19:51:33] *** Quits: id_tam (~tadmin@186.122.88.127) (Ping timeout: 256 seconds)
+[19:52:56] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[19:53:03] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[19:55:36] *** Joins: hamzaalaouy (~hamzaalao@41.143.238.178)
+[19:55:47] *** Quits: hamzaalaouy (~hamzaalao@41.143.238.178) (Client Quit)
+[19:56:02] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[20:00:55] *** Joins: vdamewood (~vdamewood@fedora/vdamewood)
+[20:02:45] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Remote host closed the connection)
+[20:02:53] <GyrosGeier> geordi --precedence (unsigned)15 << 4
+[20:02:53] <geordi> ((unsigned)15) << 4
+[20:03:42] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[20:04:37] *** Quits: bebyx (~Thunderbi@user/bebyx) (Ping timeout: 240 seconds)
+[20:05:42] *** Joins: evlc (~evlc@l37-193-63-15.novotelecom.ru)
+[20:08:09] <welder> well, more information required
+[20:08:25] <welder> it all depends on what exactly does this C library do
+[20:08:28] *** Joins: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net)
+[20:08:41] *** Quits: eelstrebor (~eelstrebo@198-178-29-136.scb.ne.static.allophone.net) (Remote host closed the connection)
+[20:08:52] <AmR|> Alipha: I try hide my test for security issue, It's secret data
+[20:08:59] *** AmR| is now known as AmR
+[20:10:05] *** Joins: Null_A (~null_a@2601:645:8700:2290:c864:fc8b:2d0b:834a)
+[20:10:34] *** Joins: c4017w_ (~c4017@209.52.68.8)
+[20:12:12] *** Quits: MajorBiscuit (~MajorBisc@2a02:a461:129d:1:193d:75d8:745d:e91e) (Ping timeout: 240 seconds)
+[20:12:17] *** Quits: kkd (~kkd@255.205.154.104.bc.googleusercontent.com) (Read error: Connection reset by peer)
+[20:12:57] *** Quits: rgrinberg (~textual@2806:101e:7:70b6:8c10:b1d6:1961:9a70) (Ping timeout: 240 seconds)
+[20:13:30] *** Quits: evlc (~evlc@l37-193-63-15.novotelecom.ru) (Quit: WeeChat 3.4)
+[20:14:13] *** Quits: c4017w__ (~c4017@209.52.68.8) (Ping timeout: 256 seconds)
+[20:14:16] *** Joins: MajorBiscuit (~MajorBisc@c-001-015-039.client.tudelft.eduvpn.nl)
+[20:15:16] *** Quits: j0hn_mc_clane (~j0hn_mc_c@ptr-fqhhm12iua58a0gd4hj.18120a2.ip6.access.telenet.be) (Remote host closed the connection)
+[20:15:27] *** Joins: bebyx (~Thunderbi@user/bebyx)
+[20:17:32] *** Joins: Yruama (~Yruama@2a01:cb15:8128:c100:6c61:6a53:9bf0:64ca)
+[20:17:44] *** Joins: xkuru (~xkuru@user/xkuru)
+[20:22:51] *** Joins: extropiator (~admin@user/extropiator)
+[20:24:04] *** Joins: kkd (~kkd@255.205.154.104.bc.googleusercontent.com)
+[20:30:17] *** Quits: proller (~p@2a02:6b8:0:408:eafc:afff:fec7:a7a3) (Ping timeout: 240 seconds)
+[20:33:23] *** Joins: gh34 (~textual@cpe-184-58-181-106.wi.res.rr.com)
+[20:36:32] *** Joins: LuksNuke (~LuksNuke@gateway/tor-sasl/luksnuke)
+[20:38:28] *** Quits: zmt00 (~zmt00@user/zmt00) (Quit: Leaving)
+[20:38:49] *** Joins: Betal (~Betal@user/betal)
+[20:39:21] <Alipha> AmR: you were asking about how to check to see if a file exists. the existance of the file is secret data? is the filename secret?
+[20:40:02] *** Joins: Prof_Dumbledore (~Prof_Dumb@152.57.196.97)
+[20:40:44] *** Joins: zmt00 (~zmt00@user/zmt00)
+[20:41:13] <Alipha> PJBoy: GyrosGeier: `uint16_t x = 0x8000; auto y = x << 16;` is UB if an int is 16 bits (same for `unsigned(x) << 16`). unless the standard recently made it not UB to shift by the bitwidth (or more) of the type
+[20:43:38] *** Quits: zen_coder (~zen_coder@2a02:8109:a280:2d8d:2d9b:5b3e:4e6b:74da) (Quit: Konversation terminated!)
+[20:44:30] *** Joins: rgrinberg (~textual@187.223.63.190)
+[20:45:38] <AmR> Albright: Nop, I will check multi tests and then check for file. Bu I asked About file 'I think it's same case' .
+[20:46:56] *** Quits: rgrinberg (~textual@187.223.63.190) (Client Quit)
+[20:47:16] *** Quits: extropiator (~admin@user/extropiator) (Quit: bla)
+[20:47:23] <Alipha> AmR: well, you really can't check for a file's existance in constant time because the OS will almost certainly have variations in timings which you cannot control
+[20:48:22] <CarloWood> That would still be O(1) I think :p.
+[20:48:49] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[20:48:58] <CarloWood> I mean - what is the N that would make it O(N) at all? The number of files in the directory?
+[20:49:20] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[20:49:42] <imMute> CarloWood: yes, but in the OS not in the application
+[20:50:05] <imMute> CarloWood: maybe not O(n) maybe something like O(log n) - depends on how the OS organizes the name lookups
+[20:50:11] <imMute> but it's certainly not constant
+[20:50:41] <CarloWood> Nothing is constant - also reading an atomic int varies in how long it takes.
+[20:50:59] *** Joins: Brainium (~brainium@user/brainium)
+[20:51:12] <Alipha> and even so, if the lookup were constant, i would imagine that the OS API call would do additional work if the file is found (check permissions, retrieve additional information that you just end up discarding, etc) than if the file is not found
+[20:51:34] <jimbzy> Alipha, Does that hold true for real-time OSes, or is it just something that's not done in real-time computing?
+[20:51:35] <imMute> CarloWood: reading an atomic int should be O(1) since it doesn't matter how many atomic ints you have or the actual value of it affecting the lookup time.
+[20:52:03] <imMute> O(1) doesn't mean it'll always take X seconds to do, where X doesn't change.  it just means X is independent of the value/number of items
+[20:52:44] <imMute> jimbzy: real time OSes will still not be constant time, but they'll typically have a guaranteed upper bound.
+[20:53:07] *** Quits: Null_A (~null_a@2601:645:8700:2290:c864:fc8b:2d0b:834a) (Remote host closed the connection)
+[20:53:22] <CarloWood> <imMute> but it's certainly not constant <-- so you meant to say: it certainly isn't O(1)?
+[20:54:16] <imMute> constant as in using a stopwatch to measure.  not the big-O notation definition of "constant"
+[20:54:34] <CarloWood> Then read again my reaction to that.
+[20:55:15] <jimbzy> Gotcha
+[20:55:29] <imMute> I guess my point is that O(1) doesn't say anything about how much wall clock time an operation will take
+[20:55:39] <jimbzy> I knew that, too.  I'm just a bit spaced atm.
+[20:56:25] <Alipha> AmR: making code time-constant is difficult and requires quite a bit of expertise. note that other operations, such as &&, ||, ==, !, etc may result in the compiler generating an if statement in the assembly code. or even when compiled with optimizations, a compiler may be "too smart" and transform your time-constant code into something non-time-constant because it's more efficient. also note that you don't have
+[20:56:27] <Alipha> to eliminate "all if statements"--you only have to eliminate if statements that are in the middle of working with secret data.
+[20:57:16] *** Joins: Dave_R (~Dave_R@home.amunra.co.uk)
+[20:57:29] <CarloWood> That was my point :p - it was me who brought up big-O, when Alipha said "you really can't check for a file's existance in constant time because the OS will almost certainly have variations in timings which you cannot control".  The phrase "in constant time" here is dubious. Of course the exact timing can vary between 1 micro second and 1 second - but since nothing is constant it HAS to mean O(1) and then I wanted to troll by
+[20:57:29] <CarloWood> pointing out that it IS O(1).
+[20:57:41] <CarloWood> Sorry for the trolling :p
+[20:59:03] <imMute> file name lookups (and thus existence checks) are neither O(1) nor a "constant" wall clock time, since the lookup depends on the number of directories that the FS has as well as how many levels the path being looked up has.
+[21:00:02] <CarloWood> Talking about trolling... my compiler is trolling me:
+[21:00:05] <CarloWood> vulkan/SynchronousWindow.cxx:1234:5: error: unknown type name 'PipelineCache'
+[21:00:12] <CarloWood> 1234:5  ... really?
+[21:04:09] *** Joins: SGautam (uid286066@id-286066.ilkley.irccloud.com)
+[21:07:15] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[21:07:31] *** Quits: vdamewood (~vdamewood@fedora/vdamewood) (Read error: Connection reset by peer)
+[21:07:33] *** Joins: smallville7123 (~smallvill@cpe-172-193-72-46.qld.foxtel.net.au)
+[21:08:16] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[21:08:26] *** Joins: vdamewood (~vdamewood@fedora/vdamewood)
+[21:08:34] <zz> probably not. 1234 is just another number much like 69 or 42, none of which have a special meaning beyond some idiots ascribing something to them
+[21:10:33] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[21:11:18] *** Joins: c4017w__ (~c4017@209.52.68.8)
+[21:14:37] *** Quits: c4017w_ (~c4017@209.52.68.8) (Ping timeout: 240 seconds)
+[21:14:39] *** Joins: Viewday118 (~Viewday@user/viewday)
+[21:15:00] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Ping timeout: 240 seconds)
+[21:16:11] *** Quits: Viewday11 (~Viewday@user/viewday) (Read error: Connection reset by peer)
+[21:16:12] *** Viewday118 is now known as Viewday11
+[21:18:20] *** Joins: immibis_ (~hexchat@2a02:3032:3:a84:62b2:c42d:455d:d277)
+[21:21:10] *** Quits: immibis (~hexchat@62.156.144.218) (Ping timeout: 272 seconds)
+[21:21:27] *** Quits: Prof_Dumbledore (~Prof_Dumb@152.57.196.97) (Quit: Leaving)
+[21:21:37] *** Joins: rgrinberg (~textual@2806:101e:7:70b6:f105:3b0f:86e0:788)
+[21:23:25] *** Quits: meandrain (~meandrain@2a02:2f0e:f70f:6e00:3dba:87f4:782d:e764) (Ping timeout: 240 seconds)
+[21:23:39] *** Quits: the_lanetly_052 (~the_lanet@185.30.91.173) (Ping timeout: 256 seconds)
+[21:26:08] *** Joins: immibis (~hexchat@2a02:3032:3:a84:62b2:c42d:455d:d277)
+[21:26:35] *** Quits: immibis_ (~hexchat@2a02:3032:3:a84:62b2:c42d:455d:d277) (Remote host closed the connection)
+[21:27:01] *** Quits: rgrinberg (~textual@2806:101e:7:70b6:f105:3b0f:86e0:788) (Ping timeout: 240 seconds)
+[21:28:03] *** Joins: ipe (~ipe@91-156-246-15.elisa-laajakaista.fi)
+[21:28:39] *** Joins: Viewday118 (~Viewday@user/viewday)
+[21:29:50] <PJBoy> Alipha, still UB to shift past the bitwidth of the destination integer type in C++20
+[21:29:51] <CarloWood> I give up - how to initialize p here:
+[21:29:54] <CarloWood> { std::pair<void*, A> p(nullptr, A{42}); } struct A { int x; std::mutex m; A(int x_) : x(x_) { } };
+[21:29:54] <geordi> error: no matching function for call to 'pair<void*, A>::pair(nullptr_t, A)'
+[21:30:27] *** Quits: Viewday11 (~Viewday@user/viewday) (Ping timeout: 256 seconds)
+[21:30:28] *** Viewday118 is now known as Viewday11
+[21:30:50] *** Joins: drbeco (~beco@user/beco)
+[21:32:08] <PJBoy> { pair<void*, A> p{nullptr, 42}; } struct A { int x; std::mutex m; A(int x_) : x(x_) { } };
+[21:32:09] <geordi>  
+[21:33:02] *** Quits: lxsameer (~lxsameer@user/lxsameer) (Ping timeout: 260 seconds)
+[21:33:29] <CarloWood> *impressed*
+[21:33:39] <CarloWood> but
+[21:33:47] <PJBoy> more difficult is when the ctor has more than one parameter
+[21:33:52] <CarloWood> That pair actually is a map::value_type :/
+[21:34:19] <CarloWood> Lemme make a test case
+[21:34:40] <PJBoy> with multiple arguments you gotta take the piecewise_construct route
+[21:34:45] <PJBoy> { pair<void*, A> p(piecewise_construct, tuple(nullptr), tuple(42, 24)); } struct A { int x; mutex m; A(int, int) {} };
+[21:34:45] <geordi>  
+[21:34:54] <PJBoy> which is what map operations like emplace do
+[21:36:01] <PJBoy> or try_emplace anyways
+[21:41:23] <CarloWood> Hmm, the problem I have is with no parameters.
+[21:41:24] *** Joins: Moosadee (~Moosadee@216.185.233.27)
+[21:41:51] *** Quits: Moosadee (~Moosadee@216.185.233.27) (Client Quit)
+[21:42:01] <CarloWood> https://wandbox.org/permlink/Lbojn2vCaz9rpvWM
+[21:43:18] *** Quits: npaperbot (~npaperbot@dodecahedron.m-ou.se) (Remote host closed the connection)
+[21:43:26] *** Joins: npaperbot (~npaperbot@dodecahedron.m-ou.se)
+[21:43:26] *** ChanServ sets mode: +v npaperbot
+[21:43:44] *** Joins: rgrinberg (~textual@187.223.227.166)
+[21:44:12] <kalven> CarloWood: https://wandbox.org/permlink/HoGBSu8c9b7uvJSD
+[21:44:47] <CarloWood> Where did you learn that? :(
+[21:45:35] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[21:45:52] *** Joins: m_ben (~m_ben@user/m-ben/x-7429725)
+[21:45:57] *** Quits: KimK (~KimK@2600:8803:740b:4700:4a5b:39ff:fe0b:57d2) (Ping timeout: 240 seconds)
+[21:46:21] <CarloWood> Is piecewise_construct something that only is used with std::pair?
+[21:46:35] <CarloWood> Cause I never heard of it before :/
+[21:47:15] *** Joins: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net)
+[21:48:59] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[21:49:14] *** Quits: immibis (~hexchat@2a02:3032:3:a84:62b2:c42d:455d:d277) (Remote host closed the connection)
+[21:49:41] <kalven> I suppose it was made for this purpose when someone realized that you need some way to pass an arbitrary amount of arguments to both the key and the value
+[21:49:47] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[21:49:49] *** Joins: immibis (~hexchat@2a02:3032:3:a84:62b2:c42d:455d:d277)
+[21:49:50] *** Joins: b1872egsakhc22 (~jfhdg327u@186.22.54.97)
+[21:50:03] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[21:50:03] *** Quits: RokerHRO (~zonc@euporie.uberspace.de) (Read error: Connection reset by peer)
+[21:50:19] *** Parts: b1872egsakhc22 (~jfhdg327u@186.22.54.97) (Leaving)
+[21:51:17] *** Quits: MajorBiscuit (~MajorBisc@c-001-015-039.client.tudelft.eduvpn.nl) (Ping timeout: 240 seconds)
+[21:52:14] *** Joins: Zogatribe (Zogatribe@user/zogatribe)
+[21:54:31] *** Quits: PJBoy (~PJBoy@user/pjboy) (Ping timeout: 256 seconds)
+[21:55:13] *** Joins: RoKenn (~RoKenn@2001:a61:35b1:ca01:ec43:dea0:dfe1:cce1)
+[21:55:13] *** Quits: RoKenn (~RoKenn@2001:a61:35b1:ca01:ec43:dea0:dfe1:cce1) (Changing host)
+[21:55:13] *** Joins: RoKenn (~RoKenn@user/rokenn)
+[21:55:15] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Ping timeout: 240 seconds)
+[21:55:42] *** Joins: RokerHRO (~zonc@euporie.uberspace.de)
+[21:56:42] *** Quits: magla (~gelignite@d53619a1.access.ecotel.net) (Read error: Connection reset by peer)
+[21:56:45] *** Quits: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net) (Read error: Connection reset by peer)
+[21:57:10] *** Quits: RoKenn (~RoKenn@user/rokenn) (Client Quit)
+[21:57:16] *** Joins: magla (~gelignite@d53619a1.access.ecotel.net)
+[21:57:18] *** Joins: Tangent-Man (~Tang3nt-M@cpc145602-basl14-2-0-cust33.20-1.cable.virginm.net)
+[21:59:00] *** Joins: KimK (~KimK@2600:8803:740b:4700:4a5b:39ff:fe0b:57d2)
+[21:59:21] *** Quits: immibis (~hexchat@2a02:3032:3:a84:62b2:c42d:455d:d277) (Remote host closed the connection)
+[21:59:29] *** Joins: immibis (~hexchat@2a02:3032:3:a84:62b2:c42d:455d:d277)
+[22:00:39] *** Joins: id_tam (~tadmin@186.122.88.127)
+[22:01:51] *** Quits: immibis (~hexchat@2a02:3032:3:a84:62b2:c42d:455d:d277) (Excess Flood)
+[22:01:59] *** Joins: immibis (~hexchat@2a02:3032:3:a84:62b2:c42d:455d:d277)
+[22:07:55] *** Joins: timwis (uid152344@id-152344.uxbridge.irccloud.com)
+[22:08:10] *** Quits: Betal (~Betal@user/betal) (Quit: WeeChat 3.4)
+[22:09:33] *** Quits: dyeplexer (~dyeplexer@user/dyeplexer) (Ping timeout: 256 seconds)
+[22:09:47] *** Quits: imMute (~immute@user/immute) (Quit: Reconnecting)
+[22:09:55] *** Joins: imMute (~immute@user/immute)
+[22:10:29] *** Quits: imMute (~immute@user/immute) (Client Quit)
+[22:10:57] *** Joins: imMute (~immute@user/immute)
+[22:12:03] *** Joins: c4017w_ (~c4017@209.52.68.8)
+[22:12:41] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[22:15:40] *** Joins: Viewday115 (~Viewday@user/viewday)
+[22:15:47] *** Quits: c4017w__ (~c4017@209.52.68.8) (Ping timeout: 256 seconds)
+[22:17:05] *** Quits: Viewday11 (~Viewday@user/viewday) (Read error: Connection reset by peer)
+[22:17:06] *** Viewday115 is now known as Viewday11
+[22:21:22] *** Joins: Viewday115 (~Viewday@user/viewday)
+[22:22:47] *** Quits: Viewday11 (~Viewday@user/viewday) (Read error: Connection reset by peer)
+[22:22:47] *** Viewday115 is now known as Viewday11
+[22:27:01] *** Quits: rpnx-phone (rpnx-phone@gateway/vpn/protonvpn/rpnx) (Ping timeout: 245 seconds)
+[22:27:29] *** Joins: meandrain (~meandrain@2a02:2f0e:f70f:6e00:cd89:fba2:a689:f803)
+[22:27:29] *** Joins: rpnx-phone (rpnx-phone@gateway/vpn/protonvpn/rpnx)
+[22:27:47] *** Joins: unlink2 (~unlink@p200300ebcf3e190012b7094ba83de7f3.dip0.t-ipconnect.de)
+[22:27:48] *** Joins: Viewday112 (~Viewday@user/viewday)
+[22:29:23] *** Quits: Viewday11 (~Viewday@user/viewday) (Ping timeout: 256 seconds)
+[22:29:24] *** Viewday112 is now known as Viewday11
+[22:32:44] *** Joins: qaluh (~qaluh@user/qaluh)
+[22:33:48] *** Joins: CodePoint (~CodePoint@173-160-94-242-atlanta.hfc.comcastbusiness.net)
+[22:39:54] *** Quits: rgrinberg (~textual@187.223.227.166) (Ping timeout: 250 seconds)
+[22:43:32] *** Joins: rgrinberg (~textual@2806:101e:7:cba4:20c1:38e1:5832:d41b)
+[22:48:49] *** Joins: Null_A (~null_a@c-98-210-133-39.hsd1.ca.comcast.net)
+[22:49:47] *** Quits: rgrinberg (~textual@2806:101e:7:cba4:20c1:38e1:5832:d41b) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[22:53:52] *** Quits: Tobbi (~Tobbi@2a02:8108:1240:48ec:ec7a:c710:284d:4802) (Remote host closed the connection)
+[22:54:16] *** Joins: Tobbi (~Tobbi@2a02:8108:1240:48ec:ec7a:c710:284d:4802)
+[22:54:53] *** Joins: rgrinberg (~textual@2806:101e:7:cba4:20c1:38e1:5832:d41b)
+[22:56:47] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[22:57:03] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)
+[22:58:26] *** Quits: Null_A (~null_a@c-98-210-133-39.hsd1.ca.comcast.net) (Remote host closed the connection)
+[23:01:25] *** Joins: j0hn_mc_clane (~j0hn_mc_c@ptr-fqhhm12iua58a0gd4hj.18120a2.ip6.access.telenet.be)
+[23:01:38] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[23:02:13] *** Quits: qaluh (~qaluh@user/qaluh) (Remote host closed the connection)
+[23:02:22] *** Joins: tmm88 (~tmm88@user/tmm88)
+[23:04:55] *** Quits: varioust (~varioust@gateway/tor-sasl/varioust) (Remote host closed the connection)
+[23:05:24] *** Joins: varioust (~varioust@gateway/tor-sasl/varioust)
+[23:06:14] *** Quits: j0hn_mc_clane (~j0hn_mc_c@ptr-fqhhm12iua58a0gd4hj.18120a2.ip6.access.telenet.be) (Remote host closed the connection)
+[23:08:29] *** Quits: jellie (~luv_panda@user/jellie) (Ping timeout: 256 seconds)
+[23:08:57] *** Quits: tmm88 (~tmm88@user/tmm88) (Quit: Lost terminal)
+[23:11:01] *** Quits: dld (~davidlowr@73.61.9.48) (Ping timeout: 256 seconds)
+[23:12:44] *** Joins: c4017w__ (~c4017@209.52.68.8)
+[23:12:47] *** Joins: dld (~davidlowr@73.61.8.74)
+[23:13:21] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[23:14:57] *** Joins: Viewday117 (~Viewday@user/viewday)
+[23:15:09] *** Joins: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e)
+[23:16:07] *** Quits: c4017w_ (~c4017@209.52.68.8) (Ping timeout: 256 seconds)
+[23:16:59] *** Quits: Viewday11 (~Viewday@user/viewday) (Ping timeout: 256 seconds)
+[23:17:00] *** Viewday117 is now known as Viewday11
+[23:20:39] *** Joins: slidercrank (~slidercra@user/slidercrank)
+[23:23:03] *** Quits: Kohe (~Kohe@46.12.214.37.dsl.dyn.forthnet.gr) (Ping timeout: 268 seconds)
+[23:24:15] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[23:25:57] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[23:26:40] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Client Quit)
+[23:26:56] *** Joins: sbrothy (~sbrothy@192038128240.mbb.telenor.dk)
+[23:28:26] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[23:28:36] <imMute> *p++;  is the same as  p++;  right?  (p is a pointer)
+[23:29:25] *** Quits: gproto23 (~gproto23@user/gproto23) (Remote host closed the connection)
+[23:29:40] *** Joins: gproto23 (~gproto23@user/gproto23)
+[23:30:51] *** Quits: CodePoint (~CodePoint@173-160-94-242-atlanta.hfc.comcastbusiness.net) (Ping timeout: 256 seconds)
+[23:32:42] *** Quits: gproto23 (~gproto23@user/gproto23) (Remote host closed the connection)
+[23:33:17] *** Quits: Null_A (~null_a@2601:645:8700:2290:3c1e:11a0:debc:333e) (Ping timeout: 240 seconds)
+[23:33:52] <sbrothy> no. look up "derefenrece operator"
+[23:34:22] <sbrothy> oh no. sorry. ignore
+[23:34:30] <sbrothy> im sleeping here. nvm.
+[23:34:33] *** Quits: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net) (Ping timeout: 256 seconds)
+[23:34:49] *** Parts: sbrothy (~sbrothy@192038128240.mbb.telenor.dk) ()
+[23:35:28] <river> imMute: is *p++ equal to (*p)++ or *(p++)?
+[23:36:25] *** Joins: phrosty (~phrosty@c-73-225-175-19.hsd1.wa.comcast.net)
+[23:36:33] <river> if you check man operator, we can see that ++ binds tighter than *, so it's *(p++), that means it will give you *p as a value, but it will increment the pointer p
+[23:36:56] <river> be careful not to have another use of p in any expression containing *(p++)
+[23:39:06] *** Quits: rgrinberg (~textual@2806:101e:7:cba4:20c1:38e1:5832:d41b) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[23:39:16] *** Joins: CodePoint (~CodePoint@173-160-94-242-atlanta.hfc.comcastbusiness.net)
+[23:39:20] *** Joins: Thelma (uid509475@id-509475.lymington.irccloud.com)
+[23:40:55] <imMute> that's what I thought, but then this code had "*p1++;" and I was questioning myself (because the dereference is useless here)
+[23:45:12] *** Joins: RoKenn (~RoKenn@2001:a61:35b1:ca01:7359:5fa7:37ed:e9d5)
+[23:45:12] *** Quits: RoKenn (~RoKenn@2001:a61:35b1:ca01:7359:5fa7:37ed:e9d5) (Changing host)
+[23:45:12] *** Joins: RoKenn (~RoKenn@user/rokenn)
+[23:45:44] *** Quits: immibis (~hexchat@2a02:3032:3:a84:62b2:c42d:455d:d277) (Read error: Connection reset by peer)
+[23:45:49] <FAT1337> UZE POINTERZZZ EVRY*were
+[23:45:49] <leah2> a reasonable compiler would optimize it away, but in c++ you can overload operator* to do something else maybe?
+[23:46:18] *** Joins: immibis (~hexchat@2a02:3032:3:a84:62b2:c42d:455d:d277)
+[23:47:06] *** Quits: millido (~millido@84.210.150.128) (Quit: ZNC 1.8.2 - https://znc.in)
+[23:47:24] <FAT1337> I am truly sorry my imiginary cat walk on my imaginary keayboard and it was in fran�ais
+[23:48:19] <FAT1337> oops got revise my ortho
+[23:48:30] <FAT1337> brb
+[23:50:11] <imMute> leah2: yeah, overloaded operator* would be a potential issue (but not in this case)
+[23:54:51] *** Quits: Hello71 (~Hello71@wireguard/contributor/hello71) (Remote host closed the connection)
+[23:55:03] *** Joins: Hello71 (~Hello71@wireguard/contributor/hello71)

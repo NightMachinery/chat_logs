@@ -1,0 +1,247 @@
+[01:24:07] *** Joins: melezhik (~melezhik@c-98-198-217-77.hsd1.tx.comcast.net)
+[01:31:32] *** Quits: melezhik (~melezhik@c-98-198-217-77.hsd1.tx.comcast.net) (Ping timeout: 240 seconds)
+[01:32:45] <guifa> SmokeMachine: I guess Apple loosened restrictions a while back 
+[01:40:37] *** Joins: reportable6 (rep-able@2001:41d0:2:5eb5::)
+[02:04:02] *** Quits: wingfold (~wingfold@173.38.117.90) (Ping timeout: 240 seconds)
+[02:10:53] *** Joins: Tom (~Tom@047-014-035-071.res.spectrum.com)
+[02:12:17] *** Tom is now known as Guest750
+[02:15:36] <Guest750> I'm running Ubuntu 20.04; I have been running rakudo-2021.04 and rakudo-star. I just tried to install rakudo-star-2022.02, but the mods to my .bashrc don't seem to work. In particular the env. var 'PATH' references 'share' but there is no share directory in the rakudo-star-2022.02. Any thoughts?
+[02:17:40] *** Joins: melezhik (~melezhik@c-98-198-217-77.hsd1.tx.comcast.net)
+[02:18:48] <melezhik> sena_kun SmokeMachine yes, idea is to run tests on sparky cluster built on top off azure container instances - with per seconds price model - https://azure.microsoft.com/en-us/pricing/details/container-instances/
+[02:19:42] <melezhik> in that case there is no need to keep multi core pricy VM, and runs docker container on demand and then shutdown them
+[02:20:30] <melezhik> how many modules blin tests?
+[02:21:49] <melezhik> SmokeMachine we don't even need to have a k8s cluster - azure container instance are spawned and shut down on demand - it's pretty cheap and effective
+[02:22:50] <tonyo> melezhik: what are you building?
+[02:22:57] <melezhik> this is an example how to do this for parallel ( on many docker containers on the same time ) Rakudo spec test - https://github.com/melezhik/fastspec/blob/master/sparrowfile
+[02:24:24] <melezhik> tonyo I am thinking about building distributed test systems built on top of Sparky and azure docker instances
+[02:25:02] <melezhik> we could run tests on 20 containers in parallel and this would give us 20X speed )))
+[02:26:36] <melezhik> we could apply this pattern to any distributed nature tasks, I am just suggesting community modules testing against raid commits / releases as an obvious example
+[02:26:52] <melezhik> maybe there are other niches for that
+[02:27:36] <japhb> melezhik: At a certain point, the overall time to complete parallel tests becomes dominated by imbalance between the individual tests, by work needed to distribute the tests, and startup/shutdown/cleanup of each run test.
+[02:27:58] *** Quits: destroycomputers (~destroyco@5.188.41.98) (Ping timeout: 268 seconds)
+[02:27:59] <melezhik> like I said as a prove of concept I tried to do Rakudo test spec on multiple spec chunks on sparky cluster - https://github.com/melezhik/fastspec/blob/master/sparky/fastspec/sparrowfile#L49-L78
+[02:28:11] <japhb> You can mitigate the imbalance problem by using feedback from previous runs to sort the tests by longest-runtime-first in the work distribution queue.
+[02:29:13] *** Quits: Guest750 (~Tom@047-014-035-071.res.spectrum.com) (Quit: Connection closed)
+[02:29:40] <melezhik> japhb the thing is it'll hugely improved with the an era of docker. Also Sparky cluster  job api does all the job - it's all already implemented - https://github.com/melezhik/sparky#cluster-jobs
+[02:30:21] <tonyo> melezhik: i started down that path but you'll run into wanting different OSes to test against, eg something will work in linux but not bsd or windows, etc
+[02:30:38] <melezhik> so, yes there are some overheads to manage distributed queue, but they are not that significant, like I said
+[02:31:38] <japhb> The imbalance problem is the bigger one.
+[02:31:43] <melezhik> tonyo this was my previous work, with rakudist, but now I am talking about something different - about parallel cluster tests for community modules
+[02:32:12] <melezhik> but this also could be applied to parallel tests on various os, distributions
+[02:33:13] <melezhik> japhb - "and startup/shutdown/cleanup of each run test." - it's already solved one runs tests on clean docker containers and then just kill them
+[02:34:29] <melezhik> this is completely the case with azure container instance, and you can see how it works with fast spec - https://github.com/melezhik/fastspec/blob/master/sparky/fastspec/sparrowfile#L135
+[02:38:44] <japhb> I'm glad you've solved the second problem.  Just don't forget the first problem, is all I'm saying.  :-)
+[02:40:08] <melezhik> yeah, this is why I've referenced (addressed) only the  second part of your statement ))),  so you are saying we are always limit by the slowest and greatest test, right? ))
+[02:42:12] <japhb> Well, the big problem is when you get unlucky and after a well distributed run in which all workers are happily churning along, and you've gotten almost to the end of the work queue, you have the bad luck of the last couple tests being outsized huge -- so only those two workers have anything at all to do, and it takes them a long time to finish, meanwhile you can't use the rest of your fleet capacity to help 
+[02:42:18] <japhb> at all.
+[02:43:15] <melezhik> yeah, I see, but I guess my level of granularity is a module is being tested not a certain test, right?
+[02:43:46] <melezhik> so paralyzation is made by modules not by tests
+[02:44:23] <japhb> Right, but how do you know which modules have nearly-no tests, and which have lots of test files but are really fast to execute them, and which have tests that run for several minutes?
+[02:44:38] <melezhik> so roughly speaking we are guaranteed to have an even workload for all workers in a cluster, at least with some good aproximation ...
+[02:44:52] <tonyo> right but no matter what the background OS is using (eg even if your os is win, the container is still using only linux)
+[02:45:52] <melezhik> yeah, that's true, I still think for the sake of Rakudo testing , (back compatibility ) not module testsing, we can think of the of 100 most breakable modules if you will so that to tests against them every Rakudo commit
+[02:45:54] <tonyo> so you might have RCM modules that work only against the container and the system library provided by linux (GNU) but not the library provided by BSD (this crept up in an issue with a module running tar)
+[02:46:00] <japhb> melezhik: Yes, but that approximation is only as good as the granularity of parallelism you can achieve and the variance of its grains
+[02:46:58] <japhb> Anyway, I'm just trying to provide a hint.  Either you will be lucky, or you won't ... and then you'll remember this conversation.  ;-)
+[02:47:47] <melezhik> tonyo japhb I get all that, thanks ... well the idea - have very fast (1 minute total time  ) test for 100 💯 Raku modules against every Rakudo commit, to give Raku devs fast feedback on regression
+[02:47:58] <melezhik> will they be happy about that? :-)))
+[02:48:18] <japhb> That would be awesome, yes.  :-)
+[02:48:48] <tonyo> i think a nightly would suffice, yea, and if it automatically managed the issue in GH (eg, closed the issue when the problem is fixed) then yea i think it'd be less than objectionable noise on the repo
+[02:48:52] <melezhik> it could be just 1 hours of containers CPU/memory time per day, so dirt cheap - remember - it's per second price for azure container instances ? )))
+[02:49:56] <melezhik> so, I'll go ahead for this next journey ?  ha-ha )))
+[02:50:54] <melezhik> tonyo yeah, we could start with your nightly Rakudo builds - it'll be even cheaper ....
+[02:51:23] <tonyo> i like the idea, don't take the opinions as criticism
+[02:51:36] <melezhik> not at all  )))
+[02:51:58] <melezhik> :]
+[02:52:24] <El_Che> I hate it with passion and hate you all!
+[02:52:27] <El_Che> just kidding :)
+[02:52:40] <melezhik> )))
+[02:56:16] <tonyo> melezhik: i also had the thought of dedicating 10 cores of my desktop to that task but running against a VM so you can have a matrix of oses with it (bsd, osx, linux, win)
+[03:00:24] <nine> Why reinvent that wheel?
+[03:01:38] <nine> If we want to test a larger part of the ecosystem on every rakudo commit, all it takes is someone running the https://github.com/wbiker/module2rpm script on more modules and submit them to https://build.opensuse.org/project/show/home:niner9:rakudo-git
+[03:02:36] *** Quits: melezhik (~melezhik@c-98-198-217-77.hsd1.tx.comcast.net) (Ping timeout: 240 seconds)
+[03:02:49] <nine> Fully parallelized, dependency aware integration test on a > 1500 machine cluster.
+[03:03:40] <MasterDuke> is there any way to get notifications of failures?
+[03:03:43] <nine> Including web and command line interfaces, notifications, set-up of native dependencies and I don't know what else
+[03:04:15] <nine> And of course an API, on which you can automate everything and get all the data.
+[03:04:57] <nine> Oh, and it's completely free. Both in terms of license and for use.
+[03:16:39] *** Joins: linkable6 (lin-able@2001:41d0:2:5eb5::)
+[03:37:38] *** Joins: monkey_ (~user@190.104.116.153)
+[04:14:49] *** Joins: melezhik (~melezhik@c-98-198-217-77.hsd1.tx.comcast.net)
+[04:15:38] <melezhik> nine is it 1500 machines cluster for Rakudo modules only or this cluster shared by all other clients?
+[04:26:33] *** Quits: melezhik (~melezhik@c-98-198-217-77.hsd1.tx.comcast.net) (Ping timeout: 252 seconds)
+[04:29:51] *** Joins: kj4tip (~kj4tip@2600:380:6b48:9af:5c09:c5e1:c6e6:87b4)
+[04:37:10] *** Quits: reportable6 (rep-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[04:50:42] *** Joins: melezhik (~melezhik@c-98-198-217-77.hsd1.tx.comcast.net)
+[04:50:48] <melezhik> .
+[04:57:25] *** Quits: melezhik (~melezhik@c-98-198-217-77.hsd1.tx.comcast.net) (Ping timeout: 240 seconds)
+[05:30:30] *** Quits: monkey_ (~user@190.104.116.153) (Remote host closed the connection)
+[05:37:45] *** Joins: reportable6 (rep-able@2001:41d0:2:5eb5::)
+[06:52:32] *** Quits: vrurg (~vrurg@45.74.95.181) (Read error: Connection reset by peer)
+[06:52:44] *** Joins: vrurg (~vrurg@45.74.95.181)
+[06:55:55] *** Joins: vrurg_ (~vrurg@45.74.95.181)
+[06:58:21] *** Quits: vrurg (~vrurg@45.74.95.181) (Ping timeout: 252 seconds)
+[07:14:21] *** Joins: vrurg (~vrurg@45.74.95.181)
+[07:14:21] *** Quits: vrurg_ (~vrurg@45.74.95.181) (Read error: Connection reset by peer)
+[07:31:24] *** Quits: m_athias (~m-fteeyd@comm.detonation.org) (Remote host closed the connection)
+[07:32:02] *** Joins: m_athias (~m-fteeyd@comm.detonation.org)
+[07:40:51] *** Joins: elcaro_ (~anonymous@45.32.191.75)
+[07:40:55] *** Joins: thowe_ (~thowe@66.39.169.133)
+[07:40:56] *** Joins: merpader1 (~ircuser@89.111.36.243)
+[07:41:08] *** Joins: mplsCorwin (someone@fosshost/director/corwin)
+[07:41:19] *** Joins: kjp_ (~kevin@n175-36-89-183.meb3.vic.optusnet.com.au)
+[07:41:29] *** Quits: thowe (~thowe@66.39.169.133) (*.net *.split)
+[07:41:29] *** Quits: kjp (~kevin@n175-36-89-183.meb3.vic.optusnet.com.au) (*.net *.split)
+[07:41:29] *** Quits: jrjsmrtn (~jrjsmrtn@ip-83-134-41-224.dsl.scarlet.be) (*.net *.split)
+[07:41:29] *** Quits: merpaderp (~ircuser@89.111.36.243) (*.net *.split)
+[07:41:29] *** Quits: corwin (someone@fosshost/director/corwin) (*.net *.split)
+[07:41:29] *** Quits: elcaro (~anonymous@45.32.191.75) (*.net *.split)
+[07:41:58] *** Joins: jrjsmrtn (~jrjsmrtn@ip-83-134-41-224.dsl.scarlet.be)
+[08:04:32] *** Joins: destroycomputers (~destroyco@5.188.41.98)
+[09:09:11] *** Quits: reportable6 (rep-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[09:09:11] *** Quits: statisfiable6 (sta-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[09:09:11] *** Quits: unicodable6 (uni-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[09:09:11] *** Quits: linkable6 (lin-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[09:09:11] *** Quits: bloatable6 (blo-able@2001:41d0:2:5eb5::) (Read error: Connection reset by peer)
+[09:09:11] *** Quits: evalable6 (eva-able@2001:41d0:2:5eb5::) (Read error: Connection reset by peer)
+[09:09:11] *** Quits: bisectable6 (bis-able@2001:41d0:2:5eb5::) (Read error: Connection reset by peer)
+[09:09:11] *** Quits: notable6 (not-able@2001:41d0:2:5eb5::) (Read error: Connection reset by peer)
+[09:09:11] *** Quits: greppable6 (gre-able@2001:41d0:2:5eb5::) (Read error: Connection reset by peer)
+[09:09:11] *** Quits: coverable6 (cov-able@2001:41d0:2:5eb5::) (Read error: Connection reset by peer)
+[09:09:11] *** Quits: benchable6 (ben-able@2001:41d0:2:5eb5::) (Read error: Connection reset by peer)
+[09:09:11] *** Quits: quotable6 (quo-able@2001:41d0:2:5eb5::) (Read error: Connection reset by peer)
+[09:09:11] *** Quits: squashable6 (squ-able@2001:41d0:2:5eb5::) (Read error: Connection reset by peer)
+[09:09:11] *** Quits: nativecallable6 (nat-able@2001:41d0:2:5eb5::) (Write error: Connection reset by peer)
+[09:09:11] *** Quits: shareable6 (sha-able@2001:41d0:2:5eb5::) (Write error: Connection reset by peer)
+[09:09:11] *** Quits: sourceable6 (sou-able@2001:41d0:2:5eb5::) (Write error: Connection reset by peer)
+[09:09:11] *** Quits: releasable6 (rel-able@2001:41d0:2:5eb5::) (Write error: Connection reset by peer)
+[09:09:11] *** Quits: committable6 (com-able@2001:41d0:2:5eb5::) (Write error: Connection reset by peer)
+[09:09:35] *** Joins: bloatable6 (blo-able@2001:41d0:2:5eb5::)
+[09:09:57] *** Joins: sourceable6 (sou-able@2001:41d0:2:5eb5::)
+[09:10:51] *** Joins: evalable6 (eva-able@2001:41d0:2:5eb5::)
+[09:10:53] *** Joins: committable6 (com-able@2001:41d0:2:5eb5::)
+[09:11:14] *** Joins: unicodable6 (uni-able@2001:41d0:2:5eb5::)
+[09:11:19] *** Joins: notable6 (not-able@2001:41d0:2:5eb5::)
+[09:11:57] *** Joins: benchable6 (ben-able@2001:41d0:2:5eb5::)
+[09:12:10] *** Joins: bisectable6 (bis-able@2001:41d0:2:5eb5::)
+[10:09:27] *** Joins: quotable6 (quo-able@2001:41d0:2:5eb5::)
+[10:09:38] *** Joins: shareable6 (sha-able@2001:41d0:2:5eb5::)
+[10:10:00] *** Joins: linkable6 (lin-able@2001:41d0:2:5eb5::)
+[10:11:25] *** Joins: statisfiable6 (sta-able@2001:41d0:2:5eb5::)
+[10:11:50] *** Joins: squashable6 (squ-able@2001:41d0:2:5eb5::)
+[10:11:51] *** Joins: greppable6 (gre-able@2001:41d0:2:5eb5::)
+[10:22:01] *** Quits: ggoebel (~ggoebel@107-134-157-130.lightspeed.tukrga.sbcglobal.net) (Ping timeout: 245 seconds)
+[10:38:49] *** Joins: reportable6 (rep-able@2001:41d0:2:5eb5::)
+[10:50:17] *** thowe_ is now known as thowe
+[11:11:18] *** Joins: nativecallable6 (nat-able@2001:41d0:2:5eb5::)
+[11:11:24] *** Joins: releasable6 (rel-able@2001:41d0:2:5eb5::)
+[11:50:21] *** Quits: sena_kun (~koto@94.142.239.45) (Remote host closed the connection)
+[11:56:41] *** Joins: abraxxa (~ahartmai@smtp.hartmaier.priv.at)
+[11:57:58] *** Quits: abraxxa (~ahartmai@smtp.hartmaier.priv.at) (Remote host closed the connection)
+[11:59:58] *** Joins: abraxxa (~ahartmai@smtp.hartmaier.priv.at)
+[12:02:10] <nine> It's shared.
+[12:02:36] <nine> In practice, most of the time things start to build immediately.
+[12:04:33] *** Quits: abraxxa (~ahartmai@smtp.hartmaier.priv.at) (Ping timeout: 268 seconds)
+[12:05:39] *** Joins: abraxxa (~ahartmai@tsa-tc-flod.t-systems.at)
+[12:09:31] <Geth> ¦ App-Rakubrew: patrickbkr self-assigned "unauthenticated git protocol no longer supported" https://github.com/Raku/App-Rakubrew/issues/48
+[12:13:07] *** Quits: Sgeo (~Sgeo@user/sgeo) (Read error: Connection reset by peer)
+[12:22:12] *** Quits: kj4tip (~kj4tip@2600:380:6b48:9af:5c09:c5e1:c6e6:87b4) (Ping timeout: 240 seconds)
+[12:35:29] *** Joins: vrurg_ (~vrurg@45.74.95.181)
+[12:37:51] *** Quits: vrurg (~vrurg@45.74.95.181) (Ping timeout: 268 seconds)
+[12:38:05] *** Joins: mexen_wfh (uid495612@id-495612.ilkley.irccloud.com)
+[12:42:20] *** Joins: suman (~suman@27.34.50.9)
+[12:42:50] <suman> m: my @a=[1,2,3,4];
+[12:42:51] <camelia> rakudo-moar f71ada59a: ( no output )
+[12:43:27] <suman> Is there a way to test if the giveb list is all composed  of integers or num or rat ?
+[12:52:33] <MasterDuke> m: my @a = [1,2e2,3.3]; say all(@a) ~~ Numeric; my @b = [1,2e2,3.3,"str"]; say all(@b) ~~ Numeric;
+[12:52:34] <camelia> rakudo-moar f71ada59a: OUTPUT: «True␤False␤»
+[13:03:10] <suman> MasterDuke my goal is to test if the list is made of ints or num, accordingly i can pass the list/array to nativecall. If I test individual items then it would be O(n). can it be done in O(1) time.
+[13:04:25] <MasterDuke> sort of
+[13:05:21] <MasterDuke> m: my int @a = 1,2; say @a.of
+[13:05:22] <camelia> rakudo-moar f71ada59a: OUTPUT: «(int)␤»
+[13:07:18] <MasterDuke> if the array is parameterized, you can check what it was parameterized as with `.of`. if it isn't parameterized, but you just want to check that all the elements are ok, you're pretty much stuck at O(n)
+[13:09:16] <MasterDuke> m: sub foo(@a) { say @a.of; say @a }; foo([1, 2]); my int @n = 2,3; foo(@n)
+[13:09:17] <camelia> rakudo-moar f71ada59a: OUTPUT: «(Mu)␤[1 2]␤(int)␤[2 3]␤»
+[13:09:45] *** Joins: coverable6 (cov-able@2001:41d0:2:5eb5::)
+[13:17:03] <lizmat> m: dd (1,2,3,"foo").are
+[13:17:04] <camelia> rakudo-moar f71ada59a: OUTPUT: «Cool␤»
+[13:17:09] <lizmat> m: dd (1,2,3).are
+[13:17:09] <camelia> rakudo-moar f71ada59a: OUTPUT: «Int␤»
+[13:17:13] <lizmat> m: dd (1,2,3,3.4).are
+[13:17:14] <camelia> rakudo-moar f71ada59a: OUTPUT: «Real␤»
+[13:17:32] <lizmat> suman MasterDuke ^^
+[13:17:44] <MasterDuke> doh, forgot that was added
+[13:18:26] <lizmat> m: dd (1,2,3,3.4,Date.today).are
+[13:18:26] <camelia> rakudo-moar f71ada59a: OUTPUT: «Any␤»
+[13:30:38] *** Quits: suman (~suman@27.34.50.9) (Quit: Connection closed)
+[13:30:42] *** Joins: dakkar (~dakkar@home.thenautilus.net)
+[14:05:37] <CIAvash> oh! `infer` was changed to `are`? Is it part of Raku or just Rakudo?
+[14:10:41] <lizmat> I think it's Raku now
+[14:11:00] <lizmat> although I just noticed it's not been added to the docs yet
+[14:11:19] <lizmat> nor are there any spectests yet
+[14:30:42] *** Quits: evalable6 (eva-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[14:30:43] *** Quits: linkable6 (lin-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[14:33:18] *** Joins: linkable6 (lin-able@2001:41d0:2:5eb5::)
+[14:40:59] *** Joins: wingfold (~wingfold@173.38.117.89)
+[14:53:15] *** Joins: Darkcoal (~user@user/Darkcoal)
+[15:33:23] *** Joins: evalable6 (eva-able@2001:41d0:2:5eb5::)
+[15:50:00] *** Joins: razetime (~quassel@117.254.35.226)
+[15:59:25] *** Joins: ggoebel (~ggoebel@107-134-157-130.lightspeed.tukrga.sbcglobal.net)
+[16:02:26] *** Quits: razetime (~quassel@117.254.35.226) (Remote host closed the connection)
+[16:07:12] *** Joins: razetime (~quassel@117.254.35.226)
+[16:37:45] *** Quits: reportable6 (rep-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[16:52:06] *** Quits: discord-raku-bot (~RakuIRC@ip5f5ab729.dynamic.kabel-deutschland.de) (Remote host closed the connection)
+[16:52:30] *** Joins: discord-raku-bot (~RakuIRC@ip5f5ab729.dynamic.kabel-deutschland.de)
+[17:22:30] *** Joins: ggoebel_ (~ggoebel@107-134-157-130.lightspeed.tukrga.sbcglobal.net)
+[17:26:09] *** Quits: ggoebel (~ggoebel@107-134-157-130.lightspeed.tukrga.sbcglobal.net) (Ping timeout: 250 seconds)
+[17:39:41] * lizmat clickbaits https://rakudoweekly.blog/2022/03/21/2022-12-releasomatic/
+[17:50:27] *** Quits: razetime (~quassel@117.254.35.226) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[17:57:54] *** Quits: Darkcoal (~user@user/Darkcoal) (Ping timeout: 268 seconds)
+[17:59:43] *** Joins: Darkcoal (~user@user/Darkcoal)
+[18:02:14] *** Quits: Darkcoal (~user@user/Darkcoal) (Read error: Connection reset by peer)
+[18:07:58] *** Joins: Darkcoal (~user@user/Darkcoal)
+[18:18:57] *** Quits: Darkcoal (~user@user/Darkcoal) (Ping timeout: 240 seconds)
+[18:21:16] *** Joins: Darkcoal (~user@user/Darkcoal)
+[18:30:29] *** Joins: Sgeo (~Sgeo@user/sgeo)
+[18:53:31] *** mplsCorwin is now known as corwin
+[18:59:34] *** Quits: Darkcoal (~user@user/Darkcoal) (Ping timeout: 268 seconds)
+[19:01:01] *** Joins: Darkcoal (~user@user/Darkcoal)
+[19:09:26] *** Quits: abraxxa (~ahartmai@tsa-tc-flod.t-systems.at) (Remote host closed the connection)
+[19:09:49] *** Joins: abraxxa (~ahartmai@tsa-tc-flod.t-systems.at)
+[19:18:41] <[Coke]> good tutorial on Raku OO? I am trying to follow the BUILD/TWEAK examples for a simple class and passing in an attribute in the constructor doesn't seem to be working.
+[19:19:19] <[Coke]> AHAHAHA. because I'm an idiot.
+[19:19:22] <[Coke]> nevermind. :)
+[19:27:08] <[Coke]> ... crud. the powershell command to get the window size seems to be reporting on it as if it were a brand new powershell, not whatever the current terminal (in my case, a git bash terminal) is
+[19:29:36] <[Coke]> works just fine if my terminal is already a powershell, unsurprisingly.
+[19:30:35] <vrurg_> [Coke]: $COLUMNS?
+[19:30:48] *** vrurg_ is now known as vrurg
+[19:31:07] <vrurg> %*ENV<COLUMNS> I mean. :)
+[19:35:48] <[Coke]> doesn't exist on windows
+[19:37:30] <[Coke]> best I've found is: powershell -command '&{(get-host)).ui.rawui.WindowSize;}'
+[19:48:54] *** Joins: razetime (~quassel@117.254.35.226)
+[19:52:29] <[Coke]> ah, tput works on git bash
+[20:39:33] *** Joins: reportable6 (rep-able@2001:41d0:2:5eb5::)
+[20:41:00] <[Coke]> docs.raku.org/language/concurrency#Locks - This example is unlikely to trigger the issue the lock is protecting against. should make it ^1000 and remove the sleep, yes?
+[20:45:31] *** Joins: morte_ (~user@190.104.116.153)
+[20:47:07] <[Coke]> ... actually, tempting to make it a race.
+[21:07:47] *** Quits: djerius (~quassel@pool-108-20-43-199.bstnma.fios.verizon.net) (Ping timeout: 256 seconds)
+[21:09:09] *** Joins: djerius (~quassel@pool-108-20-43-199.bstnma.fios.verizon.net)
+[21:13:27] * guifa needs a cool title for his PRC talk 
+[21:13:49] <guifa> it's gonna be about reusing grammars inside of other grammars
+[21:17:57] *** Quits: razetime (~quassel@117.254.35.226) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[21:18:21] <lizmat> Grammarly Grammaring
+[21:23:20] <[Coke]> somehow work in a Kelsey Grammer joke?
+[21:25:30] <guifa> Grammarly ™̸ Grammaring to avoid legal trouble?
+[22:04:12] *** Quits: dakkar (~dakkar@home.thenautilus.net) (Ping timeout: 240 seconds)
+[22:05:17] *** Quits: peder (4822@nidur.ifi.uio.no) (Ping timeout: 252 seconds)
+[22:27:18] *** Quits: mexen_wfh (uid495612@id-495612.ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[22:39:34] *** Quits: reportable6 (rep-able@2001:41d0:2:5eb5::) (Remote host closed the connection)
+[22:52:29] *** Joins: peder (4822@nidur.ifi.uio.no)
+[22:53:41] *** Quits: wingfold (~wingfold@173.38.117.89) (Ping timeout: 245 seconds)
+[23:11:34] <Voldenet> [Coke]: you can get columns in powershell using nativecall
+[23:12:50] <Voldenet> like this: http://ix.io/3Tcb
+[23:13:56] *** Joins: _ed (~ed@184.55.211.167)
+[23:21:27] <Voldenet> i've skipped the error handling, but basically GetConsoleScreenBufferInfo returns 0 on fail, so there's nothing much in it
+[23:25:29] *** Quits: _ed (~ed@184.55.211.167) (Ping timeout: 256 seconds)
+[23:34:35] *** Quits: colemanx (~coleman@2600:1700:13be:9240:b029:8be5:6eb5:95e0) (Quit: Leaving)
+[23:37:22] *** Quits: Darkcoal (~user@user/Darkcoal) (Quit: Darkcoal)

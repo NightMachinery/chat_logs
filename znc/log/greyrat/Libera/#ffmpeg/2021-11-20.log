@@ -1,0 +1,617 @@
+[00:02:40] *** Quits: Rhvs (Rhys@help.lux.melted.me) (Read error: Connection reset by peer)
+[00:03:24] *** Joins: Rhvs (Rhys@help.lux.melted.me)
+[00:12:06] *** Joins: mateo` (~mateo@ffmpeg/developer/mateo)
+[00:14:33] *** Joins: N77 (~N77@075-112-092-167.res.spectrum.com)
+[00:14:46] *** Joins: beaver_ (~beaver@user/pong)
+[00:15:30] <N77> Uploaded file: https://uploads.kiwiirc.com/files/658490d46a8cfeea500c20b30fdaf9a3/pasted.txt
+[00:18:05] <N77> Hey everyone. I have a question related to the ffmpeg api for using filters with multiple input sources here on stackoverflow: https://stackoverflow.com/questions/69921016/cant-retrieve-valid-filtered-frame-from-buffersink-when-using-multiple-inputs. If I can get some help, I would really appreciate it.
+[00:18:15] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[00:18:21] *** Quits: beaver (~beaver@user/pong) (Ping timeout: 276 seconds)
+[00:19:30] *** Quits: N77 (~N77@075-112-092-167.res.spectrum.com) (Quit: Connection closed)
+[00:19:42] *** Joins: N77 (~N77@075-112-092-167.res.spectrum.com)
+[00:27:45] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 256 seconds)
+[00:29:09] *** Joins: arbitercoin (~Rheanna@101.91.232.166)
+[00:33:59] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Ping timeout: 256 seconds)
+[00:41:39] *** Quits: luni-4 (uid453292@ilkley.irccloud.com) (Read error: Connection reset by peer)
+[00:41:48] *** Joins: luni-4 (uid453292@ilkley.irccloud.com)
+[00:54:01] <emcodem> @N77 i know this question from videohelp and recommended you to post it here, glad you made it.
+[00:54:58] <emcodem> So what i know about the problem of @N77 is that he pushes frames from 2 different sources into the filter and he uses overlay but he never gets back any frame from the filter...
+[00:55:05] <emcodem> what could he be doing wrong?
+[00:56:00] <emcodem> https://www.irccloud.com/pastebin/x8LdumP1/
+[00:56:08] <emcodem> AND:
+[00:56:29] <emcodem> https://www.irccloud.com/pastebin/GBmgGueQ/
+[00:56:59] <JEEB> I would raise the verbosity level to verbose or further, and then log all the fed timestamps etc
+[00:59:31] <emcodem> @JEEB thanks for your attention, really appreciated. What i thought when looking at i was that there might be something missing that makes the overlay filter know which frame comes from source 0 VS source 1
+[00:59:55] <emcodem> and i never needed to feed filters from different sources so i am lost here...
+[01:01:30] *** Quits: shokohsc8618 (~shokohsc@161.88.195.77.rev.sfr.net) (Quit: The Lounge - https://thelounge.chat)
+[01:02:01] <JEEB> if you have a filter chain it really shouldn't matter where things come from per se
+[01:02:24] <JEEB> you just have AVFrames with pts (which should be on the time base according to the filter chain configuration)
+[01:02:42] <JEEB> thus the most common problem is that your AVFrames are not on that time base
+[01:02:51] <JEEB> since you have the framesync logic
+[01:03:05] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[01:03:09] <JEEB> which attempts to feed things matched by PTS
+[01:04:16] <emcodem> but will e.g. the overlay filter automatically detect which frame is coming from which source by just looking at the context somehow?
+[01:08:18] <emcodem> @N77 can you check the time base of your inputs? if JEEB's assumption is correct, your code might work in case you take the same file for input#0 and input #1
+[01:08:46] <JEEB> well there's helper functions to just adjust timestamps
+[01:09:00] <N77> emcodem Sure will
+[01:10:47] <N77> So I'm using the AVStream* time_base for both url input sources. The time_base for both is the same time_base.num is 1 and time_base.den is 90000
+[01:10:49] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 256 seconds)
+[01:10:49] <JEEB> well, for avpackets there's av_packet_rescale_ts but nothing like that for AVFrames yet, I think (mostly since they just contain pts and pkt_duration, I think?) so av_rescale_q is the most common
+[01:11:37] *** Quits: arbitercoin (~Rheanna@101.91.232.166) (Remote host closed the connection)
+[01:13:11] <JEEB> ok, I'm just looking at some stuff I wrote a few years ago
+[01:13:28] <JEEB> in my case I have a single input
+[01:13:39] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[01:14:02] <JEEB> so I have one buffer filter created, as "in" and I set video size, pix_fmt, time base and sar for it
+[01:14:02] *** Joins: arbitercoin (~Rheanna@218.78.94.61)
+[01:14:21] <JEEB> and then one buffersink for output
+[01:14:39] <N77> No problem thanks for the continued help. I noticed there's almost NO help online concerning using a filter-graph with multiple inputs that shows how to properly decode the frames, assign the timestamp, feed the filter-graph, and retrieve the final frame...
+[01:14:41] <JEEB> basically you'd need to create and configure two buffer sources, and link them
+[01:16:50] *** Quits: Volgaar (~volgaar@193.137.116.78.rev.sfr.net) (Quit: WeeChat 3.3)
+[01:17:01] <JEEB> N77: in theory it should be the same as with a single input->output. you just have two buffer sources instead of one
+[01:17:02] <N77> @JEEB I believe I did that already when creating and initializing the filter-graph. I used the avfilter_graph_parse2 function to automatically link them.
+[01:17:19] <JEEB> yea, not many examples if any do it manually like I did in my test :)
+[01:17:58] <N77> I tried that before I used avfilter_graph_parse2 and it still failed... lol :)
+[01:18:18] <JEEB> well if the filter chain is configured the exact same way the result should be the same :P
+[01:19:12] <JEEB> anyways, bump verbosity with av_log_set_level to AV_LOG_DEBUG or so
+[01:19:31] <JEEB> and then start logging the PTS of the frames passed to both buffer sources
+[01:20:14] <JEEB> also log both the decoder codec context's time base as well as the buffer source's time base
+[01:20:26] <JEEB> or wherever you're getting your AVFrames from :)
+[01:20:30] <JEEB> to/from
+[01:21:38] <N77> Thanks, sure thing, give me about 10 minutes
+[01:23:42] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 260 seconds)
+[01:27:35] *** Quits: luni-4 (uid453292@ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[01:28:57] *** Quits: Guest9482 (~Buster@46.160.36.66) (Ping timeout: 256 seconds)
+[01:29:01] *** Quits: `St0ner (~services@user/st0ner/x-3205467) (Remote host closed the connection)
+[01:29:29] *** Joins: shokohsc8618 (~shokohsc@161.88.195.77.rev.sfr.net)
+[01:30:52] <N77> I just checked the immediate properties of the buffersrc (AVFilterContext*) and I don't think it has a time_base
+[01:31:26] <N77> I can print the time_base of the AVStream* instead if need be.
+[01:32:37] <JEEB> that isn't too relevant unless your time base mishaps go all the way there
+[01:32:50] <emcodem> not that i am too into this all but did you check if it works when input#0 and #1 is actually the same file?
+[01:33:07] <JEEB> decoder context is the thing on which time base you are receiving the AVFrames
+[01:33:18] <N77> @emcodem Sorry let me try that
+[01:33:32] *** Quits: blaze (~blaze@user/blaze) (Ping timeout: 240 seconds)
+[01:33:38] <N77> @JEEB good point. I'll just print that then
+[01:34:32] *** Quits: c7s (~c7s@user/c7s) (Ping timeout: 240 seconds)
+[01:34:37] <JEEB> N77: AVFilterLink has it
+[01:34:46] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[01:35:08] <JEEB> in any case, you should be configuring the buffer's time base
+[01:36:53] <JEEB> av_buffersink_get_time_base is a thing for buffer sinks, so outputs at least have it
+[01:40:50] <N77> This is the kind of output I'm getting from logging the information (the second input source is the "screen-grab"):
+[01:40:55] <N77> Uploaded file: https://uploads.kiwiirc.com/files/ef3757bd1da6f7e4de6cc8d6f553cabc/pasted.txt
+[01:41:22] <N77> @emcodem I'm about to try to run this with both inputs being the same file now
+[01:41:54] <N77> Or at least the same url source
+[01:42:02] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Quit: Ping timeout (120 seconds))
+[01:42:19] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[01:42:24] <JEEB> also today I learned: av_buffersc_parameters_alloc and the AVBufferSrcParameters struct in general
+[01:42:27] <JEEB> lol
+[01:43:04] <JEEB> but eh, how ffmpeg.c inits the filter chain looks really similar to how I did otherwise
+[01:43:31] <JEEB> sets parameters as a config string (I think nowadays you might get away with AVDictionary options?)
+[01:44:05] <JEEB> and then av_buffersrc_parameters_set can be utilized on the created filter, right
+[01:44:08] <JEEB> funky
+[01:44:51] <N77> @JEEB Yeah that's strange
+[01:45:10] <JEEB> N77: those timestamps seem really differently offset btw, like if you consider that you are getting 1544806800 from 1/50, and 2607750 from 1/240
+[01:45:16] <N77> @emcodem The application still fails even though I'm using the same type of source as both inputs
+[01:45:28] <emcodem> uff thats what i feared
+[01:46:04] <N77> @JEEB That's what I meant when I mentioned in the post that I started the ffmpeg command-line streaming at different times.
+[01:46:49] <N77> One has been running for a good while (over an hour). One has been running for maybe 30 minutes or less
+[01:47:21] <N77> Now If I start them both within about 10 seconds of each other, It seems to work. Let me post the results
+[01:47:21] *** Joins: blaze (~blaze@user/blaze)
+[01:47:48] <JEEB> OK, so your application needs to basically figure out that it got input X at time something, and input Y at time another
+[01:47:57] <JEEB> and then match them up PTS vs real time
+[01:48:15] *** Quits: blaze (~blaze@user/blaze) (Client Quit)
+[01:48:43] <N77> Uploaded file: https://uploads.kiwiirc.com/files/adea525239df6b876fad1b15f23a3087/pasted.txt
+[01:48:45] <N77> these are the results of when it successfully runs:
+[01:49:21] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 256 seconds)
+[01:49:59] <N77> I launched the two ffmpeg command-line url "streamers" about a second or two apart from each other
+[01:50:15] <JEEB> you might be just logging those incorrectly, but if those two inputs are supposed to be close to each other in time and you are logging them in their correct time base, they clearly are not.
+[01:50:40] <JEEB> 2156400 on a 50Hz clock, and 2566500 on a 120Hz clock
+[01:51:03] *** Quits: af (~af@awalgarg.me) (Ping timeout: 256 seconds)
+[01:51:27] *** Joins: causa_sui (~causasui@c-68-60-125-136.hsd1.mi.comcast.net)
+[01:51:51] <N77> Well, this is my code for logging them...
+[01:51:55] <N77> Uploaded file: https://uploads.kiwiirc.com/files/acae9883c1359416831b108ccc98fb85/pasted.txt
+[01:52:08] <N77> Here's for logging the time_base:
+[01:52:10] <N77> Uploaded file: https://uploads.kiwiirc.com/files/81a48c6ab8ded198635bd6510736f598/pasted.txt
+[01:54:00] <JEEB> basically the examples in doc/examples go through this, but you have AVFormatContext if you are reading some input and that returns AVPackets with pts|dts|duration on the AVStream's time base. Then you initialize a decoder context and after initialization it has a time base. you basically have to av_packet_rescale_ts() the timestamps from input context's AVStream to the codec context's time base before
+[01:54:06] <JEEB> passing the packet to the decoder
+[01:54:36] *** Joins: Guest5 (~Guest5@2a00:23c7:4305:7601:611f:918f:f0cd:f176)
+[01:54:50] <JEEB> then when you receive an AVFrame from a decoder it will be on the AVCodecContext's time base, and you will have to av_rescale_q its pts to the buffer source's time base
+[01:55:03] <JEEB> and that's the basics, and that should not be affected by how many inputs etc you have
+[01:55:43] <Guest5> hello! i was wondering if there was a feature in ffmpeg that finds specific pixels in frames and then makes a list of all the timeframes where those pixels appear?
+[01:55:47] <JEEB> then in addition to that you have to make sure the inputs are in sync
+[01:56:02] <N77> Oh wow! Thanks! I'll try that out then. Forgive me I have to step away for about an hour. I will post my results when I get back
+[01:56:03] <JEEB> like when your pts are way out there
+[01:56:53] <JEEB> overlay not doing aynthing when your timestamps are way out there isn't surprising, it expects that you will push frames to it from roughly the same time range and framesync will sync them then to the filter(s) according to their PTS
+[01:57:06] <emcodem> @Guest5 i fear there is not even anything similar than that.
+[01:57:43] <emcodem> @Guest5, maybe you better describe your actual usecase
+[01:58:26] <JEEB> so if you are trying to sync two live inputs, you just either give up and offset both inputs' timestamps so that they start at "zero"
+[01:58:34] <JEEB> (which is probably what something like ffmpeg.c is doing)
+[01:58:48] *** Quits: causa_sui (~causasui@c-68-60-125-136.hsd1.mi.comcast.net) (Read error: Connection reset by peer)
+[01:58:56] <JEEB> or you see when you opened the input, set the offset to that monotonic time
+[01:59:10] <JEEB> and then pass through timestamps on that offset
+[01:59:19] *** Quits: edman007_ (~edman007@user/edman007) (Remote host closed the connection)
+[01:59:31] <JEEB> so if you have a 25Hz input, it will have an offset of that initial timestamp, and then continue 25Hz
+[02:00:05] <JEEB> not exact stuff since when you opened the context is different from the exact receipt time of a packet
+[02:00:08] <JEEB> but eh
+[02:00:19] <Guest5> well, i'm trying to get timestamps of like an hour long video where one picture of my dog shows up, i have that one dog picture saved, can i get all of the times where that image appears in the video?
+[02:00:31] <Guest5> is that a better example? sorry my english is bad
+[02:00:51] <JEEB> although in theory the best thing would be if the thing feeding the live stuff would not be starting at a random timestamp, but instead f.ex. at the unix timestamp
+[02:01:07] <JEEB> that way the reading side doesn't have to do random attempts at synchronization
+[02:01:18] <JEEB> aanyways, sleep for me :P
+[02:02:22] <emcodem> @JEEB nighty night, thanks for not making me look bad when referring users from other forums to here :D
+[02:02:22] *** Quits: arbitercoin (~Rheanna@218.78.94.61) (Remote host closed the connection)
+[02:03:25] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[02:03:41] *** Joins: arbitercoin (~Rheanna@218.78.104.50)
+[02:05:47] *** Quits: auth (~auth@user/auth) (Ping timeout: 256 seconds)
+[02:05:57] <emcodem> @Guest5 unfortunately what you want is future technology
+[02:06:51] <Guest5> ah, well alright, thanks for letting me know atleast!
+[02:07:04] <emcodem> it might be kind of possible, using detection of images that contain your dogs colors in certain areas
+[02:07:15] *** Parts: Guest5 (~Guest5@2a00:23c7:4305:7601:611f:918f:f0cd:f176) ()
+[02:07:48] <emcodem> but it is something that would require at least some serious amount of scripting... are you able to deliver that?
+[02:08:03] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 256 seconds)
+[02:09:15] *** Joins: Guest5 (~Guest5@2a00:23c7:4305:7601:611f:918f:f0cd:f176)
+[02:09:15] <Guest5> sorry, i'm back
+[02:09:21] <Guest5> sorry, i'm back
+[02:09:27] <Guest5> must've pressed something by accident
+[02:09:30] <emcodem> only thing you missed:
+[02:09:31] <emcodem> but it is something that would require at least some serious amount of scripting... are you able to deliver that?
+[02:09:53] <Guest5> i'm sure i could get by with some trial and error?
+[02:10:39] <emcodem> just to be sure... i ask you:
+[02:11:34] <emcodem> what is your favourite scripting language?
+[02:11:59] <emcodem> or programming language of course...
+[02:12:31] <Guest5> i can go about using bash/terminal
+[02:12:49] <Guest5> and flags they come with
+[02:13:46] <emcodem> thats just fine... and are you willing to invest at least 20 hours + into this?
+[02:14:08] <Guest5> maybe, it'd be a fun project atleast :)
+[02:14:22] <emcodem> hehe perfect
+[02:14:34] <emcodem> ok, so lemme try to explain...
+[02:15:19] <furq> you probably want opencv or something for that
+[02:15:55] <emcodem> we currently cannot detect things like "your dog", instead the only thing we can really do is to check if a certain picture area contains colors that are "close to your dog"
+[02:16:20] <emcodem> might i ask what color has you dog's fur so i can come up with an example?
+[02:16:54] <Guest5> the background of the "dog" is solid light gray, would that make it simpler?
+[02:17:34] <emcodem> @furq yeah but learning new models to opencv sounds like overengineered for this usecase maybe?
+[02:18:56] <emcodem> what i was after is exactly something like the "solid light gray" instead which might be kind of possible to detect and report without using any kind of AI and such
+[02:21:10] <Guest5> sounds good so far.
+[02:22:19] <emcodem> so, in my (very basic) approach, we can use existing ffmpeg filters to check if a certain picture area has +- this and that color
+[02:24:02] <emcodem> i did that for detecting a red dot in the middle of the picture, lemme see if i can find the old stuff
+[02:25:02] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[02:31:26] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 260 seconds)
+[02:32:06] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[02:33:23] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Quit: ERC (IRC client for Emacs 27.1))
+[02:34:38] <Guest5> I'm going through the ffmpeg documentation to find something that might help :P
+[02:34:43] *** Joins: af (~af@awalgarg.me)
+[02:36:08] *** Joins: wootehfoot (~wootehfoo@user/wootehfoot)
+[02:41:34] <emcodem> ah, i recall how we did this
+[02:42:13] <emcodem> not going to be too helpful today because ready for bed but how it worked was like that:
+[02:44:01] <emcodem> extract a certain area of the picture of each frame, save the extracted area as bmp
+[02:45:41] <emcodem> then compare the extracted image with a reference image which holds the basic reference color of your dog
+[02:45:59] *** Quits: palasso (~palasso@user/palasso) (Remote host closed the connection)
+[02:46:57] <Guest5> gotcha. i found something about "blackdetect" in the documentation, perhaps that could work?
+[02:47:36] <emcodem> if you can concentrate on some area of the video, like when your dog is in center, it could work
+[02:49:17] <emcodem> yeah well, blackdetect is an option but you'd need to set it to just work with a certain area of the fulll picture plus you'd need to be able to tell it what's your dog's grayish
+[02:49:39] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 268 seconds)
+[02:50:00] <Guest5> ah, well
+[02:50:11] <Guest5> in any case, this gives me a bit of a lead on how to move forward, so thanks a lot
+[02:50:22] <emcodem> have fun :D
+[02:50:26] <Guest5> thanks
+[02:50:35] *** Parts: Guest5 (~Guest5@2a00:23c7:4305:7601:611f:918f:f0cd:f176) ()
+[02:51:32] *** Quits: arbitercoin (~Rheanna@218.78.104.50) (Remote host closed the connection)
+[02:52:14] *** Joins: arbitercoin (~Rheanna@218.78.105.67)
+[02:53:28] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[02:58:29] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 256 seconds)
+[03:04:33] *** Quits: Seirdy (~Seirdy@sourcehut/user/seirdy) (Quit: exiting 3.3)
+[03:05:06] *** Joins: Seirdy (~Seirdy@sourcehut/user/seirdy)
+[03:08:57] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[03:13:47] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 256 seconds)
+[03:16:12] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[03:23:23] *** Quits: wootehfoot (~wootehfoo@user/wootehfoot) (Read error: Connection reset by peer)
+[03:27:10] *** Joins: MightyBOB (~MightyBOB@c-76-99-21-35.hsd1.pa.comcast.net)
+[03:27:23] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 256 seconds)
+[03:28:52] *** Quits: LurkingBOB (~MightyBOB@c-76-99-21-35.hsd1.pa.comcast.net) (Read error: Connection reset by peer)
+[03:35:14] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[03:41:55] *** Quits: arbitercoin (~Rheanna@218.78.105.67) (Remote host closed the connection)
+[03:44:03] *** Joins: arbitercoin (~Rheanna@218.78.109.69)
+[03:48:47] *** Joins: avery__ (~avery@2607:ea00:107:3c07:1ff:7b73:4b44:5fc4)
+[03:50:50] *** Quits: Hackerpcs (~user@user/hackerpcs) (Quit: Hackerpcs)
+[03:51:29] <N77> Hey @emcodem thank you and @JEEB so much for the help. I am still working on implementing the suggestions from earlier, but I just wanted to say thank you
+[03:54:14] *** Joins: Hackerpcs (~user@user/hackerpcs)
+[04:04:23] *** Quits: fkaa (~fkaa@81-226-20-99-no256.tbcn.telia.com) (Remote host closed the connection)
+[04:11:08] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[04:13:40] *** Quits: rammstein (~gnu@2400:8904::f03c:92ff:fe4b:7c0a) (Remote host closed the connection)
+[04:14:15] *** Quits: iive (~iive@87.119.101.204.client.entry.bg) (Quit: They came for me...)
+[04:15:58] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 260 seconds)
+[04:40:39] *** Quits: rpthms (~rpthms@user/rpthms) (Ping timeout: 268 seconds)
+[04:42:00] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[04:46:43] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 256 seconds)
+[04:47:48] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[04:52:22] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 268 seconds)
+[05:09:27] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[05:10:10] *** Joins: maximilian90 (~standard-@x590feea3.dyn.telefonica.de)
+[05:13:50] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 260 seconds)
+[05:17:22] *** Joins: Fohsap (~Muimi@2001:19f0:5001:2bf8:5400:3ff:fe30:8554)
+[05:19:59] *** Joins: rpthms (~rpthms@user/rpthms)
+[05:26:36] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[05:26:40] <N77> So, @JEEB and @emcodem, the suggestions didn't fully work... but thank you both for the help.
+[05:27:47] *** Quits: N77 (~N77@075-112-092-167.res.spectrum.com) (Quit: Connection closed)
+[05:30:20] *** Quits: vlm (~vlm@user/vlm) (Quit: "")
+[05:31:34] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 260 seconds)
+[05:32:07] *** Quits: avery__ (~avery@2607:ea00:107:3c07:1ff:7b73:4b44:5fc4) (Quit: avery__)
+[05:35:08] *** beaver_ is now known as beaver
+[05:48:32] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[05:53:02] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 260 seconds)
+[05:53:02] *** Quits: nrg (~NRG@user/nrg) (Ping timeout: 260 seconds)
+[05:56:09] *** Joins: nrg (~NRG@user/nrg)
+[06:00:36] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[06:02:48] *** Quits: lexano (~lexano@cpe00e06722f0e4-cm98524a70e35e.cpe.net.cable.rogers.com) (Read error: Connection reset by peer)
+[06:05:29] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 256 seconds)
+[06:05:29] *** Quits: maximilian90 (~standard-@x590feea3.dyn.telefonica.de) (Ping timeout: 256 seconds)
+[06:07:33] *** Joins: maximilian90 (~standard-@x590fec6b.dyn.telefonica.de)
+[06:11:37] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[06:11:37] *** Quits: arbitercoin (~Rheanna@218.78.109.69) (Remote host closed the connection)
+[06:13:54] *** Joins: arbitercoin (~Rheanna@218.78.104.50)
+[06:17:23] *** Quits: af (~af@awalgarg.me) (Ping timeout: 256 seconds)
+[06:17:34] *** Quits: beaver (~beaver@user/pong) (Quit:  )
+[06:19:05] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 256 seconds)
+[06:19:18] *** Joins: beaver (~beaver@user/pong)
+[06:21:27] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[06:24:25] *** Quits: mega (~iglosiggi@user/mega) (Quit: cya!)
+[06:26:38] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 260 seconds)
+[06:28:58] *** Quits: wyatt8750 (~wyatt8740@23.105.46.19) (Ping timeout: 260 seconds)
+[06:30:43] *** Joins: wyatt8740 (~wyatt8740@185.199.102.128)
+[06:31:08] *** Joins: nillyhan (~00000000@user/nillyhan)
+[06:38:05] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[06:47:11] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 264 seconds)
+[06:49:16] *** Joins: a0z (~a0z@90.244.141.170)
+[06:59:48] *** Quits: waleee (~waleee@h-82-196-111-63.NA.cust.bahnhof.se) (Quit: WeeChat 3.3)
+[07:00:36] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[07:06:24] *** Joins: Kei_N_ (~Kei_N@user/kei-n/x-2886111)
+[07:07:49] *** Quits: maximilian90 (~standard-@x590fec6b.dyn.telefonica.de) (Ping timeout: 256 seconds)
+[07:08:12] *** Joins: maximilian90 (~standard-@x590fec6b.dyn.telefonica.de)
+[07:09:03] *** Quits: Kei_N (~Kei_N@user/kei-n/x-2886111) (Ping timeout: 250 seconds)
+[07:09:06] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 260 seconds)
+[07:09:24] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[07:13:35] *** Quits: maximilian90 (~standard-@x590fec6b.dyn.telefonica.de) (Ping timeout: 268 seconds)
+[07:17:47] *** Quits: jos1 (~jos3@dyndsl-178-142-065-051.ewe-ip-backbone.de) (Ping timeout: 264 seconds)
+[07:18:34] *** Joins: AbleBacon (~AbleBacon@user/AbleBacon)
+[07:24:11] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[07:30:16] *** Quits: minimal (~minimal@user/minimal) (Quit: Leaving)
+[07:31:03] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 256 seconds)
+[07:31:21] *** Joins: jos1 (~jos3@dyndsl-091-248-050-207.ewe-ip-backbone.de)
+[07:33:53] *** Joins: yeirr (~yeirr@user/yeirr)
+[07:43:53] *** Joins: therobin_ (~UserNick@2607:f2c0:9510:9e00:99c5:3198:d7ae:57da)
+[07:46:28] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[07:47:47] *** Quits: therobin (~UserNick@2607:f2c0:9510:9e00:f84a:d22b:c937:a902) (Ping timeout: 264 seconds)
+[07:47:50] *** therobin_ is now known as therobin
+[07:51:23] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 264 seconds)
+[07:52:01] *** Quits: arbitercoin (~Rheanna@218.78.104.50) (Remote host closed the connection)
+[07:53:20] *** Joins: arbitercoin (~Rheanna@218.78.105.67)
+[07:56:19] *** Joins: maximilian90 (~standard-@x590fec6b.dyn.telefonica.de)
+[08:02:34] *** Quits: maximilian90 (~standard-@x590fec6b.dyn.telefonica.de) (Quit: WeeChat 3.0)
+[08:20:55] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[08:25:07] *** Quits: yeirr (~yeirr@user/yeirr) (Ping timeout: 268 seconds)
+[08:25:35] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 264 seconds)
+[08:26:06] *** Quits: tlacatlc6 (~tlacatlc6@097-101-132-062.res.spectrum.com) (Quit: Leaving)
+[08:32:06] *** Joins: af (~af@awalgarg.me)
+[08:41:20] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[08:42:24] *** Quits: arbitercoin (~Rheanna@218.78.105.67) (Remote host closed the connection)
+[08:43:16] *** Joins: arbitercoin (~Rheanna@218.78.53.13)
+[08:47:06] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 260 seconds)
+[08:53:14] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[08:57:50] *** Joins: yeirr (~yeirr@user/yeirr)
+[08:58:19] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 256 seconds)
+[08:58:57] *** Quits: tar_xvf (~tar_xvf@ec2-3-136-243-174.us-east-2.compute.amazonaws.com) (Quit: ZNC 1.7.5+deb4 - https://znc.in)
+[08:59:15] *** Joins: tar_xvf (~tar_xvf@ec2-3-136-243-174.us-east-2.compute.amazonaws.com)
+[09:15:01] *** Joins: Vonter (~Vonter@user/vonter)
+[09:27:47] *** Joins: realies0 (~realies@user/realies)
+[09:28:34] *** Quits: realies (~realies@user/realies) (Ping timeout: 260 seconds)
+[09:28:35] *** realies0 is now known as realies
+[09:31:44] *** Quits: arbitercoin (~Rheanna@218.78.53.13) (Remote host closed the connection)
+[09:33:09] *** Joins: arbitercoin (~Rheanna@218.78.99.237)
+[09:46:23] *** Joins: Jerrk (~Jerrk@45.83.220.218)
+[09:48:11] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[09:52:54] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 260 seconds)
+[10:15:05] *** Joins: kib (~kib@user/kib)
+[10:22:40] *** Quits: Xaldafax (~xaldafax@cpe-198-72-160-101.socal.res.rr.com) (Quit: Bye...)
+[10:25:32] *** Quits: AbleBacon (~AbleBacon@user/AbleBacon) (Read error: Connection reset by peer)
+[10:25:32] *** Quits: kib (~kib@user/kib) (Quit: WeeChat 3.3)
+[10:28:31] *** Joins: kib (~kib@user/kib)
+[10:36:21] *** Joins: auth (~auth@user/auth)
+[10:37:30] *** Joins: YuGiOhJCJ (~YuGiOhJCJ@gateway/tor-sasl/yugiohjcj)
+[10:41:09] *** Quits: rando25892 (~user@user/rando25892) (Ping timeout: 250 seconds)
+[10:51:16] *** Quits: kib (~kib@user/kib) (Ping timeout: 268 seconds)
+[10:53:10] *** Joins: kib (~kib@user/kib)
+[11:00:20] *** Quits: YuGiOhJCJ (~YuGiOhJCJ@gateway/tor-sasl/yugiohjcj) (Quit: YuGiOhJCJ)
+[11:02:46] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[11:04:00] *** Joins: tuxd3v (~tuxd3v@93.102.33.166.rev.optimus.pt)
+[11:07:31] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 256 seconds)
+[11:21:37] *** Quits: Colt (~Colt@user/colt) (Quit: Leaving)
+[11:21:41] *** Joins: fkaa (~fkaa@81-226-20-99-no256.tbcn.telia.com)
+[11:27:08] *** Quits: yeirr (~yeirr@user/yeirr) (Quit: yeirr)
+[11:33:47] *** Joins: a0z_ (~a0z@90.244.184.28)
+[11:34:40] *** Quits: a0z (~a0z@90.244.141.170) (Killed (NickServ (GHOST command used by a0z_!~a0z@90.244.184.28)))
+[11:34:45] *** a0z_ is now known as a0z
+[11:40:03] *** Joins: Volgaar (~volgaar@193.137.116.78.rev.sfr.net)
+[11:44:27] *** Joins: Colt (~Colt@user/colt)
+[11:50:16] *** Joins: dreamon (~dreamon@ppp-88-217-64-242.dynamic.mnet-online.de)
+[11:53:06] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[11:57:59] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 264 seconds)
+[12:01:54] *** Quits: arbitercoin (~Rheanna@218.78.99.237) (Remote host closed the connection)
+[12:04:21] *** Joins: arbitercoin (~Rheanna@218.78.79.129)
+[12:17:24] *** Joins: hpkn_ (~hpkn@gateway/tor-sasl/hpkn)
+[12:18:33] *** Quits: hpkn (~hpkn@gateway/tor-sasl/hpkn) (Ping timeout: 276 seconds)
+[12:18:34] *** hpkn_ is now known as hpkn
+[12:21:14] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[12:27:28] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 268 seconds)
+[12:30:55] *** Quits: Fohsap (~Muimi@2001:19f0:5001:2bf8:5400:3ff:fe30:8554) (Quit: Going offline, see ya! (www.adiirc.com))
+[12:32:02] *** Quits: nillyhan (~00000000@user/nillyhan) (Ping timeout: 240 seconds)
+[12:32:42] *** Joins: rsx (~dummy@ppp-188-174-146-173.dynamic.mnet-online.de)
+[12:43:24] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[12:49:59] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[12:51:32] *** Quits: arbitercoin (~Rheanna@218.78.79.129) (Remote host closed the connection)
+[12:53:22] *** Joins: nillyhan (~00000000@user/nillyhan)
+[12:53:56] *** Joins: arbitercoin (~Rheanna@218.78.105.67)
+[12:54:22] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 260 seconds)
+[12:54:29] *** Quits: mthall (~quassel@mail.thalliman.com) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[12:58:33] *** Joins: bartzy (uid163429@hampstead.irccloud.com)
+[13:02:31] *** Joins: luni-4 (uid453292@ilkley.irccloud.com)
+[13:04:03] <bartzy> Can ffmpeg output animated HEICs?
+[13:07:25] *** Quits: sagax (~sagax_nb@user/sagax) (Ping timeout: 250 seconds)
+[13:12:26] *** Quits: Jerrk (~Jerrk@45.83.220.218) (Read error: Connection reset by peer)
+[13:18:54] *** Joins: l4yer (~l4yer@195.181.170.210)
+[13:20:33] *** Joins: Amoz (~alex@h-155-4-73-184.A192.priv.bahnhof.se)
+[13:23:37] *** Joins: palasso (~palasso@user/palasso)
+[13:29:14] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[13:30:35] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[13:31:07] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Client Quit)
+[13:31:35] *** Quits: gnoo (gnoo@user/gnoo) (Ping timeout: 264 seconds)
+[13:32:33] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[13:37:26] *** Quits: l4yer (~l4yer@195.181.170.210) (Remote host closed the connection)
+[13:37:30] *** Joins: Fohsap (~Muimi@2001:19f0:5001:2bf8:5400:3ff:fe30:8554)
+[13:41:46] *** Quits: arbitercoin (~Rheanna@218.78.105.67) (Remote host closed the connection)
+[13:42:24] <emcodem> @bartzy no
+[13:42:38] *** Joins: l4yer (~l4yer@195.181.170.210)
+[13:43:01] *** Joins: Jerrk (~Jerrk@193.138.218.225)
+[13:43:44] *** Joins: arbitercoin (~Rheanna@101.89.150.168)
+[13:46:03] <Amoz> Hi, i have a very old VHS tape that seems to have a lot of small "white stripes" randomly appearing for only one frame. Is there any chance there exists a filter that could handle that type of noise and remove it? Here's a sample video https://amoz.duckdns.org/download/sample.mp4
+[13:46:39] <bartzy> emcodem: thanks
+[13:51:59] *** Quits: kib (~kib@user/kib) (Ping timeout: 264 seconds)
+[13:55:16] <emcodem> @Amoz i believe this is more a case for avisynth
+[13:56:23] *** Quits: dreamon (~dreamon@ppp-88-217-64-242.dynamic.mnet-online.de) (Ping timeout: 256 seconds)
+[13:57:59] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[14:00:17] <durandal_1707> avisynth is crap
+[14:00:18] <Amoz> emcodem, thank you! For some reason I thought it was non-free and i've seen it come up in my searches before. I'll see if i can figure it out
+[14:00:20] <durandal_1707> do not use it
+[14:00:31] <Amoz> durandal_1707, any better suggestion?
+[14:01:14] <durandal_1707> Amoz: combination of tmedian filter and some others
+[14:02:37] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 256 seconds)
+[14:02:47] <Amoz> durandal_1707, "some others" ? I'll play around with tmedian with default settings and see what happens
+[14:02:56] <emcodem> hehe why am i under the impression that there is some kind of fight between avisynth and ffmpeg guys :D
+[14:11:56] <JEEB> not really?
+[14:13:07] <emcodem> https://usercontent.irccloud-cdn.com/file/8jDkxSz4/sample.MP4
+[14:15:53] <emcodem> well i have seen some topics on doom9 (avisynth home basically) where people say "dont use ffmpeg" and here the other way around which is funny
+[14:16:25] <emcodem> i mean ffmpeg is super duper ultra good and avisynth has lots of interesting plugins as well
+[14:16:42] *** Joins: blaze (~blaze@user/blaze)
+[14:17:11] <furq> ffmpeg got a lot better in recent years
+[14:17:12] <emcodem> and the 2 cannot be compared at all actually, i mean avisynth can do filtering only, not more, it cannot even decode natively
+[14:17:18] <furq> avisynth has been dead for years as far as i can tell
+[14:17:51] <JEEB> avisynth and vapoursynth are tools in their own right, and have a history of plugins, yup.
+[14:17:59] <emcodem> well they still work on it but it's progressing very slow
+[14:18:09] <furq> i guess there's avs+ now so maybe it can finally multithread without crashing
+[14:18:15] <furq> but you should probably use vapoursynth
+[14:18:25] <furq> assuming lavfi doesn't have what you want
+[14:18:28] <emcodem> btw, above clip was done using avisynth RemoveDirt function
+[14:19:02] <JEEB> and just note that you shouldn't take d's strong wordings too much at heart :P he seems to always respond like that. he probably means good, but keep that in mind if you think of this being an FFmpeg VS Others kind of thing
+[14:19:15] <JEEB> which it is not
+[14:19:24] <furq> yeah
+[14:19:30] <furq> ffmpeg has an avisynth demuxer after all
+[14:19:39] <emcodem> agreed, well expressed Jan
+[14:19:52] <emcodem> hehe and avisynth has the ffmpeg source plugin :D
+[14:20:12] <JEEB> ffms2 is just a library that utilizes FFmpeg's APIs to attempt to provide frame-exact seeking etc through indexing
+[14:20:27] <JEEB> it's used with both vs and avs, as well as just a library
+[14:20:43] <JEEB> in applications such as aegisub or within large video sites like the Y and V ones
+[14:22:44] <JEEB> anyways, I have no bone in the discussion at hand. I do not know the filters in either lavfi or vs/avs regarding removal of random bright artifacts :)
+[14:23:54] *** Joins: kib (~kib@user/kib)
+[14:24:09] <emcodem> https://usercontent.irccloud-cdn.com/file/97hMGvRf/tmedian.mp4
+[14:24:15] <emcodem> tmedian does a great job too
+[14:25:48] *** Joins: softworkz_ (~softworkz@user/softworkz)
+[14:25:48] *** Quits: softworkz (~softworkz@user/softworkz) (Killed (strontium.libera.chat (Nickname regained by services)))
+[14:25:48] *** softworkz_ is now known as softworkz
+[14:25:52] <Amoz> i wonder if it gets better if adding some sharpening as well. In my previous filter settings i had this: yadif=1:1,hqdn3d=3,drawbox=y=ih-h:w=0:h=6:t=6,format=yuv420p
+[14:32:12] <emcodem> i think i wouldn't do too much filtering with it but as you see it's not like i am a pro in regards to filtering ;-)
+[14:32:52] <Amoz> everyone is a pro in comparison to me!
+[14:41:16] *** Joins: nock (~noctarium@2804:14c:8786:81c3:a10c:e0ab:fd30:1397)
+[14:45:41] <durandal_1707> Amoz: well it would be much better if you provided lossless compressed video
+[14:45:55] <durandal_1707> untouched/unprocessed one
+[14:46:54] <durandal_1707> also i see other issues with that motorcycle sample, like different field where blended together
+[14:47:17] <durandal_1707> you cant use tmedian as single filter solution...
+[14:47:20] <JEEB> yea, that's not great :< but it depends on how you were able to capture
+[14:48:19] <durandal_1707> basically you build mask that will change only those ugly impules in video (whites and blacks)
+[14:49:03] <Amoz> that sample is from my converted (finished) output, based on an unprocessed one. If you want an unprocessed one i can extract it. Hold on
+[14:49:12] <durandal_1707> but note that white impulses are fading to some color so its not going to be perfect
+[14:50:48] <Amoz> my current source->target ffmpeg args (filter only) are -vf yadif=1:1,drawbox=y=ih-h:w=0:h=6:t=6,format=yuv420p
+[14:54:52] <Amoz> this should be an extract of the raw capture https://amoz.duckdns.org/download/raw_sample.mp4
+[14:54:55] <Amoz> durandal_1707, ^
+[15:01:02] *** Quits: nock (~noctarium@2804:14c:8786:81c3:a10c:e0ab:fd30:1397) (Ping timeout: 268 seconds)
+[15:03:53] <durandal_1707> Amoz: "separatefields,split[v][t];[t]tmedian=1[t];[t][v]maskedthreshold=220,weave,estdif"
+[15:04:17] <durandal_1707> its not perfect, but you can get general idea what to do...
+[15:06:02] *** Joins: cosimone (~user@2001:b07:ae5:db26:a7aa:8027:6b4e:2fb3)
+[15:06:36] *** Joins: gnoo (gnoo@user/gnoo)
+[15:07:06] <Amoz> durandal_1707, would i use estdif instead of yadif in my additional filters?
+[15:09:09] <durandal_1707> Amoz: try it and do visual comparison
+[15:10:30] <durandal_1707> yadif just tends for some cases to introduce additional spottable artifacts in interpolated fields
+[15:10:49] <durandal_1707> bwdif less likely
+[15:12:37] <durandal_1707> if you are on windows, you could try virtualdub dirtcleaner plugin
+[15:14:23] <durandal_1707> or vapoursynth if you want to learn it, but both cases you need to spend time on learning it
+[15:19:58] *** Joins: dreamon (~dreamon@pd95032c6.dip0.t-ipconnect.de)
+[15:22:22] *** Quits: arbitercoin (~Rheanna@101.89.150.168) (Remote host closed the connection)
+[15:24:02] *** Joins: arbitercoin (~Rheanna@218.78.109.69)
+[15:27:22] <Amoz> thanks a lot, I'll try to experiment a bit. Seems i have older version of ffmpeg, so had to replace estdif with bwdif, but i also appended drawbox=y=ih-h:w=0:h=6:t=6,hqdn3d=4.0:3.0:6.0:4.5,format=yuv420p to your filter. It seems to clean it very well!
+[15:30:09] <durandal_1707> Amoz: use fillborders instead of drawbox?
+[15:30:42] <Amoz> that looks reasonable. I'll try to use that instead
+[15:35:19] *** Quits: softworkz (~softworkz@user/softworkz) (Remote host closed the connection)
+[15:35:36] *** Joins: softworkz (~softworkz@user/softworkz)
+[15:36:06] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[15:41:06] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 268 seconds)
+[15:41:51] <Amoz> durandal_1707, thanks a lot again. This looks really good. The noise is basically all gone as far as i can see
+[15:44:10] <durandal_1707> Amoz: well, frames with scene changes are not easily fixable really, you need to filter such frames with conditional spatial median filter
+[15:45:00] <Amoz> if there's another appending filter that would mitigate the scene changes I'm open to suggestion. Otherwise this will be a huge improvement over what i had before
+[15:48:53] <Amoz> stupid question, would it be worth using latest ffmpeg (and use estdif) or would there be essentially no difference?
+[15:48:58] <durandal_1707> there is not magic filter, just more masking filters + median filter
+[15:49:47] <durandal_1707> Amoz: for such VHS capture, differences are mostly irrelevant
+[15:51:13] <durandal_1707> mpv raw_sample.mp4 -vf lavfi="[split[a][b];[a]separatefields,split[v][t];[t]tmedian=1[t];[t][v]maskedthreshold=220,median,weave,bwdif[a];[a][b]hstack]"
+[15:52:11] <durandal_1707> where there is ',median,' filter, you need to add seperate filter graphs which would kill impulses only and not kill detail
+[15:53:00] <Amoz> that sounds too complex for my current knowledge and what I'm willing to spend for this project, but i'll keep it in mind for the future.
+[15:53:14] <durandal_1707> Amoz: i cant do it, if you give me more tie
+[15:53:17] <durandal_1707> *time
+[16:05:32] *** Quits: bartzy (uid163429@hampstead.irccloud.com) (Quit: Connection closed for inactivity)
+[16:05:51] *** Joins: Fohsap_ (~Muimi@2001:19f0:5001:2bf8:5400:3ff:fe30:8554)
+[16:07:17] <Amoz> durandal_1707, hmm so the tmedian filter cleans the white "spikes" in the time-domain, and the median filter will clean it out for those cases where there still are small white pixels in the spatial domain
+[16:09:23] *** Joins: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net)
+[16:10:05] *** Quits: Fohsap (~Muimi@2001:19f0:5001:2bf8:5400:3ff:fe30:8554) (Ping timeout: 268 seconds)
+[16:10:29] <durandal_1707> Amoz: exactly
+[16:10:47] <durandal_1707> "split[a][b];[a]separatefields,split[v][t];[t]tmedian=1[t];[t][v]maskedthreshold=220,split[f][m];[m]median=1[m];[f][m]maskedthreshold=10,weave,bwdif"
+[16:11:41] *** Quits: arbitercoin (~Rheanna@218.78.109.69) (Remote host closed the connection)
+[16:12:56] *** Joins: arbitercoin (~Rheanna@101.91.232.166)
+[16:13:21] <Fohsap_> i'm having a lot of trouble figuring out which videos have the best audio track....
+[16:14:05] *** Quits: uehreka (~uehreka@c-69-255-164-46.hsd1.md.comcast.net) (Ping timeout: 256 seconds)
+[16:14:05] <durandal_1707> https://0x0.st/-RhX.png
+[16:15:47] <Amoz> durandal_1707, and how much "damage" would that filter do to the overall picture for continious scenes?
+[16:16:15] <durandal_1707> 1 radius is 3x3 block
+[16:17:10] <durandal_1707> which means it will sort pixels in 3x3 block and use median pixel value
+[16:19:32] <durandal_1707> maskedthreshold filter will take 2 inputs and pick 1. if difference between median filtered output and 1. input is <= 10
+[16:20:08] <durandal_1707> for anything greater it will pick median pixels
+[16:20:19] <durandal_1707> off course you can change parameters
+[16:21:20] <Amoz> i'll see if i can make a distinction between those two when it's a continuous scene. If i can't, it's probably an improvement overall to add the median filter as well
+[16:21:55] <durandal_1707> mpv raw_sample.mp4 -vf lavfi="[split[a][b];[a]separatefields,split[v][t];[t]tmedian=1[t];[t][v]maskedthreshold=220,split[f][m];[m]median=15[m];[f][m]maskedthreshold=50,weave,bwdif[a];[a][b]hstack]" --pause
+[16:22:19] <durandal_1707> using mpv player to compare filtered and original input
+[16:22:23] <Amoz> how can i get the visualization of a graph? ffmpeg -dumpgraph 1 -f lavfi -i sample.mp4 is apparently not the way..
+[16:26:07] *** Joins: softworkz_ (~softworkz@user/softworkz)
+[16:26:07] *** Quits: softworkz (~softworkz@user/softworkz) (Killed (strontium.libera.chat (Nickname regained by services)))
+[16:26:07] *** softworkz_ is now known as softworkz
+[16:31:23] <durandal_1707> Amoz: ffplay -f lavfi -graph "movie=raw_sample.mp4,split[a][b];[a]separatefields,split[v][t];[t]tmedian=1[t];[t][v]maskedthreshold=220,split[f][m];[m]median=1[m];[f][m]maskedthreshold=50,weave,bwdif[a];[a][b]hstack" -dumpgraph 1 dummy
+[16:32:25] *** Quits: thebombzen (~thebombze@c-68-41-54-207.hsd1.mi.comcast.net) (Quit: Quit)
+[16:32:30] <Amoz> very cool!
+[16:33:12] <durandal_1707> for a long time i wanted to write avfilter GUI using libmpv and cimgui
+[16:34:15] <durandal_1707> so one could build graphs visually instead via typing text
+[16:34:58] <Amoz> so if i understand this correctly the VHS has scanlines, and at some point there was noise introduced in the analog world. Thus now there are white/black artifacts randomly appearing horizontally, but we can use the tmedian and median filters to clean those up (inter/extrapolate?) with the "redundant" data we have inbetween frames and spatially
+[16:35:44] *** Joins: c7s (~c7s@user/c7s)
+[16:36:06] *** Quits: a0z (~a0z@90.244.184.28) (Ping timeout: 260 seconds)
+[16:38:52] <durandal_1707> Amoz: nope, there is never redundant data in video (unless there is duplicated frames)
+[16:39:20] <durandal_1707> the corrupted pixels are lost forever, you can only guess them and hope the best
+[16:40:05] <Amoz> what i meant was that in reality a non-moving camera usually catches the same color in a certain place over time, so if noise is introduced, we can rely on the principle of interpolating it
+[16:40:18] <Amoz> so i probably should've used another word than "redundant"
+[16:41:06] <durandal_1707> that is all guesses on specific mathematical models
+[16:41:49] <Amoz> very true, but apparently it works very well for human consumption
+[16:42:19] *** Joins: sagax (~sagax_nb@user/sagax)
+[16:42:38] <Amoz> random pixels that stand out to us are more annoying than trying to estimate the data that should've been there, obviously.
+[16:43:01] <Amoz> even if the estimations aren't perfect
+[16:43:32] *** Joins: thebombzen (~thebombze@c-68-41-54-207.hsd1.mi.comcast.net)
+[16:53:56] *** Joins: softworkz_ (~softworkz@user/softworkz)
+[16:53:56] *** Quits: softworkz (~softworkz@user/softworkz) (Killed (molybdenum.libera.chat (Nickname regained by services)))
+[16:53:56] *** softworkz_ is now known as softworkz
+[17:19:56] *** Joins: softworkz_ (~softworkz@user/softworkz)
+[17:19:56] *** Quits: softworkz (~softworkz@user/softworkz) (Killed (sodium.libera.chat (Nickname regained by services)))
+[17:19:56] *** softworkz_ is now known as softworkz
+[17:37:23] *** Quits: pntaylor (~quassel@101.113.153.159) (Ping timeout: 250 seconds)
+[17:43:42] *** Joins: tlacatlc6 (~tlacatlc6@097-101-132-062.res.spectrum.com)
+[17:44:02] *** Joins: pntaylor (~quassel@2405:6e00:10da:8700::d)
+[17:46:58] *** Quits: Amoz (~alex@h-155-4-73-184.A192.priv.bahnhof.se) (Ping timeout: 260 seconds)
+[17:52:07] *** Quits: arbitercoin (~Rheanna@101.91.232.166) (Remote host closed the connection)
+[17:53:12] *** Joins: arbitercoin (~Rheanna@218.78.104.50)
+[17:53:36] *** Joins: lexano (~lexano@cpe00e06722f0e4-cm98524a70e35e.cpe.net.cable.rogers.com)
+[18:12:26] *** Quits: Hackerpcs (~user@user/hackerpcs) (Quit: Hackerpcs)
+[18:14:22] *** Joins: Hackerpcs (~user@user/hackerpcs)
+[18:29:32] *** Joins: xkuru (~xkuru@user/xkuru)
+[18:30:40] *** Quits: xkuru (~xkuru@user/xkuru) (Read error: Connection reset by peer)
+[18:30:42] *** Quits: nillyhan (~00000000@user/nillyhan) (Ping timeout: 268 seconds)
+[18:33:40] *** Joins: nillyhan (~00000000@user/nillyhan)
+[18:41:40] *** Quits: arbitercoin (~Rheanna@218.78.104.50) (Remote host closed the connection)
+[18:42:06] *** Joins: xkuru (~xkuru@user/xkuru)
+[18:43:35] *** Joins: arbitercoin (~Rheanna@101.89.150.168)
+[18:52:18] *** Quits: luni-4 (uid453292@ilkley.irccloud.com) (Quit: Connection closed for inactivity)
+[19:16:00] *** Joins: Xaldafax (~xaldafax@cpe-198-72-160-101.socal.res.rr.com)
+[19:22:46] *** Joins: minimal (~minimal@user/minimal)
+[19:32:11] *** Quits: arbitercoin (~Rheanna@101.89.150.168) (Remote host closed the connection)
+[19:33:44] *** Joins: arbitercoin (~Rheanna@61.171.21.169)
+[19:47:15] *** Quits: blaze (~blaze@user/blaze) (Quit: WeeChat 3.3)
+[20:07:49] *** Joins: Fohsap__ (~Muimi@2001:19f0:5001:2bf8:5400:3ff:fe30:8554)
+[20:10:42] *** Quits: Fohsap_ (~Muimi@2001:19f0:5001:2bf8:5400:3ff:fe30:8554) (Ping timeout: 260 seconds)
+[20:17:25] *** Joins: Guest9482 (~Buster@buster-net.ru)
+[20:21:08] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[20:21:51] *** Quits: arbitercoin (~Rheanna@61.171.21.169) (Remote host closed the connection)
+[20:24:24] *** Joins: arbitercoin (~Rheanna@61.171.21.169)
+[20:28:14] *** Joins: oliv3 (~olivier@2001:bc8:6005:129:208:a2ff:fe0c:46bc)
+[20:28:51] <oliv3> hi, the -start_number option has been removed ?
+[20:29:47] *** Joins: jafa (~jafa@ip70-162-106-203.ph.ph.cox.net)
+[20:30:46] *** Quits: rsx (~dummy@ppp-188-174-146-173.dynamic.mnet-online.de) (Quit: rsx)
+[20:36:17] <JEEB> oliv3: nope. more likely is that you have a version from before that option was added
+[20:36:57] <oliv3> i have 4.3.2
+[20:37:00] <JEEB> if you're thinking of image2, see `ffmpeg -h demuxer=image2`
+[20:37:18] <JEEB> if it doesn't have start_number then it's old enough to not have it yet
+[20:37:30] <oliv3> i'm trying to extract a range of frames [start..end]
+[20:38:08] *** Quits: minimal (~minimal@user/minimal) (Quit: Leaving)
+[20:39:16] <JEEB> start_number is an option with the HLS writer adn the image2 demuxer. not a generic option. FFmpeg in general with seeking etc doesn't handle seeking by frames (technically it is in the API, but it isn't supported in most modules)
+[20:39:33] <JEEB> so if you want to say [1336,2007] for example, then vapoursynth with ffms2 is something you want to look into
+[20:40:32] <oliv3> oh ok, thanks !
+[20:44:31] *** Joins: AbleBacon (~AbleBacon@user/AbleBacon)
+[20:46:58] *** Quits: nillyhan (~00000000@user/nillyhan) (Ping timeout: 268 seconds)
+[20:49:50] *** Joins: nillyhan (~00000000@user/nillyhan)
+[20:50:11] *** Quits: CruxOfTheB (~CruxOfThe@192.222.196.53) (Ping timeout: 264 seconds)
+[21:08:54] *** Joins: Fohsap_ (~Muimi@140.82.56.189)
+[21:11:59] *** Joins: softworkz_ (~softworkz@user/softworkz)
+[21:11:59] *** softworkz is now known as Guest6769
+[21:11:59] *** Quits: Guest6769 (~softworkz@user/softworkz) (Killed (lithium.libera.chat (Nickname regained by services)))
+[21:11:59] *** softworkz_ is now known as softworkz
+[21:12:16] *** Quits: Fohsap__ (~Muimi@2001:19f0:5001:2bf8:5400:3ff:fe30:8554) (Ping timeout: 268 seconds)
+[21:15:48] *** Quits: Vonter (~Vonter@user/vonter) (Quit: WeeChat 3.3)
+[21:20:16] *** Quits: rya (~ry@user/rya) (Ping timeout: 268 seconds)
+[21:20:46] *** Quits: l4yer (~l4yer@195.181.170.210) (Ping timeout: 260 seconds)
+[21:33:00] *** Quits: nillyhan (~00000000@user/nillyhan) (Quit: Ping timeout (120 seconds))
+[21:33:21] *** Joins: nillyhan (~00000000@user/nillyhan)
+[22:01:36] *** Quits: arbitercoin (~Rheanna@61.171.21.169) (Remote host closed the connection)
+[22:03:37] *** Joins: arbitercoin (~Rheanna@101.91.232.166)
+[22:09:11] *** Joins: minimal (~minimal@user/minimal)
+[22:10:32] *** Quits: Fohsap_ (~Muimi@140.82.56.189) (Ping timeout: 240 seconds)
+[22:12:07] *** Quits: mven (~mven@ip68-104-39-54.lv.lv.cox.net) (Ping timeout: 265 seconds)
+[22:12:32] *** Quits: dreamon (~dreamon@pd95032c6.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[22:14:50] *** fling is now known as ciphersalad
+[22:15:36] *** ciphersalad is now known as fling
+[22:20:43] *** Quits: wyatt8740 (~wyatt8740@185.199.102.128) (Ping timeout: 256 seconds)
+[22:21:27] <tuxd3v> hello guys, I wanted to use ffmpeg to create a video of my desktop display
+[22:21:59] <tuxd3v> I have a base for the command, but somehow, I can't apply scalling :/
+[22:22:07] <tuxd3v> my display is 16:9
+[22:22:17] <tuxd3v> 1680x1050
+[22:23:04] *** Joins: wyatt8740 (~wyatt8740@62.182.99.241)
+[22:23:09] <tuxd3v> this is what I have:
+[22:23:15] <tuxd3v> ffmpeg -hwaccel auto -f x11grab -s 1680x1050 -r 25 -i :0.0 -f pulse -ac 2 -i default /home/tuxd3v/Desktop/output.mkv
+[22:24:07] <tuxd3v> but the video is created in 4:3 scale
+[22:24:40] <tuxd3v> ffmpeg version 4.3.3-0+deb11u1
+[22:25:59] <tuxd3v> any help on this to apply correct scaling?
+[22:26:05] <tuxd3v> thanks
+[22:38:52] *** Quits: Seirdy (~Seirdy@sourcehut/user/seirdy) (Quit: exiting 3.3)
+[22:39:24] *** Joins: Seirdy (~Seirdy@sourcehut/user/seirdy)
+[22:44:11] *** Joins: Nact (~l@host-85-27-120-251.dynamic.voo.be)
+[22:45:22] *** Quits: Volgaar (~volgaar@193.137.116.78.rev.sfr.net) (Quit: WeeChat 3.3)
+[22:49:45] *** Quits: durandal_1707 (~computer@95.168.118.16) (Read error: Connection reset by peer)
+[22:50:25] *** Joins: durandal_1707 (~computer@95.168.118.16)
+[22:51:25] *** Quits: durandal_1707 (~computer@95.168.118.16) (Client Quit)
+[22:51:50] *** Joins: durandal_1707 (~computer@95.168.118.16)
+[22:51:51] *** Quits: arbitercoin (~Rheanna@101.91.232.166) (Remote host closed the connection)
+[22:54:32] *** Joins: arbitercoin (~Rheanna@61.171.69.141)
+[22:57:22] *** Quits: someuser (~user@197.54.24.66) (Ping timeout: 260 seconds)
+[23:00:52] *** Joins: mven (~mven@ip68-104-39-54.lv.lv.cox.net)
+[23:02:01] *** Quits: System_Error (~SystemErr@user/systemerror) (Remote host closed the connection)
+[23:03:05] *** Joins: System_Error (~SystemErr@user/systemerror)
+[23:24:36] *** Quits: Xaldafax (~xaldafax@cpe-198-72-160-101.socal.res.rr.com) (Quit: Bye...)
+[23:32:35] *** Joins: hpkn_ (~hpkn@gateway/tor-sasl/hpkn)
+[23:32:36] *** Quits: hpkn (~hpkn@gateway/tor-sasl/hpkn) (Ping timeout: 276 seconds)
+[23:32:38] *** hpkn_ is now known as hpkn
+[23:41:02] *** Quits: finsternis (~X@23.226.237.192) (Ping timeout: 240 seconds)
+[23:41:47] *** Joins: finsternis (~X@23.226.237.192)
+[23:41:47] *** Quits: arbitercoin (~Rheanna@61.171.69.141) (Remote host closed the connection)
+[23:41:48] *** Parts: bencc1 (~bencc1@2a00:a040:197:3af:164f:4097:7306:a6f2) (Leaving)
+[23:42:39] *** Quits: minimal (~minimal@user/minimal) (Quit: Leaving)
+[23:44:15] *** Joins: arbitercoin (~Rheanna@218.78.53.13)
+[23:55:01] *** Joins: vqueiroz (uid340368@hampstead.irccloud.com)
+[23:59:28] *** Joins: softworkz_ (~softworkz@user/softworkz)
+[23:59:28] *** Quits: softworkz (~softworkz@user/softworkz) (Killed (sodium.libera.chat (Nickname regained by services)))
+[23:59:28] *** softworkz_ is now known as softworkz

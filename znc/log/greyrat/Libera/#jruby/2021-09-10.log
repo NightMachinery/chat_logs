@@ -1,0 +1,263 @@
+[00:00:23] <byteit101[m]> All the relevant methods:... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/5d810eb4651adc4b9f10b5798d0adb6f8672e5b3)
+[00:00:48] <byteit101[m]> (from generated Parent.class)
+[00:02:03] <byteit101[m]> Child.class has no toString nor __super$toString, just:... (full message at https://libera.ems.host/_matrix/media/r0/download/libera.chat/e9d25dbac7fffe073909d88a791a21098abb4800)
+[00:13:11] <headius> right so the trick here is somehow carrying the Parent class through to the dispatch so we can use its JPC
+[00:13:33] <headius> that is a conundrum 🤔
+[00:14:05] <headius> but it is curious that it works in the simple case so I am stepping through now
+[00:15:26] <headius> ah right... it works because Parent is the self class
+[00:16:42] <headius> yeah so I think we need to add some logic to super to detect that we are dealing with proxies
+[00:18:45] <headius> enebo: and this doesn't improve if you override toString in the Child class because it still always restarts the search from the bottom
+[00:19:23] <headius> the minute we are one level above the self class it loses track of where it is
+[00:19:32] <byteit101[m]> the super bridge methods were added to allow ruby calling super of the java parent, not of caling super of the ruby parent
+[00:19:34] <enebo[m]> I was thinking about that too
+[00:19:44] <headius> byteit101: right
+[00:20:02] <headius> the ruby super can just go through Ruby but it still ends up back in the Parent method looking up against Child
+[00:20:19] <headius> or rather, dispatching normally rather than through the shim methods
+[00:21:29] <byteit101[m]> yes
+[00:21:36] <headius> if you add toString to Child it ends up in Parent, sees that Child is a proxy, retrieves the JPC from Child, gets Child.toString.super, and then we are stuck again
+[00:21:46] <byteit101[m]> it was my hope that that would be the case
+[00:21:46] <headius> so it overflows in a slightly different way but the same cause
+[00:22:16] <headius> the super lookup logic way back in IR needs to know about JI for this to work, I think
+[00:22:30] <byteit101[m]> *dispatching normally via ruby vs the shim/proxy methods, that is
+[00:22:30] <headius> so it can keep the original defining class in hand
+[00:22:42] <headius> otherwise it finds java.lang.Object and then goes from there to dispatching against Child again
+[00:23:02] <enebo[m]> well perhaps instancesuper needs to do something different when it sees this
+[00:23:07] <headius> I think so
+[00:23:24] <headius> I think we need to rewrite supers in java proxy classes
+[00:23:38] <headius> (rather than checking for a proxy every call)
+[00:23:58] <enebo[m]> we can see self.clazz != definedModule 
+[00:23:58] <headius> it doesn't have to be a split but it should be a different call
+[00:24:19] <headius> JavaProxySuperInstr or something
+[00:24:47] <headius> that will know how to get the correct super shim if needed
+[00:24:49] <enebo[m]> I think we can detect this by just looking can't we?
+[00:25:09] <headius> well yeah but you want to do this check for every super everywhere?
+[00:25:10] <enebo[m]> maybe
+[00:25:17] <enebo[m]> I guess it depends on the check
+[00:25:52] <enebo[m]> I have wondered about making instrs which do Java calls
+[00:26:00] <headius> the check would be like the code in tryProxyInvocation
+[00:26:04] <enebo[m]> like you know it is unconditionally an array
+[00:26:08] <headius> if it is a proxy and it defines this method and there's a super method then use that instead
+[00:26:15] <enebo[m]> so you can just call op_set on RubyArray
+[00:26:24] <headius> sure
+[00:26:36] <enebo[m]> so I just threw that out there
+[00:27:01] <headius> could be that an instanceof check against self wouldn't add too much but I wouldn't want to leave it that way long term
+[00:27:06] <enebo[m]> but near term a simpler approach would be to leave istance_super as an instr and then make a boolean on the instr
+[00:27:12] <headius> instanceof ReifiedJavaProxy or whatever
+[00:27:23] <headius> also an option, sure
+[00:27:26] <enebo[m]> for JIT it would have no perf impact and for interp it would just be a boolean comparison
+[00:27:41] <headius> that is equivalent to rewriting in my mind
+[00:27:49] <headius> except for checking the boolean every time in interp
+[00:28:04] <enebo[m]> I don't love that per se but it is a lot less work and I am wondering what other issues we will hit once we release
+[00:28:14] <headius> we can do it without revisiting the IR by using something like an instanceof check
+[00:28:16] <enebo[m]> IR is pure internals for us so I don't fear changing them later once we learn more
+[00:28:48] <enebo[m]> All I can say is the boolean check will not be noticeable in the interp :)
+[00:29:29] <enebo[m]> but my suggestion is more based on pragmatism of doing a bunch of work and then realizing next week we need to a bunch of other work
+[00:29:35] <headius> right
+[00:29:55] <headius> I can get behind that for 9.3 if we look at a better fix in 9.3.1
+[00:30:14] <enebo[m]> yeah so how do we know we are in a JI thing to do this?
+[00:30:45] <enebo[m]> When we run addMethod we look at what it is and mutate instanceSuper to have the boolean toggled?
+[00:31:11] <headius> prototyping a fix quick
+[00:31:16] <enebo[m]> For super on split it is obviously only for JI but for this particular test case we don't know until we add
+[00:31:31] <headius> well the same way we detect that we need to split initialize, no?
+[00:31:46] <enebo[m]> we only check that in initialize
+[00:31:59] <enebo[m]> Or wait maybe we don't
+[00:32:05] <enebo[m]> haha let me check. 
+[00:33:01] <enebo[m]> yeah we only split on constructors/initialize
+[00:34:30] <enebo[m]> byteit101: I sort of wish we had some nice way of flagging methods called by concreteJavaProxy by proxies so they do not look like dead code in the IDE (e.g. finishInitialize)
+[00:34:57] <enebo[m]> we do have a comment so that is probably as good as it gets without doing something weird
+[00:36:40] <enebo[m]> I don't even think the idea of toggling instance_super works.  We have to know if we are on top of a class which is on top of a reified class
+[00:37:22] <byteit101[m]> enebo: yes, that's why I made sure I put comments above all of them      * Do not refactor without looking at RCG
+[00:37:33] <enebo[m]> Parent < java.lang.Object and is an ordinary ruby method but what happens if Parent < GrandParent < java.lang.Object where GrandParent has no toString?
+[00:37:47] <byteit101[m]>     //called from reified java concrete-extended classes with super-overrides
+[00:37:56] <byteit101[m]> JPC has several
+[00:38:09] <enebo[m]> byteit101: yeah I did manage to notice them but whenever I see gray text then I decide to figure out if it is dead
+[00:38:49] <enebo[m]> byteit101: So I am not really asking for anything since I think all we could do is make some bogus shim class call them which is never instantiated or something which would be silly
+[00:39:03] <byteit101[m]> Annotations maybe?
+[00:39:38] <enebo[m]> byteit101: yeah I try that historicall and come up short but perhaps we could put @JIT anno on them
+[00:39:58] <enebo[m]> I made @Interp and @JIT so we could tell what helpers are used by what but @JIT really means something from bytecode
+[00:40:16] <byteit101[m]> @calledFromReifiedCode
+[00:40:22] <enebo[m]> It is purely as a doc marker though so perhaps that is ok
+[00:40:41] <enebo[m]> if I see @JIT I know I can grep through source and see something invoking it
+[00:40:46] <enebo[m]> via ASM or whatever
+[00:40:47] <byteit101[m]> @calledFromReifiedCode(ClassThatGeneratesSaidCode.class)
+[00:41:12] <enebo[m]> I think I will just add @JIT since I am probably the only person who actually cares
+[00:41:32] <enebo[m]> but annotation was agood suggestion since it made me remember this
+[00:42:18] <byteit101[m]>  bin/ruby -e 'class Parent < java.lang.Object;end;class Child < Parent;def toString;"child " + super;end;end;Child.become_java!("/tmp/abc");p Child.new.toString'
+[00:42:18] <byteit101[m]> "child rubyobj.Child@2aceadd4"
+[00:42:34] <byteit101[m]> enebo: ^
+[00:43:19] <byteit101[m]> (ignore the b_j!, I was looking at the class files)
+[00:43:19] <enebo[m]> does that not work also
+[00:43:30] <byteit101[m]> That works, see the second line
+[00:43:32] <enebo[m]> ok ignore b_j!
+[00:43:47] <byteit101[m]> vs bin/ruby -e 'class Parent < java.lang.Object;def toString;"parent " + super;end;end;class Child < Parent;def test;"child " + toString;end;end;Child.become_java!("/tmp/abc");p Child.new.test'
+[00:43:47] <byteit101[m]> Error: Your application used more stack memory than the safety cap of 2048K.
+[00:43:47] <byteit101[m]> Specify -J-Xss####k to increase it (#### = cap size in KB).
+[00:43:47] <byteit101[m]> Specify -w for full java.lang.StackOverflowError stack trace
+[00:44:43] <byteit101[m]> bin/ruby -e 'class Parent < java.lang.Object;end;class Child < Parent;def toString;"child " + super;end;end;class GrandChild < Child; end;p GrandChild.new.toString'
+[00:44:43] <byteit101[m]> Error: Your application used more stack memory than the safety cap of 2048K.
+[00:44:43] <byteit101[m]> Specify -J-Xss####k to increase it (#### = cap size in KB).
+[00:44:43] <byteit101[m]> Specify -w for full java.lang.StackOverflowError stack trace
+[00:45:01] <enebo[m]> but that makes sense... jpc will be Child and it will have a getMethod entry marked as having a super implementation
+[00:45:22] <byteit101[m]> so empty parents above make no difference
+[00:46:17] <enebo[m]> byteit101: I don't think so because the case you originally put in the comment will run if we just pretend it has a super impl and go down the invokeDirectSuperWithExceptionHandling(context, jpm.getSuperMethod(), javaInvokee, args); path
+[00:46:26] <byteit101[m]> `Child(toString)< (Parent <)* Object` works, `(GrandChild <)+ Child(toString)< (Parent <)* Object` doesn't
+[00:46:51] <enebo[m]> well we need a valid getSuperMethod()
+[00:47:21] <enebo[m]> yeah because toString entry in Child seems to end up with the proper getSuperMethod() return value
+[00:47:31] <enebo[m]> or I think it does
+[00:48:17] <enebo[m]> but in GrandChild we ask Grandchild for toString and it has no entry so we do something else which basically has us just call the same method over and over
+[00:49:26] <enebo[m]> for it to work at the moment whatever javaInvokee passed in to tryProxyInvocation must have a method entry on it with the proper superMethod attached to it
+[00:49:32] <headius> I'm close to having something
+[00:49:44] <headius> it works
+[00:49:46] <headius> $ jruby --disable-gems -X-C -Xbacktrace.style=full blah.rb
+[00:49:46] <headius> "parent rubyobj.Parent@6a396c1e"
+[00:49:46] <headius> "parent rubyobj.Child@1c72da34"
+[00:49:56] <enebo[m]> so what did you change?
+[00:50:11] <headius> I basically inlined all that java proxy dispatch logic into instanceSuper
+[00:50:25] <headius> but using the right module to do the JPC lookup
+[00:50:25] <enebo[m]> oh ok
+[00:50:53] <enebo[m]> yeah so we will pay some cost per instance_super
+[00:50:53] <headius> child override is broken but I know how to fix that too
+[00:51:21] <basshelal[m]> headius: should I add all of the Windows versions?
+[00:51:21] <basshelal[m]> It's a lot of code to add and I don't know how relevant or useful some of the old Windows versions are like anything before XP
+[00:51:26] <basshelal[m]> https://github.com/jnr/jnr-posix/blob/40396aa2bae7c6e18ae3d813f02d433c700e7e7d/src/main/java/jnr/posix/util/Platform.java#L61-L68
+[00:51:48] <headius> the check is not cheap
+[00:52:20] <headius> basshelal: I wouldn't go back past whatever Java 8 requires
+[00:56:03] <headius> ok the child override case is harder
+[00:56:13] <headius> because the child adds a same-named shim for super
+[00:56:17] <headius> so we are back at the bottom again
+[00:56:32] <headius> the shims need to be unique to the level they are at
+[00:56:51] <headius> isn
+[00:56:51] <headius> isn't this fun 😀
+[00:57:08] <headius> it would work if the shim in Parent was named differently than the shim in Child with what I have here
+[00:57:20] <headius> I will gist a diff
+[00:58:17] <headius> https://gist.github.com/headius/73d8717a8fcd3b7b2c00662e7b60b0c5
+[00:59:21] <headius> actually I can make the check cheaper
+[00:59:59] <headius> updated gist
+[01:00:09] <headius> it just detects if the super method is a JI method now
+[01:00:29] <headius> and then additionally confirms we are calling on a proxied class, which might be redundant at that point
+[01:05:35] <headius> so there it is gents, ship it
+[01:08:47] <byteit101[m]> Oh, Its possible to uniqueify the shim names
+[01:09:52] <headius> yeah I am trying that quick
+[01:10:28] <byteit101[m]> update in two spots JPC.initMethod ~396 and RubyClass GenerateSuperBridges ~2024
+[01:10:42] <headius> got it
+[01:11:41] <byteit101[m]> (feel free to make a constant or helper method, just realized it was the same string in two llocations)
+[01:12:41] <headius> trying ti figure out what to use to make it unique that I have access to in both places 🤔
+[01:14:11] <byteit101[m]> Class name? Ruby class object_id?
+[01:14:30] <headius> the latter would work I think
+[01:17:54] <headius> hmm unsure how to get to the Ruby class from the JavaProxyClass
+[01:18:10] <byteit101[m]> this.metaClass?
+[01:18:18] <headius> oh duh that would be it
+[01:24:22] <enebo[m]> headius: you can also outline the logic there since this is unlikely to normally occur and won't impact method size as much
+[01:25:31] <headius> yeah I will look at some refactoring once this works
+[01:25:38] <headius> still not finding the right metaclass... it is JavaProxyClass in this call
+[01:26:11] <lopex[m]> headius: https://www.youtube.com/watch?v=yTMRGERZrQE very interesting
+[01:26:53] <lopex[m]> so the complexity of x86 doesnt count very much it appears
+[01:27:00] <lopex[m]> enebo: ^^
+[01:27:20] <enebo[m]> lopex: TL;DR
+[01:27:39] <enebo[m]> x86 is just RISC beneath or something?
+[01:27:56] <lopex[m]> enebo: the variable instruction sets are mostly solved wrt fetch/exec etc
+[01:28:03] <lopex[m]> perf wise
+[01:28:18] <lopex[m]> and the logic doesnt dominate the die on cpus
+[01:28:23] <enebo[m]> lopex: but Arm will win from using less heat
+[01:28:34] <lopex[m]> yeah, sure
+[01:29:25] <lopex[m]> enebo: also, it's all about iset iterations, the younger the set is the simpler it is, but eventually all end up with junk
+[01:29:40] <enebo[m]> lopex: then they release Leg
+[01:29:41] <headius> woot, it works
+[01:29:50] <lopex[m]> Leg ?
+[01:29:52] <headius> this is kinda nasty but both cases pass now
+[01:29:58] <enebo[m]> HAHAHAH
+[01:30:05] <enebo[m]> A newer appendage
+[01:30:26] <headius> gist updated
+[01:30:31] <enebo[m]> Followed by the AI chip Head
+[01:31:33] <enebo[m]> headius: nice so each method will be mangled uniquely and called appropriate at the site with that name
+[01:31:45] <lopex[m]> ah
+[01:31:58] <headius> Right
+[01:32:38] <lopex[m]> enebo: you think that ai chip thing is a fad?
+[01:32:48] <headius> The instance check here would be nice to eliminate by revisiting the IR but this might be close enough for release
+[01:32:50] <lopex[m]> I have no opinion
+[01:33:32] <enebo[m]> if (method instanceof InstanceMethodInvoker && self instanceof JavaProxy) callsomethinginjavamethod
+[01:33:48] <enebo[m]> then it can be a return
+[01:34:00] <enebo[m]> for JI super you will do a second instanceof but that is ok
+[01:34:22] <byteit101[m]> >  it is JavaProxyClass in this call
+[01:34:22] <byteit101[m]> unsure which you are referring to, but the JPC doesn't exist yet in generateSuperBridges
+[01:34:27] <byteit101[m]> but looks like you abandoned that attempt
+[01:35:21] <enebo[m]> lopex: I have no opinion on AI chips but I largely because I don't care and I also have no idea of actual limitations (like how far can Tesla take their hardware)
+[01:39:03] <lopex[m]> enebo: which I dont care as well
+[01:39:13] <byteit101[m]> headius: oh hmm, the JPC doesn't get the rubyclass (clazz not saved in the new JPC in JPC:519
+[01:39:13] <enebo[m]> headius: for IR so long as we know it is an InstanceMethodInvoker we can modify the instr I guess
+[01:39:56] <enebo[m]> lopex: My original joke was just that there will always be new platforms displacing old ones 
+[01:40:33] <byteit101[m]> headius: If you want to save the RubyClass in the JPC, you'll need to add a new arg to the ctor
+[01:40:39] <enebo[m]> lopex: I think the historical issue is getting a new platform off the ground to make tooling etc but those costs will just keep dropping so I expect more hardware variety as time moves forward
+[01:40:42] <lopex[m]> enebo: but the beer will never change
+[01:41:05] <lopex[m]> enebo: we have shortages of American beers here now
+[01:41:05] <enebo[m]> lopex: you need to come to America one day for beers...It changes too much
+[01:41:40] <lopex[m]> enebo: the shifts in styles you mean ?
+[01:41:42] <enebo[m]> lopex: I ordered beer from Belgium on Friday and got it here yesterday.  An expensive experiment!
+[01:42:20] <enebo[m]> lopex: just saying if you accumulate baggage which slowly affects the platform they can put out a new system
+[01:42:36] <lopex[m]> enebo: here, it was all about hazy ipas lately which I dont like that much
+[01:43:08] <enebo[m]> lopex: A lot of hardware is making sure old software continues to work but as time moves on I think language portablity will move beyond C
+[01:43:36] <enebo[m]> lopex: NE/Hazy IPAs are massive her too and I am over them but don't dislike them
+[01:43:44] <lopex[m]> enebo: I'm leaning towards barleys now.. and RISes etc
+[01:43:56] <enebo[m]> lopex: most beers I am seeing a big increase in ABV 8+% is very common now
+[01:44:21] <lopex[m]> enebo: I like either light beers or heavy ones
+[01:44:37] <enebo[m]> I bought an Italian RIS that is like 12%..That will be an adventure
+[01:45:06] <lopex[m]> enebo: summer IPAs are still good for me
+[01:46:00] <enebo[m]> lopex: This summer I have gotten more Hefes (well not more than IPAs) as I enjoy them in the summer
+[01:46:11] <lopex[m]> enebo: bleh, on last weekend I ordered 0.3L 20%+ icebock, it was too much of that
+[01:46:23] <enebo[m]> HAHAH
+[01:46:54] <lopex[m]> enebo: I was driking it for like 3 hours
+[01:46:54] <enebo[m]> 20% is largely a syrupy liquer
+[01:47:00] <headius> I really loved the hazies for a while but now they're all so same-y
+[01:47:12] <headius> I'd like to see something new
+[01:47:20] <headius> Or just a return to good old fashioned hoppy double ipas
+[01:47:20] <enebo[m]> GOSE!
+[01:47:30] <headius> Yeah eff that
+[01:47:33] <lopex[m]> also juicy IPAs are common here too
+[01:47:35] <lopex[m]> now
+[01:47:50] <headius> Milkshake ipas tried to take over here but lactose just isn't for everybody
+[01:47:56] <enebo[m]> There are a lot of double IPAs but they are pretty split between hazy/not
+[01:48:06] <headius> I don't like the mouth coating or texture of milkshakes
+[01:48:16] <lopex[m]> headius: I also liked good double IPAs but I guess I;'m to old for that now
+[01:48:28] <enebo[m]> more juicy but I like the old piney ones
+[01:48:28] <headius> Yeah
+[01:48:30] <lopex[m]> yeah piny is good
+[01:48:35] <enebo[m]> and some with a little malt
+[01:49:02] <enebo[m]> It is one reason I will still buy centennial IPA from time to time
+[01:49:40] <headius> I got some axe man the other day and it was nice to return to a traditional piney double IPA
+[01:49:51] <headius> Even though surly seems to have screwed that recipe up a little
+[01:50:46] <enebo[m]> yeah I am not buying from Surly
+[01:50:46] <enebo[m]> well not much
+[01:53:28] <basshelal[m]> headius: Ok I think I've done everything I can, I put them all in separate PRs
+[01:57:39] <basshelal[m]> headius: I'm not 100% about this though
+[01:57:39] <basshelal[m]> https://github.com/jnr/jnr-posix/blob/752f608f5134e2c2eae125cda2e237cf4bbb4d36/src/main/java/jnr/posix/FreeBSDPOSIX.java#L52-L73
+[01:57:39] <basshelal[m]> Need to get a FreeBSD image running to see if `freebsd-version -u` is actually different from a java `os.version` or `uname` because if not then we can use my new version methods to check instead of using `exec` and launching a new process or whatever
+[01:59:18] <basshelal[m]> When the PRs get merged the next thing we could do is use our new APIs in the places you referenced, I could try to do that later, just hope there are tests to ensure I don't break anything
+[01:59:37] <headius> byteit101 thank you for your help and patience, I feel like I have to relearn this stuff every time I go back in
+[01:59:37] <basshelal[m]> Dogfooding is awesome 
+[01:59:57] <headius> I will distill this fix down a bit and then see how it goes in testing
+[02:02:08] <byteit101[m]> No problem! And glad I could be of assistance fixing this, and making the original JI PR work in general
+[02:02:26] <headius> There will certainly be other issues but it's still so much cleaner than the old stuff
+[02:06:10] <byteit101[m]> Indeed, I remember being exicited I could delete that old file
+[04:20:56] <basshelal[m]> I have a FreeBSD image!
+[04:20:56] <basshelal[m]> No major difference between `freebsd-version -u` and regular system property `os.name` except _maybe_ if you did a kernel update the `freebsd-version -u` will report the new kernel and not the old one. _Maybe_!
+[04:20:56] <basshelal[m]> Not sure if this is a killer feature or not, we'd have to ask the FreeBSD users, likely so though because the person who added it probably knows what's best for FreeBSD though if you can headius ask a FreeBSD expert/user if it's an absolutely necessary feature to have, if not we can use `Platform.getVersionMajor()` for that FreeBSDPOSIX hack.
+[04:22:28] <basshelal[m]> Otherwise I'd say it's happy days! Everything I've added should be ok as far as I can tell and once they're all merged and pushed into maven, we can use our own APIs to clean up a lot of the internal code and keep it uniform
+[07:43:25] <headius> that's great to hear!
+[07:43:45] <headius> I never liked that subprocess launch and it could constitute a security issue under some circumstances
+[08:07:10] <headius> now for sleep! back tomorrow to tidy up that fix and look at your PR
+[17:03:44] <headius> good morning
+[18:56:50] <headius> ok here it is enebo byteit101: https://github.com/jruby/jruby/pull/6820
+[18:56:59] <headius> byteit101: I added you as a contributor so you can do reviews
+[18:57:31] <headius> this includes tests for the two cases (Child < Parent with and without Child overriding the method) and spec:ji passes locally so I am optimistic
+[18:58:51] <enebo[m]> looks good
+[19:30:19] <headius> GREEN
+[19:36:56] <headius> lol https://github.com/jruby/jruby/issues/6818
+[19:37:11] <headius> I get that Ruby is about empowering users but this is pretty ridiculous
+[19:45:41] <headius> enebo: only two issues remain open: the one I just fixed + its PR, and the FileUtils mismatch with 2.6.8
+[19:46:02] <headius> the latter can be resolved by just using a newer FileUtils than 2.6.8, but I am trying to lean on ruby-core folks to get their house in ourder
+[19:46:07] <headius> so we are basically done
+[19:46:46] <headius> time to make coffee
+[20:30:07] *** Quits: danieljrubyquest (~danieljru@2001:470:69fc:105::d505) (Quit: You have been kicked for being idle)
+[20:53:40] <enebo[m]> nice!
+[22:18:48] *** Quits: fidothe (sid1130@highgate.irccloud.com) (Read error: Connection reset by peer)
+[22:19:56] *** Joins: fidothe (sid1130@highgate.irccloud.com)

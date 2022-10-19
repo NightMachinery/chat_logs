@@ -1,0 +1,760 @@
+[00:06:46] <Nekomander> shinbet, why not use tags or branches for versions of that software?
+[00:08:09] <Nekomander> Oh these are like series, chapters?
+[00:08:45] <Nekomander> Okay, now I understand.
+[00:13:25] *** Quits: panella32 (~panella32@154.6.16.6) (Ping timeout: 240 seconds)
+[00:23:01] *** Quits: DrowningElysium (uid190788@user/drowningelysium) (Quit: Connection closed for inactivity)
+[00:27:10] *** Joins: BadAdviceCat (~BadAdvice@user/badadvicecat)
+[00:27:37] *** Quits: Nekomander (~BadAdvice@user/badadvicecat) (Ping timeout: 256 seconds)
+[00:35:37] *** Quits: AllenJB (~AllenJB@user/allenjb) (Quit: Leaving)
+[00:42:08] <TML> varrg: Personally, I would recommend iconv over mbstring - mbstring is internal specifically to PHP and has historically had some rough issues, while iconv is based on the underlying de facto standard GNU iconv library.
+[00:42:45] *** Joins: daoumilseitek (~daoumilse@164.96.146.77.rev.sfr.net)
+[00:42:51] <varrg> I see, I will look into that
+[00:43:05] <varrg> what do you think about the logic when a write files?
+[00:43:10] <varrg> files=fails
+[00:48:21] *** Quits: magla (~gelignite@55d483f5.access.ecotel.net) (Quit: Stay safe!)
+[00:50:17] <TML> Well, as a general rule, I'd throw an exception rather than trigger_error. Not sure why you test $bytes twice, once as !$bytes and once as $bytes===FALSE - I would think the latter test was sufficient, but maybe there's some edge case you're trying to handle that I'm not thinking of.
+[00:54:14] <biberu> varrg: why are you using mb_ functions in there?
+[00:54:36] <varrg> well, apparently fwrite can act weird in some situations - mostly network writes. Where false is an actually failure and less than sizeof() is interrupted or similar.
+[00:55:29] <varrg> biberu, well, say I'm writing data with multibyte characters and the connection is lost, the loop retries and it was interrupted in the middle of a character. Trying to fend for that situation
+[00:55:35] <varrg> but it's hard to test this :p
+[00:56:42] <biberu> varrg: sure, but fwrite only cares about binary data anyhow, doesn't matter if you split a multibyte character to send it in another iteration
+[00:57:22] <varrg> yes, but substr doesn't
+[00:57:53] <biberu> varrg: substr doesn't care about encoding either
+[00:58:32] <varrg> but it can start at the middle of a multibyte character, so the result will be more than 1 character and neither will be what it's supposed to be
+[00:58:45] <TML> varrg: if the connection is lost fwrite() won't be able to keep writing to that network socket, though
+[00:59:27] <TML> so I don't follow what you mean by "the loop retries and it was interrupted in the middle of a character"
+[00:59:29] <biberu> varrg: why are you counting characters though? you should be able to just treat that string as a byte array and get rid of some of the complexity
+[00:59:33] <TML> the connection is gone
+[00:59:36] <varrg> yeah. I'm following some comments on php.net, so I'm kind of just swinging
+[00:59:56] <TML> comments on php.net are not a very reliable source of truth
+[00:59:57] <biberu> oh no, php.net comments
+[01:00:09] <biberu> more like reliable anti-truth
+[01:00:22] <varrg> biberu, how do I treat it as a bytes array?
+[01:00:34] <TML> varrg: You use strlen, substr, etc.
+[01:00:43] <TML> forget about "characters" and just write it byte-wise
+[01:00:47] <biberu> ^
+[01:00:55] <varrg> following https://www.php.net/fwrite top comment
+[01:01:18] <TML> 11 years ago
+[01:01:30] <TML> PHP has changed a hell of a lot in 11 years
+[01:01:30] <varrg> that's true, didn't look at the timestamp :P
+[01:02:00] <TML> also, that persons statements about a return value of 0 are patently untrue
+[01:02:06] <biberu> varrg: as for testing the case where fwrite doesn't write your entire buffer, one way could be to split it into several smaller functions, one being the one with your retry loop, it could take a function with fwrite's signature as an argument that you could swap out during testing
+[01:02:56] *** Joins: nwulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[01:02:56] <TML> if you're writing a buffer to a network socket and your connection is broken, there are very few cases where a retry loop on the server side are going to do you any good at all
+[01:03:44] <varrg> https://3v4l.org/RX0hB#v8.1.1 this is what I'm trying to handle
+[01:04:00] <biberu> why?
+[01:04:09] <TML> in most cases, I would say that fwrite() is needlessly low-level and you should probably be using the stream handlers
+[01:04:24] <biberu> yeah, that too
+[01:04:40] <biberu> varrg: why do you care what that data might be rendered as?
+[01:05:39] <varrg> well, if it would be cut off in the middle, and the retry loop would succeed, it would break it up and keep writing a different character.
+[01:05:54] <varrg> but if a retry loop is not neccessary as TML points out, then my problem's gone
+[01:06:08] <TML> varrg: your retry loop should not retry in the middle of a bytestream
+[01:06:09] *** Quits: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 256 seconds)
+[01:06:16] <TML> I can't think of an instance where that would make sense
+[01:06:40] <TML> either the entire file is written, or it failed you need to seek back to zero and try again
+[01:07:13] <varrg> well, for that code, fwrite works with 8bit right, for larger characters it could fail at 8bit on a 16bit character
+[01:07:13] <TML> I can't come up with a scenario off-hand where PHP userland code should commence a retry in the middle of a bytestream
+[01:07:24] <TML> varrg: fwrite just writes bytes
+[01:07:30] <TML> it doesn't know about characters
+[01:07:46] <TML> trying to teach fwrite about characters is a fool's errand
+[01:08:19] <varrg> hm, so a 16bit character written in two steps 8 + 8 will be the same byte sequence, so whatever reads it later on will treat it as a 16bit character if told to
+[01:08:21] <varrg> right
+[01:09:14] *** Joins: Jonos (~madder@user/Jonos)
+[01:09:25] <TML> Right
+[01:09:32] *** Quits: Jonos (~madder@user/Jonos) (Remote host closed the connection)
+[01:10:12] <TML> but again, you probably should get away from fwrite() in general and consider the stream functions - maybe even a stream wrapper, but that kind of depends on what you're doing
+[01:10:32] <varrg> okay, well I'll leave the retry loop "security", and just call fwrite directly in the calling function. And don't worry about multibyte characters
+[01:11:09] *** Hash is now known as PCLoadLetter
+[01:11:11] <varrg> my parent function takes a filename or a file resource, and writes data to it. So if is_string => file_put_contents, if is_resource => that function
+[01:11:21] <varrg> that is, an already opened file resource
+[01:12:32] *** Quits: pmercado (~pmercado@186.107.48.62) (Ping timeout: 256 seconds)
+[01:12:53] <varrg> I couldn't find a function that writes the entire buffer to a stream. Maybe I missed it?
+[01:12:59] *** Joins: Xavier7 (~ircap@179.6.137.194)
+[01:13:01] <varrg> a stream_ function that is
+[01:15:58] <biberu> varrg: what are you writing to?
+[01:16:21] <biberu> (why doesn't file_put_contents work?)
+[01:17:20] <varrg> it's for the end user, I want to also let them export the object to an already opened stream
+[01:17:34] <varrg> in most cases the user will send a filename and file_put_contents will be used
+[01:18:21] <TML> I am very confused about what it is you're writing
+[01:18:44] <varrg> it's just an export function for an object wrapping an array
+[01:19:00] <varrg> so basically: $cfg->export("filename.json", new JSONParser);
+[01:21:03] <__adrian> "varrg> so basically..."   "biberu> (why doesn't file_put_contents work?)"
+[01:21:35] <__adrian> file_put_contents() can append, if that's it
+[01:22:14] <varrg> __adrian, just for already opened streams, but sure user can just do: fwrite($r, $cfg->toArray())
+[01:22:22] <TML> varrg: I mean in a broader sense, what it is that you're doing in PHP. This seems like architectural astronautics.
+[01:22:24] <varrg> so maybe I'm complicating things by trying too hard
+[01:22:41] <varrg> :P
+[01:22:50] <varrg> I'm just fwriting to a stream
+[01:42:56] *** Joins: pileatedx (~textual@cpe-67-241-68-204.twcny.res.rr.com)
+[01:45:45] *** Quits: BadAdviceCat (~BadAdvice@user/badadvicecat) (Quit: Quitting)
+[01:49:43] <lembron> hmpf i seem to run into one deadend after another with this coverage-story :/ https://i.imgur.com/fXXkZmk.png someone explain me that lol...
+[01:50:52] <TML> lembron: I don't even know what tool that is
+[01:51:03] <lembron> phpunit
+[01:51:19] *** Quits: Warped (~Warped@user/warped) (Quit: We Gone! Bye Bye)
+[01:51:28] <varrg> I understand it as the 6 tests that made it into the conditional statement, all terminated the process before leaving whatever happens in there, thus they never reach the closing bracket
+[01:51:43] *** PCLoadLetter is now known as Hash
+[01:52:03] <TML> lembron: Maybe https://stackoverflow.com/questions/8827132/why-does-phpunit-show-some-close-curly-braces-as-not-being-covered is relevant?
+[01:53:05] <TML> one of the comments there suggests it might be a Windows-vs-Unix newline issue
+[01:53:26] <lembron> varrg the masked code is just a define() call, so "no" -- and as i understood that "closing bracket" is kinda more supposed to "show the non-existent-else" - what has clearly been hit given the 512 hits above&below
+[02:00:00] *** Joins: BadAdviceCat (~BadAdvice@user/badadvicecat)
+[02:02:46] <lembron> and its all clean \n and result from ci, so not something on my client either
+[02:04:53] <lembron> + the whole thing seems to be inconsistent i can produce such a result: https://i.imgur.com/yCdXL5c.png - 195 is wrong, but 161ff kinda looks "okaish" - but is actually kinda borky still, while 202ff seems almost reasonable, just to derp on 211 again
+[02:07:12] <lembron> and i can make the red on 157, 159, 198, 210 and 211 "disappear" if i flip nonsense arround
+[02:07:29] <lembron> where key kinda is - seems like both is "wrong" ?
+[02:10:50] *** Joins: ianthrive (~ianthrive@166.70.191.9)
+[02:13:08] *** Quits: BadAdviceCat (~BadAdvice@user/badadvicecat) (Remote host closed the connection)
+[02:13:33] *** Joins: BadAdviceCat (~BadAdvice@user/badadvicecat)
+[02:17:54] <lembron> (as in, it turns into no-code lines, cant get them green...)
+[02:18:41] *** Quits: varrg (~varrg@h-176-10-198-245.A351.priv.bahnhof.se) (Quit: Leaving)
+[02:18:43] *** Joins: Warped (~Warped@user/warped)
+[02:27:41] *** Joins: GreyXor (~GreyXor@2a01:e0a:13e:a720:6138:53a6:3cce:7b04)
+[02:33:43] *** Quits: daoumilseitek (~daoumilse@164.96.146.77.rev.sfr.net) (Quit: Leaving)
+[02:35:50] *** Quits: ThePhilgrim (~ThePhilgr@78-69-18-227-no49.tbcn.telia.com) (Remote host closed the connection)
+[02:39:09] *** Quits: infernix (nix@2a02:22a0:bbb1:d500::2) (Ping timeout: 268 seconds)
+[02:45:12] <relipse> i don't know if any of you are praying people, but I need prayer, got covid
+[02:45:23] *** Quits: LucaTM (~LucaTM@user/lucatm) (Quit: Textual IRC Client: www.textualapp.com)
+[02:45:53] <GreyXor> relipse praying is useless
+[02:47:19] *** Joins: infernix (~nix@spirit.infernix.net)
+[02:48:01] *** Quits: GreyXor (~GreyXor@2a01:e0a:13e:a720:6138:53a6:3cce:7b04) (Quit: Client closed)
+[02:56:41] *** Quits: guido (~weechat@host-79-52-252-228.retail.telecomitalia.it) (Quit: WeeChat 3.4)
+[02:57:56] *** Quits: brentaarnold (~brentaarn@24.112.58.14) (Ping timeout: 256 seconds)
+[02:59:35] *** hays is now known as h_
+[03:03:23] *** Quits: DaNeenjah (~jake@adsl-74-230-4-35.hsv.bellsouth.net) (Quit: WeeChat 3.4)
+[03:11:41] *** Joins: axisys (~axisys@ec2-52-207-123-244.compute-1.amazonaws.com)
+[03:12:22] *** Joins: GreyXor (~GreyXor@2a01:e0a:13e:a720:6138:53a6:3cce:7b04)
+[03:14:11] *** Quits: GreyXor (~GreyXor@2a01:e0a:13e:a720:6138:53a6:3cce:7b04) (Client Quit)
+[03:14:17] *** Quits: ms49434 (~ms49434@user/ms49434) (Quit: Leaving)
+[03:34:59] *** Joins: z_lehinsun (~lehinsun@188.113.178.220)
+[03:36:51] *** Quits: lembron (~admin@user/lembron) (Read error: Connection reset by peer)
+[03:47:49] *** Quits: thiras (~thiras@user/thiras) (Ping timeout: 240 seconds)
+[03:48:47] *** Quits: MrBlue (~MrBlue@146.70.75.86) (Ping timeout: 256 seconds)
+[03:50:59] *** Joins: Nekomander (~BadAdvice@user/badadvicecat)
+[03:51:03] *** Quits: BadAdviceCat (~BadAdvice@user/badadvicecat) (Ping timeout: 256 seconds)
+[03:51:25] *** Quits: pileatedx (~textual@cpe-67-241-68-204.twcny.res.rr.com) (Quit: Buh-bye)
+[03:54:48] *** Joins: ferdna (~ferdna@user/ferdna)
+[04:00:58] *** Parts: z_lehinsun (~lehinsun@188.113.178.220) (Leaving)
+[04:01:14] *** Joins: brentaarnold (~brentaarn@24.112.58.14)
+[04:02:04] *** Quits: shokohsc (~shokohsc@lfbn-idf2-1-630-171.w86-246.abo.wanadoo.fr) (Quit: The Lounge - https://thelounge.chat)
+[04:02:23] *** Joins: Alex8532 (~Alex8532@user/alex8532)
+[04:02:47] <TML> relipse: That sucks; but keep your hopes up, I've known dozens of people who got it and all of them are walking around more-or-less fine now.
+[04:04:22] *** Joins: Hiccup (cHoy@user/hiccup)
+[04:08:11] <TML> relipse: and some of those were actually in incredibly bad physical shape even BEFORE they contracted COVID
+[04:11:02] *** Quits: brentaarnold (~brentaarn@24.112.58.14) (Ping timeout: 256 seconds)
+[04:22:04] <ordos> relipse, fear not, there's a very good chance that the mutation of Covid you've contracted is the Omicron variant, which - whilst being highly infectious - is far less dangerous than all prior variants. I echo what TML said - I too know plenty of folks who have gotten Covid lately, and they're all fine. Hell, my wife (healthcare worker) got it back in mid 2020 when things were particularly rough, and she made a full recovery. Odds are you'll be ok. It'll suck for
+[04:22:04] <ordos> a few days, and then you'll be fine.
+[04:22:44] <TML> All the people I know who got it had the earlier variants and came through it just fine.
+[04:23:22] <TML> I don't actually know anyone who's had the omicron variant yet, but I've heard it's much more mild symptomatically (of course, we can never believe anything we hear anymore, but *shrug*)
+[04:23:34] <__adrian> i'm certainly glad you folks haven't lost anyone. relipse, i wish you a speedy recovery
+[04:46:06] <Sammitch> for everyone else, please bear in mind that the lessened severity, and therefore hospitalization rate, of omicron is far outweighed by how incredibly infectious it is, so please continue doing your best to mask, distance, and avoid unnecessary social contacts.
+[04:47:56] *** Joins: hans (uid529825@id-529825.helmsley.irccloud.com)
+[04:56:10] <ordos> Sammitch, 100% agreed
+[04:57:33] *** Joins: pmercado (~pmercado@186.107.48.62)
+[04:57:49] <ordos> My country was among the first to discover Omicron and we've been tracking the numbers very closely. Indeed, incredibly infectious, but less severe.
+[04:57:58] <ordos> relipse, this might ease your mind: https://www.samrc.ac.za/news/decreased-severity-disease-during-first-global-omicron-variant-covid-19-outbreak-large-hospital
+[04:58:47] <ordos> But most importantly, heed Sammitch's advice - wear your mask.
+[05:00:46] *** Quits: ProfSimm (~ProfSimm@87.227.196.109) (Ping timeout: 256 seconds)
+[05:02:07] <hans> is there a php api for omnicron?
+[05:02:19] <__adrian> good question.
+[05:02:27] <hans> haha som1 do the !recommends thing
+[05:03:00] *** Quits: oztunan (~oztunan@oztunan.org) (Quit: In the morning!)
+[05:03:36] <__adrian> relipse, again, i wish you a quick recovery.
+[05:04:00] *** Joins: oztunan (~oztunan@oztunan.org)
+[05:11:41] *** Quits: Nekomander (~BadAdvice@user/badadvicecat) (Quit: Quitting)
+[05:14:38] *** Joins: brentaarnold (~brentaarn@24.112.58.14)
+[05:20:03] <relipse> Thanks
+[05:30:19] *** Quits: vlm (~vlm@user/vlm) (Quit: "")
+[05:32:39] *** Joins: Rockwood (~Rocky@user/rocky)
+[05:52:00] *** Joins: ethoxy (~root@bison.sh3ll.ru)
+[06:03:01] *** Quits: Rockwood (~Rocky@user/rocky) (Read error: Connection reset by peer)
+[06:12:05] <hans> oh dear >		// For some reason, instantiating UnlinkRemovedAds spits white-space into our phpunit output. Output buffering fixes it. \n ob_start();
+[06:27:34] <Blondie101010> so clean that code
+[06:28:03] <Blondie101010> the most likely reason would be a file ending with: ?>\n\n\n\n\n
+[06:28:49] <Blondie101010> output buffering does not solve any problem there, it merely hides it
+[06:33:56] *** Joins: Lazenca (~lazenca@user/lazenca)
+[06:40:23] *** Quits: Alex8532 (~Alex8532@user/alex8532) (Quit: Going offline, see ya! (www.adiirc.com))
+[07:18:10] *** Joins: BadAdviceCat (~BadAdvice@user/badadvicecat)
+[07:18:18] *** Joins: WishBoy (~WishBoy@user/wishboy)
+[07:25:49] *** Quits: BadAdviceCat (~BadAdvice@user/badadvicecat) (Ping timeout: 240 seconds)
+[07:27:56] *** Quits: WishBoy (~WishBoy@user/wishboy) ()
+[07:43:01] *** Quits: pmercado (~pmercado@186.107.48.62) (Ping timeout: 240 seconds)
+[08:02:27] *** Quits: de-facto (~de-facto@user/de-facto) (Ping timeout: 276 seconds)
+[08:05:47] *** Joins: BadAdviceCat (~BadAdvice@user/badadvicecat)
+[08:07:13] *** Joins: de-facto (~de-facto@user/de-facto)
+[08:12:17] *** Quits: Xavier7 (~ircap@179.6.137.194) (Ping timeout: 240 seconds)
+[08:20:07] *** Quits: ferdna (~ferdna@user/ferdna) (Quit: Leaving)
+[08:37:08] *** Joins: bandit_za (~bandit@41.13.164.182)
+[08:51:01] *** Quits: bandit_za (~bandit@41.13.164.182) (Read error: Connection reset by peer)
+[08:54:43] *** Quits: tirnanog (~tirnanog@user/tirnanog) (Quit: = "")
+[09:01:17] *** Quits: junktext (~junktext@gateway/vpn/pia/junktext) (Ping timeout: 240 seconds)
+[09:26:47] *** Joins: lembron (~admin@user/lembron)
+[09:33:00] *** Quits: h_ (rootvegeta@fsf/member/hays) (Quit: h_)
+[09:35:26] *** Joins: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[09:38:25] *** Quits: nwulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 256 seconds)
+[09:41:59] *** Joins: hays (rootvegeta@fsf/member/hays)
+[09:50:14] *** Joins: Nekomander (~BadAdvice@user/badadvicecat)
+[09:50:53] *** Quits: BadAdviceCat (~BadAdvice@user/badadvicecat) (Ping timeout: 256 seconds)
+[09:58:58] *** Quits: \mSg_mini (mSg@user/msg/x-0285936) (Ping timeout: 256 seconds)
+[10:00:56] *** Quits: Xaldafax (~xaldafax@cpe-198-72-160-101.socal.res.rr.com) (Quit: Bye...)
+[10:06:11] *** Joins: \mSg (mSg@user/msg/x-0285936)
+[10:09:32] *** Joins: PovilasCNC (~PovilasCN@user/PovilasCNC)
+[10:11:25] *** Quits: \mSg (mSg@user/msg/x-0285936) (Ping timeout: 240 seconds)
+[10:14:30] *** Joins: \mSg (mSg@user/msg/x-0285936)
+[10:30:37] *** Quits: stenno (~stenno@user/stenno) (Ping timeout: 240 seconds)
+[10:31:07] *** Joins: Naktibalda (~Naktibald@88.135.22.17)
+[10:33:27] *** Joins: stenno (~stenno@user/stenno)
+[10:34:29] *** Joins: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk)
+[10:35:21] *** Quits: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk) (Remote host closed the connection)
+[10:35:46] *** Joins: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk)
+[10:39:41] *** Quits: PovilasCNC (~PovilasCN@user/PovilasCNC) (Read error: Connection reset by peer)
+[10:42:22] *** Joins: PovilasCNC (~PovilasCN@user/PovilasCNC)
+[10:54:09] *** Joins: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net)
+[11:00:13] *** Quits: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net) (Ping timeout: 240 seconds)
+[11:10:34] *** Joins: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net)
+[11:10:34] *** Quits: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net) (Client Quit)
+[11:10:51] *** Joins: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net)
+[11:11:26] *** Joins: guido (~weechat@2001:b07:6455:ac4f:3641:5dff:fe55:2a8f)
+[11:25:45] *** Joins: BadAdviceCat (~BadAdvice@user/badadvicecat)
+[11:26:37] *** Quits: Nekomander (~BadAdvice@user/badadvicecat) (Ping timeout: 240 seconds)
+[11:32:40] *** Joins: AllenJB (~AllenJB@user/allenjb)
+[11:33:00] *** Joins: fef (~thedawn@user/thedawn)
+[11:40:12] *** Quits: Blondie101010 (~Blondie10@user/blondie101010) (Read error: Connection reset by peer)
+[11:43:39] *** Joins: ms49434 (~ms49434@user/ms49434)
+[12:04:29] *** Joins: fahrradToken (~fahrradTo@2a02:810b:149f:f0f4::5cc4)
+[12:04:58] *** Quits: infernix (~nix@spirit.infernix.net) (Remote host closed the connection)
+[12:18:49] *** Quits: fahrradToken (~fahrradTo@2a02:810b:149f:f0f4::5cc4) (Ping timeout: 268 seconds)
+[12:22:37] *** Quits: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net) (Read error: Connection reset by peer)
+[12:27:02] *** Joins: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net)
+[12:32:22] *** Joins: nwulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com)
+[12:33:17] *** Quits: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net) (Quit: WeeChat 3.4)
+[12:35:22] *** Quits: night_wulfe (~wulfe@cpe-174-103-156-213.cinci.res.rr.com) (Ping timeout: 256 seconds)
+[12:36:18] *** Joins: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net)
+[12:42:26] <shinbet> I scrap this kind of data from web
+[12:42:28] <shinbet> https://github.com/shinbeth/pasizaidimai/blob/master/7.4/temp_cur_valiutos.list
+[12:43:36] <shinbet> then I'm trying to trim it and append $ at the beginning
+[12:43:39] <shinbet> https://github.com/shinbeth/pasizaidimai/blob/master/7.4/index.php
+[12:44:13] <shinbet> I want to turn that data into a php code and include it as array for use
+[12:45:04] *** Joins: LucaTM (~LucaTM@user/lucatm)
+[12:46:18] <shinbet> or is it stupid idea and I should just process text furtherly to refine just string - float pairs and then loop it into an array ?
+[12:51:46] <shinbet> oh
+[12:51:49] <shinbet> nvm
+[12:52:12] <shinbet> just needed to add php script tags to metaprogrammed file
+[12:52:13] *** Quits: molt (~molt@46.33.200.12) (Ping timeout: 256 seconds)
+[12:52:38] <AllenJB> I would just parse the file content (probably using regex). Evaluating (with eval/include/require, even modified) content that comes from a third party is a bad idea in my opinion.
+[12:52:53] <shinbet> it is regexed before
+[12:53:08] <shinbet> egrep "curRates\['[A-Z]{2,3}'\] = [0-9]{1,2}\.[0-9]{10}" cur_valiutos.html > temp_cur_valiutos.list
+[12:53:32] <shinbet> from this dump lynx -source https://rekvizitai.vz.lt/valiutu-kursai/ > cur_valiutos.html
+[12:53:49] *** Quits: otisolsen70 (~otisolsen@xd4ed80b5.cust.hiper.dk) (Quit: Leaving)
+[12:54:12] <shinbet> so it can hardly be anything nasty as its regexed very specifically for what it takes
+[13:02:13] *** Quits: onichomp (~onichomp@177.231.44.9) (Read error: Connection reset by peer)
+[13:06:50] <Naktibalda> you could probably use egrep to prepend $ and append ;  (lookup how to do substitution), but it would be simpler to do all fetching and parsing in PHP
+[13:08:25] *** Joins: shokohsc (~shokohsc@lfbn-idf2-1-630-171.w86-246.abo.wanadoo.fr)
+[13:08:27] *** Joins: krux02 (~krux02@p50822ef8.dip0.t-ipconnect.de)
+[13:08:39] <shinbet> yes it would be interesting to do all the fetching and parsing in PHP I'm just not there yet, and is ti doable with base PHP or I would need to use something like symphony panther ?
+[13:09:34] <Naktibalda> $text = file_get_contents($url);
+[13:09:45] *** krux02 is now known as krux03
+[13:10:00] *** Quits: dlundgren (~dlundgren@75-9-109-251.lightspeed.milwwi.sbcglobal.net) (Quit: dlundgren)
+[13:14:14] <shinbet> ok gonna try to rewrite the shell part in php or this as I wanted to eventually get rid of shell dependencies in some scripts
+[13:19:32] *** Quits: ianthrive (~ianthrive@166.70.191.9) (Quit: Textual IRC Client: www.textualapp.com)
+[13:20:06] <shinbet> or even easier for this purpose to get national bank CSV export https://www.lb.lt/lt/currency/buhalteriniaiexport/?csv=1&class=Lt&type=day&date_day=2022-01-11 here
+[13:22:49] *** Joins: tirnanog (~tirnanog@user/tirnanog)
+[13:26:56] *** Quits: BadAdviceCat (~BadAdvice@user/badadvicecat) (Ping timeout: 256 seconds)
+[13:30:37] *** Joins: bandit_za (~bandit@105.27.200.166)
+[13:40:02] *** Joins: maroloccio (~marolocci@151.75.59.229)
+[13:47:50] <shinbet> I avoided learning any of PHP because I generally dislike webpages and got into this EU funded training just because there was an opportunity to study for free, and it turns out I was wrong for assuming that php sucks just because most webpages sucks, but php is cool
+[13:48:53] *** Quits: bandit_za (~bandit@105.27.200.166) (Ping timeout: 256 seconds)
+[13:55:03] *** Joins: sambauer64 (~sambauer6@86.121.131.207)
+[13:56:33] *** Joins: tercaL (~tercaL@user/tercal)
+[13:57:26] <krux03> shinbet, you could be me :P
+[13:57:44] <krux03> php is generally not spoken well about.
+[13:57:51] *** Joins: Jonos (~madder@user/Jonos)
+[13:58:09] *** Joins: molt (~molt@46.33.200.12)
+[13:59:15] *** Quits: tercaL (~tercaL@user/tercal) (Remote host closed the connection)
+[14:07:45] <shinbet> I like it better than python as I dont have to think about fascist syntax and I initially thought that the only way is to use php via some webservice like apache, but turns out one can just do "php script.php" which was gamechanger when I learned that
+[14:08:31] *** Joins: fahrradToken (~fahrradTo@2a02:810b:149f:f0f4::5cc4)
+[14:09:11] <shinbet> ; is easier to notice than how many restraining spaces there is
+[14:12:51] *** Joins: bandit_za (~bandit@105.27.200.166)
+[14:19:45] *** Joins: infernix (nix@spirit.infernix.net)
+[14:27:40] *** Quits: hans (uid529825@id-529825.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[14:34:56] *** Quits: bandit_za (~bandit@105.27.200.166) (Ping timeout: 256 seconds)
+[14:35:48] *** Quits: maroloccio (~marolocci@151.75.59.229) (Quit: WeeChat 3.0)
+[14:36:38] *** Quits: Jonos (~madder@user/Jonos) (Ping timeout: 256 seconds)
+[14:41:55] <ordos> Good stuff - https://stitcher.io/blog/php-in-2022
+[14:47:12] *** Quits: Hiccup (cHoy@user/hiccup) (Remote host closed the connection)
+[14:52:49] *** Joins: olle (~olle@i5E866D9F.versanet.de)
+[14:53:03] <olle> Does LOCK_UN apply automatically at end of script, after doing flock with LOCK_EX?
+[14:53:29] <olle> https://stackoverflow.com/questions/13522273/will-flocked-file-be-unlocked-when-the-process-die-unexpectedly
+[14:53:32] <olle> Bah
+[14:53:32] *** Joins: Error (~err@user/error)
+[14:55:07] <olle> Does anyone knows what this means?
+[14:55:08] <olle> if (flock($pLock, LOCK_EX + LOCK_NB)) {
+[14:55:11] <olle> with `+`
+[14:55:20] <olle> Usually it's `|`, but in our code, for some reason `|`
+[14:55:23] <olle> sorry `+`
+[14:57:26] <Naktibalda> must be mistake, but it often produces the same result with simple flags, so it makes no difference
+[14:57:42] <Naktibalda> 1+2 and 1|2  both return 3
+[14:58:50] <olle> Naktibalda: Lucky break, huh? :)
+[14:59:00] *** Joins: panella32 (~panella32@89.46.114.155)
+[14:59:22] <Naktibalda> flag constants have one bit set to 1
+[14:59:23] <shinbet> naktibalda means nightbanger in lithuanian
+[14:59:53] <Naktibalda> now if you had to do math with file modes 5 and 6,  + and | would produce different results
+[14:59:53] *** Quits: panella32 (~panella32@89.46.114.155) (Client Quit)
+[15:00:21] <olle> Hmm
+[15:00:30] <olle> | is bit shift?
+[15:00:32] <olle> bit mask?
+[15:00:35] <Naktibalda> bit or
+[15:00:39] <olle> But what is + in bit masking?
+[15:00:52] <Naktibalda> integer addition
+[15:01:01] <olle> Oh right
+[15:01:15] <olle> Should only use | or & for bit masking, right?
+[15:01:20] <Naktibalda> 1+2 = 3   => 01 | 10 = 11
+[15:01:42] *** Quits: fef (~thedawn@user/thedawn) (Ping timeout: 276 seconds)
+[15:01:54] <olle> Right
+[15:02:00] <Naktibalda> 5+6 = 11 , 101 | 110 = 111  (7)
+[15:02:54] <olle> Thanks :)
+[15:02:58] <olle> Will explain this for my boss
+[15:10:28] *** Quits: Lazenca (~lazenca@user/lazenca) (Remote host closed the connection)
+[15:11:44] *** Joins: Alex8532 (~Alex8532@user/alex8532)
+[15:13:25] *** Joins: fef (~thedawn@user/thedawn)
+[15:25:48] *** Joins: pileatedx (~textual@cpe-67-241-68-204.twcny.res.rr.com)
+[15:26:13] *** Joins: pmercado (~pmercado@186.107.48.62)
+[15:30:36] *** Joins: mIk3_08 (~Thunderbi@user/mik3-08/x-2852566)
+[15:36:19] *** Quits: echoSMILE (uid504326@user/echosmile) (Quit: Connection closed for inactivity)
+[15:37:23] *** Joins: dlundgren (~dlundgren@75-9-109-251.lightspeed.milwwi.sbcglobal.net)
+[15:47:16] *** Quits: guido (~weechat@2001:b07:6455:ac4f:3641:5dff:fe55:2a8f) (Quit: WeeChat 3.4)
+[15:54:56] *** Quits: fahrradToken (~fahrradTo@2a02:810b:149f:f0f4::5cc4) (Ping timeout: 252 seconds)
+[16:02:15] <arash> Hello, can I use variable in another variable __name__? for example $num = 1; I need something like this $string$num
+[16:03:05] <AllenJB> arash: https://www.php.net/manual/en/language.variables.variable.php
+[16:03:05] <Naktibalda> use array instead
+[16:03:42] <AllenJB> Note that using variable variables is generally considered a bad idea as it can make code confusing / harder to read and keep track of what variables you have.
+[16:05:35] *** Quits: gxt (~gxt@gateway/tor-sasl/gxt) (Remote host closed the connection)
+[16:05:56] *** Joins: gxt (~gxt@gateway/tor-sasl/gxt)
+[16:06:27] *** Joins: Blondie101010 (~Blondie10@user/blondie101010)
+[16:06:41] *** Parts: sambauer64 (~sambauer6@86.121.131.207) ()
+[16:10:39] *** Joins: brentaarnold_ (~brentaarn@24.112.58.14)
+[16:11:50] *** Quits: brentaarnold (~brentaarn@24.112.58.14) (Ping timeout: 256 seconds)
+[16:11:50] *** brentaarnold_ is now known as brentaarnold
+[16:12:21] *** Joins: guido (~weechat@host-79-36-250-82.retail.telecomitalia.it)
+[16:22:29] *** Joins: MrBlue (~MrBlue@139.28.218.212)
+[16:25:35] *** Joins: DrowningElysium (uid190788@user/drowningelysium)
+[16:27:02] *** Quits: remolej (~kenoba@user/kenoba) (Quit: The Lounge - https://thelounge.chat)
+[16:27:49] *** Joins: remolej (~kenoba@user/kenoba)
+[16:30:09] <__adrian> "arash> I need something like this $string$num"  I'd ask why you want this - for example, do you need a list of things? like, $thing1, $thing2, etc.?
+[16:30:23] <__adrian> this is what _arrays_ are for. do not make variable variables.
+[16:30:44] <__adrian> $things = ["thing1", "thing2", "etc."];
+[16:31:00] <arash> __adrian, yes, ok then. thank you
+[16:31:14] <__adrian> welcome
+[16:32:58] *** Quits: remolej (~kenoba@user/kenoba) (Quit: The Lounge - https://thelounge.chat)
+[16:33:58] *** Joins: remolej (~kenoba@user/kenoba)
+[16:34:00] *** Quits: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net) (Quit: WeeChat 3.4)
+[16:35:53] *** Joins: fahrradToken (~fahrradTo@2a02:810b:149f:f0f4::5cc4)
+[16:36:31] *** Joins: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net)
+[16:49:34] *** Joins: MrBech (~MrBech@152.115.67.90)
+[16:50:52] *** Quits: MrBlue (~MrBlue@139.28.218.212) (Quit: Leaving)
+[16:51:55] <Error> hi all im try to fix a directory wise search and get output..cannot get it work..my php knowledge is very very basic.. here is the detail https://0bin.net/paste/kHNGLa6p#zTbtXBvQ1T32HdkzMQueiEdSmU571+Ws9hI6MsQ124f
+[16:52:14] <Error> can anyone help plz or even gimme a guide line
+[16:58:35] <stenno> where is the error message?
+[16:59:48] <Error> its show me 500 err
+[16:59:54] <Error> not working at all
+[17:00:19] <Error> https://oddprotocol.org/list/test.html
+[17:00:21] <Error> thats the link
+[17:02:50] <Naktibalda> check the logs
+[17:03:15] <Error> once sec
+[17:03:32] <Naktibalda> if you use shared hosting, it is quite likely that exec function is disabled
+[17:03:55] <Naktibalda> wtf is this? $maxresults=##MAX_RESULTS##;
+[17:04:23] <Error> PHP message: PHP Parse error:  syntax error, unexpected '&', expecting ')' in /htdocs/main/list/search.php on line 10
+[17:04:23] <Error> PHP message: PHP Parse error:  syntax error, unexpected '&', expecting ')' in /htdocs/main/list/search.php on line 10
+[17:04:45] <Error> i promise i would tell you if i knew
+[17:05:03] <TinoDidriksen> So it's not even your code.
+[17:05:10] <Naktibalda> remove that &
+[17:05:44] <Error> done
+[17:05:57] <Error> remove the $maxresults=##MAX_RESULTS##; whole line?
+[17:06:22] <Naktibalda> replace ##MAXRESULTS## with a number
+[17:07:43] <Error> done
+[17:07:47] <Error> i replaced it with 20
+[17:08:06] <Naktibalda> & in function call was deprecated since 4.3.0 and removed in 5.4.0 (10 years ago)
+[17:08:49] <Error> this script is old
+[17:09:17] <Error> its just a mailing list archive search!
+[17:14:15] *** Joins: hans (uid529825@id-529825.helmsley.irccloud.com)
+[17:16:09] *** Joins: krux02_ (~krux02@p50822ef8.dip0.t-ipconnect.de)
+[17:18:42] *** Quits: krux03 (~krux02@p50822ef8.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[17:19:26] <stenno> ...and it used to work? or where do you have that from
+[17:19:48] <stenno> sounds like its part of a CMS or so, with all that templating thingies
+[17:19:57] *** Quits: fahrradToken (~fahrradTo@2a02:810b:149f:f0f4::5cc4) (Ping timeout: 240 seconds)
+[17:21:11] <Error> i have deleted & and replaced with () as the error loge was saying.. now its runing a search and its just showing search as result
+[17:23:22] <Naktibalda> your PHP code expects parameter named "words" (no quotes), but your HTML sends "term"
+[17:23:48] <stenno> maybe its a covert ctf challenge :D
+[17:24:31] <Naktibalda> I'm pretty sure that remote command execution is possible there
+[17:24:41] *** Joins: MrBlue (~MrBlue@5.181.233.205)
+[17:28:48] <Snowman23> I don't think so
+[17:29:11] <Snowman23> If you could control two parameters, maybe, but as it is, I don't see a way to break out
+[17:29:27] <stenno> its probably possible, yeah
+[17:29:31] <stenno> so i guess ctf :P
+[17:29:48] <stenno> it has happened before, especially in this channel
+[17:30:05] <stenno> seems that php4 is a popular choice for ctf backend :P
+[17:30:40] <Snowman23> Oh, actually, it may be possible. You can pass a single arbitrary argument to xargs/egrep (by setting $words to something like -V)
+[17:30:58] <Snowman23> Whether that is exploitable depends on how xargs/egrep work, which I don't know off the top of my head. At a guess I'd still say no
+[17:31:22] <Snowman23> Argument injection isn't always super exploitable, but is still a cool bug class
+[17:32:12] <stenno> $words doesn't replace '.' or '/'
+[17:32:39] <Snowman23> That makes it buggy, but not exploitable right
+[17:32:45] <stenno> hrm
+[17:32:46] <Error> i need a translator
+[17:32:48] <Error> ;P
+[17:32:53] <stenno> also regexp for parsing html
+[17:33:13] <stenno> right now i have to make the fateful decision to put time into this, or not
+[17:33:18] <stenno> its looks very very ctf
+[17:33:28] <Snowman23> Oh you could almost certainly get it to read arbitrary files with the file_get_contents
+[17:33:38] <hans> whats the code being discussed?
+[17:33:46] <stenno> https://paste.ircnow.org/o1ebkpy34xqb0d63wxmb/
+[17:33:52] <Error> now i have tried the actual script without my Kamikaze idea
+[17:34:32] <hans> that looks vulnerable indeed, you're fixing it wrong
+[17:34:40] <Error> https://paste.ircnow.org/01yf49ibgtmrcxmn05mr
+[17:34:53] <stenno> it replaces ' with '''
+[17:34:56] <Error> it loads up
+[17:35:05] <stenno> hmm actually
+[17:35:09] <Error> but no result
+[17:35:12] <hans> not sure how that would handle null bytes
+[17:35:14] <stenno> it replaces ' with '"'"
+[17:35:22] <stenno> depends on the php version
+[17:35:30] <hans> pretty sure it wouild short-circuit the commandline
+[17:35:31] <stenno> actually with exec, hmm
+[17:35:35] <Error> 7.4 that what im running!
+[17:35:40] <hans> and you'd get a shell syntax error if nothing else
+[17:36:09] <stenno> 7.4 is safe from null-byte poisoning with its C functions, but of course this will not translate to exec
+[17:36:33] <Snowman23> I vote that you cannot get RCE from the code
+[17:36:35] <Snowman23> Final answer
+[17:37:04] <stenno> i say you can
+[17:37:09] <stenno> the replace is so strange
+[17:37:14] *** Joins: fahrradToken (~fahrradTo@2a02:810b:149f:f0f4::5cc4)
+[17:37:38] <Snowman23> Come on, show an example payload then :P
+[17:37:51] <stenno> an exec call with the POST param directly interpolated into it
+[17:38:00] <stenno> i mean come on
+[17:38:04] <Snowman23> The best I can get is a single arbitrary parameter to egrep
+[17:38:19] <stenno> we know the folder structure
+[17:38:33] <stenno> i wonder whats in 'oddprotocol'
+[17:38:49] <Error> thats a domain
+[17:38:59] <Error> as odd as my choice
+[17:39:00] <stenno> it must be a ctf setup, come on
+[17:39:20] <stenno> i will look into this a bit later
+[17:39:30] <stenno> Error: how long will the test page be up?
+[17:40:01] <Error> paste ?
+[17:40:12] <Error> test page gonna be up for long!
+[17:42:02] <Snowman23> stenno: If you get anything working, I'd like to see it :D
+[17:42:18] <stenno> Snowman23: don't you find the replace strange
+[17:42:59] <stenno>    <h1>search ##TITLE_LOCATION## (you can use POSIX regex)</h1>
+[17:43:02] <stenno> i mean
+[17:43:08] <stenno> this is like a textbook ctf setup
+[17:43:34] <stenno> i really have other things to do, dammit
+[17:43:41] <stenno> why do i naturally get drawn to stuff like that
+[17:43:48] <Snowman23> If it was a CTF challenege, it would be a poor one. There's no complexity to it
+[17:43:52] <Snowman23> (I do a lot of CTFs)
+[17:44:07] <Error> ctf? Child Trust Fund?
+[17:44:11] <stenno> well its a basic one
+[17:44:16] <stenno> at least it seems like one
+[17:44:23] <stenno> can't really know that yet :P
+[17:44:40] <Snowman23> Error: Capture the flag -- hacking/programming challeneges, competitively :)
+[17:44:51] <stenno> but maybe its just  bad code after all
+[17:45:00] <stenno> hanlons razor
+[17:45:05] <Error> this code is about 10 years all
+[17:45:25] <Error> i dont no any alternative yet
+[17:45:36] <stenno> the basic stuff i learned about ctf are all present here
+[17:46:58] <Snowman23> My favorite CTF level I've done that involves PHP was turning https://gist.github.com/ss23/001cf6d576e9d3d0087d9f94755e8345 into RCE
+[17:48:38] <stenno> Snowman23: probably with something like php://*
+[17:48:41] <stenno> ?
+[17:48:57] <stenno> also i know about some ?? magic
+[17:49:04] <stenno> isset style magic
+[17:49:10] <Snowman23> heh, nope. I doubt you could figure it without some significant time investigating it
+[17:49:23] <stenno> gotcha, noted
+[17:49:57] <stenno> maybe its more healthy for me to actually put effort into this one instead
+[17:50:04] <stenno> thansk for the challenge!
+[17:50:13] <stenno> gotta see if i am up to this one
+[17:50:25] *** Quits: LucaTM (~LucaTM@user/lucatm) (Quit: Textual IRC Client: www.textualapp.com)
+[17:50:34] <stenno> oh it can rewrite itself lol
+[17:50:54] <Snowman23> Nope, not writable. https://ctftime.org/task/14374 has the full "image" of the setup etc if you want it (the archive)
+[17:51:02] <stenno> thanks
+[17:51:03] <Snowman23> It has a writeup there if you get stuck :P
+[17:51:07] <stenno> thanks!
+[17:51:40] *** Joins: chazy (~chazy@2a0c:5a84:d201:d800:1ac0:4dff:fe96:16ad)
+[17:51:45] <stenno> imma bookmark that and try it out in a quiet moment
+[17:52:31] <chazy> hi, is there a return type declaration that works with json? i tried string but it also prints the response header, no idea why
+[17:53:07] <Naktibalda> how is return type declaration related to response headers?
+[17:53:21] *** Quits: fahrradToken (~fahrradTo@2a02:810b:149f:f0f4::5cc4) (Remote host closed the connection)
+[17:54:19] <chazy> `return response()->json([...]);` if i specify string as return type i can see the response as just text, starting with the header information and then the object {} in the browser, if i don't i just see the browser's interface for display json code
+[17:55:04] <stenno> return type should be Response or so maybe?
+[17:55:11] <stenno> if i understood correctly
+[17:55:22] <stenno> what framework is that?
+[17:55:38] <chazy> laravel
+[17:55:44] *** Joins: fahrradToken (~fahrradTo@2a02:810b:149f:f0f4::5cc4)
+[17:56:10] <stenno> can you typehint 'Response' then?
+[17:56:18] <chazy> if i don't specify string, the raw response is just the object {}, if i do, i can see text before the {}
+[17:56:22] <stenno> or JsonResponse
+[17:56:27] <stenno> hm
+[17:56:29] <Naktibalda> I don't believe return type declaration affects result
+[17:56:30] <stenno> maybe its unrealted then
+[17:56:32] <stenno> yep
+[17:56:35] <Naktibalda> anyway, this is framework question
+[17:56:56] *** Parts: olle (~olle@i5E866D9F.versanet.de) ()
+[17:57:05] <chazy> like maybe if it treats the response as a string it includes the header as text?
+[17:57:15] <Naktibalda> or does it, in non-strict mode?
+[17:57:46] <Naktibalda> in non-strict mode PHP could cast object to string
+[17:58:12] <Naktibalda> anyway, it is not intended, don't set return type to string
+[17:58:25] <stenno> JsonResponse should be the correct typehint
+[17:58:47] <stenno> and yeah, php does implicit typecasting without strict_types
+[18:00:03] <Naktibalda> example of casting https://3v4l.org/jH9PE
+[18:00:16] <chazy> oh my bad then, i should've researched that earlier, i'm still new to laravel but thoguht it wasn't related to that, like i didn't know php had strict mode
+[18:01:24] <Naktibalda> it is per file setting, add declare(strict_types=1); to every file you create
+[18:02:18] <Naktibalda> like this: https://3v4l.org/4vlED
+[18:05:38] *** Quits: MrBech (~MrBech@152.115.67.90) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[18:07:37] <chazy> Naktibalda: isn't there another way than to every single php file in my project?
+[18:08:45] *** Joins: MrBech (~MrBech@152.115.67.90)
+[18:08:56] *** Joins: sambauer64 (~sambauer6@86.121.131.207)
+[18:09:23] <sambauer64> hi. is it possible to set cookies with php to remember certain preferences for multiple dropdowns?
+[18:09:43] <Naktibalda> chazy: no
+[18:10:28] <Naktibalda> sambauer64: of course
+[18:13:51] <sambauer64> thank you. but is this the way to do it or I can accomplish it in other ways?
+[18:14:24] *** Quits: mIk3_08 (~Thunderbi@user/mik3-08/x-2852566) (Quit: mIk3_08)
+[18:16:52] *** Joins: montybanksnyc (~montybank@108.50.135.21)
+[18:18:18] *** Quits: Furai (~Furai@furai.pl) (Quit: WeeChat 3.4)
+[18:20:48] *** Joins: bizolos (~bizolos@176-179-18-127.abo.bbox.fr)
+[18:21:17] *** Joins: Furai (~Furai@furai.pl)
+[18:21:50] <bizolos> Hi there. I have an issue with a datetime format. '2021-09-29T13:45:41.125+02:00'. I tried `\DateTimeImmutable::createFromFormat(\DateTimeImmutable::ATOM, '2021-09-29T13:45:41.125+02:00')` but it gives me false. Same if I add a DateTimeZone: `\DateTimeImmutable::createFromFormat(\DateTimeImmutable::ATOM, '2021-09-29T13:45:41.125+02:00', new \DateTimeZone('Europe/Paris'))`
+[18:21:56] <bizolos> But in Python, this works: `datetime.fromisoformat('2021-09-29T13:45:41.125+02:00')`
+[18:23:49] <TinoDidriksen> That's not the ATOM format. It's RFC3339_EXTENDED
+[18:24:39] *** Quits: tirnanog (~tirnanog@user/tirnanog) (Quit: = "")
+[18:25:42] *** Quits: MrBech (~MrBech@152.115.67.90) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[18:26:18] <bizolos> TinoDidriksen, Oh my god. You saved my day <3. Thank you very much
+[18:31:12] *** Quits: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net) (Quit: WeeChat 3.4)
+[18:32:33] *** Joins: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net)
+[18:35:22] *** Joins: junktext (~junktext@gateway/vpn/pia/junktext)
+[18:40:19] <__adrian> chazy: "per-file" is on purpose, as a global setting is likely to break code from different authors (e.g., vendor libraries) in many projects.
+[18:52:06] *** Joins: LucaTM (~LucaTM@user/lucatm)
+[18:54:27] *** Joins: tirnanog (~tirnanog@user/tirnanog)
+[18:58:17] <chazy> __adrian: true, that makes sense, still there could be an option to set every file that's not in vendor or w/e
+[18:58:54] *** krux02_ is now known as krux02
+[19:03:14] <__adrian> could get complicated pretty quick, depending on the project  ;)  also a less-typical approach than php usually takes.
+[19:06:58] *** Joins: lenarhoyt (~lenarhoyt@p200300c24f035f017da1451e09e4bf13.dip0.t-ipconnect.de)
+[19:07:14] <Error> i got no hope
+[19:07:15] <Error> lol
+[19:08:49] <chazy> i can't help but think about if there's anything wrong with using php as a backend for an online unreal engine game (not that it's a triple A game but still), what do you think?
+[19:15:53] *** Quits: sambauer64 (~sambauer6@86.121.131.207) (Quit: Lost terminal)
+[19:18:17] <Naktibalda> chazy: what does backend do?
+[19:19:35] <chazy> Naktibalda: actually, pretty simple stuff such as return the character list, the winning probability, the reward earned, the tries left for a character, and not sure if something else but nothing complicated
+[19:19:56] *** Joins: Rockwood (~Rocky@user/rocky)
+[19:21:00] <chazy> i think the problem or complication will come when we implement a multi player mode
+[19:25:14] <Rockwood> are you creating any kind of game?
+[19:25:27] <Naktibalda> PHP should be fine as long as you aren't going to send lots of real time data
+[19:27:17] <chazy> Rockwood: yes, a pretty simple one though, i'm only in charge of the server side, which is the easiest part, i don't anything about UE or modeling, etc
+[19:28:31] <Rockwood> chazy, what kind of that?
+[19:29:16] <chazy> Naktibalda: yeah, i'm just reading the mechanics server usually uses UDP instead of TCP, i wonder if QUIC would in any way be better or at least similar and allow real-time communications
+[19:29:26] <chazy> wait, it's actually built on top of UDP
+[19:30:34] <chazy> Rockwood: a soccer game, but just for penalty shootout, and eventually a multiplayer mode where an additional user will replace the AI as the goalkeeper
+[19:38:32] *** Quits: lenarhoyt (~lenarhoyt@p200300c24f035f017da1451e09e4bf13.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[19:43:09] *** Joins: krux02_ (~krux02@p50822ef8.dip0.t-ipconnect.de)
+[19:43:41] *** Joins: Northwoods (~Northwood@202.14.122.149)
+[19:46:02] *** Quits: krux02 (~krux02@p50822ef8.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[19:47:46] *** Quits: AMG (ghebo@user/amg) (Ping timeout: 260 seconds)
+[19:52:09] *** krux02_ is now known as krux02
+[19:52:40] *** Quits: hans (uid529825@id-529825.helmsley.irccloud.com) (Quit: Connection closed for inactivity)
+[19:57:56] *** Quits: Northwoods (~Northwood@202.14.122.149) (Ping timeout: 256 seconds)
+[19:58:18] *** Joins: MrBech (~MrBech@152.115.67.90)
+[19:59:55] *** Joins: Northwoods (~Northwood@202.14.122.149)
+[20:00:12] *** Quits: bizolos (~bizolos@176-179-18-127.abo.bbox.fr) (Ping timeout: 256 seconds)
+[20:02:00] *** Quits: Rockwood (~Rocky@user/rocky) (Quit: The Time is Over)
+[20:09:54] *** Joins: BadAdviceCat (~BadAdvice@user/badadvicecat)
+[20:15:51] <chazy> how can i implement a schedule system that defines when a user can do a certain action (play) or not? due to the potential rewards we want to limit the amount of times a user can play, so we decided every 4 hours, they have x tries left but can only use them during the first 30 minutes (the decision is beyond me but anyways), should i hardcode that, starting at 00:00 utc users have 30 minutes to play,
+[20:15:53] <chazy> and then at 04:00 and so on the next turn in the schedule starts, can't wrap my head around this functionality yet
+[20:16:50] <chazy> i mean, if i should store something or just hardcode it
+[20:18:46] *** Quits: krux02 (~krux02@p50822ef8.dip0.t-ipconnect.de) (Remote host closed the connection)
+[20:19:43] <Naktibalda> chazy: I think that you should separate try counting and open window functionality.
+[20:20:08] *** Quits: luigibu (~luigi@11.red-79-159-71.dynamicip.rima-tde.net) (Read error: Connection reset by peer)
+[20:20:57] <chazy> Naktibalda: yes, that's what i was just thinking about, define both concepts first and then try to implement them
+[20:21:57] *** Quits: fahrradToken (~fahrradTo@2a02:810b:149f:f0f4::5cc4) (Ping timeout: 240 seconds)
+[20:24:06] *** Joins: ThePhilgrim (~ThePhilgr@78-69-18-227-no49.tbcn.telia.com)
+[20:27:28] *** Joins: ge (~g@37.214.25.224)
+[20:29:29] *** Joins: lenarhoyt (~lenarhoyt@pd9fc84e9.dip0.t-ipconnect.de)
+[20:33:19] *** Joins: varrg (~varrg@h-176-10-198-245.A351.priv.bahnhof.se)
+[20:35:51] *** Joins: freeman_h (~freeman_h@37.120.159.215)
+[20:36:35] <freeman_h> hi all I was wondering, if possible to do similar  min(array_keys($a)) - min(array_keys($b)) if $b and $a were an object?
+[20:37:02] <freeman_h> or best to turn it into array and be stress free
+[20:37:19] <varrg> freeman_h, https://www.php.net/manual/en/function.get-object-vars.php
+[20:37:38] <Naktibalda> objects with numeric property names?
+[20:39:26] <Naktibalda> have you json_decode'd some string to object?
+[20:47:17] <__adrian> generally, objects are not generic data containers. if you're operating on an object as though it were an array, you should probably have an array.
+[20:47:33] <__adrian> but you'll get a better answer with more context  ;)
+[20:48:31] *** Quits: ThePhilgrim (~ThePhilgr@78-69-18-227-no49.tbcn.telia.com) (Remote host closed the connection)
+[20:48:50] *** Joins: ThePhilgrim (~ThePhilgr@78-69-18-227-no49.tbcn.telia.com)
+[20:59:47] *** Quits: MrBech (~MrBech@152.115.67.90) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[21:04:42] *** Joins: Hunman (~hunman@94-21-53-18.pool.digikabel.hu)
+[21:07:32] *** Joins: panella32 (~panella32@89.46.114.44)
+[21:08:05] <judah> What is the best way to tell your boss that you will not support a live ecommerce site that is long out of PCI compliance and horribly insecure?
+[21:08:21] <judah> Because I do not want that liability
+[21:10:04] <da_wunder> I would start with explaining current risks and maybe even offer somekind of solution to fix those
+[21:11:13] <judah> Crossing fingers I get fired. Insubordination or something like that.
+[21:11:32] <judah> If I have to deal with Magento any longer I might just off myself
+[21:12:37] *** Quits: Northwoods (~Northwood@202.14.122.149) (Ping timeout: 240 seconds)
+[21:12:40] <panella32> Lookinh for a regex to find (remove) whatever comes after "|" sign in each line using notepad++?
+[21:13:30] <Naktibalda> offtopic
+[21:13:39] <__adrian> you might ask on #regex (##regex ?) or a notepad++ focused channel
+[21:13:44] <varrg> panella32, notepad++ should parse whatever you throw at it for such a simple pattern: find and replace, tick regex pattern matching
+[21:13:58] <__adrian> ^ i'd guess it's as simple as that
+[21:14:18] <Naktibalda> \|.*$   replace with | if you want to keep it
+[21:15:14] <panella32> Thanks guy, as always you are so helpful specially Naktibalda <3
+[21:15:23] <freeman_h> Naktibalda, not sure if its a numeric property. The code looks like this https://kopy.io/6IpPF i know the stockItems Variable is an object of an entity class however for some reason I cannot step into the usort
+[21:15:32] <panella32> guys*
+[21:16:56] <__adrian> freeman_h: usort() is for arrays
+[21:17:48] <Naktibalda> he is sorting array of objects that look like disguised arrays
+[21:17:49] <da_wunder> also it would help a lot if you share what that $stokItems really is - create eg. example to 3v4l.org site
+[21:17:53] <__adrian> if $stockItems is an object, you'll get an error
+[21:18:15] <__adrian> "look like disguised arrays" ?
+[21:18:31] <Naktibalda> freeman_h: what's the order that you expect to get?
+[21:19:04] <__adrian> +1 for a 3v4l
+[21:26:20] <freeman_h> da_wunder, how $stockItems is created. https://3v4l.org/Fr5gH
+[21:27:39] <Naktibalda> then you aren't running array_keys on object
+[21:28:08] <Naktibalda> you want to get the lowest StockStatusID for that ID
+[21:28:44] *** Joins: NakedKing (~NakedKing@user/nakedking)
+[21:33:58] <freeman_h> https://3v4l.org/L0LAq why isnt the echo showing? because when I run my actual code I get this error "Unsupported operand types: string - string"
+[21:35:16] <__adrian> your array has only one item
+[21:35:21] <__adrian> there's nothing to sort
+[21:35:47] <da_wunder> so is this what you're looking for - https://3v4l.org/cnbOv ?
+[21:37:01] *** Quits: BadAdviceCat (~BadAdvice@user/badadvicecat) (Ping timeout: 240 seconds)
+[21:37:20] *** Joins: BadAdviceCat (~BadAdvice@user/badadvicecat)
+[21:39:46] <Hunman> What about a spaceship operator instead of the ternary operator?
+[21:40:49] <da_wunder> true, I always forget to use that :D
+[21:41:19] <Sammitch> if they are numeric ids you can just do `$a->id - $b->id`
+[21:42:28] <freeman_h> __adrian, so am getting that expecting because $stockItems only have a single array
+[21:43:17] <freeman_h> because what I am trying to figure out is why does this old code work on php 5.6 but on php 8 am getting this expectation
+[21:43:35] *** Joins: olle (~olle@i5E866D9F.versanet.de)
+[21:43:48] <olle> Any thoughts on push vs pull architecture? Risk, effort, benefit? Pros, cons?
+[21:45:12] <Naktibalda> what are you pushing/pulling?
+[21:45:40] <da_wunder> freeman_h: you can run 3v4l.org with EOL versions too, and you example doesn't throw exceptions on PHP 5.6
+[21:45:46] <olle> Naktibalda: Products, customer data, delivery of product on our SaaS
+[21:46:02] <olle> E.g. pushing customer data to separate support tracker
+[21:46:15] *** Quits: pileatedx (~textual@cpe-67-241-68-204.twcny.res.rr.com) (Quit: I have gone to sleep. ZZZzzz…)
+[21:47:23] <Naktibalda> freeman_h: it looks like you have ID which is not a number.
+[21:47:42] <olle> I think we can remove number of moving parts in a pull system vs push
+[21:47:53] <olle> But that's because we have so many cronjobs reading queues everywhere
+[21:48:16] *** Quits: BadAdviceCat (~BadAdvice@user/badadvicecat) (Quit: Quitting)
+[21:48:21] <CoJaBo> Is there a way I can get a better representation of objects in an error stack trace, without completely having to write my own error handler? E.g., I want to change the "Object(User)" to something actually usable like "Object(User(BobSmith))" in the "#0 something.php(4923): some_func(Object(User))" part of the stack trace. Does something to do this exist already somewhere? Even a PHP implementation of printing an exception would be a start..
+[21:48:34] <olle> __toString
+[21:48:35] <olle> ?
+[21:49:19] <Naktibalda> freeman_h: subtracting string from string wasn't an error in PHP5, but it doesn't mean that behaviour was good or predictable#
+[21:49:28] <Naktibalda> https://3v4l.org/YO3dY
+[21:49:32] <CoJaBo> Weirdly, there isn't a magic function for this, even tho it feels like there should be
+[21:49:46] <da_wunder> CoJaBo: I would recommend to use eg. symfony/var-dumper component, with that you just need to write `dd($someVar);` and that will show you nice output
+[21:50:30] <Hunman> If you want to do that specifically for error stack traces, I usually use the Filp/Whoops composer package
+[21:50:58] <CoJaBo> da_wunder: Does that support exceptions sanely tho? It looks like just a fancy var_dump
+[21:52:08] <da_wunder> CoJaBo: you could use eg. try { ... } catch ($e) { dd($e); } - but not sure if that is what you're looking for
+[21:52:18] *** Joins: BadAdviceCat (~BadAdvice@user/badadvicecat)
+[21:52:52] <CoJaBo> da_wunder: what does that actually print tho?
+[21:53:13] <da_wunder> that exception object
+[21:53:30] *** Quits: axisys (~axisys@ec2-52-207-123-244.compute-1.amazonaws.com) (Remote host closed the connection)
+[21:53:54] <__adrian> CoJaBo: if you want something different for exceptions/message/data formatting, look at a tool like monolog. no, nothing built-in does this.
+[21:54:16] <CoJaBo> In what format tho? I can't find an example of it being called on an exception, and I don't have it installed atm
+[21:54:21] *** Joins: sambauer64 (~sambauer6@86.121.131.207)
+[21:54:57] <__adrian> fwiw "special var_dump"-like tools are useless nonsense imo
+[21:55:39] *** Quits: lenarhoyt (~lenarhoyt@pd9fc84e9.dip0.t-ipconnect.de) (Ping timeout: 256 seconds)
+[21:55:45] *** Quits: BadAdviceCat (~BadAdvice@user/badadvicecat) (Client Quit)
+[21:56:57] *** Joins: onichomp (~onichomp@2806:264:4408:8:186f:68f:fe03:3d72)
+[21:57:06] <da_wunder> CoJaBo: something like this - https://3v4l.org/N0N1F
+[21:57:17] *** Quits: jgrim (~jgrim@d60-65-99-197.col.wideopenwest.com) (Quit: Buh bye!)
+[21:57:20] *** Quits: onichomp (~onichomp@2806:264:4408:8:186f:68f:fe03:3d72) (Read error: Connection reset by peer)
+[21:57:58] *** Joins: onichomp (~onichomp@2806:264:4408:8:186f:68f:fe03:3d72)
+[21:58:52] <CoJaBo> da_wunder: Yeh, that's a lot more useless than the built-in lol
+[21:59:45] <Naktibalda> isn't it HTML output and everything is expandable?
+[22:00:36] <CoJaBo> __adrian: AFAICT, monolog doesn't seem to format the backtrace as a string, which is the annoying part I won't want to have to write from scratch, cuz if it screws up then all I get logged is my own failures <_<
+[22:00:51] <__adrian> monolog does whatever formatter you choose does
+[22:00:59] <__adrian> *or write
+[22:01:00] *** Parts: olle (~olle@i5E866D9F.versanet.de) ()
+[22:01:05] <CoJaBo> I think what I need is the formatter
+[22:01:55] *** Joins: axisys (~axisys@ec2-52-207-123-244.compute-1.amazonaws.com)
+[22:02:11] <CoJaBo> I already have the logging framework; it's running as a daemon, so that just gets dumped to a file as plain text (tho I'd also like to use this on the web backend, which also does plain-text logging, but it ought to work exactly the same on both anyway)
+[22:02:43] *** Joins: jgrim4 (~jgrim@d60-65-99-197.col.wideopenwest.com)
+[22:04:17] <CoJaBo> It does look like cutting print_r down to its first line does kinda-sorta give output that looks like what the default stack trace prints. Is there a built-in I'm missing that is more sane tho, printing, e.g., Object(something) or 'quoted string' as appropriate?
+[22:06:01] <Hunman> Not that I'm aware of, but you can write your own error handler with `set_error_handler()` and/or `set_exception_handler()`
+[22:06:55] *** Quits: freeman_h (~freeman_h@37.120.159.215) (Read error: Connection reset by peer)
+[22:07:32] <da_wunder> or try that filp/whoops package
+[22:08:41] <CoJaBo> Hunman: That's what I need to do, but I was hoping to not have to completely re-write debug_print_backtrace() from scratch to just change one minor bit of it lol
+[22:11:27] <CoJaBo> da_wunder: Doesn't look like it prints the args, which is really annoying because that's the part I actually needed lol..
+[22:12:05] <da_wunder> that sounds like you should use some debug tools like xdebug for that
+[22:12:40] <CoJaBo> I don't think it's sane to deploy xdebug in production lol
+[22:13:23] <da_wunder> I though you was looking for tool for your development environment and not production
+[22:13:36] <__adrian> it's not sane to print error messages to screen in production either
+[22:13:49] <Naktibalda> CoJaBo: take debug_backtrace() and format it yourself
+[22:14:05] <__adrian> ^ debug_backtrace() is the same function, sans printing
+[22:14:13] <CoJaBo> Naktibalda: That's what I need to do, but I was hoping a pre-existing implementation existed
+[22:14:16] <da_wunder> although you should be able to reproduce that error in your development environment, where you can use those tools
+[22:14:18] <CoJaBo> It seems not :/
+[22:14:43] <CoJaBo> da_wunder: I can't, because I don't know which object is breaking it, because that info doesn't make it into the stack trace
+[22:15:12] <CoJaBo> All I get is "Object(User)", but I don't know which "User" object is breaking
+[22:15:22] <__adrian> why would there be a pre-existing implementation of this minor off the wall tweak?
+[22:16:17] <__adrian> again, if it's production, do logging
+[22:16:22] <__adrian> not printing to screen
+[22:16:24] <CoJaBo> __adrian: I assumed someone somewhere in the history of Humanity, might have wanted to format the backtrace in their own way but *also* not dispose of the args list. It seems nobody cares about the args tho lol
+[22:16:49] <Hunman> If it's for production, you'll probably want to use Sentry instead
+[22:16:49] <CoJaBo> __adrian: In this context, it's a daemon, so logging is by printing to STDOUT
+[22:16:52] *** Quits: novns (~novns@user/novns) (Quit: ZNC - https://znc.in)
+[22:17:01] <__adrian> keeping args  is often a gigantic waste of memory. and there's already a very easy way to keep them, if you want to.
+[22:17:10] <da_wunder> and what is the actual exception that you're getting there? looks like you're calling some method on that user object and it's returning not expected data
+[22:17:25] <da_wunder> that should be quite easy to track down
+[22:17:37] <CoJaBo> da_wunder: The specific stack line looks like      #0 something.php(4923): some_func(Object(User))
+[22:17:54] <__adrian> ^ i'd think you'd start with more logging around the particular code that's going wrong, vs. installing a new site-wide error handling process
+[22:18:03] <CoJaBo> Tho it's buried way deep in the stack, and it's important to know what User object it is
+[22:18:39] <CoJaBo> __adrian: I've been doing that for the past year, but there is always another bug in a place where there is insufficient logging
+[22:20:01] <da_wunder> hmm, not sure if that stacktrace shows id if you add __toString() magic method to your user object, where you return eg. user id - although that might cause some side effects
+[22:20:27] *** Joins: novns (~novns@user/novns)
+[22:20:40] <__adrian> backtrace won't
+[22:20:50] <__adrian> __debugInfo() wouldn't change anything either
+[22:21:17] <__adrian> (not without further whatever)
+[22:21:50] <CoJaBo> Yeh, I already tried both of those, sucks it can't take advantage of either
+[22:21:50] <__adrian> but in any case ...  :)
+[22:22:34] <Hunman> Yeah, it really starts to sound like what you're looking for is kinda like Sentry
+[22:23:00] <CoJaBo> The reason I'm wary of rolling my own, is that as a stop-gap I thought I might was well just serialize the exception and store it in a file, but then I lost several of the errors because it turned out that something was passed as an arg that went nuclear when passed to serialize >_>
+[22:23:24] <CoJaBo> Naturally, it crashed before printing the original error, so all was lost. Fun times..
+[22:25:44] *** Joins: magla (~gelignite@55d42175.access.ecotel.net)
+[22:26:12] <CoJaBo> Not really sure what Sentry is, but I'm not looking to replace all logging atm, just one minor tweak lol
+[22:26:42] <__adrian> logging tool
+[22:26:55] <__adrian> *log aggregation tool
+[22:26:57] *** Quits: gxt (~gxt@gateway/tor-sasl/gxt) (Ping timeout: 276 seconds)
+[22:27:23] <__adrian> if you want system wide special logginng, sincerely, look at monolog.
+[22:27:40] *** Joins: gxt (~gxt@gateway/tor-sasl/gxt)
+[22:28:21] <da_wunder> I think this is just easier to look that code and exception and see why it's failing - even write a test for that
+[22:29:34] *** Joins: BadAdviceCat (~BadAdvice@user/badadvicecat)
+[22:30:14] *** Joins: AMG (ghebo@user/amg)
+[22:30:15] <CoJaBo> The objects this thing uses are complex and don't always have the same properties. So it's very important to know which object it is, otherwise I can't determine what went wrong after the fact, I have to just add logging and wait for it to happen again. So it'd make more sense to just always add that info to the stack trace so I have it anytime I ever need it
+[22:30:37] *** Joins: echoSMILE (uid504326@user/echosmile)
+[22:30:54] <CoJaBo> This at least gets me most of the way there, and should be less suceptible to me writing bugs https://github.com/filp/whoops/blob/master/src/Whoops/Exception/Formatter.php
+[22:31:27] <da_wunder> ok, so what about wrapping that code to try / catch block, where you log that exception and user id and then just throw that same exception
+[22:34:12] <da_wunder> with that you should get the user id which is causing your problem - and with that you should be able to reproduce that error in your development environment - right?
+[22:36:14] *** Quits: Hunman (~hunman@94-21-53-18.pool.digikabel.hu) (Read error: Connection reset by peer)
+[22:40:10] <chazy> is it possible to pass null to DateTime.setTime(null, 30), if i only need to set the minutes?
+[22:40:59] <chazy> also, if i call setTime() on an object, does that object get the time set or only the copy returned by setTime()?
+[22:41:29] <Naktibalda> no to null
+[22:41:43] <Naktibalda> it depends if you have an instance of DateTime or of DateTimeImmutable
+[22:42:49] <chazy> ok, but i guess it doesn't matter in this case: [ $now->setTime(intval($currentHour), 0), $now->setTime(intval($currentHour), 30), ]
+[22:43:08] <Naktibalda> look at modify method
+[22:43:49] <Naktibalda> class makes big difference to result
+[23:00:45] *** Quits: fef (~thedawn@user/thedawn) (Ping timeout: 276 seconds)
+[23:08:20] *** Joins: MrBech (~MrBech@80-62-116-180-mobile.dk.customer.tdc.net)
+[23:21:47] *** Joins: WishBoy (~WishBoy@user/wishboy)
+[23:31:05] <judah> Never thought I would be so excited for a WordPress project
+[23:31:10] <judah> here is the situation
+[23:31:39] <judah> Client migrated site to new server and new URL. Did the search&replace in the database for the old and new URL. For some reason, the home page (and only home page) is redirecting back to old site. Any guesses?
+[23:33:12] <__adrian> recommend you /join #wordpress
+[23:37:48] *** Quits: fstd (~fstd@xdsl-87-78-21-185.nc.de) (Read error: Connection reset by peer)
+[23:38:04] *** Joins: fstd (~fstd@xdsl-87-78-21-185.nc.de)
+[23:41:29] *** Quits: Naktibalda (~Naktibald@88.135.22.17) (Quit: Light travels faster then sound, which is why some people appear bright, until you hear them speak)
+[23:42:34] *** Quits: MrBech (~MrBech@80-62-116-180-mobile.dk.customer.tdc.net) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[23:44:30] <judah> good recommendation
+[23:50:00] *** Joins: netfrog (~netfrog@178.165.204.55.wireless.dyn.drei.com)
+[23:55:13] <netfrog> i have a php script with which i send queries to an apache solr search server, the special character queries must be masked with e.g. str_replace (ö, '\ ö', $ query) I don't succeed
+[23:56:14] <netfrog> ( ö, '\ ö', $query)
+[23:56:21] <netfrog> ( ö, '\ö', $query)
+[23:56:58] <__adrian> ö is not "special"
+[23:57:05] <__adrian> what is it you need to escape, exactly?
+[23:57:22] *** Joins: Hunman (~Hunman@94-21-53-18.pool.digikabel.hu)
+[23:58:01] <netfrog> +, -, &&, ||, !, (, ), ", ~, *, ?, and :
+[23:58:04] <da_wunder> maybe you're looking for - https://www.php.net/manual/en/function.htmlspecialchars.php
+[23:58:13] <__adrian> and are you not using a library that already handles it?
+[23:58:27] <__adrian> "+, -, &&, ||, !, (, ), ", ~, *, ?, and :"  none of those are ö
+[23:58:37] <da_wunder> ^
+[23:59:22] <__adrian> strongly recommend using an existing, well-used library.  https://packagist.org/?query=solr
+[23:59:52] <__adrian> such low-level escaping is not something you should be doing from scratch.

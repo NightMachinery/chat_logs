@@ -1,0 +1,539 @@
+[00:03:30] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[00:09:45] *** Joins: ss4 (~wootehfoo@user/wootehfoot)
+[00:12:54] *** Quits: wootehfoot (~wootehfoo@user/wootehfoot) (Ping timeout: 260 seconds)
+[00:15:07] *** Joins: LewisGaul (~LewisGaul@64.103.40.27)
+[00:15:32] *** Quits: jokoon (~eio@2a01:e0a:542:e160:e9a2:e8db:f0e1:66fa) (Quit: Leaving)
+[00:24:56] <tane> https://github.com/ziglang/zig/blob/d29871977f97b50fe5e3f16cd9c68ebeba02a562/lib/std/heap/arena_allocator.zig#L66
+[00:25:20] <tane> has anything changed about that pattern or the problem that occurs when the embedded struct is copied to a value of the embedded structs type?
+[00:25:41] <tane> (last time tried was around 0.6.0)
+[00:34:14] <squeek502> tane, nothing has changed yet, the relevant accepted proposal is https://github.com/ziglang/zig/issues/7769 i believe
+[00:35:08] *** Quits: raghavgururajan (9fd51d1ea8@user/raghavgururajan) (Ping timeout: 252 seconds)
+[00:36:08] <squeek502> there's also https://github.com/ziglang/zig/issues/10052 which might end up with no longer using @fieldParentPtr for allocators
+[00:37:37] <tane> squeek502, thanks
+[00:37:48] *** Quits: unmanbearpig (~unmanbear@45.76.95.141) (Ping timeout: 260 seconds)
+[00:38:16] <LewisGaul> Hey, I was here yesterday asking about my PR that adds f128 support to `std.math.exp2()` (#10046) - squeek502 thanks for the response on the PR :)  The main thing I was asking was whether the `std.math` implementations are actually used by the compiler, and how what I've done in `std.math` relates to https://github.com/ziglang/zig/issues/4026 which
+[00:38:16] <LewisGaul> is about the builtin functions such as `@exp2()`. Could anyone enlighten me on the relationship between the two?
+[00:42:40] *** Joins: raghavgururajan (9fd51d1ea8@user/raghavgururajan)
+[00:44:58] <andrewrk> LewisGaul, long term we are transitioning to math functions being provided by the language runtime (in compiler-rt) with weak linkage to allow a libc to override it. some std.math functions will be deprecated in favor of language builtins; others will not have a language builtin and remain in std.math
+[00:45:06] <andrewrk> I believe @sqrt is an example of one already migrated to this way of doing things
+[00:45:31] *** Joins: unmanbearpig (~unmanbear@user/unmanbearpig)
+[00:46:02] <andrewrk> reasoning for this is that some backends have instructions for math functions, such as hardware sqrt 
+[00:46:06] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[00:46:17] <andrewrk> also llvm has instructions for math functions, so when targeting that backend, it makes sense to use them
+[00:46:46] <andrewrk> since zig is general-purpose, we target a lot of different backends, some language primitives are high level
+[00:49:27] <LewisGaul> ok thanks for the context
+[00:50:03] <LewisGaul> what does that mean for implementation of maths functions - is there any need for the Zig implementation of them (e.g. for f128) in the long term?
+[00:50:41] <LewisGaul> I'm just trying to ascertain whether it's worth me adding tests and f128 support in `std.math` now
+[00:51:07] *** Quits: ss4 (~wootehfoo@user/wootehfoot) (Read error: Connection reset by peer)
+[00:51:23] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 264 seconds)
+[00:52:12] <LewisGaul> "we are transitioning to math functions being provided by the language runtime" - this makes it sound like a Zig implementation for each of the maths funcs will be needed, even if just as a fallback when not provided by the backend?
+[00:53:05] *** Joins: leon-p (~leon-p@2a02:8108:96c0:1810:9463:70ff:feb1:4918)
+[00:55:27] *** Quits: zig-irc-logger (~zig-irc-l@216.117.174.63) (Ping timeout: 265 seconds)
+[00:58:06] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[00:59:47] <andrewrk> yes there is a need because we need "polyfills" for targets that do not have native instructions/implementations
+[01:00:06] <andrewrk> ah yep you have it right
+[01:00:15] <LewisGaul> ok, so I guess makes sense to just implement in `std.math` for now even if they end up being moved
+[01:02:06] <LewisGaul> In stage1 how are the builtin maths funcs such as `@exp2()` implemented if they're not using `std.math`?
+[01:06:18] <andrewrk> agreed
+[01:06:49] <andrewrk> LewisGaul, checkout lib/std/special/c.zig
+[01:08:11] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 264 seconds)
+[01:08:37] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[01:08:47] *** Quits: tane (~tane@user/tane) (Quit: Leaving)
+[01:09:46] <LewisGaul> Ah, yes I just found `lib/std/special/c_stage1.zig` at that moment :)  so `std.math` is being used - makes sense
+[01:11:47] <LewisGaul> What's the plan for 128 bit float funcs? libc doesn't support f128 AFAIUI (I've been testing the C implementation by linking `libquadmath` ). Should `c.zig` contain implementations for f128, presumably named after libquadmath, e.g. `exp2q()`?
+[01:12:56] <andrewrk> long term plan is to move all the logic to compiler-rt and expose our own non-standard functions when no standard ones suffice
+[01:13:04] <andrewrk> yes I was thinking to use the `q` suffix too
+[01:13:56] <LewisGaul> probably not really important right now, but wondering whether I should add `export fn exp2q(a: f128) f128` in `c_stage1.zig` now that I've added `std.math` support for it?
+[01:14:42] <andrewrk> go for it!
+[01:15:02] <andrewrk> and then we have to decide in the llvm backend sometimes to call that rather than call the llvm intrinsic (depending on the target)
+[01:15:45] <LewisGaul> Is this (std.special.c) what gets used by `@exp2()` in stage1 when not provided by llvm and libc isn't linked?
+[01:16:02] <andrewrk> does anyone use zig on archlinux, with llvm/clang/lld built from source? I'm doing that now and getting a 30min long "Building self-hosted component /home/andy/zig/build-backfill/zig1.o" rather than the 1-minute long expected time
+[01:16:16] <andrewrk> with -DCMAKE_BUILD_TYPE=Release for everything
+[01:16:27] <andrewrk> LewisGaul, yes
+[01:16:28] <LewisGaul> just checking whether I should be changing something somewhere to propagate support for f128 through to the builtin
+[01:16:51] * luuk Raises hand. I use Archlinux, with llvm/clang/ldd built from source (all are release builds)
+[01:17:10] <ifreund> https://github.com/archlinux/svntogit-community/blob/fb65c3723911039ae824d6acf1e0e634318bc22f/trunk/PKGBUILD#L36
+[01:17:23] <ifreund> -DZIG_PREFER_CLANG_CPP_DYLIB=ON should be set I guess
+[01:17:37] <andrewrk> mmm I built llvm, clang, lld from source though, I have .a file for everything
+[01:17:57] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[01:18:19] <ifreund> ah yeah if you're not using arch's then you know better
+[01:18:36] <luuk> ifreund, I haven't set that and it works. Perhaps that flag is only required when using the sytem-provided libs
+[01:18:40] <andrewrk> luuk, how long does "building self-hosted component..." take for you?
+[01:18:52] <luuk> No longer than 1 minute
+[01:19:10] <andrewrk> must be something weird on this particular system 🤔
+[01:19:44] <andrewrk> thanks 
+[01:20:29] <andrewrk> damn it, I have this backfill script all ready to go for benchmark data but I don't want to wait 30 min for every rebuild
+[01:21:28] <ifreund> did you build llvm in debug mode or something by accident?
+[01:21:45] <ifreund> though it would be hard not to notice that eating your whole disk :D
+[01:22:33] <andrewrk> I just triple checked, I definitely configured it release, and plus the install dir is only taking up 7.2G
+[01:22:50] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[01:23:34] <earnestly> The 'None' buildtype is undocumented(?) but is quite nice because it causes cmake to honour environmental CFLAGS and such
+[01:27:15] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[01:28:16] <luuk> andrewrk, for whatever it's worth: I followed the wiki's steps exactly (apart from the linker-max-thread flag).
+[01:29:01] <andrewrk> so did I
+[01:29:04] <andrewrk> very strange
+[01:29:16] <andrewrk> this is a beefy machine too, 128 G ram, NVMe hard drive
+[01:30:38] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Quit: WeeChat 3.3)
+[01:31:21] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[01:32:23] *** Quits: tgschultz (UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[01:32:38] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 260 seconds)
+[01:32:45] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[01:32:50] *** Joins: tgschultz (UserNick@047-034-058-084.res.spectrum.com)
+[01:33:02] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[01:38:18] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[01:38:48] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[01:39:26] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[01:44:11] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 264 seconds)
+[01:44:32] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[01:50:01] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[01:50:17] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[01:55:34] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[01:56:02] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[01:56:55] *** Joins: rgrinberg (~textual@ip73-183-64-186.ct.co.cr)
+[01:58:39] *** Quits: xackus (~xackus@7-24.w.knc.pl) (Ping timeout: 268 seconds)
+[02:01:07] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[02:01:47] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[02:06:59] *** Quits: paulgrmn (~paulgrmn@user/paulgrmn) (Ping timeout: 264 seconds)
+[02:07:55] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[02:08:28] <hspak> andrewrk: FWIW I was about to run https://github.com/ziglang/zig-bootstrap on my arch system last week without a hitch. I ran `build -j8 x86_64-linux-gnu native` (no idea if this relates to your Q though)
+[02:08:37] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[02:08:42] <hspak> able*
+[02:14:04] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[02:14:23] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[02:17:47] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 264 seconds)
+[02:19:37] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[02:20:07] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[02:22:29] *** Joins: keyehzh (~keyehzh@user/keyehzh)
+[02:25:10] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[02:25:50] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[02:30:36] *** Joins: dirkson (~dirkson@2602:61:7830:1e00:ddc9:87de:2cd6:6f65)
+[02:32:36] <dirkson> Hey all. Any chance we've got a good writeup on concurrency in zig yet?
+[02:32:58] *** Joins: livoreno (~livoreno@user/notzmv)
+[02:34:25] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[02:35:27] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[02:35:29] *** Quits: novakane (~novakane@user/novakane) (Quit: WeeChat 3.3)
+[02:35:39] *** Quits: Swahili (~Swahili@cpc153693-lewi20-2-0-cust508.2-4.cable.virginm.net) (Ping timeout: 268 seconds)
+[02:40:36] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[02:41:13] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[02:46:26] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[02:46:59] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[02:49:18] *** Joins: Swahili (~Swahili@cpc153693-lewi20-2-0-cust508.2-4.cable.virginm.net)
+[02:51:58] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[02:52:43] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[02:54:53] *** Quits: rgrinberg (~textual@ip73-183-64-186.ct.co.cr) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[02:57:51] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[02:58:29] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[03:03:25] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[03:04:14] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[03:09:34] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[03:09:49] *** Joins: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se)
+[03:10:00] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[03:15:07] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[03:15:46] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[03:20:40] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[03:21:29] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[03:26:51] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[03:27:14] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[03:32:23] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[03:32:24] *** Quits: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se) (Ping timeout: 268 seconds)
+[03:32:59] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[03:34:13] *** Joins: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se)
+[03:37:56] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[03:38:43] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[03:43:50] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[03:44:29] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[03:44:56] *** Quits: LewisGaul (~LewisGaul@64.103.40.27) (Ping timeout: 256 seconds)
+[03:49:40] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[03:50:13] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[03:55:13] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[03:55:58] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[04:01:02] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[04:01:44] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[04:05:30] *** Joins: okCiel (~okCiel@softbank126126141082.bbtec.net)
+[04:06:42] *** Quits: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se) (Ping timeout: 260 seconds)
+[04:11:46] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[04:13:14] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[04:15:24] <jrl> dirkson, I'm very new to zig but I am finding chapter 5 of ziglearn https://ziglearn.org/chapter-5/ which links to std.event.Loop doc and the wait group test as a good resource: https://github.com/ziglang/zig/blob/master/lib/std/event/wait_group.zig 
+[04:15:59] *** Joins: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se)
+[04:17:42] *** Joins: kiedtl|litterbox (kiedtl@kisslinux/kiedtl)
+[04:18:38] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[04:19:00] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[04:24:55] *** Quits: dbuckley (~dbuckley@2601:182:c77f:c13b:6077:ac41:812c:2015) (Remote host closed the connection)
+[04:26:03] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[04:26:20] *** Joins: dbuckley (~dbuckley@2601:182:c77f:c13b:ae1f:6bff:fe6c:d454)
+[04:26:39] *** Quits: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se) (Ping timeout: 268 seconds)
+[04:27:20] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[04:27:31] *** Joins: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd)
+[04:32:50] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[04:33:05] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[04:34:10] *** Quits: waleee (~waleee@2001:9b0:216:8200:d457:9189:7843:1dbd) (Ping timeout: 260 seconds)
+[04:37:58] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[04:38:50] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[04:44:02] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[04:44:37] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[04:44:48] *** Quits: dbuckley (~dbuckley@2601:182:c77f:c13b:ae1f:6bff:fe6c:d454) (Remote host closed the connection)
+[04:45:23] *** Joins: rgrinberg (~textual@ip73-183-64-186.ct.co.cr)
+[04:46:10] *** Joins: dbuckley (~dbuckley@2601:182:c77f:c13b:ae1f:6bff:fe6c:d454)
+[04:50:06] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[04:50:22] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[04:55:38] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[04:56:08] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[05:03:03] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[05:04:15] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[05:09:14] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[05:09:15] *** Quits: dbuckley (~dbuckley@2601:182:c77f:c13b:ae1f:6bff:fe6c:d454) (Remote host closed the connection)
+[05:09:59] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[05:11:32] *** Joins: Guest82 (~Guest82@222.67.19.82)
+[05:13:10] *** Joins: dbuckley (~dbuckley@2601:182:c77f:c13b:ae1f:6bff:fe6c:d454)
+[05:15:22] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[05:15:44] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[05:20:55] *** Quits: dbuckley (~dbuckley@2601:182:c77f:c13b:ae1f:6bff:fe6c:d454) (Remote host closed the connection)
+[05:20:55] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[05:21:29] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[05:25:45] *** Joins: dbuckley (~dbuckley@2601:182:c77f:c13b:ae1f:6bff:fe6c:d454)
+[05:26:16] *** Joins: leon-p_ (~leon-p@2a02:8108:96c0:1810:6080:16ff:fe81:aaee)
+[05:26:26] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[05:27:10] *** Quits: dbuckley (~dbuckley@2601:182:c77f:c13b:ae1f:6bff:fe6c:d454) (Remote host closed the connection)
+[05:27:15] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[05:28:56] *** Quits: leon-p (~leon-p@2a02:8108:96c0:1810:9463:70ff:feb1:4918) (Ping timeout: 268 seconds)
+[05:30:40] <freshcoffee> andrewrk: back at desktop, I'll be poking around soon on zinc to see if anything shows up. Are you configuring with make or ninja?
+[05:30:47] *** Joins: dbuckley (~dbuckley@2601:182:c77f:c13b:ae1f:6bff:fe6c:d454)
+[05:30:55] <andrewrk> ninja
+[05:32:39] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[05:33:02] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[05:37:11] *** Quits: rgrinberg (~textual@ip73-183-64-186.ct.co.cr) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[05:37:23] <andrewrk> print("{x2}", .{byte}) used to work, but now it doesn't. i feel this is worse
+[05:38:12] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[05:38:49] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[05:41:11] *** Quits: Swahili (~Swahili@cpc153693-lewi20-2-0-cust508.2-4.cable.virginm.net) (Remote host closed the connection)
+[05:41:44] *** Joins: Swahili (~Swahili@cpc153693-lewi20-2-0-cust508.2-4.cable.virginm.net)
+[05:43:43] *** Joins: paulgrmn (~paulgrmn@user/paulgrmn)
+[05:44:21] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[05:44:35] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[05:46:11] *** Joins: rgrinberg (~textual@ip73-183-64-186.ct.co.cr)
+[05:48:22] *** Quits: paulgrmn (~paulgrmn@user/paulgrmn) (Ping timeout: 260 seconds)
+[05:49:02] *** Quits: Guest82 (~Guest82@222.67.19.82) (Ping timeout: 256 seconds)
+[05:49:55] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[05:50:21] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[05:54:24] <freshcoffee> andrewrk: Debug zig1.o in 0:43 (43s), Release zig1.o in 1:56 (116s)
+[05:54:51] <andrewrk> freshcoffee, that is expected results. I am getting 30 minutes for zig1.o
+[05:55:09] <freshcoffee> ok if I poke in your account for diffs?
+[05:55:11] <andrewrk> yep
+[05:55:22] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[05:55:39] <andrewrk> you can repro with `touch ../CMakeLists.txt && ninja` from zig/build-release 
+[05:56:08] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[05:58:56] <freshcoffee> llvm13-release/bin/llvm-config --assertion-mode
+[06:00:45] <freshcoffee> I feel like assertion mode shouldn't account for that kind of difference, but my debug zig1.o against that build of llvm is already at 3+ minutes
+[06:01:18] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Quit: WeeChat 3.3)
+[06:01:38] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[06:01:54] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[06:02:15] <freshcoffee> please try against /opt/llvm-linux-x86_64-13.0.0-release
+[06:02:50] <andrewrk> this was my cmake line: cmake .. -DCMAKE_INSTALL_PREFIX=$HOME/local/llvm13-release -DCMAKE_PREFIX_PATH=$HOME/local/llvm13-release -DCMAKE_BUILD_TYPE=Release  -G Ninja  -DLLVM_PARALLEL_LINK_JOBS=16
+[06:03:44] <andrewrk> hm but why is my build 7.2G while yours is 3.0G
+[06:03:47] <andrewrk> what cmake line did you use?
+[06:04:27] <freshcoffee> for llvm... one sec. I have 2 builds actually. putting the  other one there too.
+[06:07:02] <freshcoffee> my deps were built on different archlinux host. I Can repeat on zinc if you want. here is the command line:
+[06:07:04] <freshcoffee> https://gist.github.com
+[06:07:35] <freshcoffee> oops have gist issue
+[06:08:46] <freshcoffee> https://gist.github.com/mikdusan/22b72ce132c1c77348110f5c1b0daae7
+[06:08:54] <freshcoffee> will try on zinc
+[06:09:22] *** Quits: earnestly (~earnest@user/earnestly) (Ping timeout: 260 seconds)
+[06:11:14] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[06:11:48] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[06:13:56] <andrewrk> why all that stuff? https://github.com/ziglang/zig/wiki/How-to-build-LLVM,-libclang,-and-liblld-from-source#posix should be sufficient
+[06:16:54] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[06:17:34] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[06:20:19] *** Quits: okCiel (~okCiel@softbank126126141082.bbtec.net) (Quit: WeeChat 2.8)
+[06:20:32] <freshcoffee> that stuff probably accounts for much of 7.2G vs 3.0G; but I am confused, your command line does not enable assertions, why llvm-config reports as ON
+[06:21:19] <andrewrk> oh I didn't notice that llvm-config reports it as on
+[06:21:45] <andrewrk> on my laptop I use the same cmake line and it is 3.0G
+[06:22:36] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[06:23:20] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[06:26:02] <andrewrk> anyway good to know it's something with the llvm installation and not system-wide
+[06:26:05] <andrewrk> I can figure it out from here
+[06:26:25] <freshcoffee> I'll keep poking. it's got my curiosity; will check your cmake args after my llvm13 finishes
+[06:26:30] <freshcoffee> will *try
+[06:27:08] <andrewrk> oh oops I think we're both doing a build of llvm 
+[06:28:18] <andrewrk> sneak peak at the frontend work I did today: https://imgur.com/blXWoTG.png
+[06:28:45] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[06:29:07] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[06:30:01] <andrewrk> freshcoffee, I wiped llvm and rebuilt and now it's only 3.0G
+[06:30:12] <andrewrk> same cmake line
+[06:30:16] <andrewrk> no idea what happened
+[06:30:55] *** Quits: arkurious (~arkurious@user/arkurious) (Quit: Leaving)
+[06:31:13] *** Quits: neurocyte0132889 (~neurocyte@user/neurocyte) (Ping timeout: 268 seconds)
+[06:34:14] <freshcoffee> is it now giving expected zig1.o times? (my llvm build is finished as of 5 seconds ago so I'm not effecting load)
+[06:34:18] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[06:34:54] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[06:35:54] <andrewrk> yes now it gives expected times
+[06:36:25] <andrewrk> anyway now I can run the backfill script and collect some benchmark data
+[06:37:02] *** Quits: Terlisimo (~Terlisimo@outofband.ozna.net) (Quit: Connection reset by beer)
+[06:37:02] <freshcoffee> noice
+[06:37:35] *** Joins: damxsa (~damx@2001:16a2:ce33:4e00:3604:f881:a16d:7606)
+[06:38:05] <freshcoffee> k will cleanup the /opt stuff I added
+[06:38:13] <andrewrk> thanks
+[06:39:46] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[06:41:12] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[06:46:07] <andrewrk> alright backfill script is running on the latest 500 master branch commits. we'll see how far it gets before it starts hitting incompatibilities with older zig versions
+[06:46:20] <freshcoffee> hehe wow
+[06:46:35] <andrewrk> you can see why I wanted to wait 1m for zig builds rather than 30 :)
+[06:46:38] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[06:47:14] <andrewrk> it's the difference of 10 days vs 8 hours
+[06:47:28] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[06:48:24] <andrewrk> ok next thing to figure out: how do we integrate this with the CI 
+[06:48:46] <andrewrk> I could just run it in the linux x86_64 ci script
+[06:49:13] <andrewrk> need the ability to obtain records.csv and publish a new version of it though
+[06:52:11] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[06:53:50] *** leon-p_ is now known as leon-p
+[06:58:29] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[06:58:50] <freshcoffee> I admit not having looked at gottagofast  in detail, but eg. it's 1 records.csv produced for each commit? git could be used to publish?
+[06:58:58] *** Quits: Tekk_ (~tekk@89.38.227.233) (Ping timeout: 268 seconds)
+[07:03:40] <andrewrk> it's about 10 rows added to records.csv for each commit
+[07:03:50] <andrewrk> 1 per benchmark in benchmarks/manifest.json
+[07:03:54] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[07:04:08] *** Joins: Tekk (~tekk@cpe-76-182-45-53.nc.res.rr.com)
+[07:04:12] <andrewrk> I suppose that wouldn't be so bad
+[07:04:16] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[07:09:27] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[07:10:03] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[07:14:23] *** Quits: wallacer (~quassel@2001:bc8:1824:9a:cafe:babe:b00b:aa05) (Ping timeout: 265 seconds)
+[07:15:10] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[07:15:49] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[07:19:32] *** Joins: wallacer (~quassel@2001:bc8:1824:9a:cafe:babe:b00b:aa02)
+[07:21:11] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[07:21:31] *** Quits: livoreno (~livoreno@user/notzmv) (Read error: Connection reset by peer)
+[07:21:35] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[07:22:44] *** Joins: epmills (~epmills@45.63.70.181)
+[07:26:44] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[07:27:20] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[07:32:06] <andrewrk> alright everyone, now's the time to get your benchmarks in to https://github.com/ziglang/gotta-go-fast/ before I run a backfill script
+[07:32:30] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[07:33:06] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[07:34:57] <andrewrk> freshcoffee, one new problem I noticed
+[07:35:07] <andrewrk> if you look at https://github.com/ziglang/zig/commits
+[07:35:25] <andrewrk> the newest commit actually did have a green checkmark for ci.ziglang.org but it got overwritten by drone ci
+[07:35:42] <andrewrk> I think because the name "continuous-integration/drone/push" is being clobbered
+[07:36:01] *** Quits: supakeen (~user@python/site-packages/supakeen) (Quit: WeeChat 3.3)
+[07:36:31] *** Joins: supakeen (~user@python/site-packages/supakeen)
+[07:37:15] *** Joins: mla (~mla@162.253.176.229)
+[07:38:27] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[07:38:52] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[07:38:58] *** Quits: keyehzh (~keyehzh@user/keyehzh) (Quit: Leaving)
+[07:44:00] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[07:44:38] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[07:45:26] <andrewrk> damn I'm also getting all 0s from perf events
+[07:45:33] <freshcoffee> I'll look into it; I see where it defaults in .go source, there might be an override somewhere
+[07:47:47] *** Quits: ur5us (~ur5us@2406:e002:6c33:6d01:f05d:361c:3a9a:58cb) (Ping timeout: 264 seconds)
+[07:48:21] <freshcoffee> oh yes https://docs.drone.io/server/reference/drone-status-name/
+[07:50:04] *** Quits: squeek502 (~squeek502@user/squeek502) (Remote host closed the connection)
+[07:50:09] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Remote host closed the connection)
+[07:50:24] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[07:51:57] <freshcoffee> changed to "ci.ziglang.org/drone" and bounced. feel free to bike-shed
+[07:52:41] <andrewrk> thanks :)
+[07:54:28] *** Quits: frmdstryr (~jrm@172.58.203.229) (Ping timeout: 268 seconds)
+[07:55:43] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[07:56:10] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[08:01:16] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[08:01:56] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[08:01:57] *** Quits: drewlander (~drewlande@173-80-249-48.bklycmtk03.res.dyn.suddenlink.net) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[08:02:04] *** Quits: rgrinberg (~textual@ip73-183-64-186.ct.co.cr) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[08:03:00] *** Joins: frmdstryr (~jrm@172.58.206.157)
+[08:06:58] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 260 seconds)
+[08:07:42] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[08:12:58] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Ping timeout: 268 seconds)
+[08:19:14] *** Joins: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net)
+[08:20:41] *** Quits: davidfetter_work (~davidfett@c-73-252-148-184.hsd1.ca.comcast.net) (Client Quit)
+[08:26:00] *** Joins: dyeplexer (~dyeplexer@user/dyeplexer)
+[08:32:11] *** Joins: squeek502 (~squeek502@user/squeek502)
+[08:45:48] *** Quits: leon-p (~leon-p@2a02:8108:96c0:1810:6080:16ff:fe81:aaee) (Quit: leon-p)
+[09:10:06] *** Quits: Overkill (~overkill9@69-165-200-34.cable.teksavvy.com) (Ping timeout: 245 seconds)
+[09:10:40] <andrewrk> argh the perf data I get on the ci machine is garbage even though it works fine on my laptop
+[09:15:17] *** Quits: epmills (~epmills@45.63.70.181) ()
+[09:18:42] <andrewrk> ok I get it. the hardware just doesn't support branch_instructions, but since I grouped everything, it zeroed out everything
+[09:23:15] *** Joins: Guest82 (~Guest82@222.67.19.83)
+[09:24:22] *** Joins: Overkill (~overkill9@69-165-200-34.cable.teksavvy.com)
+[09:34:59] *** Quits: damxsa (~damx@2001:16a2:ce33:4e00:3604:f881:a16d:7606) (Ping timeout: 268 seconds)
+[09:53:05] *** Quits: tgschultz (UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[09:53:27] *** Joins: tgschultz (UserNick@047-034-058-084.res.spectrum.com)
+[10:00:48] *** Joins: Vexu (~Thunderbi@188.117.20.105)
+[10:05:21] <andrewrk> https://ziglang.org/perf/ MVP
+[10:05:27] <andrewrk> suggestions welcome in the form of pull requests
+[10:10:10] <devast8a> Are all of the measurements intended to be displayed on top of each other, rather than spread over the x-axis?
+[10:13:23] <andrewrk> not sure what you mean spread over the x-axis
+[10:14:23] * devast8a uploaded an image: (15KiB) < https://libera.ems.host/_matrix/media/r0/download/matrix-bridge.com/rqPvvdAokwVTkpmUtioxrZgn/image.png >
+[10:14:23] <andrewrk> if you mean y-axis then no
+[10:14:57] <andrewrk> mm this is what I see: https://imgur.com/7S5H9n4.png
+[10:15:13] <devast8a> walltime / cycles / instructions etc... are just on top of each other with no horizontal separation
+[10:15:23] <devast8a> o-oh
+[10:15:42] <devast8a> I thought these were intended to be box-plots or something lol.
+[10:16:17] <andrewrk> mmm looks like I should have tested with chromium
+[10:28:36] <andrewrk> devast8a, fixed, give it a refresh
+[10:28:57] <devast8a> 👍️ looks good to me
+[10:31:06] <andrewrk> some next steps: hook it up to CI for auto populating data, ability to uncheck/check some of the lines, ability to zoom, better tool tip text, make it link to the relevant commit
+[10:31:45] <andrewrk> it would also be nice if the lines weren't on the same Y axis scale since they are different units
+[10:32:50] <discipulus> nice
+[10:36:15] <andrewrk> it also looks like there is a lot of noise with process overhead
+[10:36:31] <andrewrk> so the benchmarks that do not create a child process should be favored
+[10:55:12] *** Joins: xd1le (~xd1le@user/xd1le)
+[11:03:39] *** Joins: ofh (~felix@2001:44b8:3080:a5:6f0:21ff:fe3c:d4d7)
+[11:04:24] *** Quits: yelnah (~felix@2001:44b8:3084:172:6f0:21ff:fe3c:d4d7) (Ping timeout: 268 seconds)
+[11:11:48] *** Joins: damxsa (~damx@2001:16a2:ce33:4e00:3604:f881:a16d:7606)
+[11:21:20] *** Quits: tomku (~tomku@user/tomku) (Ping timeout: 260 seconds)
+[11:54:20] *** Joins: novakane (~novakane@user/novakane)
+[11:58:48] *** Joins: thing_ (~thing@user/thing)
+[12:00:03] *** Quits: thing (~thing@user/thing) (Ping timeout: 276 seconds)
+[12:00:27] *** thing_ is now known as thing
+[12:24:56] *** Joins: p_____ (~dyeplexer@user/dyeplexer)
+[12:25:14] *** Quits: p_____ (~dyeplexer@user/dyeplexer) (Remote host closed the connection)
+[12:27:39] *** Quits: frmdstryr (~jrm@172.58.206.157) (Ping timeout: 268 seconds)
+[12:28:02] *** Joins: frmdstryr (~jrm@172.58.203.41)
+[12:28:16] *** Quits: Vexu (~Thunderbi@188.117.20.105) (Ping timeout: 268 seconds)
+[12:28:17] *** Quits: dyeplexer (~dyeplexer@user/dyeplexer) (Ping timeout: 268 seconds)
+[12:33:53] *** Quits: b_jonas (~x@catv-176-63-4-98.catv.broadband.hu) (Quit: leaving)
+[12:34:15] *** Joins: xackus (~xackus@7-24.w.knc.pl)
+[12:43:34] *** Joins: earnestly (~earnest@user/earnestly)
+[12:57:26] *** Quits: Guest82 (~Guest82@222.67.19.83) (Ping timeout: 256 seconds)
+[13:08:06] *** Joins: ur5us (~ur5us@2406:e002:6c33:6d01:f05d:361c:3a9a:58cb)
+[13:17:45] *** Joins: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl)
+[13:22:26] *** Quits: Swahili (~Swahili@cpc153693-lewi20-2-0-cust508.2-4.cable.virginm.net) (Remote host closed the connection)
+[13:22:37] *** Joins: Swahili (~Swahili@cpc153693-lewi20-2-0-cust508.2-4.cable.virginm.net)
+[13:27:06] *** Quits: ur5us (~ur5us@2406:e002:6c33:6d01:f05d:361c:3a9a:58cb) (Ping timeout: 260 seconds)
+[13:37:49] *** Joins: Techcable_ (~Techcable@168.235.93.147)
+[13:37:50] *** Quits: unmanbearpig (~unmanbear@user/unmanbearpig) (Ping timeout: 260 seconds)
+[13:38:38] *** Quits: Techcable (~Techcable@168.235.93.147) (Ping timeout: 265 seconds)
+[13:39:54] *** Joins: unmanbearpig (~unmanbear@user/unmanbearpig)
+[13:40:31] *** Quits: tdeo (~tdeo@user/tdeo) (Ping timeout: 268 seconds)
+[13:41:11] *** Joins: tdeo (~tdeo@user/tdeo)
+[13:45:22] *** Quits: xackus (~xackus@7-24.w.knc.pl) (Ping timeout: 268 seconds)
+[13:46:14] *** Quits: tdeo (~tdeo@user/tdeo) (Ping timeout: 260 seconds)
+[13:46:42] *** Quits: mgxm (~mgxm@user/mgxm) (Ping timeout: 260 seconds)
+[13:47:54] *** Joins: mgxm (~mgxm@user/mgxm)
+[13:48:04] *** Joins: tdeo (~tdeo@user/tdeo)
+[13:56:07] *** Quits: tgschultz (UserNick@047-034-058-084.res.spectrum.com) (Quit: Going offline, see ya! (www.adiirc.com))
+[13:56:43] *** Joins: tgschultz (UserNick@047-034-058-084.res.spectrum.com)
+[14:19:45] *** Joins: wib_jonas (~wib_jonas@business-37-191-60-209.business.broadband.hu)
+[14:47:21] *** Joins: notapenguin (~ryu@179.222.254.137)
+[15:02:59] *** Quits: notapenguin (~ryu@179.222.254.137) (Quit: WeeChat 3.3)
+[15:03:14] *** Joins: tomku (~tomku@user/tomku)
+[15:03:25] *** Joins: guniberas (~guniberas@42.191.188.121)
+[15:19:47] *** Quits: xd1le (~xd1le@user/xd1le) (Quit: xd1le)
+[15:34:11] *** Joins: Omar (~Omar@2.50.115.40)
+[15:36:02] *** Quits: supakeen (~user@python/site-packages/supakeen) (Quit: WeeChat 3.3)
+[15:36:32] *** Joins: supakeen (~user@python/site-packages/supakeen)
+[16:23:16] *** Joins: paulgrmn (~paulgrmn@user/paulgrmn)
+[16:26:50] *** Joins: drewlander (~drewlande@173-80-249-48.bklycmtk03.res.dyn.suddenlink.net)
+[16:34:54] *** Quits: drewlander (~drewlande@173-80-249-48.bklycmtk03.res.dyn.suddenlink.net) (Quit: ZNC 1.7.2+deb3 - https://znc.in)
+[16:36:13] *** Joins: drewlander (~drewlande@173-80-249-48.bklycmtk03.res.dyn.suddenlink.net)
+[16:56:20] *** Joins: Vexu (~Thunderbi@188.117.20.105)
+[17:13:47] *** Quits: frmdstryr (~jrm@172.58.203.41) (Ping timeout: 268 seconds)
+[17:16:03] *** Joins: frmdstryr (~jrm@172.58.203.41)
+[17:18:43] *** Quits: frmdstryr (~jrm@172.58.203.41) (Read error: Connection reset by peer)
+[17:20:29] *** Joins: frmdstryr (~jrm@172.58.203.41)
+[17:30:52] *** Joins: arkurious (~arkurious@user/arkurious)
+[17:35:59] *** Quits: Vexu (~Thunderbi@188.117.20.105) (Quit: Vexu)
+[17:40:03] *** Joins: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se)
+[17:50:07] <freshcoffee> zig-ci: bouncing drone-runner-docker (fix setting to allow for higher pipeline concurrency). this might cause a duplicate pipeline run temporarily.
+[17:51:55] *** Joins: xackus (~xackus@7-24.w.knc.pl)
+[18:10:11] *** Quits: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl) (Read error: Connection reset by peer)
+[18:37:54] *** Quits: damxsa (~damx@2001:16a2:ce33:4e00:3604:f881:a16d:7606) (Ping timeout: 260 seconds)
+[18:49:52] *** Joins: neurocyte0132889 (~neurocyte@user/neurocyte)
+[18:57:53] *** Quits: Nulo (~Nulo@user/nulo) (Read error: Connection reset by peer)
+[19:00:03] *** Quits: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se) (Quit: WeeChat 3.3)
+[19:01:55] *** Joins: Nulo (~Nulo@user/nulo)
+[19:17:21] *** Joins: livoreno (~livoreno@user/notzmv)
+[19:50:50] *** Joins: Tekk_ (~tekk@89.45.224.126)
+[19:53:31] *** Quits: Tekk (~tekk@cpe-76-182-45-53.nc.res.rr.com) (Ping timeout: 268 seconds)
+[19:58:26] *** Quits: guniberas (~guniberas@42.191.188.121) (Ping timeout: 268 seconds)
+[20:03:11] *** marler8997_ is now known as marler8997
+[20:03:23] <marler8997> andrewrk, I'm curious on your reasoning that the allocator's ability to return more memory than you need has no benefit.  Is it because if you need more memory you can call realloc?
+[20:06:19] *** Joins: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl)
+[20:14:47] *** Quits: Omar (~Omar@2.50.115.40) (Quit: Client closed)
+[20:15:07] *** Joins: Omaraaa (~Omaraaa@2.50.115.40)
+[20:25:17] *** Quits: livoreno (~livoreno@user/notzmv) (Read error: Connection reset by peer)
+[20:27:06] *** Joins: leon-p (~leon-p@2a02:8108:96c0:1810:e464:dd2d:a9d7:efc8)
+[20:27:22] *** Quits: leon-p (~leon-p@2a02:8108:96c0:1810:e464:dd2d:a9d7:efc8) (Client Quit)
+[20:27:41] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[20:34:12] *** Joins: yelnah (~felix@110-175-211-64.static.tpgi.com.au)
+[20:35:30] *** Quits: ofh (~felix@2001:44b8:3080:a5:6f0:21ff:fe3c:d4d7) (Ping timeout: 260 seconds)
+[20:41:59] *** Quits: Omaraaa (~Omaraaa@2.50.115.40) (Quit: Client closed)
+[20:58:26] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Ping timeout: 260 seconds)
+[20:59:20] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[21:06:33] *** Joins: rgrinberg (~textual@ip73-183-64-186.ct.co.cr)
+[21:07:36] *** Quits: wib_jonas (~wib_jonas@business-37-191-60-209.business.broadband.hu) (Ping timeout: 256 seconds)
+[21:18:15] *** Quits: novakane (~novakane@user/novakane) (Quit: WeeChat 3.3)
+[21:20:27] *** Joins: novakane (~novakane@user/novakane)
+[21:21:28] *** Joins: leon-p (~leon-p@2a02:8108:96c0:1810:ca0:2dff:fe0f:ca5a)
+[21:22:56] *** Quits: binarycat32 (~binarycat@35.24.192.117) (Read error: Connection reset by peer)
+[21:30:24] *** Quits: neurocyte0132889 (~neurocyte@user/neurocyte) (Quit: The Lounge - https://thelounge.chat)
+[21:33:12] *** Joins: neurocyte0132889 (~neurocyte@user/neurocyte)
+[21:46:19] *** Joins: damxsa (~damx@2001:16a2:ce33:4e00:152d:b032:78f3:27f0)
+[21:47:50] *** Joins: damxsa_ (~damx@2001:16a2:ce33:4e00:3604:f881:a16d:7606)
+[21:51:17] *** Quits: damxsa (~damx@2001:16a2:ce33:4e00:152d:b032:78f3:27f0) (Ping timeout: 268 seconds)
+[21:51:40] *** Quits: damxsa_ (~damx@2001:16a2:ce33:4e00:3604:f881:a16d:7606) (Client Quit)
+[21:51:54] *** Joins: damxsa (~damx@2001:16a2:ce33:4e00:3604:f881:a16d:7606)
+[21:55:52] <tgschultz> marler8997: I have just discovered your generated win32 bindings. Since my own are a) much more of a hack, and 2) extremely out of date with zig, I've been just writing bindings as-needed by hand. So I really appreciate this, thanks.
+[21:56:45] <marler8997> tgschultz I was in the same boat :)
+[21:56:56] <marler8997> I did a showtime talk on it here if you're interested: https://www.youtube.com/watch?v=HsnWZxrf5VE
+[21:59:19] <lucus> I'm thinking about packed structs. In a packed struct { a: u8, b: u8 }, should a and b be in a shared u16 host integer or should they receive separate u8 host integers?
+[22:00:14] <lucus> In principle, if they are in separate host integers, you could atomically update them separately but that property doesn't hold for packed structs in general
+[22:00:29] <marler8997> both
+[22:01:08] <lucus> What do you mean with both?
+[22:01:58] <marler8997> You could think of them as a shared u16 host integer or seperate u8 integers
+[22:02:44] <lucus> think of them sure, but the compiler has to make a choice at some point in how it's going to access them
+[22:03:38] <marler8997> nah, both
+[22:04:10] <marler8997> :P
+[22:05:58] <lucus> I'm thinking it's best if they share a host integer and hopefully if only one of them is accessed, something like llvm can optimize that access to a singly byte access
+[22:07:27] <marler8997> I don't think the spec would make a restriction saying it has to be one or the other.  The optimizer is free to do whatever it wants based on how it's used
+[22:08:16] <marler8997> I'm assuming by "host integer" you're meaning a hardware register.  But when it comes to optimization, it could be anything, including nothing at all :)
+[22:10:48] <lucus> The Zig compiler translates packed structs to llvm structs containing host integers with sizes the machine can deal with. Every packed field is part of a single host field but a single host field can hold multiple packed fields
+[22:13:25] *** Joins: m4r35n357 (~m4r35n357@host-78-151-108-203.as13285.net)
+[22:13:40] <lucus> E.g. packed struct { a: u20, b: u12 } looks like a struct { _host_a_b: u32 } under the hood
+[22:13:45] <tgschultz> that just seems like a bad idea llvm took from C to me. I can't see a reason it conceptually would need to have a concept of "host integer"
+[22:14:11] <tgschultz> but I suppose that is irrelevent since that's the way llvm does it
+[22:14:57] <lucus> tgschultz: It's somewhat of an implementation detail but yeah, cpu's can't do bit-addressed memory loads and stores so at some point the compiler has to decide how to map u12's to operations the cpu understands
+[22:17:52] <tgschultz> sure, but I don't think "host integer" is helpful there. Lets say I have 32 bit host and a large packed structure (48 bits, say), and I need to access a i19 bit field that exists accross the i32 and i16 boundary. host integer does nothing to help me. but I can access that in one read anyway if the arch supports byte-aligned reads of an integer >=24 bits. concept of "host integer" is irrelevant to "best way to get the bits".
+[22:20:10] <lucus> Hmm, you have a point
+[22:21:17] <andrewrk> marler8997, re: returning more memory: it's just a hunch. I need to test it
+[22:27:37] *** Joins: waleee (~waleee@h-98-128-228-119.NA.cust.bahnhof.se)
+[22:28:24] <marler8997> oh you're saying you just always return more memory?
+[22:28:52] <lucus> tgschultz: After thinking about it, I think what you suggest is possible, but it would be more complicated than using host integers: Accesses to different fields could partially overlap instead of either fully or not at all.
+[22:33:51] <andrewrk> marler8997, no- I'm suggesting that the overhead of dealing with the possibility of getting more memory might not be worth the API complexity, and I'm questioning whether it actually has any perf benefits
+[22:35:15] <marler8997> right that makes sense.  I was suprised because you said "at best it has no benefit", making me think you already knew the answer
+[22:36:55] <lucus> For example in packed struct { a: u20, b: u12 }, if you loaded b with a u16 access and computed a new value for it and then wanted to update a, you'd either have to write back the new value of b before loading a or load a and merge it with b before writing back both or analyze enough ahead of time to see loading b as 2 bytes leads to these inefficiencies
+[22:44:54] *** Joins: b_jonas (~x@catv-176-63-3-164.catv.broadband.hu)
+[22:45:16] <andrewrk> marler8997, sincere apologies for not communicating clearly
+[22:47:11] *** Quits: rgrinberg (~textual@ip73-183-64-186.ct.co.cr) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[22:50:32] <tgschultz> lucus: I don't follow. How does a host integer help here?
+[22:51:52] <lucus> tgschultz: In the case of host integers, the fields would share a host integer to begin with and therefor b would be loaded with a 32-bit load that includes the entirety of a
+[22:54:55] <tgschultz> lucus: you could do that anyway since you know you have a 32 bit register.
+[22:55:09] <lucus> yeah
+[22:55:47] <lucus> it's more of a matter of how much analysis is needed but I admit that it's hard to tell if the difference is significant without implementing it
+[22:58:40] *** Joins: mithz (~mithz@h-176-10-236-148.A785.priv.bahnhof.se)
+[22:59:09] *** Quits: mithz (~mithz@h-176-10-236-148.A785.priv.bahnhof.se) (Client Quit)
+[23:08:37] <tgschultz> marler8997: kinda strange what is and isn't defined in zigwin32. UINT isn't, but USHORT is. wgl* functions are, but not gl* functions or GLxxxx types.
+[23:09:43] *** Joins: Guest97 (~Guest97@192-063-007-169.res.spectrum.com)
+[23:12:39] <andrewrk> freshcoffee, are we ready to try switching over x86_64 linux to ci.ziglang.org?
+[23:15:56] <freshcoffee> 2 things are still missing: push to s3 the json manifest and tarball, AND on_master_success
+[23:17:12] *** Quits: km (9ab7146360@user/km) (Remote host closed the connection)
+[23:17:41] <freshcoffee> andrewrk: I can prioritize those items if you want
+[23:18:08] <andrewrk> up to you! I'm just volunteering to do some work right now to help out
+[23:23:01] *** Joins: rgrinberg (~textual@ip73-183-64-186.ct.co.cr)
+[23:23:12] *** Quits: andrzejku (~andrzejku@45-11-60-125.ip4.greenlan.pl) (Read error: Connection reset by peer)
+[23:25:42] *** Quits: Guest97 (~Guest97@192-063-007-169.res.spectrum.com) (Quit: Client closed)
+[23:25:56] *** Joins: Guest97 (~Guest97@192-063-007-169.res.spectrum.com)
+[23:28:46] *** Quits: yrlf (~yrlf@omnath.yrlf.at) (Quit: The Lounge - https://thelounge.chat)
+[23:29:39] *** Joins: yrlf (~yrlf@omnath.yrlf.at)
+[23:30:52] *** Quits: Guest97 (~Guest97@192-063-007-169.res.spectrum.com) (Quit: Client closed)
+[23:32:27] *** Joins: notapenguin (~ryu@2804:14d:5680:8a2c:75cf:7f59:516a:b801)
+[23:33:21] <freshcoffee> if you want to try sure; reminder you'll have to apt-get s3cmd and whatever else (later I can rebuild image with whatever packages you add in script); I suspect we need another pipeline just like azure has for on-master-success. Drone pipelines can depend on other pipelines too.
+[23:33:53] <freshcoffee> to be more clear, drone.yml lets step depend on steps in same pipeline, and pipelines depend on other pipelines
+[23:39:47] <andrewrk> neat
+[23:40:11] <andrewrk> right now we rely on submitting a job to lavatech to check if all tarballs are present which coordinates between different CI systems
+[23:42:06] *** Quits: m4r35n357 (~m4r35n357@host-78-151-108-203.as13285.net) (Quit: Leaving)
+[23:42:31] <tgschultz> marler8997: more notes: everything.zig should include FALSE and TRUE from zig.zig. Also, why doesn't everything.zig just use usingnamespace?
+[23:43:45] *** Joins: ur5us (~ur5us@2406:e002:6c33:6d01:e4a1:448d:2cb1:fbb6)
+[23:48:17] *** Parts: davidfetter (~davidfett@xvm-110-146.dc2.ghst.net) ()
+[23:48:24] *** Joins: davidfetter (~davidfett@xvm-110-146.dc2.ghst.net)
+[23:51:40] <marler8997> tgshultz, because of symbol conflicts
+[23:51:59] <marler8997> woops, I mean tgschultz
+[23:52:15] <tgschultz> ah, alright

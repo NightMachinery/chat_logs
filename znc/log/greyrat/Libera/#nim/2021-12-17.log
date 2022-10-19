@@ -1,0 +1,406 @@
+[00:23:20] <FromDiscord> <analesthetist> hi, i'm quite new to the language and i'm checkout out parallelization
+[00:23:32] <FromDiscord> <analesthetist> i'm trying to paralelize an iterator
+[00:23:58] <FromDiscord> <analesthetist> but i think the iterators are sharing memory
+[00:24:43] <FromDiscord> <analesthetist> because internally the iterator created a table and a deque
+[00:24:59] <FromDiscord> <analesthetist> and weird stuff happens que running in parallel
+[01:02:33] <FromDiscord> <el__maco> I'm not convinced that the compiler could give a warning for running out of stack. It probably could in trivial cases, but the trivial cases are relatively easy to figure out anyways 🤷‍♂️
+[01:03:14] *** Joins: bkay (~beshr@78-72-246-187-no2006.tbcn.telia.com)
+[01:04:25] *** Quits: beshr (~beshr@user/beshr) (Ping timeout: 268 seconds)
+[01:04:48] <FromDiscord> <leorize> I don't see why it could not, the compiler has to allocate this space for variables anyway, and it knows all the sizes
+[01:05:42] <FromDiscord> <el__maco> yes but it doesn't know what happens at runtime
+[01:07:16] <FromDiscord> <ynfle (ynfle)> Doesn't nim allocate itself?
+[01:10:14] <FromDiscord> <el__maco> not sure what you mean
+[01:11:48] <FromDiscord> <leorize> variables in a function are typically allocated up front
+[01:12:07] <FromDiscord> <leorize> so the compiler know how much stack is necessary for a stack frame
+[01:12:42] <FromDiscord> <el__maco> local variables are on stack, and you cannot allocate them ahead of time. But obviously you have to know how much space is required
+[01:12:48] <FromDiscord> <leorize> now if you do recursion, then it's not detectable by the compiler, but the cost of a stack frame is definitely measurable
+[01:13:43] <FromDiscord> <el__maco> when you know how much stack you need you increment or decrement the stack pointer by that amount, and whether or not you run out depends on where the stack pointer was at that moment
+[01:14:09] <FromDiscord> <el__maco> this takes place at runtime, at compile time you don't know
+[01:14:25] <FromDiscord> <leorize> yea but the compiler knows how much would a function need to run, like the minimum needed
+[01:14:38] <FromDiscord> <el__maco> yes, but it doesn't know your call stack
+[01:14:51] <FromDiscord> <el__maco> so it can only reason about the trivial case
+[01:15:17] <FromDiscord> <leorize> yes, but you could easily catch a 1MiB stack frame caused by oversized variables
+[01:15:33] <FromDiscord> <el__maco> 1MB can be perfectly okay, even on Windows
+[01:15:56] <FromDiscord> <el__maco> though I wouldn't necessarily write such code but you know
+[01:17:25] <FromDiscord> <el__maco> you could add a warning for the trivial case surely, but how useful that would be since you cannot rely on that warning at all
+[01:19:43] <FromDiscord> <leorize> it can still be plenty useful, we have more warnings than most users will see
+[01:36:02] <qwr> "Error: cannot 'importc' variable at compile time; F_WRLCK" -- what it actually means? i'm cross compiling and specified --cincludes:/usr/arm-linux-gnueabihf/include but this seems to not help?
+[01:39:21] * qwr thinks it tries to use in posix_other_consts.nim var F_WRLCK* {.importc: "F_WRLCK", header: "<fcntl.h>".}: cint
+[01:55:29] <FromDiscord> <Sabena Sema> in general without recursion (or mutual recursion) you can put static bounds on stack size and then prove they are met
+[01:56:50] <FromDiscord> <Sabena Sema> in terms of making sure (at runtime) the program will crash fairly gracefully if you run out of stack (or run out of memory in general) you need stack probes
+[01:57:18] <FromDiscord> <Sabena Sema> oh, variable length arrays/alloca with runtime size can break static proofs of stack size too
+[01:57:23] * qwr could work around the problem by replacing F_WRLCK with 1 (that is its value), but would be interesting to know what could be the cause (cross compiling on arm64 debian for armhf...)
+[01:57:26] <FromDiscord> <Sabena Sema> but can still be dealt with using probes
+[01:57:50] <FromDiscord> <Sabena Sema> (historically a lot of C99 compilers just ... didn't emit correct probes for alloca, which was embarrassing and led to the feature's removal
+[01:57:53] <FromDiscord> <Sabena Sema> (edit) "removal" => "removal)"
+[02:02:03] <FromDiscord> <Sabena Sema> you can't just ask the OS how much "stack space" is left at runtime and compare, since the kernel does not reserve enough memory to ensure programs can successfully execute, it'll only (at best) reserve memory exactly when you ask for it
+[02:02:14] <FromDiscord> <Sabena Sema> so asking "is there memory" then allocating memory is a race
+[02:08:00] <FromDiscord> <Sabena Sema> anyhow, you can get stack size checks by passing `--passc:/Gs`  and perhaps gcc's `-fstack-check` option
+[02:08:18] <FromDiscord> <Sabena Sema> gcc appears to like, not probe every page... I'm not sure
+[02:08:28] <FromDiscord> <Sabena Sema> it also probes using writes which is extremely odd
+[02:26:09] *** Quits: tombrick (~user@2601:2c5:600:bb8:f450:844b:8f39:d09f) (Quit: tombrick)
+[02:34:10] *** Quits: krux02 (~krux02@p200300e8172499004cdf065c4ed80e7b.dip0.t-ipconnect.de) (Remote host closed the connection)
+[02:57:51] <FromDiscord> <huantian> looking at <https://nim-lang.org/docs/tut2.html#object-oriented-programming-object-variants>↵and wondering if there's a way to notate that a proc returns a specific variant
+[02:58:22] <FromDiscord> <Elegantbeef> Using a macro you could, but nothing built in
+[02:58:33] <FromDiscord> <huantian> kk
+[03:04:59] <FromDiscord> <Elegantbeef> https://play.nim-lang.org/#ix=3ICC here's an example
+[03:11:34] <FromDiscord> <ynfle (ynfle)> @beef, it won't help for the type system though. Just more like a sanity check
+[03:13:12] <FromDiscord> <Elegantbeef> Well you could also make it check it in the type system checking all constructors of the procedure
+[03:14:02] <FromDiscord> <Elegantbeef> Basically check all assignment to result at CT assuming the functions they call dont rely on importC would work
+[03:14:14] <FromDiscord> <Elegantbeef> It'd be a big ol' macro to write but it's mostly doable
+[03:14:54] <FromDiscord> <ynfle (ynfle)> Only if you have control over it, ie. you have control over the library if it's not your own
+[03:16:08] <FromDiscord> <Elegantbeef> I dont follow
+[03:17:06] <FromDiscord> <ynfle (ynfle)> Never mind. Basically to ensure that the proc from the json module returns a certain type, or to enforce that the other person knows that this type is of a certain variant
+[03:17:13] <FromDiscord> <ynfle (ynfle)> Either way. It's some next level stuff
+[03:18:19] <FromDiscord> <Elegantbeef> I think it's still doable with json since if anywhere in the proc call stack there is an object constructed that doesnt have your given type you stop compilation
+[03:18:59] <FromDiscord> <Elegantbeef> So if you call parseJson and you annotate your proc with `kind: jInt` or w/e the kind is and it finds constructors that dont construct with that kind it'd error
+[03:19:33] <FromDiscord> <leorize> maybe one of these days we can create a macro that creates an union from a representation \:p
+[03:20:04] <FromDiscord> <Elegantbeef> lol
+[03:20:24] <FromDiscord> <Elegantbeef> doesnt even know what that means
+[03:20:47] <FromDiscord> <leorize> factor JsonNode -\> JInt, JNull, etc. automatically
+[03:21:14] <FromDiscord> <leorize> and when used with `union`, for example, any combination of these types result in the `JsonNode` object, but distinct \:p
+[03:24:42] <FromDiscord> <MegaIng (MegaIng)> sent a code paste, see https://paste.rs/YTD
+[03:26:10] <FromDiscord> <Elegantbeef> You can put the nonref before the ref, however odd
+[03:27:08] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3ICF
+[03:27:12] <FromDiscord> <Elegantbeef> Seems it's just an issue with the generic type definition
+[03:27:36] <FromDiscord> <Elegantbeef> Dont know if you were adding more to the `obj` if not this is a good way of doing it
+[03:28:15] <FromDiscord> <Elegantbeef> Oh nvm i broke the type definition like a dummy
+[03:28:57] <FromDiscord> <Elegantbeef> Putting the obj before the ref solves the issue so seems like an issue with the generic cache
+[03:29:11] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3ICG
+[03:31:07] <FromDiscord> <MegaIng (MegaIng)> Aha, then I wrote a to generalized example from my actual problem. I tried that but it didn't work in my actual code.
+[03:31:48] <FromDiscord> <Elegantbeef> Do you have you real code somewhere, i dont mind self abuse
+[03:32:20] <FromDiscord> <MegaIng (MegaIng)> Nah, I am currently in the early stages of starting to develop this and wanted to directly have sensible type definitions
+[03:33:40] <FromDiscord> <Elegantbeef> If you want me to take a look throw the type defs in a file and share it, otherwise cant say much, probably just generic cache being drunk
+[03:33:56] <FromDiscord> <Elegantbeef> There is a non zero chance i'm the reason it's not working, i've caused issues before 😛
+[03:34:21] *** Quits: src (~src@user/src) (Quit: Leaving)
+[03:34:42] <FromDiscord> <MegaIng (MegaIng)> This is it
+[03:34:44] <FromDiscord> <MegaIng (MegaIng)> sent a code paste, see https://play.nim-lang.org/#ix=3ICK
+[03:34:55] <FromDiscord> <MegaIng (MegaIng)> Well, no that is not the actual code
+[03:35:01] <FromDiscord> <MegaIng (MegaIng)> But this is no very very close
+[03:35:36] <FromDiscord> <MegaIng (MegaIng)> E.g. I want a linked list of arrays of some kind
+[03:36:24] <FromDiscord> <MegaIng (MegaIng)> And either way I order the object/ref it throws an error
+[03:36:39] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3ICL
+[03:37:19] <FromDiscord> <MegaIng (MegaIng)> That does in fact work as a workaround
+[03:37:25] <FromDiscord> <MegaIng (MegaIng)> Why didn't I think of that?
+[03:37:40] <FromDiscord> <Elegantbeef> You dont have a degree in workaroundology?
+[03:37:58] <FromDiscord> <Elegantbeef> It very much sounds like a generic cache issue so i'd suggest making an issue on the github repo if you have the time
+[03:38:09] <FromDiscord> <Elegantbeef> Though i imagine one already exists
+[03:38:43] <FromDiscord> <MegaIng (MegaIng)> Could very well be, I had no clue what words to search for. But I will try again
+[03:45:15] <FromDiscord> <huantian> Is it possible for two procs to be mutually recursive?
+[03:48:43] <FromDiscord> <Elegantbeef> Yes
+[03:48:50] <FromDiscord> <Elegantbeef> Forward declare both and voila
+[03:49:27] <FromDiscord> <Elegantbeef> sent a code paste, see https://play.nim-lang.org/#ix=3ICM
+[03:49:33] <FromDiscord> <Elegantbeef> Really mutually recursive procs there
+[03:51:38] <FromDiscord> <huantian> cool beans
+[03:55:35] <FromDiscord> <Yardanico> seems like i found an oob bug in httpclient, nice
+[03:55:51] <FromDiscord> <Yardanico> some web server replies with headers in a very weird way but both browser and curl seem to be happy with it
+[04:01:05] <FromDiscord> <Yardanico> https://github.com/nim-lang/Nim/issues/19261
+[04:06:40] *** Quits: arkurious (~arkurious@user/arkurious) (Quit: Leaving)
+[04:37:45] <FromDiscord> <Yardanico> this goddamn http header mess
+[05:03:17] *** Quits: kayabaNerve (~kayabaNer@user/kayabanerve) (Remote host closed the connection)
+[05:24:56] <FromDiscord> <valerga> just now I missed nims feature of x.func vs func(x) format, in javascript
+[05:25:15] <FromDiscord> <valerga> it would be useful. only way I see is changing the dom element's prototype and eh
+[05:25:30] <FromDiscord> <Yardanico> In reply to @Yardanico "https://github.com/nim-lang/Nim/issues/19261": https://github.com/nim-lang/Nim/pull/19262
+[05:25:34] <FromDiscord> <Elegantbeef> Yep it's a wonderful thing, i especially miss it looking at C# 😀
+[05:25:50] <FromDiscord> <Yardanico> so the root issue is that httpclient doesn't really follow the spec and just finds the `:` in a line to find the header name
+[06:20:37] *** Quits: lumo_e (~enrico@151.29.48.90) (Quit: Quit)
+[06:44:43] *** Joins: zacts (~zacts@user/zacts)
+[06:44:57] <zacts> hi #nim
+[06:45:27] <nrds> <06Prestige99> hey zacts
+[07:18:35] <NimEventer> New question by How2: Pythonic pip freeze in Nim or how to list installed packages?, see https://stackoverflow.com/questions/70388197/pythonic-pip-freeze-in-nim-or-how-to-list-installed-packages
+[07:36:02] *** Quits: supakeen (~user@python/site-packages/supakeen) (Quit: WeeChat 3.3)
+[07:36:31] *** Joins: supakeen (~user@python/site-packages/supakeen)
+[07:45:36] *** Quits: rockcavera (~rc@user/rockcavera) (Remote host closed the connection)
+[08:20:10] *** Joins: noeontheend (~noeonthee@207.237.194.194)
+[09:28:32] <FromDiscord> <Yardanico> i don't get these questions
+[09:28:38] <FromDiscord> <Yardanico> is it just asking for the sake of answerring?
+[09:28:45] <FromDiscord> <Yardanico> i can make tens of those on SO too 🤔
+[09:37:03] *** Quits: bkay (~beshr@78-72-246-187-no2006.tbcn.telia.com) (Ping timeout: 256 seconds)
+[09:37:57] <FromDiscord> <valerga> who is How2?
+[09:38:02] <FromDiscord> <valerga> looks useful though
+[09:38:38] <FromDiscord> <Phytolizer> Can I include a string at compile time, like Rust's `include_str!("file.txt");`?
+[09:38:58] <FromDiscord> <Elegantbeef> `const a = staticRead("file.txt")`
+[09:39:03] <FromDiscord> <Phytolizer> staticRead, thank you :)
+[09:49:58] *** Joins: kayabaNerve (~kayabaNer@user/kayabanerve)
+[09:52:57] *** Quits: noeontheend (~noeonthee@207.237.194.194) (Ping timeout: 240 seconds)
+[10:41:55] <FromDiscord> <reilly> Is there a meaningful difference between `type SomeRange = 0..127` and `type SomeRange = range[0..127]`?
+[10:43:06] <FromDiscord> <Elegantbeef> The former is the latter
+[10:56:51] <FromDiscord> <Rika> You could have said that they were the same
+[10:57:10] <FromDiscord> <Elegantbeef> Riddles i must speak in
+[10:57:24] <FromDiscord> <Yardanico> woof woof
+[10:57:29] <FromDiscord> <Yardanico> meow meow
+[11:09:06] <FromDiscord> <reilly> Is there a convenient way of `sleep()`ing until the beginning of the following day? (i.e. the time is 7:53pm, so sleep for 4 hours and 7 minutes.)
+[11:09:50] <FromDiscord> <reilly> I already have a way of doing it that works, but it seems to me like a silly way of doing it. Surely there must be a better way.
+[11:23:24] <FromDiscord> <Elegantbeef> How are you doing it presently?
+[11:26:33] <FromDiscord> <Rika> How precise do you need it to be
+[11:39:53] <FromDiscord> <reilly> In reply to @Rika "How precise do you": Precision isn't very important. I'm happy as long as it triggers no earlier than 12am on any given day.
+[11:40:27] <FromDiscord> <reilly> Ideally within the first minute would be nice, though :P
+[11:42:42] <FromDiscord> <Yardanico> have you considered using the OS facilities for that?
+[11:42:46] <FromDiscord> <Yardanico> like systemd timers or cron
+[11:46:26] <FromDiscord> <reilly> In reply to @Elegantbeef "How are you doing": `format(now + 24.hours, "yyyy-MM-dd").parse("yyyy-MM-dd") - now` - Basically, I format then re-parse the DateTime so that all the time information I don't need is discarded, and I end up with a DateTime that effectively represents "Tomorrow at 12am." Like I said, a silly way of doing it, but it is a one-line expression.
+[11:48:21] <FromDiscord> <reilly> In reply to @Yardanico "have you considered using": I haven't, but that seems like overkill for this silly little thing I'm doing. The only reason I ask, really, is because this isn't the first time I've wanted to sleep() until the very beginning of the next day. Ideally I'd like to be able to write down a convenient way of doing it that I can use later, when I need to do it again, just in case.
+[11:48:41] <FromDiscord> <Yardanico> I don't really think it's silly, it's actually smart IMO :)
+[11:48:52] <FromDiscord> <Rika> I think it’s the best way
+[11:48:56] <FromDiscord> <Yardanico> it's much easier from the developing standpoint to just use existing mechanisms
+[11:49:02] <FromDiscord> <Yardanico> and it will work across reboots and stuff
+[11:49:03] <FromDiscord> <Rika> Without relying on OS I mean
+[11:50:00] <FromDiscord> <Yardanico> first you write some scheduling stuff, next you make scripts to autostart your program on reboot, and in the end you have an init system :D
+[11:50:35] <FromDiscord> <Elegantbeef> https://play.nim-lang.org/#ix=3IE7 i suppose is what you're really doing
+[11:50:42] <FromDiscord> <reilly> sent a long message, see http://ix.io/3IE8
+[11:51:02] <FromDiscord> <Yardanico> well that's just my opinion, it just seems a bit  weird to me to `sleep` for hours in a program
+[11:51:11] <FromDiscord> <Yardanico> instead of using some scheduling to launch it when needed
+[11:53:45] <FromDiscord> <reilly> It's not a "real" program that I'll actually be running, it's just a silly little script, so I feel like in this case it's better to just have a ludicrously long sleep time than to go through the trouble of doing it the better way just for a joke script that I'll never actually run.
+[11:54:56] <FromDiscord> <narimiran> Nim 1.6.2 is out!! https://nim-lang.org/blog/2021/12/17/version-162-released.html
+[11:54:58] <FromDiscord> <Yardanico> In reply to @reilly "It's not a "real"": and what if you reboot?
+[11:55:00] <NimEventer> New thread by Miran: Nim 1.6.2 released, see https://forum.nim-lang.org/t/8717
+[11:55:03] <FromDiscord> <Yardanico> In reply to @narimiran "Nim 1.6.2 is out!!": so fast after rc?
+[11:55:04] <FromDiscord> <Yardanico> interesting
+[11:56:24] <FromDiscord> <reilly> In reply to @Yardanico "and what if you": Maybe I could do a better job of explaining why I don't care about doing it the right way if you just see it: https://play.nim-lang.org/#ix=3IE9
+[11:58:12] <FromDiscord> <reilly> Like I said, a silly little script. I can't imagine that anybody would run this for more than three seconds, if at all. It's about the festive spirit, not the functionality :P
+[11:59:34] <FromDiscord> <Rika> Well at least now you know what to do when you need to do it in a serious program
+[12:03:30] <FromDiscord> <reilly> If I really wanted a task to run periodically in the real world, there's no way I'd do it the sleep() way. I hate useless windows cluttering up my taskbar... I get annoyed enough already using a Fidget window to render a background for OBS.
+[12:04:06] <FromDiscord> <Rika> Why do you use a- you know what you do you
+[12:04:28] <FromDiscord> <Elegantbeef> Got it done without deprecation warnings 😛 https://play.nim-lang.org/#ix=3IEb
+[12:06:34] <FromDiscord> <reilly> In reply to @Rika "Why do you use": Because I want fancy procedurally-animated backgrounds in OBS, and I want to be able to write them quickly and easily. Doesn't get much easier than just drawing basic 2d shapes...
+[12:06:46] <FromDiscord> <Rika> Oh so you’re like me except more sane
+[12:06:57] <FromDiscord> <Rika> I was planning on manually doing everything via pixie
+[12:07:28] <FromDiscord> <Rika> I’ve got some ideas that I don’t think would fit fidget
+[12:07:55] <FromDiscord> <Elegantbeef> Reilly have you ever seen nanim? https://github.com/EriKWDev/nanim might be something you like
+[12:08:04] <FromDiscord> <reilly> I may do something more elaborate in Pixie someday, but I haven't written any new backgrounds in a long time and I you can go a long way with circles and some post-processing FX.
+[12:09:13] <FromDiscord> <reilly> In reply to @Elegantbeef "Reilly have you ever": I have, haven't gotten around to giving it a spin yet though. The last time I wrote one of these backgrounds I'm talking about was 7 months and 24 days ago, so it hasn't exactly been a priority.
+[12:09:39] <FromDiscord> <Elegantbeef> Ah was just asking since it seems similar to what you described 😀
+[12:11:09] <FromDiscord> <Rika> Oh yeah that I forgot
+[12:11:13] <FromDiscord> <Rika> Might use that as well
+[12:11:35] <FromDiscord> <reilly> For simple stuff like what I've done, I prefer the obvious, procedural syntax that Fidget lets me use. But, if I were to do something more serious and/or elaborate, I'd probably go with Pixie or Nanim.
+[12:12:01] <FromDiscord> <Rika> Yeah my plans are kinda stupid wrt. my overlay haha
+[12:12:03] <FromDiscord> <reilly> But I have no interest in making more stuff like that at the moment :P
+[12:14:53] <FromDiscord> <reilly> Fidget is good enough for when you just want a little bit of eye candy: https://youtu.be/UUmRA1PmE-8
+[12:19:07] <FromDiscord> <Rika> Is that max?
+[12:19:28] <FromDiscord> <Rika> Looks dope the bg
+[12:22:47] <FromDiscord> <reilly> Bitwig actually, I've taken a peek at Puredata and I dislike the UX... Max, while not exactly the same, I'd wager would be a similar story. It'd only be worth it using if it was Max4Live-flavored, as the standalone Max would be pretty useless to me.
+[12:23:03] <FromDiscord> <reilly> (edit) "actually," => "actually!" | "actually!I've taken a peek at Puredata ... and" 03added "before"
+[12:23:22] <FromDiscord> <reilly> (edit) "This is Bitwig actually! I've taken a peek at Puredata before and I dislike the UX... Max, while not exactly the same, I'd wager would be a similar story. It'd only be worth ... it" 03added "using" | 04removed "using"
+[12:23:45] <FromDiscord> <Rika> Max afaik is the proprietary brother so technically it should be nicer
+[12:23:54] <FromDiscord> <Rika> I’ll look into bitwig though since damn
+[12:26:32] <FromDiscord> <reilly> Bitwig and U-He have been working on a new audio plugin format (https://github.com/free-audio/clap), and all I'm going to say is that if one were to create an idiomatic Nim wrapper/interface for this library, that would be a serious game changer.
+[12:29:34] <FromDiscord> <Rika> Do you not want to try making it?
+[12:29:50] <FromDiscord> <Elegantbeef> Cmon reilly change the game
+[12:30:40] <FromDiscord> <Rika> I mean if I do get super interested I’ll try but I don’t think I will
+[12:30:47] <FromDiscord> <reilly> I would like to, but I don't have nearly a good enough understanding of C to work it out, at least not on my own.
+[12:30:50] <FromDiscord> <valerga> is this to replace vst?
+[12:30:55] <FromDiscord> <Rika> Let’s say 5% probability I do make such
+[12:31:06] <FromDiscord> <Rika> In reply to @reilly "I would *like* to,": You could just ask I guess
+[12:31:11] <FromDiscord> <Rika> Some of us do
+[12:31:15] <FromDiscord> <reilly> Besides, the format is still in the works, so you can forget about doing it until it's properly codified.
+[12:31:30] <FromDiscord> <Rika> In reply to @reilly "Besides, the format is": Can always just change it once the thing is codified
+[12:31:36] <FromDiscord> <Rika> Shouldn’t be too hard I assume
+[12:31:40] <FromDiscord> <Elegantbeef> Well the best way to learn that information is you just try then hit the wall
+[12:31:57] <FromDiscord> <reilly> In reply to @valerga "is this to replace": I don't think it will, but I wish it would. I think everybody's pretty sick of Steinberg's proprietary crap.
+[12:32:09] <FromDiscord> <Rika> In reply to @Elegantbeef "Well the best way": C does bite back really hard and often though
+[12:32:36] <FromDiscord> <Rika> In reply to @reilly "I don't think it": If only LV2 did huh
+[12:32:44] <FromDiscord> <Rika> 14 competing standards
+[12:34:43] <FromDiscord> <reilly> Actually, no, you know what? I have a better answer.
+[12:35:20] <FromDiscord> <Rika> ? Let’s hear it
+[12:36:38] <FromDiscord> <reilly> Based on statements from U-He, it appears to be the case that, while CLAP is a standalone format, it can be translated and/or interfaced with in such a way that it would be relatively easy to write your plugin using CLAP and then compile/bundle it in the VST format.
+[12:36:45] <FromDiscord> <Elegantbeef> Prefixed questions Rika is using Lisp english edition
+[12:37:19] <FromDiscord> <reilly> LV2, by contrast, is from my understanding intended to be a replacement for VST, which realistically isn't going to happen, at least not anytime soon.
+[12:37:31] <FromDiscord> <Rika> Sorry, my native language is VSO
+[12:38:27] <FromDiscord> <Rika> Or do you refer to something else
+[12:38:36] <FromDiscord> <Rika> The question mark?
+[12:39:03] <FromDiscord> <Elegantbeef> Yes
+[12:39:19] <FromDiscord> <Elegantbeef> You prefixed the question with the `?` operator 😛
+[12:39:43] <FromDiscord> <Rika> Okay
+[12:40:05] *** Quits: jmdaemon (~jmdaemon@142.207.63.60) (Ping timeout: 256 seconds)
+[12:49:38] <FromDiscord> <valerga> wew new nim release
+[12:49:44] <FromDiscord> <valerga> found out via HN
+[12:50:57] <FromDiscord> <Yardanico> In reply to @valerga "wew new nim release": #announcements
+[12:51:00] <FromDiscord> <Yardanico> #community-events
+[12:51:02] <FromDiscord> <Yardanico> in this chat a bit up
+[12:51:10] <FromDiscord> <Yardanico> on the forum, on reddit, on the website :)
+[12:51:33] <FromDiscord> <Yardanico> it's a minor patch release though
+[12:52:05] *** Joins: SebastianM (~seba@user/sebastianm)
+[13:08:43] *** Quits: SebastianM (~seba@user/sebastianm) (Quit: Bye)
+[13:58:07] <FromDiscord> <dom96> I think it's time someone creates a drinking game based on HN comments 😄
+[13:58:50] <FromDiscord> <Yardanico> oh wow, 51 points so fast
+[13:59:04] <FromDiscord> <dom96> it'll get killed as soon as one of the mods wakes up
+[13:59:33] <FromDiscord> <dom96> but it seems our timing was good
+[14:02:49] <FromDiscord> <dom96> "transpiles" 🥃
+[14:04:22] <FromDiscord> <valerga> python 🍹
+[14:05:27] <FromDiscord> <amadan> s_t_y_l_e_i_n_s_e_n_s_i_t_i_v_e 🍷
+[14:36:42] *** Joins: arkurious (~arkurious@user/arkurious)
+[14:39:44] <FromDiscord> <hmmm> oh wehw we on hn?
+[14:40:00] <FromDiscord> <Yardanico> In reply to @hmmm "oh wehw we on": every Nim release is on HN
+[14:40:04] <FromDiscord> <Yardanico> (edit) "In reply to @hmmm "oh wehw we on": every ... Nim" 03added "new"
+[14:44:24] <FromDiscord> <hmmm> "why would I care about nim there is a ton of different langs already" if these frigging plebs cannot see a no benefit in a typed python that is not slow as an old whale I guess the joke is on them
+[14:57:50] <FromDiscord> <hmmm> do hn people really believe people write nim programs L_i_K_e_T_h_i_S
+[14:59:26] <FromDiscord> <Yardanico> In reply to @hmmm "do hn people really": yes
+[14:59:29] <FromDiscord> <Yardanico> have you seen my nim code yet?
+[14:59:37] <FromDiscord> <el__maco> Extra snake mode ftw
+[14:59:49] <FromDiscord> <Yardanico> https://raw.githubusercontent.com/Yardanico/nuglifier/master/example_output/example_case.nim
+[14:59:58] <FromDiscord> <Yardanico> my usual nim code style
+[15:00:03] <FromDiscord> <hmmm> lol
+[15:00:14] <FromDiscord> <Yardanico> (it compiles btw)
+[15:00:40] <FromDiscord> <el__maco> such a boomer joke but they should allow l33t code in symbol names too
+[15:01:24] <FromDiscord> <dom96> !eval var 💬 = "Hello"; echo(💬)
+[15:01:28] <NimBot> Hello
+[15:01:37] <FromDiscord> <valerga> `iN_PuT[0]`
+[15:01:38] <FromDiscord> <dom96> No need for l33t code when you've got emojis
+[15:02:44] <FromDiscord> <Yardanico> In reply to @valerga "`iN_PuT[0]`": people sometimes forget that cAsE_InSeNsItIvI_tY applies to keywords too btw
+[15:02:53] <FromDiscord> <Yardanico> but fear not, nim got you covered
+[15:02:58] <FromDiscord> <Rika> In reply to @hmmm ""why would I care": Well why would I care about go or zig or rust it’s really the same thing
+[15:03:12] <FromDiscord> <Rika> It’s just that the value of what Nim offers isn’t immediately appreciable versus the others
+[15:04:14] <FromDiscord> <Solitude> marketable buzzword has not arrived
+[15:05:44] *** Joins: SebastianM (~seba@user/sebastianm)
+[15:05:45] <FromDiscord> <hmmm> man I've tried rust for just 5 minutes so I'm far from an authority but cannot fathom how people got enough stomach to deal with that robo verbose sythax
+[15:05:59] <FromDiscord> <hmmm> I still have a cargo folder from the tutorial laying somewhere
+[15:06:29] <FromDiscord> <valerga> saying nim is typed python is short selling it. nim features a bunch of genius experimental ideas that i haven't seen in other languages
+[15:06:56] <FromDiscord> <Rika> In reply to @valerga "saying nim is typed": Keyword is experimental; people don’t like stuff that is weird and experimental and unorthodox even if it’s a good idea
+[15:06:59] <FromDiscord> <Rika> People don’t like change
+[15:07:11] <FromDiscord> <Solitude> In reply to @hmmm "man I've tried rust": you're no better than hn posters then
+[15:07:17] <FromDiscord> <hmmm> for sure lol
+[15:07:27] <FromDiscord> <valerga> experimental/modern
+[15:07:41] <FromDiscord> <valerga> it's a modern language
+[15:09:43] <FromDiscord> <Rika> Rust is cool, I don’t like how much people are seemingly overhyping it though
+[15:10:33] <FromDiscord> <Yardanico> yeah, memory safety is all cool and good but there are tons of other problems with security in apps
+[15:12:15] <FromDiscord> <valerga> i studied rust for some months
+[15:12:24] <FromDiscord> <valerga> got hyped, even listened to podcasts about it
+[15:12:33] <FromDiscord> <valerga> wrote some programs in it
+[15:12:42] <FromDiscord> <valerga> but discovering nim was like loosing out a tight belt
+[15:13:00] <FromDiscord> <valerga> small things, even "echo x" is a lot easier
+[15:13:10] <FromDiscord> <Rika> In reply to @Yardanico "yeah, memory safety is": And if you want to argue, rust goes against some issues such as those that are caused by readability
+[15:13:22] <FromDiscord> <Rika> And yeah ease of use
+[15:14:01] <FromDiscord> <Rika> I don’t like people who treat a language (even if it’s Nim) as a fixes-everything kind of godlike entity
+[15:14:25] <FromDiscord> <Rika> And rust is just egregious with the amount of people within their religion
+[15:15:07] <FromDiscord> <hmmm> I mean....wtf is this lol https://media.discordapp.net/attachments/371759389889003532/921367401675759636/wtf.png
+[15:16:45] <FromDiscord> <Yardanico> a screenshot
+[15:17:22] <FromDiscord> <Rika> An image
+[15:17:28] <FromDiscord> <dom96> A Portable Network Graphics
+[15:18:58] <FromDiscord> <valerga> nim's rust backend when
+[15:19:05] <FromDiscord> <dom96> never
+[15:19:40] <FromDiscord> <valerga> is it possible though?
+[15:19:52] <FromDiscord> <dom96> of course
+[15:27:31] <FromDiscord> <Rika> It’s just too different and hard to generate for
+[15:36:02] *** Quits: supakeen (~user@python/site-packages/supakeen) (Quit: WeeChat 3.3)
+[15:36:31] *** Joins: supakeen (~user@python/site-packages/supakeen)
+[15:41:47] *** Joins: smintheus (~smintheus@94.31.99.126)
+[15:57:35] *** Quits: SebastianM (~seba@user/sebastianm) (Quit: Bye)
+[16:36:48] *** Quits: smintheus (~smintheus@94.31.99.126) (Quit: leaving)
+[16:48:38] <FromDiscord> <tandy> what would be the point↵(@valerga)
+[16:48:42] <FromDiscord> <tandy> zig backend however.....
+[17:02:12] <FromDiscord> <Yardanico> In reply to @tandy "zig backend however.....": what's the point? the same question as you asked
+[17:02:46] <FromDiscord> <Yardanico> zig targets llvm ir anyway, and if you only need cross compilation from zig, zig cc is a thing
+[17:12:13] <FromDiscord> <tandy> joke↵(@Yardanico)
+[17:12:24] <FromDiscord> <Yardanico> You never know these days
+[17:12:29] <FromDiscord> <tandy> lool
+[17:12:41] <FromDiscord> <tandy> zig truthers
+[17:12:46] <FromDiscord> <Rika> i mean
+[17:12:50] <FromDiscord> <Rika> theyre all wonderful languages
+[17:13:00] <FromDiscord> <Rika> its just that my opinions sway me towards nim the most
+[17:15:27] <FromDiscord> <tandy> tbh if zig replaced c that would b cool
+[17:15:47] <FromDiscord> <Rika> ~~tbh if nim replaced c that would b cool~~
+[17:30:58] <FromDiscord> <el__maco> ~~c would still continue to exist because of the c backend~~
+[17:55:23] <FromDiscord> <ynfle (ynfle)> The point could be easier cross compilation
+[17:56:04] <FromDiscord> <Yardanico> In reply to @ynfle (ynfle) "The point could be": zig cc
+[18:03:27] <FromDiscord> <AmjadHD> Is there an official grammar for nim configuration files (nim.cfg) ?
+[18:08:07] *** Joins: SebastianM (~seba@user/sebastianm)
+[18:23:04] *** Joins: rockcavera (~rc@192.12.112.199)
+[18:23:04] *** Quits: rockcavera (~rc@192.12.112.199) (Changing host)
+[18:23:04] *** Joins: rockcavera (~rc@user/rockcavera)
+[18:26:11] <NimEventer> New thread by Rnd83: How can I convert a generic Type?, see https://forum.nim-lang.org/t/8718
+[18:39:20] <FromDiscord> <Saptak> which c compiler does nim ship with?
+[18:44:33] <FromDiscord> <Recruit_main707> iirc with none, but after installing nim you run finish.exe and it will search for mingw in your path and if it cannot find it it will install it
+[18:46:33] <FromDiscord> <GeeLeonidas> has anyone tried wrap tons of headers via futhark?
+[18:48:04] <FromDiscord> <GeeLeonidas> I'm trying to wrap libnx, but some functions don't appear inside the generated .nim file
+[18:48:14] <FromDiscord> <GeeLeonidas> (edit) "wrap" => "wrapping"
+[18:51:01] <FromDiscord> <GeeLeonidas> I'm thinking about opening an issue but I'm not certain if this is futhark's fault
+[18:53:27] <FromDiscord> <Recruit_main707> do they use macros and does futhark support them?
+[19:00:27] <FromDiscord> <demotomohiro> In reply to @Saptak "which c compiler does": nim is not shipped with c compiler.
+[19:00:57] <FromDiscord> <demotomohiro> On linux, package manager automatically install gcc before installing nim
+[19:01:48] <FromDiscord> <demotomohiro> And Nim just call gcc when compiling
+[19:02:07] <FromDiscord> <GeeLeonidas> In reply to @Recruit_main707 "do they use macros": they do use, but after looking into futhark's cache it seems that it can understand them
+[19:03:13] <FromDiscord> <GeeLeonidas> interestingly, if I switch a header's position, some of these functions become avaiable
+[19:06:23] <FromDiscord> <GeeLeonidas> I would guess that futhark is ignoring functions with unknown types, but maybe I'm missing something here
+[19:06:49] <FromDiscord> <GeeLeonidas> (edit) "unknown" => "not yet wrapped"
+[19:10:27] *** Quits: SebastianM (~seba@user/sebastianm) (Quit: Bye)
+[19:13:37] <FromDiscord> <Saptak> In reply to @demotomohiro "nim is not shipped": Ok
+[19:13:42] <FromDiscord> <Saptak> In reply to @Recruit_main707 "iirc with none, but": Ok
+[19:14:13] <FromDiscord> <enthus1ast> on windows i normally use msys2 to install a recent gcc
+[19:14:28] <FromDiscord> <enthus1ast> mingw/gcc
+[20:20:05] *** Joins: noeontheend (~noeonthee@12.205.205.130)
+[20:26:45] *** Joins: jmdaemon (~jmdaemon@142.207.63.60)
+[20:33:27] *** Joins: SebastianM (~seba@user/sebastianm)
+[21:00:13] *** Quits: noeontheend (~noeonthee@12.205.205.130) (Ping timeout: 240 seconds)
+[21:12:55] <FromDiscord> <geekrelief> sent a code paste, see https://play.nim-lang.org/#ix=3IGv
+[21:16:53] <FromDiscord> <geekrelief> Hmm I guess I can use `{.noinit.}` on the proc.
+[21:16:57] *** Quits: SebastianM (~seba@user/sebastianm) (Read error: Connection reset by peer)
+[21:17:10] *** Joins: SebastianM (~seba@user/sebastianm)
+[21:17:24] *** Joins: src (~src@user/src)
+[21:17:30] <arkanoid> I have a question about iterator. I know there are closure iterator, inline iterators, but there are also non inlined but non-closure iterators?
+[21:17:49] *** Quits: SebastianM (~seba@user/sebastianm) (Client Quit)
+[21:24:16] <FromDiscord> <geekrelief> sent a code paste, see https://play.nim-lang.org/#ix=3IGz
+[21:48:48] <NimEventer> New thread by Xioren: What am I missing here? (async), see https://forum.nim-lang.org/t/8719
+[21:54:00] *** Quits: jmdaemon (~jmdaemon@142.207.63.60) (Quit: ZNC 1.8.2 - https://znc.in)
+[22:06:35] *** Quits: def- (~def-@static.238.114.9.176.clients.your-server.de) (Quit: -)
+[22:08:46] <ozzz> Hi! Does asan and tsan supported in Nim? I tried, only able to exec binary with asan.
+[22:09:49] *** Joins: def- (~def-@static.238.114.9.176.clients.your-server.de)
+[22:15:49] <FromDiscord> <hmmm> hey how do I use a fusion package, is fusion auto imported?
+[22:16:03] <FromDiscord> <IsaacPaul> In reply to @ozzz "Hi! Does asan and": https://pewpewthespells.com/blog/using-sanitizers-with-nim.html ?
+[22:16:08] <FromDiscord> <IsaacPaul> maybe that helps
+[22:16:36] <ozzz> IsaacPaul, thanks!
+[22:19:52] <FromDiscord> <Solitude> In reply to @hmmm "hey how do I": like any other nimble package
+[22:20:01] <FromDiscord> <hmmm> yea I found it on nimble
+[22:20:37] <FromDiscord> <hmmm> but still the import doesn't work in standalone you have to import the single package like in my case import fusion/iotools
+[22:21:02] <FromDiscord> <Solitude> what
+[22:21:07] <FromDiscord> <hmmm> or not..
+[22:21:10] <FromDiscord> <hmmm> yea it doesn't work
+[22:21:45] <FromDiscord> <hmmm> but still how do I use it, if I just import fusion I get an error 😦
+[22:22:09] <FromDiscord> <Solitude> ?
+[22:22:16] <FromDiscord> <hmmm> hmmmmmmm
+[22:22:20] <FromDiscord> <hmmm> I'm confus'd
+[22:22:28] <FromDiscord> <Solitude> https://github.com/nim-lang/fusion/tree/master/src/fusion
+[22:22:32] <FromDiscord> <Solitude> fusion is collection of packages
+[22:23:09] <FromDiscord> <hmmm> oh shi it's not iotools it's ioutils lol
+[22:23:44] <FromDiscord> <hmmm> perfect it works!
+[22:28:02] <FromDiscord> <dom96> @ajusa looks like your article is on HN front page
+[22:30:54] <NimEventer> New thread by Nimnewbie1: Memory safety suggestions will this work, see https://forum.nim-lang.org/t/8720
+[22:36:23] <FromDiscord> <hmmm> In reply to @dom96 "<@!102899813149855744> looks like your": as a total webstuff noob, that's impressive to me, karax and jester do a lot of heavy lifting with a few simple lines needed 👀
+[22:36:38] *** Joins: Robin[m]123 (~robintown@2001:470:69fc:105::cd3)
+[22:38:54] <FromDiscord> <dom96> the beauty of DSLs 🙂
+[22:39:58] <FromDiscord> <ajusa> In reply to @dom96 "<@!102899813149855744> looks like your": Oh wow second time in my life I've been on the first page of HN 😄
+[22:44:19] <FromDiscord> <ajusa> But this sort of content is popular/useful, I'll keep writing this sort of stuff when I'm free. Showing off a small project will probably get more people to try Nim
+[22:44:30] <FromDiscord> <ajusa> (edit) "But ... thisseems" 03added "since" | "is" => "seems to be"
+[22:44:44] <FromDiscord> <dom96> yep, blog articles are one of the best ways to promote Nim
+[22:46:46] <FromDiscord> <hmmm> I'm eagerly waiting for the video series of "How to build the entire python standard library with 16 lines of nim sequtils"
+[22:47:21] *** Parts: Robin[m]123 (~robintown@2001:470:69fc:105::cd3) ()
+[22:48:25] <FromDiscord> <konsumlamm> honestly, sequtils is overhyped
+[22:48:43] <FromDiscord> <hmmm> do we have better stuff than sequtiles? 👀
+[22:50:25] <FromDiscord> <treeform> I like sequtiles
+[22:50:58] <Zevv> zerofunctional
+[22:54:00] <FromDiscord> <konsumlamm> sequtils returns a new seq for everything, which is pretty inefficient
+[22:54:42] <FromDiscord> <konsumlamm> i'd like it if it worked on iterators, but even then i'd think it's overhyped, since every modern language has something comparable
+[23:09:29] *** Joins: neurocyte0132889 (~neurocyte@45.131.37.166)
+[23:09:29] *** Quits: neurocyte0132889 (~neurocyte@45.131.37.166) (Changing host)
+[23:09:29] *** Joins: neurocyte0132889 (~neurocyte@user/neurocyte)
+[23:15:11] *** Quits: jkl1337 (~jkl@user/jkl) (Quit: Gone.)
+[23:16:32] *** Joins: jkl (~jkl@user/jkl)
+[23:17:51] <FromDiscord> <reilly> In reply to @hmmm "I mean....wtf is this": Where did you get this from?
+[23:19:46] <FromDiscord> <hmmm> In reply to @reilly "Where did you get": Side-by-side code snippets from Rosetta Code for comparing 2 languages: https://rosetta.fiatjaf.com/
+[23:20:18] <FromDiscord> <reilly> Fantastic, thank you
+[23:23:20] <FromDiscord> <Kermithos> sent a code paste, see https://play.nim-lang.org/#ix=3IH8
+[23:23:21] <FromDiscord> <Kermithos> Do I have to use Nil?
+[23:24:07] <FromDiscord> <hmmm> nu you probably want to use std/options
+[23:25:46] <Zevv> konsumlamm: that's why I mentioned zero-functional
+[23:25:56] <Zevv> it's sequtils done right at the macro level
+[23:26:11] <Zevv> https://github.com/zero-functional/zero-functional
+[23:26:12] <FromDiscord> <Elegantbeef> Depends on the semantics for the typeof(x) you want
+[23:26:31] <Zevv> "Functional style handling of sequences is awesome, and Nim is supposed to be fast and smart. Allocating new sequences on each method in a chain can be extremely wasteful and there are not a lot of technical reasons to punish functional style like that.
+[23:26:35] <Zevv> This library can expand functional chains to simple loops fusing the method bodies one after another. It is still very experimental, but it shows that a purely metaprogramming approach can be used to optimize functional Nim code."
+[23:27:14] <FromDiscord> <Elegantbeef> ZF is nice but i'd really be nice to see iterators in nim be chainable without external tooling
+[23:27:30] <Zevv> yes, but we don't have that now, and we *do* have ZF now :)
+[23:27:41] <FromDiscord> <Elegantbeef> I agree
+[23:27:45] <Zevv> also, I know a way to chain iterators, but i'll not talk about that here
+[23:28:58] <FromDiscord> <hmmm> Zev I recently discovered keepItIf from sequtils and found it amazing, is there a zerofunctional version of it
+[23:29:03] <FromDiscord> <Elegantbeef> Well i think if iterators were allowed to take iterables but it turned them into generics, it'd solve the problem, though i didnt get that fully implemented
+[23:29:43] <FromDiscord> <Elegantbeef> Iterables could be though as a static generic which i think could resolve the issue, though idk
+[23:31:47] <Zevv> hmmm: I don't know, the semantics are quite different under the hood, ZF core job is trying to not allocate new seqs  in a chain, so the regular filter() might prove just fine
+[23:42:08] *** Joins: vicfred (~vicfred@user/vicfred)

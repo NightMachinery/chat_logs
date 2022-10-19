@@ -1,0 +1,453 @@
+[00:06:09] <Alipha> kevinnn: also, if you did use long-term symmetric keys, you'll have to make sure to not reuse nonces. Though this could be easily done by randomly generating a starting nonce and increment from there
+[00:06:11] <ioxzev1z> Just curious but what are you writing?
+[00:06:27] <kevinnn> ioxzev1z: remote desktop
+[00:06:53] <ioxzev1z> Alipha, given a small nonce of say 2^64 bits, isn't the probability of generating a repeating nonce very close to 0?
+[00:07:05] <ioxzev1z> Like the universe will die before you generate two 2^64 bit nonces
+[00:07:38] <ioxzev1z> s/two/two same/
+[00:08:19] <Alipha> ioxzev1z: yes. If you're using < 128-bit nonces, then randomly generating them is not recommended (or you'll need to occasionally rotate keys). Luckily, crypto_secretbox_easy uses large nonces
+[00:08:42] <Alipha> I should have said, <= 128-bit
+[00:09:01] <dude12312414> 2^64 really isn't that big anymore, no?
+[00:09:05] <ioxzev1z> Including '='? I thought 128 bits was like super strong
+[00:09:21] <Bostik> isn't 2^64 already within a shouting distance from being casually brute-forceable by a dedicated party?
+[00:09:25] <ioxzev1z> dude12312414, if you're generating nonces for remote desktop connections (not trillions per second) then it's fairly big
+[00:09:32] <ioxzev1z> Bostik, ^
+[00:10:05] <ioxzev1z> Though it is true that 2^64 is fairly small
+[00:10:17] <ioxzev1z> Fairly big while also being fairly small
+[00:10:27] <Alipha> ioxzev1z: the birthday attack with random nonces means that you effectively halve your bit security
+[00:11:19] <Alipha> https://sweet32.info/ (this is about block sizes, but same applies to nonces)
+[00:13:30] <Alipha> Now, if the actual message nonce size is 128 bits, then you're "fine". But, for instance, AES-GCM has a 128-bit IV which is divided into a 96-bit nonce and 32-bit message block number, which 96 bits is definitely too small (without some kind of rekeying strategy)
+[00:14:05] <ioxzev1z> Alipha, doesn't AES-GCM need to rekey after 2^36 bytes or something?
+[00:14:28] <Alipha> ioxzev1z: no cipher primitive rekeys by itself
+[00:14:40] <Alipha> xsalsa20, which crypto_secretbox_easy uses, has a 192-bit nonce and 64-bit message block number, which is plenty  for random nonces
+[00:14:46] *** Joins: imt4067 (~imt4067@tserver.wsb.onl)
+[00:15:23] *** Quits: Alina-malina (~Alina-mal@user/alina-malina) (Ping timeout: 250 seconds)
+[00:15:39] <Alipha> Well. I guess if a cipher takes a "tweak", then it effectively does "rekeying"
+[00:15:55] <ioxzev1z> Sorry was off with my numbers, from wikipedia: "For any given key and initialization vector combination, GCM is limited to encrypting 2^39−256 bits of plain text (64 GiB).
+[00:16:24] <Alipha> ioxzev1z: right, that's a single message size limitation
+[00:16:46] <ioxzev1z> Right, and by "rekey" I mean't that you need to generate a new session key after that limit
+[00:16:56] <ioxzev1z> I could have worded it a little better
+[00:17:57] <Alipha> Since AES-GCM uses 96-bit nonces, you should rekey well below 2^48 messages. Perhaps around 2^32 messages
+[00:18:13] <Alipha> When using random nonces
+[00:19:46] *** Joins: tuskkk____ (uid18470@id-18470.tinside.irccloud.com)
+[00:20:57] *** Quits: imt4067 (~imt4067@tserver.wsb.onl) (Ping timeout: 240 seconds)
+[00:21:06] <ioxzev1z> Is it not possible to make a mode of encryption with practical limits? Like a cipher that uses 256 bit keys and can encrypt 2^256 bytes of data before you need to regenerate keys, etc? 64GiB for GCM isn't a high number at current data creation rates
+[00:21:35] <ioxzev1z> That way there is no "128bit key but it's actually 64 bits because muh quantum" or whatever
+[00:26:10] *** Quits: Guyver2 (Guyver@guyver2.xs4all.nl) (Quit: Going offline, see ya! (www.adiirc.com))
+[00:27:54] <Alipha> ioxzev1z: xsalsa20 and xchacha20 use 256-bit keys and have 192 bit nonces and 64-bit message sizes, which seems plenty. A single computer isn't going to generate 2^96 messages within someone's lifetime (and you better not be sharing the same key across multiple computers). And a 2^64 max message length is plenty (how would you store that much, in order to authenticate it before processing it?)
+[00:28:37] *** Joins: Klotz (~Klotzoman@gateway/tor-sasl/klotz)
+[00:29:35] <Alipha> (not to mention, but an attacker would have to store 2^96 messages in order to do a birthday attack)
+[00:29:57] <ioxzev1z> Alipha, right, but GCM has a max message length of 2^39, which isn't too high
+[00:30:14] <Alipha> ioxzev1z: them don't use AES-GCM :-)
+[00:30:27] <Alipha> *then
+[00:30:54] <ioxzev1z> Right, but it's worth discussion, no?
+[00:31:10] <Alipha> ioxzev1z: and really, you can chunk a "message" into multiple messages
+[00:32:04] <Alipha> Which is a good idea anyway, so that you don't have to wait to receive all 2^39 bytes before starting to authenticate it
+[00:33:34] <Alipha> TLS chunks payloads into like 10KB messages or such and authenticates each 10KB message separately
+[00:33:57] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Ping timeout: 240 seconds)
+[00:34:42] <ioxzev1z> I think my point was about the small number, like when IPv4 was enough forever, only for people to realize that it wasn't. 2^39 is small enough that it should have been made into 2^64 or something
+[00:37:17] <Alipha> ioxzev1z: yeah, and the reason for that is that AES has 128-bit blocks, and so they only had 128 bits to divide between nonce and block counter. 96/32 is really the best division, imo. Though I think some implementations use 64/64?
+[00:41:19] <Alipha> 3DES-GCM would be a shit show of someone ever decided to make that. (3DES has 64-bit blocks) what, have 32-bit nonces and 2^35 max message length?
+[00:41:50] <Alipha> Err, 2^38
+[00:42:07] <ioxzev1z> Where does the 38 come from if 64/2 is 32?
+[00:42:38] <Alipha> 2^32 blocks and each block is 8 bytes
+[00:43:00] <Alipha> Oh, so I was right about 2^35
+[00:43:23] <Alipha> 2^35 bytes
+[00:43:26] <ioxzev1z> oic you're talking bytes
+[00:45:25] <kevinnn> Is there a difference between crypto_kx_client_session_keys and crypto_kx_server_session_keys?
+[00:45:39] <kevinnn> I feel like these functions pretty much do the same thing
+[00:47:24] *** Quits: dude12312414 (~test@gateway/tor-sasl/dude12312414) (Quit: THE RAM IS TOO DAMN HIGH)
+[00:47:51] *** Joins: AsenMx (~AsenMx@user/asenmx)
+[00:49:19] *** Joins: imt4067 (~imt4067@tserver.wsb.onl)
+[00:49:57] *** Quits: MajorBiscuit (~MajorBisc@c-001-015-015.client.tudelft.eduvpn.nl) (Ping timeout: 240 seconds)
+[00:52:13] *** Joins: MajorBiscuit (~MajorBisc@62-52-102.netrun.cytanet.com.cy)
+[00:53:08] *** Joins: toastloopex (toastloop@user/toastloop)
+[00:53:58] *** Quits: imt4067 (~imt4067@tserver.wsb.onl) (Ping timeout: 268 seconds)
+[00:56:26] *** Quits: toastloop (toastloop@user/toastloop) (Ping timeout: 268 seconds)
+[00:59:01] *** Joins: Alina-malina (~Alina-mal@user/alina-malina)
+[00:59:39] <Alipha> kevinnn: they're almost the same thing. crypto_kx_server_session_keys(a, b, c, server_sk, e) is almost the same as crypto_kx_client_session_keys(b, a, e, client_sk, c), except there's server_sk instead of client_sk, and that the client_pk and server_pk would end up being reversed in `BLAKE2B-512(p.n || client_pk || server_pk)` under "Algorithm details"
+[01:00:04] <kevinnn> gotcha
+[01:00:58] <Alipha> kevinnn: libsodium could have probably had one function for both, using words like "my_pk" and "recipient_pk", but i think the author of libsodium wanted to split it up into two different functions to reduce confusion and misuse
+[01:01:15] <kevinnn> makes sense!
+[01:01:33] <MacGyver> I wouldn't be surprised if they're internally implemented by calling the same function.
+[01:01:55] <MacGyver> Just with the arguments moved around.
+[01:03:20] <Alipha> MacGyver: i'm sure they are. i'm sure they're just using the 3 code snippets that are in the middle of this page: https://libsodium.gitbook.io/doc/advanced/scalar_multiplication (cc: kevinnn )
+[01:04:04] <dostoyevsky2> I haven't figured out so far what `n-bit block cipher without length extensions' is...  always when I e.g. use CFB like here, the encrypted message is larger than the original message: https://go.dev/play/p/S6yVYge6glE
+[01:04:06] <Alipha> i first used libsodium prior to crypto_kx_client_session_keys, and so i wrote out those 3 snippets
+[01:07:59] <Alipha> dostoyevsky2: you're using CBC there, not CFB? but regardless, for both CBC and CFB, they're block cipher modes, and so padding must be added to the plaintext to make the plaintext length divisible by the block size (and if the plaintext is already divisible by the block size, a block of only padding is added)
+[01:09:15] <dostoyevsky2> Alipha: Yeah, I also have a CFB example, also becomes larger
+[01:09:33] <Alipha> dostoyevsky2: if you wanted a ciphertext the same size as the plaintext (ignoring the addition of the IV), then you'd need a stream cipher mode, such as CTR or GCM (and GCM would be larger because it has an authentication tag)
+[01:09:44] <MacGyver> Or ciphertext stealing.
+[01:09:57] <MacGyver> But really, don't.
+[01:09:58] <Alipha> oh, yes, that.
+[01:15:08] *** Joins: kish` (~sid742412@user/aqua)
+[01:16:47] <dostoyevsky2> Alipha: Wow, with CTR it's now the same size!! https://go.dev/play/p/7qWzZSlknJO
+[01:17:15] <Alipha> dostoyevsky2: and completely vulnerable to malicious manipulation ;-)
+[01:17:19] <dostoyevsky2> But GCM would be my personal favorite but I guess that's not going to be possible
+[01:17:20] <kevinnn> "Sign your ephemeral public key with your long-term private key using crypto_sign and send the result to the other party" did you mean to sign the public key with a session key derived from the public/private key?
+[01:17:25] <kevinnn> Alipha
+[01:19:04] <dostoyevsky2> Alipha: Yeah, I guess there is a reason that http://web.cs.ucdavis.edu/~rogaway/papers/synopsis.pdf doesn't mention CTR -- but most of those are way over my head and also not readily available in Go
+[01:20:24] <Alipha> kevinnn: no. first, you don't sign with symmetric keys (your "session key"). secondly, i meant what i said: you need to sign the public key you generated with your long-term private signing key, so that the other side can verify that you generated that public key by checking the signature using your long-term public key that you gave them
+[01:22:36] <kevinnn> Alipha: I assume there is no difference between crypto_sign_keypair and crypto_kx_keypair
+[01:26:07] <Alipha> kevinnn: yes there is. crypto_sign_keypair creates a ed25519 keypair which can only be used for signing. crypto_kx_keypair creates a x25519 keypair which can only be used for key exchange (There are functions to convert between ed25519 and x25519 keypairs, but i wouldn't think you'd have to do so)
+[01:26:23] <dostoyevsky2> Alipha: I currently planned to have a metadata file for each FPE encrypted file.  I could extract GCM's authentication tag and store it there along with the iv... then the encrypted message would be the same size...
+[01:26:41] <Alipha> dostoyevsky2: sure
+[01:27:43] *** Joins: mouseghost (~draco@user/mouseghost)
+[01:27:55] <kevinnn> Alipha: "Generate long-term public/private keypairs for signing using crypto_kx_keypair." so you meant to say crypto_sign_keypair here right?
+[01:28:38] <Alipha> kevinnn: oh, yes, sorry. see! crypto is hard. and it's easy to make little mistakes :-P
+[01:28:58] <kevinnn> gotcha! okay thanks
+[01:29:06] *** Quits: ravan (~ravan@user/ravan) (Remote host closed the connection)
+[01:29:24] *** Joins: ravan (~ravan@user/ravan)
+[01:29:59] *** Joins: imt4067 (~imt4067@tserver.wsb.onl)
+[01:30:23] * Alipha wonders if kevinnn is going to have all this code written today, heh
+[01:30:35] <kevinnn> Just on a high level, why do I care to sign my ephemeral public key? Is it just to verify the public key is coming from the correct place?
+[01:32:07] <TimMc> I haven't been following closely, but presumably it's to prevent it from being substituted with the attacker's key.
+[01:32:12] <Alipha> kevinnn: yes. if you don't sign it, then a man in the middle (mitm) could do a key exchange with the client (pretending to be the server) and a key exchange with the server (pretending to be the client) and now the mitm can read all the traffic
+[01:32:39] <Alipha> by substituting the public keys with the attacker's public keys, yes
+[01:33:17] <Alipha> kevinnn is trying to digest a semester's worth of crypto theory in a couple hours ;-)
+[01:33:30] <kevinnn> Alipha: AH! makes sense
+[01:33:53] <kevinnn> Alipha: if you have any questions about h264 encoding I would be more than happy to answer :)
+[01:34:01] <kevinnn> now h264 I am an expert on
+[01:34:13] <kevinnn> not so much on this crypto stuff
+[01:34:13] <TimMc> heh
+[01:34:29] * Alipha didn't even know what h264 was until he looked it up just now
+[01:35:24] <TimMc> Unfortunately, I did.
+[01:35:33] <Alipha> i shoulda guessed that it had to do with video encoding though
+[01:36:44] *** Joins: semisimple (~semisimpl@user/semisimple)
+[01:36:49] <ioxzev1z> dostoyevsky2, just curious but how random is rand.Read() in your code?
+[01:37:03] <TimMc> My last job was at an online video platform and I was very happy to stay on the JSON and HTTP side of things and not have to know much about h264, manifests, conflicting notions of time, and all that jazz.
+[01:37:09] *** Joins: toastlooply (toastloop@user/toastloop)
+[01:38:01] <ioxzev1z> dostoyevsky2, nvm it's in crypto/rand so I assume it's good enough
+[01:39:43] <MacGyver> Never assume if you're unsure about the RNG.
+[01:40:00] <MacGyver> Surely there's documentation you can check.
+[01:40:00] <dostoyevsky2> https://go.dev/play/p/QQHqVC-eQ-k <- so I tried GCM and cut off something from the encrypted message... but the encrypted message is still larger...  Maybe I didn't cut-off the full authentication tag?
+[01:40:23] *** Quits: toastloopex (toastloop@user/toastloop) (Ping timeout: 256 seconds)
+[01:40:40] <TimMc> kevinnn: Is this going to be like... a video chat embedded in the game, requiring N -> N streams? Or just 1 person streamingto N watchers?
+[01:41:04] <kevinnn> TimMc: excellent question
+[01:41:08] <kevinnn> it is 1 to 1
+[01:41:14] <kevinnn> kinda think of remote desktop
+[01:41:16] <dostoyevsky2> ioxzev1z: Yeah, crypto/rand should be ok... I hope Google took good care of everything in the standard packages... The only pitfall is that there is also a math/rand which is not secure
+[01:41:51] <TimMc> kevinnn: Ohhh, OK. The game's rendering is being streamed from the server to the player?
+[01:42:06] <kevinnn> TimMc: exactly
+[01:42:27] <TimMc> Yeah, very different kind of latency tradeoffs, then. Hmm.
+[01:42:38] <Alipha> dostoyevsky2: how much did you cut off? i think the auth tag is 16 bytes
+[01:42:51] <TimMc> (consistency at the cost of controls latency)
+[01:45:13] <Alipha> dostoyevsky2: oh, apparently there's a AEAD.Overhead() (or maybe it's gcm.Overhead() in your code? i'm not familiar with Go)
+[01:46:57] *** Quits: machinedgod (~machinedg@24.105.81.50) (Ping timeout: 240 seconds)
+[01:46:59] *** Joins: sdfgsdfg (~sdfgsdfg@user/sdfgsdfg)
+[01:47:10] <dostoyevsky2> Alipha: TO decrypt one has to call `gcm.Open(nil, nonce, c, nil)' and nonce is 12 bytes and it's at the beginning of the encrypted message.. and then c seems to be the ciphertext... but my input message is 18 bytes and the encrypted message is 46 bytes...
+[01:48:09] *** Joins: toastloopex (~toastloop@user/toastloop)
+[01:48:50] <ioxzev1z> dostoyevsky2, not sure why it matters so much, I assume that the entire message isn't 2.5x the plaintext
+[01:48:54] <Alipha> dostoyevsky2: yeah, that sounds right. 12 bytes at the beginning for the nonce and 16 bytes at the end for the auth tag. 12+18+16 = 46
+[01:49:32] *** Quits: Spacenut42 (~aoeu_@24.246.170.95) (Ping timeout: 240 seconds)
+[01:49:46] <ioxzev1z> Once you add up the 12 and 16, the rest of the ciphertext should be the same size as the plaintext
+[01:50:43] <dostoyevsky2> Alipha: ah, good to know!!  Yeah, if I make my message 20 bytes the encrypted version is 48 bytes... so seems like there is some constant header/footer size
+[01:50:57] *** Quits: toastlooply (toastloop@user/toastloop) (Ping timeout: 240 seconds)
+[01:51:09] <Alipha> ioxzev1z: he wants to encrypt pixel data so that the image is still renderable (but end up looking like static), and so the encrypted pixel data would have to be the same size in order for the image to remain rectangular
+[01:51:59] <Alipha> which, the channel's general consensus is that this is dumb and he should just encrypt the whole file like a normal person, but whatever :-)
+[01:52:12] <dostoyevsky2> ioxzev1z: I am working on a simple FPE scheme, whilst trying to understand https://web.cs.ucdavis.edu/~rogaway/papers/synopsis.pdf
+[01:52:23] <ioxzev1z> Ah
+[01:59:58] *** Quits: gabriel1 (~gabriel1@user/gabriel1) (Ping timeout: 260 seconds)
+[02:06:37] *** Joins: badgerman (~badgerman@cpc121282-nmal25-2-0-cust5.19-2.cable.virginm.net)
+[02:10:15] *** Quits: toastloopex (~toastloop@user/toastloop) (Remote host closed the connection)
+[02:10:36] *** Joins: toastloopex (~toastloop@user/toastloop)
+[02:10:59] *** Quits: MajorBiscuit (~MajorBisc@62-52-102.netrun.cytanet.com.cy) (Ping timeout: 256 seconds)
+[02:32:34] *** Quits: Klotz (~Klotzoman@gateway/tor-sasl/klotz) (Quit: Klotz)
+[02:33:24] <ioxzev1z> Are there any numbers on the time it would take for any top-10 super computer to go through DES's 2^56 keyspace?
+[02:35:59] <TimMc> ioxzev1z: https://crack.sh/ claims they can do it in 26 hours. I don't know how their setup is ranked, though. :-)
+[02:37:29] <dostoyevsky2> o I just fpe encrypted my first png with gcm and on inspection it really looks like static :)
+[02:37:31] <ioxzev1z> Wikipedia says Deep Crack can do it in ~22 hours, and that's a long time ago
+[02:38:11] *** Quits: badgerman (~badgerman@cpc121282-nmal25-2-0-cust5.19-2.cable.virginm.net) (Ping timeout: 268 seconds)
+[02:39:07] <TimMc> Deep Crack is one of EFF's greatest hits. <3
+[02:40:23] <TimMc> dostoyevsky2: Ah, but can you decrypt it? :-)
+[02:42:17] *** Quits: ioxzev1z (~ioxzev1z@user/ioxzev1z) (Quit: Leaving)
+[02:42:48] *** Quits: sdfgsdfg (~sdfgsdfg@user/sdfgsdfg) (Quit: ZzzZ)
+[02:45:34] <dostoyevsky2> Hey, look!  It's GCM Santa Claus! https://i.ibb.co/X7vJGN3/gcm-santa.png
+[02:49:33] *** Quits: tuskkk____ (uid18470@id-18470.tinside.irccloud.com) (Quit: Connection closed for inactivity)
+[02:51:19] <dostoyevsky2> TimMc: Nah, I get `decrypt: Error: cipher: message authentication failed' but I guess that means it's checking the authtag... ;-)
+[02:52:41] *** Joins: Spacenut42 (~aoeu_@24.246.170.95)
+[02:58:12] *** Quits: deusexbeer (~hedeo@37-146-236-2.broadband.corbina.ru) (Quit: Konversation terminated!)
+[03:11:47] *** Joins: sdfgsdfg (~sdfgsdfg@user/sdfgsdfg)
+[03:16:25] *** Quits: aliosablack (~chomwitt@ppp-2-85-245-134.home.otenet.gr) (Ping timeout: 268 seconds)
+[03:17:02] *** Quits: chomwitt (~chomwitt@ppp-2-85-245-134.home.otenet.gr) (Ping timeout: 268 seconds)
+[03:29:50] *** Quits: Malvolio (~Malvolio@user/malvolio) (Ping timeout: 252 seconds)
+[03:35:25] *** Quits: toastloopex (~toastloop@user/toastloop) (Remote host closed the connection)
+[03:36:47] *** Joins: cwebber`` (~user@147-219-168-070.res.spectrum.com)
+[03:37:23] *** Quits: Wulf (~Wulf@user/wulf) (Ping timeout: 268 seconds)
+[03:38:37] *** Quits: cwebber` (~user@147-219-168-070.res.spectrum.com) (Ping timeout: 268 seconds)
+[03:39:03] *** Joins: Wulf (~Wulf@user/wulf)
+[03:50:24] *** Joins: machinedgod (~machinedg@24.105.81.50)
+[03:50:58] *** Quits: mouseghost (~draco@user/mouseghost) (Quit: mew wew)
+[04:01:41] *** Joins: Malvolio (~Malvolio@user/malvolio)
+[04:11:32] *** Quits: sdfgsdfg (~sdfgsdfg@user/sdfgsdfg) (Quit: ZzzZ)
+[04:12:13] *** Quits: x88x88x (~x88x88x@149.28.53.172) (Ping timeout: 240 seconds)
+[04:12:36] *** Quits: jarthur (~jarthur@cpe-70-114-198-37.austin.res.rr.com) (Quit: jarthur)
+[04:12:49] <dostoyevsky2> TimMc: Now it worked!  Turns out json doesn't really like storing binary strings.. but now I hex encoded the authtag and nonce instead and now it can be reassembled into the full encrypted message before calling gcm to decrypt it
+[04:18:12] *** Joins: x88x88x (~x88x88x@2001:19f0:5:39a8:5400:3ff:feb6:73cb)
+[04:22:38] <dostoyevsky2> When I use the wrong password I still get `Error: cipher: message authentication failed' -- is this a feature exclusive to GCM?  Or would CTR also be able to detect this?  Even though it doesn't have an authtag
+[04:23:57] <MacGyver> No, CTR would just return garbage.
+[04:24:11] <MacGyver> It's a feature exclusive to authenticated encryption.
+[04:24:22] <MacGyver> Which is why we're always screaming at everyone to use authenticated encryption.
+[04:24:32] <MacGyver> You *want* to be able to check for tampering.
+[04:24:47] <MacGyver> Preferably before ever decrypting, or as part of the decryption process.
+[04:24:49] <MacGyver> Not after.
+[04:25:33] <MacGyver> (Using the wrong password is indistinguishable from using the right one but the ciphertext has been tampered with)
+[04:25:51] *** Quits: Spacenut42 (~aoeu_@24.246.170.95) (Ping timeout: 256 seconds)
+[04:28:23] *** Quits: imt4067 (~imt4067@tserver.wsb.onl) (Quit: leaving)
+[04:30:19] *** Joins: Spacenut42 (~aoeu_@24.246.170.95)
+[04:30:51] *** Quits: x88x88x (~x88x88x@2001:19f0:5:39a8:5400:3ff:feb6:73cb) (Read error: Connection reset by peer)
+[04:31:31] *** Joins: imt4067 (~imt4067@tserver.wsb.onl)
+[04:35:05] <dostoyevsky2> Also, are there some papers discussing how well one can assess an encryption success from visual inspection (checking for to look like static)...  I guess one can easily detect repetition or something like the ECB penguin..  but are there also other weaknesses in encryption that one cannot easily see?
+[04:36:22] *** Quits: chiselfuse (~chiselfus@user/chiselfuse) (Remote host closed the connection)
+[04:36:31] *** Joins: chiselfuse (~chiselfus@user/chiselfuse)
+[04:41:26] *** Quits: HumanG33k (~HumanG33k@2a01:e0a:95:5d90:215:c5ff:fe68:fb04) (Ping timeout: 260 seconds)
+[04:43:03] *** Joins: HumanG33k (~HumanG33k@dau94-2-82-66-65-160.fbx.proxad.net)
+[04:45:57] <dostoyevsky2> MacGyver: That's very neat.  In my use case I could overwrite the original image with garbage as I didn't think about an extra check to verify the result... but it's already taken care of by GCM itself
+[04:52:10] *** Joins: electr0n (~electr0n@about/security/founder/electr0n)
+[04:57:19] *** Quits: imt4067 (~imt4067@tserver.wsb.onl) (Quit: leaving)
+[04:58:51] *** Joins: sdfgsdfg (~sdfgsdfg@user/sdfgsdfg)
+[05:12:08] *** Joins: wsb (~wsb@tserver.wsb.onl)
+[05:15:01] *** Quits: wsb (~wsb@tserver.wsb.onl) (Quit: leaving)
+[05:15:38] <Alipha> dostoyevsky2: visual inspection would only detect horrendously bad encryption
+[05:17:04] <maroon> i'd think that generally any bad ciphertext that could be detected by visual inspection would also be detected by being able to be shurnk by a compression algorithm
+[05:19:49] *** Quits: Alipha (~AliphaX@user/alipha) (Ping timeout: 240 seconds)
+[05:23:11] *** cwebber`` is now known as cwebber
+[05:23:27] *** Quits: cwebber (~user@147-219-168-070.res.spectrum.com) (Changing host)
+[05:23:27] *** Joins: cwebber (~user@user/cwebber)
+[05:34:29] *** Joins: Alipha (~AliphaX@user/alipha)
+[05:39:30] *** Quits: PJBoy (~PJBoy@user/pjboy) (Ping timeout: 268 seconds)
+[05:41:28] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[05:44:13] *** Joins: jarthur (~jarthur@2603-8080-1540-002d-9012-566e-8f45-a082.res6.spectrum.com)
+[05:46:17] *** Quits: Everything (~Everythin@37.115.210.35) (Quit: leaving)
+[05:48:55] *** Joins: jarthur_ (~jarthur@2603-8080-1540-002d-94c2-47ca-ef5a-5e64.res6.spectrum.com)
+[05:49:17] *** Quits: jarthur (~jarthur@2603-8080-1540-002d-9012-566e-8f45-a082.res6.spectrum.com) (Ping timeout: 240 seconds)
+[05:52:47] *** Quits: sdfgsdfg (~sdfgsdfg@user/sdfgsdfg) (Quit: ZzzZ)
+[05:56:32] *** Joins: frost (~frost@user/frost)
+[06:11:48] *** Quits: jarthur_ (~jarthur@2603-8080-1540-002d-94c2-47ca-ef5a-5e64.res6.spectrum.com) (Quit: jarthur_)
+[06:31:32] *** Quits: machinedgod (~machinedg@24.105.81.50) (Ping timeout: 240 seconds)
+[06:41:19] *** Joins: deusexbeer (~hedeo@37-146-236-2.broadband.corbina.ru)
+[06:55:22] *** Quits: PJBoy (~PJBoy@user/pjboy) (Ping timeout: 260 seconds)
+[06:59:33] *** Quits: jtgd (~jtgd@user/jtgd) (Quit: WeeChat 3.3)
+[07:00:56] *** Joins: kj7rrv (~kj7rrv@user/kj7rrv)
+[07:02:04] <kj7rrv> Is Fernet (specifically the implementation in the python cryptography module) secure?
+[07:04:00] *** Joins: jtgd (~jtgd@user/jtgd)
+[07:05:40] <rk4> look for audits, reviews, or credentials of core devs involved
+[07:06:03] <kj7rrv> Where would I find that information?
+[07:08:04] <int-e> https://github.com/fernet/spec/blob/master/Spec.md <-- uses AES and SHA256 HMAC in a standard way, except maybe for the cleartext timestamp?
+[07:08:07] * int-e shrugs
+[07:09:06] <rk4> dunno, typical within the project for there to be some mention of it. i see https://research.nccgroup.com/category/public-report/ gets contracted to do these sorts of things sometimes
+[07:09:58] <int-e> It's symmetric though, so that makes it kind of a niche thing from the outset.
+[07:11:26] <kj7rrv> This will be for a remote login program that needs to pass data through an untrusted host
+[07:11:49] <kj7rrv> (technically it's a trusted host, but I want the system to remains secure if the host is compromised)
+[07:12:13] <kj7rrv> Authentication credentials, commands, and there output will be relayed through it
+[07:12:30] <int-e> you can tunnel ssh through ssh
+[07:13:44] <kj7rrv> How hard is that to set up on the computer being logged in to, and could it be automated? This is going to be used for me to log in to my grandma's computer for tech support, so it needs to be really simple to use on the end being logged in to.
+[07:16:02] <rk4> if you intend to write your own scheme, i feel the risk python's fernet implementation presents is fairly low
+[07:17:50] <kj7rrv> Okay
+[07:18:16] <rk4> https://github.com/pyca/cryptography/blob/main/src/cryptography/fernet.py#L42-L44 that's the "key" part, hehe
+[07:19:02] <kj7rrv> I don't expect three-letter-agency-level cracking attempts, and if quantum computers become a problem, I could just change the protocol and reset credentials
+[07:20:19] <int-e> (open)ssh has a ProxyCommand setting that allows stuff like http://paste.debian.net/1224593/ ...maybe it's not applicable to your use, but nevertheless there's the question whether what you want to do can be accomplished with standard tools (and probably less effort)
+[07:21:17] <int-e> (this one assumes that the intermediate runs something POSIX-ish and has netcat)
+[07:22:21] <kj7rrv> It's running Linux
+[07:22:36] <kj7rrv> Both ends are Linux
+[07:22:53] <rk4> wireguard is a thing too...
+[07:24:05] <kj7rrv> Those might work
+[07:24:18] <int-e> There's even a ProxyJump which might do the same thing more directly.
+[07:25:51] <kj7rrv> Basically I want to log in from my laptop to her tablet, with her having to do something (but something very simple and non-command-line) to accept the connection, without either my laptop or her tablet being able to accept incoming TCP/IP connections. I have a Linux VPS I can use as an intermediary.
+[07:27:11] <kj7rrv> (command line on my end is fine, just not on her end)
+[07:28:19] *** Quits: igemnace (~ian@user/igemnace) (Remote host closed the connection)
+[07:30:25] <int-e> Yeah, maybe wireguard is worth looking at for that (assuming you can't directly connect to the tablet... but instead have to piggyback on a connection from the tablet to the intermediary)
+[07:31:58] <kj7rrv> Yes that is necessary
+[07:32:18] <kj7rrv> We are normally on the same LAN, but I can't rely on that
+[07:32:44] <kj7rrv> Would using wireguard slow down her Web browsing?
+[07:35:32] <int-e> (You can use ssh to forward ports, see the -L option, so in principle this can be done without a VPN)
+[07:36:02] <kj7rrv> Oh okay I might do that
+[07:36:11] <kj7rrv> So I would basically be tunneling SSH over SSH?
+[07:36:21] <int-e> Wireguard shouldn't affect connections not on the VPN? Meh, I've never used it, not sure what the constraints are.
+[07:36:40] <int-e> kj7rrv: Yeah, you would, with the port forwarding idea.
+[07:36:56] <kj7rrv> Okay
+[07:37:13] <int-e> Err, you'll want -R not -L for this.
+[07:38:17] <kj7rrv> Is that something she could easily turn on and off, or something I could feasibly write a GUI for in a day or two?
+[07:38:23] <int-e> And from your end, you'd use localhost:<whatever port is being forwarded> as the final destination.
+[07:38:58] <kj7rrv> Okay thank you
+[07:39:19] <int-e> it's a single ssh process, so keeping track of the pid, and having something to kill it is what you need... seems easy enough?
+[07:39:43] <kj7rrv> Yeah that would work
+[07:39:50] <kj7rrv> Would I run an sshd on her tablet?
+[07:40:03] <int-e> you can even wrap it up as a systemd unit and then use systemd to keep track of the pid.
+[07:40:06] <int-e> yes, you would
+[07:40:13] <kj7rrv> Okay
+[07:40:50] <kj7rrv> In that case the GUI would just run "systemctl start `something`" and "systemctl stop `something`"?
+[07:40:58] <int-e> yep
+[07:41:06] <kj7rrv> Okay, cool!
+[08:36:46] *** Quits: byteskeptical (~amnesia@user/byteskeptical) (Quit: Lost terminal)
+[08:38:34] *** Joins: athaarvaaa (~Atharva@2405:201:22:88c5:5463:9681:2a45:2418)
+[09:05:23] <athaarvaaa> Hello 
+[09:05:37] <athaarvaaa> is this channel active guys ?
+[09:05:45] <snappy> yes
+[09:09:20] <moose> of course it is
+[09:18:15] *** Joins: opsecfail (~opsecfail@user/opsecfail)
+[09:20:09] *** Quits: electr0n (~electr0n@about/security/founder/electr0n) (Quit: WeeChat 3.3)
+[09:33:40] *** Joins: sdfgsdfg (~sdfgsdfg@user/sdfgsdfg)
+[09:34:37] <athaarvaaa> thanks 
+[09:36:41] *** Quits: athaarvaaa (~Atharva@2405:201:22:88c5:5463:9681:2a45:2418) (Quit: Leaving)
+[09:56:13] *** Quits: b93 (~I@209.127.74.135) (Ping timeout: 256 seconds)
+[09:57:17] *** Quits: ravan (~ravan@user/ravan) (Ping timeout: 240 seconds)
+[10:01:23] *** Joins: BOKALDO (~BOKALDO@user/bokaldo)
+[10:08:29] <rk4> advance scout for the raiding party
+[10:08:55] * rk4 sharpens sword
+[10:12:34] *** Joins: MajorBiscuit (~MajorBisc@62-52-102.netrun.cytanet.com.cy)
+[10:40:59] *** Quits: Spacenut42 (~aoeu_@24.246.170.95) (Ping timeout: 256 seconds)
+[10:43:49] *** Quits: menace (~someone@user/menace) (Ping timeout: 256 seconds)
+[10:52:46] *** Joins: menace (~someone@ppp-93-104-175-20.dynamic.mnet-online.de)
+[10:52:57] *** Quits: menace (~someone@ppp-93-104-175-20.dynamic.mnet-online.de) (Changing host)
+[10:52:57] *** Joins: menace (~someone@user/menace)
+[11:08:37] *** Quits: MajorBiscuit (~MajorBisc@62-52-102.netrun.cytanet.com.cy) (Ping timeout: 240 seconds)
+[11:10:49] *** Joins: MajorBiscuit (~MajorBisc@c-001-020-048.client.tudelft.eduvpn.nl)
+[11:50:34] *** Joins: igemnace (~ian@user/igemnace)
+[11:50:55] *** Joins: chomwitt (~chomwitt@2a02:587:dc1c:a00:12c3:7bff:fe6d:d374)
+[11:50:56] *** Joins: aliosablack (~chomwitt@2a02:587:dc1c:a00:12c3:7bff:fe6d:d374)
+[11:54:11] *** Joins: toastloop (toastloop@user/toastloop)
+[12:09:17] *** Quits: menace (~someone@user/menace) (Quit: menace)
+[12:11:32] *** Joins: andreasbuhr (~quassel@p549dbca1.dip0.t-ipconnect.de)
+[12:12:55] *** Quits: toastloop (toastloop@user/toastloop) (Ping timeout: 268 seconds)
+[12:28:04] *** Quits: chomwitt (~chomwitt@2a02:587:dc1c:a00:12c3:7bff:fe6d:d374) (Remote host closed the connection)
+[12:28:04] *** Quits: aliosablack (~chomwitt@2a02:587:dc1c:a00:12c3:7bff:fe6d:d374) (Remote host closed the connection)
+[12:28:34] *** Quits: AsenMx (~AsenMx@user/asenmx) (Ping timeout: 260 seconds)
+[12:39:11] *** Joins: xenoterracide (~xenoterra@99-124-139-34.lightspeed.iplsin.sbcglobal.net)
+[12:39:52] *** Joins: pagios (~pagios@life.is-a.beauty)
+[12:40:08] <pagios> hi all, {SSHA}ewUgDLEeSWOwbSLenZqrSAB52Ulwcegh. <-- is this a SHA512?
+[12:40:30] <pagios> not sure what SSHA means
+[12:42:22] <snappy> i'm thinking maybe "ssh armoured" but i still don't know what that means
+[12:46:26] <Wulf> salted-sha. It looks very familiar...
+[12:47:24] <Wulf> used in e.g. openldap.
+[12:48:58] <Wulf> https://www.openldap.org/faq/data/cache/347.html
+[12:49:36] *** Joins: gproto23 (~gproto23@user/gproto23)
+[12:52:40] *** Quits: semisimple (~semisimpl@user/semisimple) (Quit: WeeChat 3.3)
+[12:58:18] *** Quits: Xenolithic (~Xenolithi@user/xenolithic) (Quit: Client closed)
+[13:01:15] *** Joins: Xenolithic (~Xenolithi@user/xenolithic)
+[13:21:36] *** Quits: JollyRoger (~JollyRoge@user/thejollyroger) (Remote host closed the connection)
+[13:21:59] *** Joins: JollyRoger (~JollyRoge@user/thejollyroger)
+[13:22:14] <pagios> Wulf: question, if the password is salted, and i am moving the password to a new system,      on the new system i need to have the salt key too right?
+[13:37:22] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[13:47:57] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[13:49:37] *** Quits: xenoterracide (~xenoterra@99-124-139-34.lightspeed.iplsin.sbcglobal.net) (Ping timeout: 240 seconds)
+[13:52:05] *** Joins: Lord_of_Life_ (~Lord@user/lord-of-life/x-2819915)
+[13:52:17] *** Quits: Lord_of_Life (~Lord@user/lord-of-life/x-2819915) (Ping timeout: 240 seconds)
+[13:54:52] *** Lord_of_Life_ is now known as Lord_of_Life
+[14:13:47] *** Quits: MajorBiscuit (~MajorBisc@c-001-020-048.client.tudelft.eduvpn.nl) (Ping timeout: 268 seconds)
+[14:15:37] *** Quits: Xenolithic (~Xenolithi@user/xenolithic) (Ping timeout: 256 seconds)
+[14:22:37] *** Joins: Xenolithic (~Xenolithi@user/xenolithic)
+[14:25:37] *** Joins: electr0n (~electr0n@about/security/founder/electr0n)
+[14:28:16] *** Joins: xenoterracide (~xenoterra@2600:1700:71d4:810:7809:8396:63f0:6697)
+[14:28:39] *** Quits: Xenolithic (~Xenolithi@user/xenolithic) (Ping timeout: 256 seconds)
+[14:49:31] <Wulf> pagios: the salt is included in the {SSHA}... string
+[14:52:27] *** Joins: Xenolithic (~Xenolithi@user/xenolithic)
+[14:53:21] <pagios> Wulf:  yes but on system2 now when a user tries to login it will take a new salt and password would not be the same SHA no ?
+[14:53:50] <pagios> input for the hash algo will be the cleartext+salt2 not salt1 
+[14:54:19] <Wulf> pagios: the salt is included in the {SSHA}... string!
+[14:54:49] <Wulf> pagios: why would there be a different salt on the new system?!
+[14:56:32] *** Quits: electr0n (~electr0n@about/security/founder/electr0n) (Ping timeout: 240 seconds)
+[14:58:02] *** Joins: electr0n (~electr0n@about/security/founder/electr0n)
+[15:07:22] *** Quits: sdfgsdfg (~sdfgsdfg@user/sdfgsdfg) (Quit: ZzzZ)
+[15:07:57] *** Quits: xenoterracide (~xenoterra@2600:1700:71d4:810:7809:8396:63f0:6697) (Ping timeout: 240 seconds)
+[15:10:42] *** Quits: instantp10neer (~instantp1@user/instantp10neer) (Quit: Leaving)
+[15:29:37] *** Joins: wsb (~wsb@user/wsb)
+[15:31:28] *** Quits: igemnace (~ian@user/igemnace) (Remote host closed the connection)
+[15:33:04] *** Joins: zer0bitz (~zer0bitz@2001:2003:f444:a000:e182:9e47:91db:c531)
+[15:33:10] *** Joins: cvmn (~caveman@gateway/tor-sasl/caveman)
+[15:34:57] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[15:36:23] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[15:36:48] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Client Quit)
+[15:38:00] *** Joins: inlight (~inlight@157.35.46.65)
+[15:38:00] *** Quits: inlight (~inlight@157.35.46.65) (Changing host)
+[15:38:00] *** Joins: inlight (~inlight@user/inlight)
+[15:38:15] *** Joins: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net)
+[15:49:40] *** Joins: ioxzev1z (~ioxzev1z@user/ioxzev1z)
+[15:52:52] *** Joins: zer0bitz_ (~zer0bitz@2001:2003:f444:a000:2421:137f:dee3:7f7d)
+[15:55:01] *** Quits: zer0bitz (~zer0bitz@2001:2003:f444:a000:e182:9e47:91db:c531) (Ping timeout: 240 seconds)
+[16:14:29] *** Joins: machinedgod (~machinedg@24.105.81.50)
+[16:16:27] *** Quits: wsb (~wsb@user/wsb) (Ping timeout: 256 seconds)
+[16:26:10] *** Joins: ravan (~ravan@user/ravan)
+[16:43:21] *** Joins: wsb (~wsb@tserver.wsb.onl)
+[16:46:11] *** Quits: zer0bitz_ (~zer0bitz@2001:2003:f444:a000:2421:137f:dee3:7f7d) (Ping timeout: 245 seconds)
+[16:48:11] *** Joins: zer0bitz (~zer0bitz@2001:2003:f444:a000:2421:137f:dee3:7f7d)
+[16:49:37] *** Quits: drathir_tor (~drathir@wireguard/tunneler/drathir) (Remote host closed the connection)
+[16:49:48] *** Joins: sdfgsdfg (~sdfgsdfg@user/sdfgsdfg)
+[16:50:39] *** Joins: MajorBiscuit (~MajorBisc@62-52-102.netrun.cytanet.com.cy)
+[16:59:18] *** Quits: cvmn (~caveman@gateway/tor-sasl/caveman) (Ping timeout: 276 seconds)
+[17:02:06] *** Joins: gully (~alex@84.66.114.82)
+[17:13:17] *** Quits: gully (~alex@84.66.114.82) (Ping timeout: 240 seconds)
+[17:16:33] *** Joins: Guyver2 (~Guyver@guyver2.xs4all.nl)
+[17:18:18] *** Joins: gully (~alex@84.66.114.82)
+[17:23:01] *** Quits: gully (~alex@84.66.114.82) (Ping timeout: 250 seconds)
+[17:40:02] *** Joins: gully (~alex@84.66.114.82)
+[17:44:37] *** Quits: gully (~alex@84.66.114.82) (Ping timeout: 240 seconds)
+[17:45:53] *** Joins: gully (~alex@84.66.114.82)
+[17:54:29] *** Quits: frost (~frost@user/frost) (Ping timeout: 256 seconds)
+[17:54:58] *** Joins: gabriel1 (~gabriel1@user/gabriel1)
+[18:00:37] *** Quits: gabriel1 (~gabriel1@user/gabriel1) (Ping timeout: 240 seconds)
+[18:03:14] *** skyl4rk is now known as tlvb
+[18:03:55] *** Quits: sdfgsdfg (~sdfgsdfg@user/sdfgsdfg) (Quit: ZzzZ)
+[18:04:25] *** tlvb is now known as skyl4rk
+[18:04:40] *** Quits: wsb (~wsb@tserver.wsb.onl) (Changing host)
+[18:04:40] *** Joins: wsb (~wsb@user/wsb)
+[18:10:44] *** Joins: drathir_tor (~drathir@wireguard/tunneler/drathir)
+[18:12:02] *** Quits: MajorBiscuit (~MajorBisc@62-52-102.netrun.cytanet.com.cy) (Ping timeout: 260 seconds)
+[18:19:01] *** Quits: andreasbuhr (~quassel@p549dbca1.dip0.t-ipconnect.de) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[18:29:17] *** Joins: gabriel1 (~gabriel1@user/gabriel1)
+[18:42:50] *** Quits: wsb (~wsb@user/wsb) (Ping timeout: 260 seconds)
+[19:10:48] *** Quits: gabriel1 (~gabriel1@user/gabriel1) (Remote host closed the connection)
+[19:23:04] *** Joins: Everything (~Everythin@37.115.210.35)
+[19:23:36] *** Joins: node1 (~node1@user/node1)
+[19:26:23] *** Joins: jarthur (~jarthur@2603-8080-1540-002d-e5e5-d7cd-75a1-94c2.res6.spectrum.com)
+[19:30:05] *** Quits: gully (~alex@84.66.114.82) (Quit: WeeChat 3.4)
+[19:35:07] *** Quits: node1 (~node1@user/node1) (Quit: Client closed)
+[19:44:17] *** Quits: cwebber (~user@user/cwebber) (Ping timeout: 240 seconds)
+[20:11:37] *** Quits: inlight (~inlight@user/inlight) (Ping timeout: 256 seconds)
+[20:17:40] *** Joins: inlight (~inlight@157.35.46.65)
+[20:17:40] *** Quits: inlight (~inlight@157.35.46.65) (Changing host)
+[20:17:40] *** Joins: inlight (~inlight@user/inlight)
+[20:30:55] *** Joins: Spacenut (~aoeu_@24.246.170.95)
+[20:34:53] *** Quits: kj7rrv (~kj7rrv@user/kj7rrv) (Ping timeout: 268 seconds)
+[20:42:47] *** Quits: inlight (~inlight@user/inlight) (Ping timeout: 256 seconds)
+[20:43:39] *** Joins: inlight (~inlight@157.35.46.65)
+[20:43:39] *** Quits: inlight (~inlight@157.35.46.65) (Changing host)
+[20:43:39] *** Joins: inlight (~inlight@user/inlight)
+[20:47:01] *** Joins: dude12312414 (~test@gateway/tor-sasl/dude12312414)
+[20:56:44] *** Joins: gabriel1 (~gabriel1@user/gabriel1)
+[20:59:20] *** Joins: gabriel1_ (~gabriel1@k2.ilion.info)
+[21:00:22] *** Joins: instantp10neer (~instantp1@user/instantp10neer)
+[21:01:08] *** Quits: pieguy128 (~pieguy128@bas1-quebec14-67-70-102-17.dsl.bell.ca) (Quit: ZNC 1.8.2 - https://znc.in)
+[21:02:01] *** Quits: gabriel1 (~gabriel1@user/gabriel1) (Ping timeout: 268 seconds)
+[21:02:46] *** Quits: gabriel1_ (~gabriel1@k2.ilion.info) (Remote host closed the connection)
+[21:04:14] *** Joins: gabriel1 (~gabriel1@user/gabriel1)
+[21:10:19] *** Joins: pieguy128 (~pieguy128@bras-base-mtrlpq5031w-grc-48-67-70-102-17.dsl.bell.ca)
+[21:12:37] *** Joins: rito_ (~rito_gh@45.112.243.69)
+[21:28:57] *** Quits: machinedgod (~machinedg@24.105.81.50) (Ping timeout: 240 seconds)
+[21:37:48] *** Quits: electr0n (~electr0n@about/security/founder/electr0n) (Ping timeout: 268 seconds)
+[21:38:20] *** Joins: electr0n (~electr0n@about/security/founder/electr0n)
+[21:41:04] *** Joins: Narrat (~omnius@p200300df5f0f8e0406ea56fffe2e7cdc.dip0.t-ipconnect.de)
+[22:18:26] *** Joins: powftw (uid448161@id-448161.lymington.irccloud.com)
+[22:24:17] *** Quits: electr0n (~electr0n@about/security/founder/electr0n) (Ping timeout: 240 seconds)
+[22:25:51] *** Joins: aleck (~aleck@user/aleck)
+[22:27:20] *** Joins: electr0n (~electr0n@about/security/founder/electr0n)
+[22:27:44] *** Quits: aleck1 (~aleck@user/aleck) (Ping timeout: 268 seconds)
+[22:32:43] *** Quits: gabriel1 (~gabriel1@user/gabriel1) (Ping timeout: 256 seconds)
+[22:40:31] *** Joins: imi (~imi@catv-89-132-115-236.catv.broadband.hu)
+[22:48:22] *** Joins: gabriel1 (~gabriel1@user/gabriel1)
+[22:49:46] *** Quits: rito_ (~rito_gh@45.112.243.69) (Quit: Leaving)
+[22:50:51] *** Quits: msfninja (~kali@user/msfninja) (Quit: WeeChat 3.0)
+[22:50:57] *** Quits: kish` (~sid742412@user/aqua) (Ping timeout: 276 seconds)
+[23:16:43] *** Joins: Guyver2_ (~Guyver@guyver2.xs4all.nl)
+[23:18:58] *** Joins: kish` (~sid742412@user/aqua)
+[23:19:45] *** Quits: Guyver2 (~Guyver@guyver2.xs4all.nl) (Ping timeout: 256 seconds)
+[23:19:52] *** Guyver2_ is now known as Guyver2
+[23:25:09] *** Joins: MajorBiscuit (~MajorBisc@62-52-102.netrun.cytanet.com.cy)
+[23:29:23] *** Quits: lagash (lagash@lagash.shelltalk.net) (Ping timeout: 252 seconds)
+[23:30:21] *** Quits: electr0n (~electr0n@about/security/founder/electr0n) (Ping timeout: 245 seconds)
+[23:34:52] *** Joins: machinedgod (~machinedg@24.105.81.50)
+[23:35:47] *** Joins: cwebber (~user@user/cwebber)
+[23:37:53] *** Quits: gdd (~gdd@129.199.146.230) (Ping timeout: 256 seconds)
+[23:40:30] *** Quits: BOKALDO (~BOKALDO@user/bokaldo) (Quit: Leaving)
+[23:46:55] *** Quits: caveman (~caveman@gateway/tor-sasl/caveman) (Remote host closed the connection)
+[23:53:43] *** Joins: electr0n (~electr0n@about/security/founder/electr0n)
+[23:55:27] *** Joins: lagash (lagash@lagash.shelltalk.net)

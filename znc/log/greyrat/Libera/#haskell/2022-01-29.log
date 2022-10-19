@@ -1,0 +1,1278 @@
+[00:00:18] <EvanR> asserting that a list is either finite or infinite, and it's valid to reason like that
+[00:00:33] <hololeap> I'm going to go with False
+[00:00:35] <awpr> janus: consider `traverse_ print [0..]` -- that only needs Applicative, but it's an infinitely long computation, whose shape is only determined by that infinite list
+[00:00:46] <c_wraith> though...  all this use of fmap Alt and fmap getAlt is making me cringe, because...  this is why coerce exists!
+[00:01:26] <c_wraith> ... If only coerce had a better inference story
+[00:01:26] <awpr> yeah, a real implementation should be more like `coerce (foldMap @(Ap ... Alt ...))` with appropriate ScopedTypeVariables
+[00:02:00] <hololeap> or just deriving (Semigroup, Monoid) via ...
+[00:02:11] <c_wraith> you wouldn't even need foldMap
+[00:02:17] <c_wraith> It'd just be coerce fold
+[00:02:21] *** Quits: bitmapper (uid464869@id-464869.lymington.irccloud.com) (Quit: Connection closed for inactivity)
+[00:02:24] <awpr> ah yeah, true
+[00:03:57] <hololeap> til all programs can be reduced down to coerce fold
+[00:04:48] *** Quits: burnsidesLlama (~burnsides@dhcp168-033.wadham.ox.ac.uk) (Remote host closed the connection)
+[00:04:53] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:41be:eda7:26bd:771e) (Remote host closed the connection)
+[00:04:56] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 245 seconds)
+[00:05:15] *** Joins: burnsidesLlama (~burnsides@dhcp168-033.wadham.ox.ac.uk)
+[00:07:03] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[00:09:36] *** Quits: burnsidesLlama (~burnsides@dhcp168-033.wadham.ox.ac.uk) (Ping timeout: 256 seconds)
+[00:09:42] *** Joins: neurocyte0917090 (~neurocyte@IP-046243082200.dynamic.medianet-world.de)
+[00:09:42] *** Quits: neurocyte0917090 (~neurocyte@IP-046243082200.dynamic.medianet-world.de) (Changing host)
+[00:09:42] *** Joins: neurocyte0917090 (~neurocyte@user/neurocyte)
+[00:12:07] *** Joins: zincy (~zincy@2a00:23c8:970c:4801:f0bc:c4cb:1665:1c67)
+[00:12:24] <janus> I can't get it to work when I call it on (repeat (read <$> getLine)) and type it to 'IO (Maybe Int)'
+[00:12:45] <janus> i thought i would be able to write 'Just 5' and then it would terminate, but it keeps reading
+[00:13:03] <EvanR> you want unsafeInterleaveIO ?
+[00:13:06] <EvanR> of some sort
+[00:13:25] <janus> why would i need that? because it is calling the getLines concurrently?
+[00:13:26] <EvanR> if you see the Just 5 from an IO (Maybe Int) it means that action is over
+[00:13:28] *** Quits: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg) (Remote host closed the connection)
+[00:13:47] *** Joins: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg)
+[00:13:59] <EvanR> if the show must go on, you need threads
+[00:14:07] <janus> well i never see it played back to me, it keeps reading, never hands me back my repl
+[00:14:16] <monochrom> IO's <*> is stricter than most people's intuition.
+[00:14:29] <monochrom> or more eager
+[00:15:08] <awpr> an infinitely long computation doesn't stop being infinitely long just because the result would infinitely produce ignored values
+[00:15:12] <monochrom> unsafeInterleaveIO may be justified in some cases or under some models.
+[00:15:34] <janus> > asum (repeat $ Just 5)
+[00:15:35] <lambdabot>  Just 5
+[00:15:51] <awpr> that's a program that requests infinitely many lines and then returns the `asum` of them
+[00:16:00] <janus> but that terminates? it has just as much infiniteness as the effectful version
+[00:16:10] <monochrom> Likewise, when Maybe's <*> is too strict, there are times a "pledge ~(Just x) = Just x" is justified. You can call it unsafeInterleaveMaybe.
+[00:16:14] <awpr> even if that result would be the first Just, there are still infinitely many lines to read before you can try to compute it
+[00:16:17] *** Quits: zincy (~zincy@2a00:23c8:970c:4801:f0bc:c4cb:1665:1c67) (Ping timeout: 240 seconds)
+[00:16:37] *** Quits: Inst (~delicacie@2601:6c4:4080:3f80:3dfd:43d3:c415:2e6f) (Read error: Connection reset by peer)
+[00:16:37] <EvanR> oh pledge is interesting
+[00:16:51] <EvanR> sometimes haskell is like iron man, and sometimes it's like Dr Strange
+[00:17:00] <monochrom> For example "some (Just 0)" is bottom, but "some (pledge (Just 0))" is successfully Just [the infinite list you hope for].
+[00:17:12] *** Joins: Null_A (~null_a@2601:645:8700:2290:8935:4edf:b32:6553)
+[00:18:14] <dolio> No, it isn't.
+[00:18:27] *** Quits: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg) (Ping timeout: 256 seconds)
+[00:19:09] <EvanR> and sometimes it's like the incredible hulk (unsafeCoerce)
+[00:19:55] *** Joins: lavaman (~lavaman@98.38.249.169)
+[00:20:41] <janus> but if written with monad, i wouldn't need any unsafe functions, i presume... hmmm
+[00:20:42] *** Quits: alp (~alp@user/alp) (Ping timeout: 250 seconds)
+[00:21:46] <EvanR> you want to interleave IO with applicativing stuff? Do you have an "exit strategy" in case an IO error happens in the middle
+[00:22:49] <monochrom> <|> is not very strict.  <*> is stricter.
+[00:22:57] *** Joins: jinsun__ (~quassel@user/jinsun)
+[00:23:03] *** Quits: dhouthoo (~dhouthoo@178-117-36-167.access.telenet.be) (Quit: WeeChat 3.4)
+[00:23:33] <monochrom> and then IO's <|> and <*> are still different from other type's <|> and <*>
+[00:24:14] <janus> how can you determine the general strictness of <*> when it isn't mentioned in the laws how strict it should be?
+[00:24:41] <monochrom> Every type is different, so the laws cannot rule either way.
+[00:24:54] *** Quits: jinsun (~quassel@user/jinsun) (Ping timeout: 256 seconds)
+[00:24:54] <monochrom> But you can always test with foo <*> undefined
+[00:25:05] <monochrom> and also foo <*> pure undefined
+[00:25:33] <monochrom> or even undefined <*> foo but usually no one really needs that.
+[00:26:34] <monochrom> But oh actually Control.Monad.State.Lazy plays well with undefined <*> foo so left recursion is productive, for a change!
+[00:27:13] <ephemient> % (undefined <*> undefined :: Proxy ()) `seq` ()
+[00:27:13] <yahb> ephemient: ()
+[00:27:13] <c_wraith> argh, I was playing with this for a while, and..  you can't actually replace fmap Alt with coerce.  The problem being that the type `f` might be a total lie with a completely bogus Functor instance.  If you use fmap Alt, that's a bug with the Functor instance.  If you use coerce, it's a hole in the type system.
+[00:27:22] <c_wraith> Type families claim another victim
+[00:28:01] <monochrom> I think we can assume that f is an honest functor for now?  It's IO or Maybe or something. :)
+[00:28:28] <c_wraith> yeah, I was just thinking about getting rid of the "unnecessary" fmap with coerce.
+[00:28:34] <c_wraith> which turns out to not be possible
+[00:28:57] *** Quits: vglfr (~vglfr@46.96.133.112) (Ping timeout: 240 seconds)
+[00:29:12] <awpr> well you can add the appropriate representationality constraint on `f`, if you're willing to change the type signature
+[00:29:38] <monochrom> I became a bit sad the other day when a conversation revealed that dependent typing takes away parametricity, and it's a tautology.
+[00:29:54] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[00:30:02] <dolio> Huh?
+[00:30:08] <awpr> `forall a b. Coercible a b => Coercible (f a) (f b)` that is, which excludes any weird GADT and type family stuff
+[00:30:27] <c_wraith> yeah, I thought about that.  But then the Coercible constraint propagates
+[00:30:33] <c_wraith> Which is a weird detail
+[00:31:01] <EvanR> forall t::Type . t -> t still only has 1 way
+[00:32:17] *** Joins: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net)
+[00:33:12] <EvanR> guess that's not really a dependent type
+[00:34:38] <awpr> I think the implication is that something like `foreach (t :: Type) -> t -> t` has more inhabitants, assuming you can type-case on such things.  and if not, then you can construct other parametricity-defeating things for dependently-quantified things of types other than Type
+[00:34:52] <dolio> Dependent types don't let you type case.
+[00:36:13] <awpr> then the "if not" part kicks in.  like, `forall n a. Vec n a -> Vec n a` has parametricity guarantees on `n` that it can't decide what to do based on the value of n, but `forall a. foreach n -> Vec n a -> Vec n a` can
+[00:36:15] *** Joins: whatsupdoc (uid509081@id-509081.hampstead.irccloud.com)
+[00:36:18] *** Quits: Erutuon (~Erutuon@user/erutuon) (Ping timeout: 250 seconds)
+[00:36:34] <c_wraith> I wonder how much it would break if you could put representational requirements on a class
+[00:36:39] *** Quits: neceve (~quassel@2.26.93.228) (Read error: Connection reset by peer)
+[00:36:45] *** Joins: ProfSimm (~ProfSimm@87.227.196.109)
+[00:37:01] <c_wraith> like, just forbid Functor instances if that type argument has a Nominal role
+[00:37:15] <awpr> hmm, I'm wrong about Vec because you can recover the length from the structure of the Vec
+[00:37:27] <dolio> What parametricity in n are you actually making use of in Haskell?
+[00:38:03] <awpr> I'm not making use of it.  just trying to make sense of "dependent typing takes away parametricity"
+[00:38:14] <EvanR> that's monochrom's job xD
+[00:39:23] *** Joins: Erutuon (~Erutuon@user/erutuon)
+[00:40:12] *** Joins: coot (~coot@213.134.190.95)
+[00:41:29] *** Quits: coot (~coot@213.134.190.95) (Client Quit)
+[00:42:02] *** Joins: coot (~coot@213.134.190.95)
+[00:42:04] *** Joins: burnsidesLlama (~burnsides@dhcp168-033.wadham.ox.ac.uk)
+[00:42:08] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Remote host closed the connection)
+[00:45:05] *** Joins: FinnElija (~finn_elij@user/finn-elija/x-0085643)
+[00:47:50] *** Joins: zincy (~zincy@2a00:23c8:970c:4801:f0bc:c4cb:1665:1c67)
+[00:51:02] *** Quits: tzh (~tzh@c-24-21-73-154.hsd1.wa.comcast.net) (Ping timeout: 260 seconds)
+[00:54:15] *** Quits: burnsidesLlama (~burnsides@dhcp168-033.wadham.ox.ac.uk) (Ping timeout: 250 seconds)
+[00:55:36] *** Joins: kimjetwav (~user@2607:fea8:2363:8f00:79e4:1253:5b58:4ecf)
+[00:56:11] *** Quits: mikoto-chan (~mikoto-ch@213.177.151.239) (Ping timeout: 245 seconds)
+[00:57:50] *** Joins: Pickchea (~private@user/pickchea)
+[01:01:03] *** Quits: jinsun__ (~quassel@user/jinsun) (Quit: https://quassel-irc.org - Chat comfortably. Anywhere.)
+[01:01:15] *** Joins: jgeerds_ (~jgeerds@55d4a547.access.ecotel.net)
+[01:03:52] *** Joins: RMSBach (~user@cpe-76-177-52-136.natcky.res.rr.com)
+[01:04:28] *** Joins: jinsun (~quassel@user/jinsun)
+[01:06:46] *** Joins: madjestic (~madjestic@88-159-247-120.fixed.kpn.net)
+[01:06:53] *** Quits: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470) (Remote host closed the connection)
+[01:07:12] *** Quits: polyphem (~rod@2a02:810d:840:8754:2c8b:1f9:dc9a:b89b) (Remote host closed the connection)
+[01:07:30] *** Joins: polyphem (~rod@2a02:810d:840:8754:cd07:81a6:97c4:d71f)
+[01:08:32] *** Quits: Topsi (~Tobias@dyndsl-095-033-019-122.ewe-ip-backbone.de) (Ping timeout: 256 seconds)
+[01:09:08] *** Joins: burnsidesLlama (~burnsides@dhcp168-033.wadham.ox.ac.uk)
+[01:09:13] <RMSBach>  
+[01:09:13] <RMSBach> /msg NickServ VERIFY REGISTER RMSBach b3sDLCtFAIw5uAit
+[01:09:34] <geekosaur> you just sent your password to the channel
+[01:10:01] <RMSBach> Yeah, that was a mistake.  I am getting used to ERC and setting up an account with libera at the same time :/
+[01:10:11] <maerwald> lol
+[01:10:37] <RMSBach> At least that was a one time generated password I think
+[01:10:51] <maerwald> lemme try that on your gmail account
+[01:11:16] <RMSBach> lol
+[01:13:38] *** Quits: burnsidesLlama (~burnsides@dhcp168-033.wadham.ox.ac.uk) (Ping timeout: 256 seconds)
+[01:14:25] *** Joins: tzh (~tzh@c-24-21-73-154.hsd1.wa.comcast.net)
+[01:15:18] <EvanR> it looks like a really strong password though, I might have to start using it
+[01:15:36] <EvanR> *yoink*
+[01:15:44] *** Quits: gdd (~gdd@129.199.146.230) (Ping timeout: 250 seconds)
+[01:15:45] *** Joins: merijn (~merijn@c-001-001-018.client.esciencecenter.eduvpn.nl)
+[01:16:50] <RMSBach> Be my guest, @EvanR. ;)
+[01:17:48] *** Joins: gdd (~gdd@129.199.146.230)
+[01:18:17] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 240 seconds)
+[01:18:39] *** Quits: zincy (~zincy@2a00:23c8:970c:4801:f0bc:c4cb:1665:1c67) (Remote host closed the connection)
+[01:19:28] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[01:22:42] *** Quits: jao (~jao@cpc103048-sgyl39-2-0-cust502.18-2.cable.virginm.net) (Ping timeout: 256 seconds)
+[01:22:51] *** Quits: segfaultfizzbuzz (~rustisafu@2602:306:cd3c:9350:59e3:db49:aa0a:46e5) (Ping timeout: 245 seconds)
+[01:24:37] *** Joins: jao (~jao@static-68-235-44-25.cust.tzulo.com)
+[01:25:05] *** Quits: wombat875 (~wombat875@pool-72-89-24-154.nycmny.fios.verizon.net) (Quit: WeeChat 2.2-dev)
+[01:27:37] *** Quits: Erutuon (~Erutuon@user/erutuon) (Ping timeout: 250 seconds)
+[01:30:35] *** Joins: Erutuon (~Erutuon@user/erutuon)
+[01:40:10] *** Joins: deadmarshal (~deadmarsh@95.38.117.123)
+[01:41:25] *** Quits: takuan (~takuan@178-116-218-225.access.telenet.be) (Ping timeout: 240 seconds)
+[01:44:31] *** Quits: deadmarshal (~deadmarsh@95.38.117.123) (Ping timeout: 245 seconds)
+[01:44:48] *** Quits: merijn (~merijn@c-001-001-018.client.esciencecenter.eduvpn.nl) (Ping timeout: 256 seconds)
+[01:46:07] *** Joins: jkaye (~jkaye@2601:281:8300:7530:1596:ed69:814a:f0eb)
+[01:46:36] *** Joins: vglfr (~vglfr@46.96.133.112)
+[01:47:04] *** Joins: burnsidesLlama (~burnsides@dhcp168-033.wadham.ox.ac.uk)
+[01:47:13] *** Quits: RMSBach (~user@cpe-76-177-52-136.natcky.res.rr.com) (Quit: ERC 5.4 (IRC client for GNU Emacs 28.0.90))
+[01:48:43] *** Joins: RMSBach (~user@cpe-76-177-52-136.natcky.res.rr.com)
+[01:49:11] *** Quits: yassernasc (~yassernas@ec2-54-87-145-249.compute-1.amazonaws.com) (Remote host closed the connection)
+[01:51:10] *** Joins: d34df00d (~d34df00d@2600:1700:8c60:3a10::48)
+[01:51:21] <d34df00d> Hi!
+[01:51:25] <d34df00d> unoffsetBS (BSI.PS ptr offset len) = BSI.PS (ptr `plusForeignPtr` offset) 0 len
+[01:51:29] <d34df00d> Is this legit with bytestring-0.10?
+[01:52:10] <d34df00d> I don't know much about foreign ptrs, and I'm not sure I don't mess up any finalizers or what not attached to `ptr` if I only keep ``ptr `plusForeignPtr` offset`` and the `ptr` itself will be GC'ed away.
+[01:53:40] *** Joins: toghat (~toghat@96-19-96-19-190-222.cpe.sparklight.net)
+[01:53:40] *** Quits: pavonia (~user@user/siracusa) (Read error: Connection reset by peer)
+[01:53:52] *** Quits: Erutuon (~Erutuon@user/erutuon) (Ping timeout: 256 seconds)
+[01:53:58] *** Joins: qrpnxz (~qrpnxz@user/qrpnxz)
+[01:54:09] *** Quits: jkaye (~jkaye@2601:281:8300:7530:1596:ed69:814a:f0eb) (Quit: Leaving)
+[01:56:50] *** Joins: pavonia (~user@user/siracusa)
+[01:56:59] *** Quits: toghat (~toghat@96-19-96-19-190-222.cpe.sparklight.net) (Client Quit)
+[01:57:48] <ephemient> the docs on https://hackage.haskell.org/package/base/docs/GHC-ForeignPtr.html#v:plusForeignPtr say that it keeps the finalizer
+[01:58:42] *** Quits: __monty__ (~toonn@user/toonn) (Quit: leaving)
+[01:59:10] <d34df00d> Somehow I managed to miss that. Thanks!
+[02:01:32] *** Quits: Vajb (~Vajb@2001:999:50:e6be:1e98:9376:d93e:4506) (Read error: Connection reset by peer)
+[02:02:05] *** Quits: burnsidesLlama (~burnsides@dhcp168-033.wadham.ox.ac.uk) (Remote host closed the connection)
+[02:02:11] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[02:02:12] *** Joins: burnsidesLlama (~burnsides@dhcp168-033.wadham.ox.ac.uk)
+[02:05:34] *** Quits: gehmehgeh (~user@user/gehmehgeh) (Quit: Leaving)
+[02:06:07] *** Quits: qrpnxz (~qrpnxz@user/qrpnxz) (Quit: Gateway shutdown)
+[02:10:36] <hololeap> is something like distcc/icecream a feasable concept for ghc?
+[02:10:47] *** Quits: max22- (~maxime@2a01cb08833598009858f30aea0eec11.ipv6.abo.wanadoo.fr) (Quit: Leaving)
+[02:14:51] *** Quits: FirstTimeInHere (~FirstTime@200.7.90.158) (Read error: Connection reset by peer)
+[02:15:21] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Remote host closed the connection)
+[02:15:50] *** Quits: zer0bitz_ (~zer0bitz@2001:2003:f444:a000:4917:bc56:f54d:812b) (Ping timeout: 252 seconds)
+[02:15:58] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[02:18:31] *** Joins: alp (~alp@user/alp)
+[02:20:21] *** Quits: coot (~coot@213.134.190.95) (Quit: coot)
+[02:24:52] *** Quits: Null_A (~null_a@2601:645:8700:2290:8935:4edf:b32:6553) (Remote host closed the connection)
+[02:26:28] *** Joins: mestre (~mestre@191.177.181.194)
+[02:26:50] <EvanR> this is an embarrassing situation where I want to test some action that outputs file to a path I type in from cabal repl, but scared of overwriting the wrong file and going into a output subdir first means I can't seem to load the module in question
+[02:27:32] <geekosaur> can you :cd inside the repl?
+[02:28:06] <monochrom> Do you mind entering an absolute path? :)
+[02:28:36] *** Quits: lbseale (~ep1ctetus@user/ep1ctetus) (Quit: Leaving)
+[02:29:18] <monochrom> If you load the module and then :cd, it doesn't hurt. Later, if you stick to :reload, the previous :cd still doesn't hurt.
+[02:31:24] *** Quits: little_mac (~little_ma@2601:410:4300:3ce0:7040:d478:b206:6b72) (Remote host closed the connection)
+[02:32:48] <EvanR> cool
+[02:36:47] *** Quits: albet70 (~xxx@2400:8902::f03c:92ff:fe60:98d8) (Remote host closed the connection)
+[02:38:54] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 268 seconds)
+[02:40:48] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[02:42:54] *** Joins: albet70 (~xxx@2400:8902::f03c:92ff:fe60:98d8)
+[02:48:20] *** Quits: michalz (~michalz@185.246.204.57) (Remote host closed the connection)
+[02:52:34] *** Quits: Feuermagier (~Feuermagi@user/feuermagier) (Remote host closed the connection)
+[02:55:50] *** Quits: Tuplanolla (~Tuplanoll@91-159-68-166.elisa-laajakaista.fi) (Quit: Leaving.)
+[03:00:35] *** Quits: mc47 (~mc47@xmonad/TheMC47) (Remote host closed the connection)
+[03:00:36] *** Quits: Techcable (~Techcable@168.235.93.147) (Ping timeout: 250 seconds)
+[03:02:08] *** Joins: AlexNoo_ (~AlexNoo@94.233.241.141)
+[03:03:49] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Ping timeout: 250 seconds)
+[03:05:17] *** Quits: AlexNoo (~AlexNoo@178.34.162.240) (Ping timeout: 240 seconds)
+[03:05:32] *** Quits: AlexZenon (~alzenon@178.34.162.240) (Ping timeout: 240 seconds)
+[03:05:32] *** Quits: Alex_test (~al_test@178.34.162.240) (Ping timeout: 240 seconds)
+[03:06:37] *** Quits: Pickchea (~private@user/pickchea) (Quit: Leaving)
+[03:09:30] *** Joins: Alex_test (~al_test@94.233.241.141)
+[03:09:39] *** Joins: AlexZenon (~alzenon@94.233.241.141)
+[03:13:08] *** Joins: vysn (~vysn@user/vysn)
+[03:18:39] *** Joins: Null_A (~null_a@2601:645:8700:2290:8935:4edf:b32:6553)
+[03:23:49] *** Quits: flipchan (~filip@188-169-255-31.dsl.utg.ge) (Ping timeout: 240 seconds)
+[03:26:39] *** Joins: little_mac (~little_ma@2601:410:4300:3ce0:a84a:183:2c1b:3735)
+[03:28:23] *** Quits: Null_A (~null_a@2601:645:8700:2290:8935:4edf:b32:6553) (Remote host closed the connection)
+[03:29:02] *** Joins: ski (~ski@remote12.chalmers.se)
+[03:30:04] *** Joins: Null_A (~null_a@c-98-210-133-39.hsd1.ca.comcast.net)
+[03:32:19] *** Joins: Erutuon (~Erutuon@user/erutuon)
+[03:36:18] *** Quits: shapr (~user@pool-100-36-247-68.washdc.fios.verizon.net) (Remote host closed the connection)
+[03:37:04] *** Joins: shapr (~user@pool-100-36-247-68.washdc.fios.verizon.net)
+[03:38:06] *** Quits: burnsidesLlama (~burnsides@dhcp168-033.wadham.ox.ac.uk) (Remote host closed the connection)
+[03:38:38] *** Joins: burnsidesLlama (~burnsides@client-8-87.eduroam.oxuni.org.uk)
+[03:43:04] *** Quits: burnsidesLlama (~burnsides@client-8-87.eduroam.oxuni.org.uk) (Ping timeout: 250 seconds)
+[03:43:33] *** Parts: RMSBach (~user@cpe-76-177-52-136.natcky.res.rr.com) (ERC 5.4 (IRC client for GNU Emacs 28.0.90))
+[03:43:48] *** Quits: Gurkenglas (~Gurkengla@dslb-090-186-104-244.090.186.pools.vodafone-ip.de) (Ping timeout: 256 seconds)
+[03:56:29] *** Joins: kaph (~kaph@net-2-47-208-144.cust.vodafonedsl.it)
+[03:57:01] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[03:57:01] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[03:57:01] *** Joins: wroathe (~wroathe@user/wroathe)
+[04:04:37] *** Quits: alp (~alp@user/alp) (Ping timeout: 268 seconds)
+[04:08:10] *** Quits: mrmr (~mrmr@user/mrmr) (Quit: The Lounge - https://thelounge.chat)
+[04:08:17] *** Quits: jao (~jao@static-68-235-44-25.cust.tzulo.com) (Ping timeout: 240 seconds)
+[04:08:50] *** Joins: Everything (~Everythin@37.115.210.35)
+[04:11:46] *** Quits: Midjak (~Midjak@may53-1-78-226-116-92.fbx.proxad.net) (Quit: This computer has gone to sleep)
+[04:12:08] *** Quits: bontaq (~user@ool-45779fe5.dyn.optonline.net) (Ping timeout: 256 seconds)
+[04:15:01] *** Quits: dsrt^ (~dsrt@75-147-197-198-Atlanta.hfc.comcastbusiness.net) (Remote host closed the connection)
+[04:16:00] *** Joins: fef (~thedawn@user/thedawn)
+[04:17:49] *** Quits: jgeerds_ (~jgeerds@55d4a547.access.ecotel.net) (Ping timeout: 240 seconds)
+[04:20:00] *** Quits: Null_A (~null_a@c-98-210-133-39.hsd1.ca.comcast.net) (Remote host closed the connection)
+[04:20:38] *** Quits: madjestic (~madjestic@88-159-247-120.fixed.kpn.net) (Ping timeout: 256 seconds)
+[04:26:12] *** Quits: CiaoSen (~Jura@p200300c95737a2002a3a4dfffe84dbd5.dip0.t-ipconnect.de) (Ping timeout: 268 seconds)
+[04:29:08] *** Quits: _ht (~quassel@231-169-21-31.ftth.glasoperator.nl) (Ping timeout: 256 seconds)
+[04:29:43] *** Joins: _ht (~quassel@231-169-21-31.ftth.glasoperator.nl)
+[04:36:08] *** Joins: Null_A (~null_a@2601:645:8700:2290:8935:4edf:b32:6553)
+[04:43:48] *** Joins: zmt01 (~zmt00@user/zmt00)
+[04:46:57] *** Quits: zmt00 (~zmt00@user/zmt00) (Ping timeout: 240 seconds)
+[04:49:37] *** Quits: n3rdy1 (~n3rdy1@2600:1700:4570:3480:1b88:50f:dae0:9293) (Ping timeout: 240 seconds)
+[04:51:17] *** Quits: doyougnu (~doyougnu@cpe-67-249-83-190.twcny.res.rr.com) (Ping timeout: 240 seconds)
+[04:53:33] *** Joins: segfaultfizzbuzz (~rustisafu@2602:306:cd3c:9350:59e3:db49:aa0a:46e5)
+[04:57:28] *** Quits: tommd (~tommd@67-42-147-226.ptld.qwest.net) (Ping timeout: 256 seconds)
+[04:58:42] *** Joins: chenqisu1 (~chenqisu1@183.217.200.249)
+[05:12:12] *** Joins: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470)
+[05:16:52] *** Joins: dsrt^ (~dsrt@75-147-197-198-Atlanta.hfc.comcastbusiness.net)
+[05:22:57] *** Quits: pieguy128 (~pieguy128@bas8-montreal02-65-93-195-202.dsl.bell.ca) (Ping timeout: 240 seconds)
+[05:24:15] *** Joins: wei2912 (~wei2912@138.75.71.147)
+[05:24:15] *** Quits: wei2912 (~wei2912@138.75.71.147) (Client Quit)
+[05:27:13] <EvanR> what is going on in ghci when you run code which is a mix of stuff you defined and stuff from loaded libraries. Is it a mix of interpreted code and compiled code
+[05:27:32] <EvanR> precompled entirely and run, or entirely interpreted
+[05:28:55] *** Quits: chele (~chele@user/chele) (Remote host closed the connection)
+[05:29:37] <Cale> It's a mix of bytecode and native compiled code
+[05:30:07] <Cale> I've never actually looked too carefully at the details of how that works though
+[05:31:41] <EvanR> the interpreter functionality is interesting, is that a built-in function of ghc
+[05:31:48] <geekosaur> I have to assume bytecode can call into compiled code or you wouldn't even have the Prelude
+[05:32:18] <geekosaur> whether compiled code can call into bytecode is another question but eith higher order functions I must assume it can
+[05:32:45] <geekosaur> EvanR, it's built in and used by runghc, ghci, and template haskell
+[05:32:56] *** Joins: pieguy128 (~pieguy128@bras-base-mtrlpq5031w-grc-37-70-24-250-178.dsl.bell.ca)
+[05:32:59] <geekosaur> (note that ghci is just ghc --interactive)
+[05:33:09] <EvanR> oh
+[05:33:31] <geekosaur> also ghc -e
+[05:40:24] *** Joins: harveypwca (~harveypwc@2601:246:c180:a570:3828:d8:e523:3f67)
+[05:43:58] *** Joins: tommd (~tommd@67-42-147-226.ptld.qwest.net)
+[05:46:22] *** Joins: merijn (~merijn@c-001-002-002.client.esciencecenter.eduvpn.nl)
+[05:49:36] *** Quits: neurocyte0917090 (~neurocyte@user/neurocyte) (Ping timeout: 256 seconds)
+[05:50:55] <ephemient> if you run ghci -fobject-code, it'll compile everything it loads
+[05:52:14] <ephemient> but otherwise, loaded source files are -fbyte-code just like expressions you enter in the repl
+[05:54:45] <Cale> Also generally installed packages will be object code, and if there are .o and .hi files alongside your source code, it will generally load that
+[05:56:28] <EvanR> ah haven't seen .o files in a while
+[05:57:01] <EvanR> ghci -fobject-code sounds good, what about cabal repl
+[05:57:30] <geekosaur> cabal repl is just a wrapper around ghci, iirc there's a way to pass ghci options which could include -fobject-code
+[06:00:50] <geekosaur> --repl-options
+[06:02:02] <geekosaur> and --repl-options=-fobject-code seems to work here
+[06:03:01] *** Quits: xff0x (~xff0x@2001:1a81:529b:5400:ae89:612e:5a81:4cf8) (Ping timeout: 240 seconds)
+[06:05:07] *** Joins: xff0x (~xff0x@2001:1a81:52b5:2e00:620f:6b65:415e:34ea)
+[06:05:24] <EvanR> not only does that make everything a lot faster, but the repl loads a lot faster now
+[06:11:06] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:12:34] *** Quits: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4) (Ping timeout: 250 seconds)
+[06:13:04] <ephemient> it's not just the .o files, ghc needs the .hi files to know what's in them. and the ghc docs say that ghci -fobject-code can potentially compile faster than ghc --make during reload because it keep those interfaces in memory
+[06:15:22] *** Quits: chexum (~quassel@gateway/tor-sasl/chexum) (Remote host closed the connection)
+[06:15:41] *** Joins: chexum (~quassel@gateway/tor-sasl/chexum)
+[06:19:33] <EvanR> fancy
+[06:19:57] *** Quits: merijn (~merijn@c-001-002-002.client.esciencecenter.eduvpn.nl) (Ping timeout: 240 seconds)
+[06:21:29] *** Joins: califax- (~califax@user/califx)
+[06:22:28] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 256 seconds)
+[06:24:20] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[06:24:44] <geekosaur> you can also usefully use -O with -fobject-code (bytecode disables optimization)
+[06:26:18] *** Quits: califax (~califax@user/califx) (Ping timeout: 276 seconds)
+[06:26:18] *** califax- is now known as califax
+[06:34:44] *** Joins: Techcable (~Techcable@168.235.93.147)
+[06:37:17] *** Quits: Maxdamantus (~Maxdamant@user/maxdamantus) (Quit: leaving)
+[06:37:39] *** Joins: Maxdamantus (~Maxdamant@124.197.32.108)
+[06:40:07] *** Quits: Maxdamantus (~Maxdamant@124.197.32.108) (Client Quit)
+[06:40:13] *** Quits: vysn (~vysn@user/vysn) (Ping timeout: 240 seconds)
+[06:42:51] *** Joins: finn_elija (~finn_elij@user/finn-elija/x-0085643)
+[06:42:51] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Killed (NickServ (Forcing logout FinnElija -> finn_elija)))
+[06:42:51] *** finn_elija is now known as FinnElija
+[06:43:34] *** Joins: Maxdamantus (~Maxdamant@user/maxdamantus)
+[06:45:29] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[06:45:42] *** Joins: lavaman (~lavaman@98.38.249.169)
+[06:50:37] *** Quits: jespada (~jespada@87.74.36.188) (Ping timeout: 240 seconds)
+[06:53:56] *** Joins: jespada (~jespada@87.74.36.188)
+[07:06:58] *** Quits: zaquest (~notzaques@5.130.79.72) (Remote host closed the connection)
+[07:09:03] *** Joins: RMSBach (~user@cpe-76-177-52-136.natcky.res.rr.com)
+[07:10:14] *** Quits: RMSBach (~user@cpe-76-177-52-136.natcky.res.rr.com) (Remote host closed the connection)
+[07:12:29] *** Joins: zaquest (~notzaques@5.130.79.72)
+[07:18:57] *** Quits: td_ (~td@94.134.91.203) (Ping timeout: 240 seconds)
+[07:20:52] *** Joins: td_ (~td@muedsl-82-207-238-224.citykom.de)
+[07:21:06] *** Joins: wei2912 (~wei2912@138.75.71.147)
+[07:23:12] *** Quits: cyphase_eviltwin (~cyphase@user/cyphase) (Ping timeout: 250 seconds)
+[07:28:15] *** Joins: cyphase (~cyphase@user/cyphase)
+[07:37:48] *** Quits: fef (~thedawn@user/thedawn) (Ping timeout: 276 seconds)
+[07:38:07] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 250 seconds)
+[07:39:02] *** Joins: jinsun__ (~quassel@user/jinsun)
+[07:39:04] *** Joins: fef (~thedawn@user/thedawn)
+[07:39:57] *** Quits: jinsun (~quassel@user/jinsun) (Ping timeout: 240 seconds)
+[07:45:49] *** Quits: yahb (xsbot@user/mniip/bot/yahb) (Ping timeout: 240 seconds)
+[07:46:43] *** Quits: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655) (Quit: WeeChat 3.4)
+[07:50:08] *** Joins: yahb (xsbot@user/mniip/bot/yahb)
+[08:04:03] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:04:20] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:04:27] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:04:42] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:04:48] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:05:03] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:05:11] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:05:25] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:05:32] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:05:37] *** Quits: ProfSimm (~ProfSimm@87.227.196.109) (Remote host closed the connection)
+[08:05:46] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:05:54] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:06:08] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:06:16] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:06:30] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:06:38] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:06:51] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:06:54] *** Quits: Null_A (~null_a@2601:645:8700:2290:8935:4edf:b32:6553) (Remote host closed the connection)
+[08:06:59] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:07:13] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:07:20] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:07:35] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:07:43] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:07:57] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:08:04] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:08:18] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:08:26] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:08:41] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:08:48] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:09:03] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:09:11] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:09:25] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:09:32] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:09:46] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:09:54] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:10:07] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:10:15] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:10:16] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[08:10:29] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:10:37] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:10:51] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:10:58] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:11:13] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:11:21] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:11:35] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:11:43] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:11:57] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:12:05] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:12:19] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:12:27] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:12:42] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:12:50] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:13:04] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:13:11] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:13:26] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:13:34] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:13:49] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:13:57] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:14:06] *** Quits: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470) (Ping timeout: 256 seconds)
+[08:14:12] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:14:19] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:14:33] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:14:41] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:14:55] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:15:03] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:15:18] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:15:26] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[08:18:38] *** Quits: vglfr (~vglfr@46.96.133.112) (Ping timeout: 256 seconds)
+[08:25:52] *** Joins: zebrag (~chris@user/zebrag)
+[08:29:17] *** Quits: Erutuon (~Erutuon@user/erutuon) (Ping timeout: 240 seconds)
+[08:32:36] *** Joins: Erutuon (~Erutuon@user/erutuon)
+[08:39:42] *** Quits: little_mac (~little_ma@2601:410:4300:3ce0:a84a:183:2c1b:3735) (Remote host closed the connection)
+[08:43:53] *** Joins: little_mac (~little_ma@2601:410:4300:3ce0:a5db:5f46:eccb:4a78)
+[08:44:02] *** Quits: machinedgod (~machinedg@24.105.81.50) (Ping timeout: 240 seconds)
+[08:45:58] *** Joins: lavaman (~lavaman@98.38.249.169)
+[08:48:30] *** Joins: yauhsien (~yauhsien@61-231-37-18.dynamic-ip.hinet.net)
+[08:50:18] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 250 seconds)
+[08:52:04] *** Quits: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net) (Ping timeout: 256 seconds)
+[08:52:37] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 240 seconds)
+[08:52:57] *** Quits: yauhsien (~yauhsien@61-231-37-18.dynamic-ip.hinet.net) (Ping timeout: 240 seconds)
+[08:54:54] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[08:55:15] *** Joins: mbuf (~Shakthi@122.162.13.98)
+[08:55:51] *** Quits: azimut_ (~azimut@gateway/tor-sasl/azimut) (Remote host closed the connection)
+[08:56:21] *** Joins: azimut (~azimut@gateway/tor-sasl/azimut)
+[08:59:45] <segfaultfizzbuzz> i just learned my first little bit of x86 assembly and noticed that a lot of the basic operations mutate the registers
+[09:00:17] *** Quits: slowButPresent (~slowButPr@user/slowbutpresent) (Quit: leaving)
+[09:00:31] <segfaultfizzbuzz> so, i don't want to get in too far over my head here but,... does haskell de-mutate things then, or..?
+[09:02:42] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[09:02:42] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[09:02:42] *** Joins: wroathe (~wroathe@user/wroathe)
+[09:03:14] <segfaultfizzbuzz> and does that mean that a more immutability-friendly ISA would make sense to have...?
+[09:04:18] *** Quits: zebrag (~chris@user/zebrag) (Quit: Konversation terminated!)
+[09:05:44] *** Quits: raym (~raym@user/raym) (Quit: kernel update, rebooting...)
+[09:12:17] *** Joins: raym (~raym@user/raym)
+[09:16:03] <EvanR> a lot of mutation goes on behind the scenes in haskell. For example, when a thunk is evaluated it's contents are overwritten with the answer, which can then be used again later
+[09:16:12] *** Joins: jao (~jao@68.235.43.13)
+[09:16:55] <EvanR> ST programs can literally mutate variables and arrays in a type safe way
+[09:16:57] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 240 seconds)
+[09:17:10] <EvanR> even within a pure computation
+[09:19:04] *** Joins: lavaman (~lavaman@98.38.249.169)
+[09:20:10] *** Joins: georgy (~bc8147f2@cerf.good1.com)
+[09:23:48] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 256 seconds)
+[09:25:15] <segfaultfizzbuzz> hmm... bbl srry
+[09:25:20] <ephemient> basically all our actual hardware is https://en.wikipedia.org/wiki/Von_Neumann_architecture
+[09:26:09] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[09:26:09] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[09:26:09] *** Joins: wroathe (~wroathe@user/wroathe)
+[09:27:08] *** Quits: tommd (~tommd@67-42-147-226.ptld.qwest.net) (Ping timeout: 250 seconds)
+[09:29:17] *** Quits: segfaultfizzbuzz (~rustisafu@2602:306:cd3c:9350:59e3:db49:aa0a:46e5) (Ping timeout: 240 seconds)
+[09:30:21] *** Joins: deadmarshal (~deadmarsh@95.38.117.123)
+[09:30:44] *** Joins: curtis (~curtis@76.208.249.124)
+[09:30:50] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 268 seconds)
+[09:32:24] *** Joins: Jing (~hedgehog@240e:390:7c53:a7e1:247f:ed9b:32f9:1faf)
+[09:33:50] *** Quits: little_mac (~little_ma@2601:410:4300:3ce0:a5db:5f46:eccb:4a78) (Remote host closed the connection)
+[09:36:51] *** Quits: curtis (~curtis@76.208.249.124) (Quit: leaving)
+[09:47:09] *** Quits: alMalsamo (~alMalsamo@gateway/tor-sasl/almalsamo) (Ping timeout: 276 seconds)
+[09:49:34] *** Joins: alMalsamo (~alMalsamo@gateway/tor-sasl/almalsamo)
+[09:54:57] *** Quits: alMalsamo (~alMalsamo@gateway/tor-sasl/almalsamo) (Ping timeout: 276 seconds)
+[09:55:08] *** Quits: fef (~thedawn@user/thedawn) (Remote host closed the connection)
+[09:58:20] *** Joins: takuan (~takuan@178-116-218-225.access.telenet.be)
+[10:00:04] *** Quits: Erutuon (~Erutuon@user/erutuon) (Ping timeout: 250 seconds)
+[10:02:53] *** Joins: Erutuon (~Erutuon@user/erutuon)
+[10:03:13] *** Quits: phma (phma@2001:5b0:212a:9da8:6f5b:6926:b319:62a2) (Read error: Connection reset by peer)
+[10:04:34] *** Joins: phma (phma@2001:5b0:2172:8d38:d8c9:6275:aa70:e454)
+[10:05:21] *** Quits: nunggu (~q@user/nunggu) (Ping timeout: 276 seconds)
+[10:11:39] *** Quits: mcglk (~mcglk@131.191.49.120) (Read error: Connection reset by peer)
+[10:14:31] *** Joins: cynomys (~cynomys@user/cynomys)
+[10:14:56] *** Joins: mcglk (~mcglk@131.191.49.120)
+[10:17:49] *** Joins: thevishy (~Nishant@2405:201:f005:c007:60d1:4243:e46a:fb96)
+[10:23:25] *** Joins: merijn (~merijn@c-001-001-018.client.esciencecenter.eduvpn.nl)
+[10:24:56] *** Joins: JuanMiguel (~juanmi@72.red-79-158-14.dynamicip.rima-tde.net)
+[10:26:13] *** Quits: JuanMiguel (~juanmi@72.red-79-158-14.dynamicip.rima-tde.net) (Client Quit)
+[10:31:44] *** Joins: nunggu (~q@user/nunggu)
+[10:43:49] *** Quits: Erutuon (~Erutuon@user/erutuon) (Ping timeout: 240 seconds)
+[10:47:18] *** Quits: econo (uid147250@user/econo) (Quit: Connection closed for inactivity)
+[10:50:14] *** Joins: fef (~thedawn@user/thedawn)
+[10:51:57] *** Quits: zmt01 (~zmt00@user/zmt00) (Ping timeout: 240 seconds)
+[10:56:47] *** Quits: rembo10 (~rembo10@remulis.com) (Quit: ZNC 1.8.2 - https://znc.in)
+[10:57:16] *** Quits: merijn (~merijn@c-001-001-018.client.esciencecenter.eduvpn.nl) (Ping timeout: 250 seconds)
+[10:57:40] *** Joins: rembo10 (~rembo10@remulis.com)
+[11:03:24] *** Joins: alp (~alp@user/alp)
+[11:05:37] *** Joins: Feuermagier (~Feuermagi@user/feuermagier)
+[11:06:12] *** Quits: cynomys (~cynomys@user/cynomys) (Quit: Lost terminal)
+[11:06:56] *** Quits: jao (~jao@68.235.43.13) (Remote host closed the connection)
+[11:08:16] *** Quits: alp (~alp@user/alp) (Ping timeout: 268 seconds)
+[11:10:11] *** Quits: thevishy (~Nishant@2405:201:f005:c007:60d1:4243:e46a:fb96) (Quit: Leaving)
+[11:14:33] *** Quits: harveypwca (~harveypwc@2601:246:c180:a570:3828:d8:e523:3f67) (Quit: Leaving)
+[11:22:27] *** Joins: max22- (~maxime@lfbn-ren-1-1026-62.w92-139.abo.wanadoo.fr)
+[11:27:36] *** Quits: Akiva (~Akiva@user/Akiva) (Ping timeout: 250 seconds)
+[11:29:07] *** Quits: geekosaur (~geekosaur@xmonad/geekosaur) (Remote host closed the connection)
+[11:30:27] *** Quits: fef (~thedawn@user/thedawn) (Remote host closed the connection)
+[11:30:52] *** Joins: fef (~thedawn@user/thedawn)
+[11:31:20] *** Quits: kaph (~kaph@net-2-47-208-144.cust.vodafonedsl.it) (Read error: Connection reset by peer)
+[11:37:11] *** Joins: mikoto-chan (~mikoto-ch@213.177.151.239)
+[11:38:09] *** Quits: Feuermagier (~Feuermagi@user/feuermagier) (Remote host closed the connection)
+[11:38:47] *** Joins: Feuermagier (~Feuermagi@user/feuermagier)
+[11:39:36] *** Quits: fef (~thedawn@user/thedawn) (Ping timeout: 276 seconds)
+[11:42:30] *** Quits: Feuermagier (~Feuermagi@user/feuermagier) (Remote host closed the connection)
+[11:42:36] *** Joins: geekosaur (~geekosaur@xmonad/geekosaur)
+[11:44:19] *** Joins: Feuermagier (~Feuermagi@user/feuermagier)
+[11:45:59] *** Quits: Feuermagier (~Feuermagi@user/feuermagier) (Remote host closed the connection)
+[11:46:06] *** Joins: Gurkenglas (~Gurkengla@dslb-090-186-104-244.090.186.pools.vodafone-ip.de)
+[11:46:25] *** Joins: Feuermagier (~Feuermagi@user/feuermagier)
+[11:51:33] *** Quits: Feuermagier (~Feuermagi@user/feuermagier) (Remote host closed the connection)
+[11:56:48] *** Joins: madjestic (~madjestic@88-159-247-120.fixed.kpn.net)
+[11:57:22] *** Joins: Feuermagier (~Feuermagi@user/feuermagier)
+[11:59:46] *** Quits: Feuermagier (~Feuermagi@user/feuermagier) (Remote host closed the connection)
+[12:01:16] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[12:02:41] *** Joins: vysn (~vysn@user/vysn)
+[12:03:31] *** Joins: alMalsamo (~alMalsamo@gateway/tor-sasl/almalsamo)
+[12:05:17] *** Quits: max22- (~maxime@lfbn-ren-1-1026-62.w92-139.abo.wanadoo.fr) (Ping timeout: 250 seconds)
+[12:05:25] *** Quits: vysn (~vysn@user/vysn) (Client Quit)
+[12:07:50] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[12:14:00] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Remote host closed the connection)
+[12:14:48] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[12:17:09] *** Joins: alp (~alp@user/alp)
+[12:18:34] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Remote host closed the connection)
+[12:18:55] *** Joins: FinnElija (~finn_elij@user/finn-elija/x-0085643)
+[12:24:48] *** Joins: Feuermagier (~Feuermagi@user/feuermagier)
+[12:26:26] *** Quits: Feuermagier (~Feuermagi@user/feuermagier) (Remote host closed the connection)
+[12:27:53] *** Joins: Inst (~delicacie@2601:6c4:4080:3f80:89ce:900e:7230:cda2)
+[12:29:50] *** Joins: Erutuon (~Erutuon@user/erutuon)
+[12:30:55] *** Joins: merijn (~merijn@c-001-001-018.client.esciencecenter.eduvpn.nl)
+[12:34:42] *** Quits: megaTherion (~therion@unix.io) (Read error: Connection reset by peer)
+[12:37:33] *** Quits: alp (~alp@user/alp) (Ping timeout: 250 seconds)
+[12:38:57] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 240 seconds)
+[12:42:07] *** Joins: lavaman (~lavaman@98.38.249.169)
+[12:45:51] *** Joins: Tuplanolla (~Tuplanoll@91-159-68-166.elisa-laajakaista.fi)
+[12:46:32] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[12:46:37] *** Joins: mc47 (~mc47@xmonad/TheMC47)
+[12:46:39] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 250 seconds)
+[12:47:36] *** Quits: geekosaur (~geekosaur@xmonad/geekosaur) (Remote host closed the connection)
+[12:47:38] *** Joins: allbery_b (~geekosaur@xmonad/geekosaur)
+[12:47:41] *** allbery_b is now known as geekosaur
+[12:49:59] *** Quits: tzh (~tzh@c-24-21-73-154.hsd1.wa.comcast.net) (Quit: zzz)
+[12:50:54] *** Joins: gehmehgeh (~user@user/gehmehgeh)
+[12:50:56] *** Quits: eggplantade (~Eggplanta@108-201-191-115.lightspeed.sntcca.sbcglobal.net) (Remote host closed the connection)
+[12:51:18] *** Joins: max22- (~maxime@2a01cb0883359800ceae7201b4b629dd.ipv6.abo.wanadoo.fr)
+[12:53:51] *** Joins: Guest9864 (~Guest98@82.212.122.61)
+[12:54:53] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 250 seconds)
+[12:55:20] <Guest9864> Hi guys, I am trying to write a haskell website for fun using yesod but im running into an issue where I am trying to use System,random, it says its hidden, I try to add it to my .cabal file but whenever i try to save that file with random added in the build-depends, the added line literally dissappears
+[12:55:50] <Guest9864> any thoughts on what this might me ? :)  Thanks
+[12:56:32] <polyphem> are you using hpack ?
+[12:56:38] <Guest9864> i dont know what is
+[12:56:49] <Guest9864> what that is**
+[12:56:52] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[12:57:51] <polyphem> it regenerates your .cabal file everytime you build , from a file called package.yaml , do you have package.yaml ?
+[12:57:58] <Guest9864> let me check
+[12:58:05] <Guest9864> yes i do
+[12:59:22] <polyphem> i havent used hpack , but i think you either have to add your dependency to package.yaml , or delete(rename) package.yaml so your .cabal file won't get regenerated
+[12:59:25] <Guest9864> I added there and it seems to be working, I have another error though so let me try to solve it
+[13:07:16] *** Quits: jespada (~jespada@87.74.36.188) (Ping timeout: 250 seconds)
+[13:09:01] *** Quits: Erutuon (~Erutuon@user/erutuon) (Ping timeout: 240 seconds)
+[13:09:27] *** Joins: jespada (~jespada@87.74.36.188)
+[13:11:02] *** Joins: yauhsien (~yauhsien@61-231-37-18.dynamic-ip.hinet.net)
+[13:15:00] <Guest9864> Why is it saying that variable is not in scope for uniformR ? https://paste.tomsmeding.com/GsEG1xVQ
+[13:15:12] <Guest9864> this is how it is used here :> https://hackage.haskell.org/package/random-1.2.1/docs/System-Random.html#v:uniformR
+[13:15:37] *** Quits: yauhsien (~yauhsien@61-231-37-18.dynamic-ip.hinet.net) (Ping timeout: 240 seconds)
+[13:15:52] <Rembane> Guest9864: Is it pureGen that's not in scope? 
+[13:15:59] <Guest9864> nope, uniformR
+[13:17:15] <Guest9864> exact error : https://paste.tomsmeding.com/JXwn2fkx
+[13:17:17] <Rembane> Guest9864: Which version of random are you using? 
+[13:17:32] <Guest9864> I didnt specify
+[13:18:09] <Rembane> Are you using a cabal project or stack or have you installed things in another way? 
+[13:18:23] <Guest9864> im using stack
+[13:19:11] <Rembane> Which release are you using? 
+[13:19:25] <Guest9864> of stack ? the most recent one, just downloaded it a few days ago
+[13:19:54] <Guest9864> 2.7.3
+[13:21:02] <Rembane> Sorry, I used the wrong word. Snapshot was the one I was looking for. LTS 18.23 is the latest snapshot, which one are you using?
+[13:21:43] <Rembane> My hypothesis is that you are using a version of the package random that's older than 1.2.
+[13:25:33] <Guest9864> i am
+[13:25:35] <Guest9864> I am using 1.1
+[13:30:16] *** Quits: jinsun__ (~quassel@user/jinsun) (Read error: Connection reset by peer)
+[13:30:32] *** Joins: Feuermagier (~Feuermagi@user/feuermagier)
+[13:31:09] <Rembane> Guest9864: That explains why you don't have uniformR, uniformR is introduced in version 1.2.
+[13:31:47] *** Joins: jinsun (~quassel@user/jinsun)
+[13:31:49] <Rembane> Guest9864: https://hackage.haskell.org/package/random-1.2.1/docs/System-Random.html#v:uniformR At the documentation for uniformR there's a small note about it.
+[13:32:36] <Guest9864> I see
+[13:32:37] <Guest9864> thanks
+[13:33:18] <Rembane> No worries. :)
+[13:34:25] *** Quits: merijn (~merijn@c-001-001-018.client.esciencecenter.eduvpn.nl) (Ping timeout: 268 seconds)
+[13:34:41] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[13:35:00] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 250 seconds)
+[13:35:57] *** Joins: flipchan (~filip@188-169-255-31.dsl.utg.ge)
+[13:37:02] *** Joins: Midjak (~Midjak@may53-1-78-226-116-92.fbx.proxad.net)
+[13:37:13] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[13:51:20] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:2541:beac:9acd:61a8)
+[13:52:34] <Guest9864> whats wrong here ? https://paste.tomsmeding.com/Rmub1shC I keep getting an error telling me to use a let in a do block
+[13:53:01] <Guest9864> but my understanding is that i can use one let and write a bunch of statements on the same level of indentation
+[13:53:16] <Guest9864> as long as its inside a do block
+[13:53:32] <ski> indent the next line
+[13:53:49] <Guest9864> which next line ?
+[13:54:09] <ski>     let pureGen = mkStdGen 137
+[13:54:11] <ski>         (randNum, _) = randomR (1 :: Int, 5 :: Int) pureGen
+[13:54:31] <Guest9864> shouldn't it be okay that they are on the same level of indentation since they are in a do block ??
+[13:54:52] <Guest9864> it worked but i dont understand why
+[13:54:56] <ski> your definitions inside the `let' should all be on the same level of indentation, yes
+[13:55:00] *** Joins: coot (~coot@213.134.190.95)
+[13:55:16] <ski> `pureGen = ...' should start in the same column as `(randNum, _) = ...'
+[13:55:37] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:2541:beac:9acd:61a8) (Ping timeout: 240 seconds)
+[13:56:32] <ski> you had `(randNum, _) = ...' on the same level as the `let' itself, which means that it was not inside the `let', it was at the level of the commands inside the `do'
+[13:56:49] <ski> (and there's no `... = ...'-commands in a `do'-expression)
+[13:57:54] <ski> btw, just so you know
+[13:57:57] <ski>     let
+[13:58:01] <ski>       pureGen = mkStdGen 137
+[13:58:06] <ski>       (randNum, _) = randomR (1 :: Int, 5 :: Int) pureGen
+[13:58:12] <ski> would have worked just as well
+[13:58:26] <ski> (perhaps here you can more easily see that they're on the same level)
+[13:58:45] <Guest9864> i guess i understand
+[13:58:46] <Guest9864> thanks
+[13:59:47] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[13:59:58] <ski> oh, and i'd not use `mkStdGen'
+[14:00:21] <ski> (unless you do want this to be deterministic)
+[14:03:45] *** Joins: dyeplexer (~dyeplexer@user/dyeplexer)
+[14:03:53] *** Quits: Everything (~Everythin@37.115.210.35) (Quit: leaving)
+[14:06:12] *** Quits: Inst (~delicacie@2601:6c4:4080:3f80:89ce:900e:7230:cda2) (Ping timeout: 250 seconds)
+[14:06:43] *** Joins: __monty__ (~toonn@user/toonn)
+[14:07:23] *** Joins: Inst (~delicacie@2601:6c4:4080:3f80:c4e7:d723:91db:1b9f)
+[14:10:48] *** Quits: Sgeo (~Sgeo@user/sgeo) (Read error: Connection reset by peer)
+[14:13:56] *** Quits: _ht (~quassel@231-169-21-31.ftth.glasoperator.nl) (Ping timeout: 256 seconds)
+[14:14:10] *** Quits: Inst (~delicacie@2601:6c4:4080:3f80:c4e7:d723:91db:1b9f) (Ping timeout: 260 seconds)
+[14:14:17] *** Quits: xff0x (~xff0x@2001:1a81:52b5:2e00:620f:6b65:415e:34ea) (Ping timeout: 240 seconds)
+[14:14:26] *** Quits: madjestic (~madjestic@88-159-247-120.fixed.kpn.net) (Ping timeout: 250 seconds)
+[14:20:26] *** Joins: Lord_of_Life_ (~Lord@user/lord-of-life/x-2819915)
+[14:21:17] *** Quits: Lord_of_Life (~Lord@user/lord-of-life/x-2819915) (Ping timeout: 240 seconds)
+[14:23:18] *** Lord_of_Life_ is now known as Lord_of_Life
+[14:24:26] *** Quits: Guest9864 (~Guest98@82.212.122.61) (Quit: Client closed)
+[14:26:46] *** Joins: xff0x (~xff0x@2001:1a81:52b5:2e00:620f:6b65:415e:34ea)
+[14:35:29] *** Joins: nightbreak (~nightbrea@victors-mbp.dyndns.rice.edu)
+[14:38:40] *** Joins: arjun (~arjun@user/arjun)
+[14:38:46] <arjun> hi
+[14:38:59] <geekosaur> o/
+[14:39:31] <arjun> any way i can tell ghci to load the language extensions in language pragmas from the file being loaded
+[14:39:37] <arjun> o/ geekosaur 
+[14:39:41] <geekosaur> no
+[14:40:12] <geekosaur> think about it, if you have multiple files loaded and switch between them, which pragmas if any should (not) be in effect?
+[14:40:48] <arjun> automagic switching, wooosh :p
+[14:41:18] <arjun> i get it. it's by design, thanks
+[14:42:12] <arjun> btw, i did get those tabs working geekosaur 
+[14:42:44] <arjun> i know now what you meant by "they behave like titlebars" : p
+[14:43:05] <geekosaur> my screenshot showed it on the right hand screen, even
+[14:43:09] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[14:43:21] <geekosaur> that was a large opart of why I made the screenshot
+[14:43:38] <geekosaur> someday we need a less hacky tab mechanism
+[14:43:42] <arjun> i was hoping they'd switch like i3's
+[14:43:51] <arjun> a tab allows it's own sublayout
+[14:44:08] <arjun> and then you can switch between those
+[14:44:21] <arjun> pretty handy
+[14:44:46] <geekosaur> there's a module for that too, iirc
+[14:44:55] <arjun> >.<
+[14:45:02] <arjun> ofc there is : p
+[14:45:31] <arjun> i still have some things i am struggling with. i'll see if you're around tonight
+[14:45:36] *** Quits: max22- (~maxime@2a01cb0883359800ceae7201b4b629dd.ipv6.abo.wanadoo.fr) (Remote host closed the connection)
+[14:45:55] <geekosaur> https://hackage.haskell.org/package/xmonad-contrib-0.17.0/docs/XMonad-Layout-SubLayouts.html#v:subTabbed
+[14:46:17] <geekosaur> also did you see liskin and myself discussing your dpms question?
+[14:46:25] *** Joins: max22- (~maxime@lfbn-ren-1-1026-62.w92-139.abo.wanadoo.fr)
+[14:46:40] <geekosaur> you really need a scriptable acpid, you can't do it from xmonad or any other window manager
+[14:47:10] <geekosaur> debianoids at least package a scriptable acpid and you could edit the scripts for lid open/close to reconfigure xrandr
+[14:51:18] *** Joins: schuelermine (~schuelerm@user/schuelermine)
+[14:56:00] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[14:56:28] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[14:57:59] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[14:58:09] *** Joins: Vajb (~Vajb@2001:999:274:c862:3b86:e1e1:5bff:355e)
+[15:08:08] *** Quits: nightbreak (~nightbrea@victors-mbp.dyndns.rice.edu) (Quit: Signing off for now...)
+[15:11:40] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:16:46] *** Quits: byorgey (~byorgey@155.138.238.211) (Quit: leaving)
+[15:21:45] *** Joins: byorgey (~byorgey@155.138.238.211)
+[15:26:12] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[15:26:26] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:26:34] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[15:26:48] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:26:55] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[15:27:09] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:27:17] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[15:27:31] <liskin> also it's quite likely that something (probably upower) would emit a dbus signal when the lid is closed
+[15:27:32] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:27:39] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[15:27:53] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:28:00] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[15:28:14] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:28:22] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[15:28:35] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:28:43] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[15:28:58] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:29:06] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[15:29:21] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:29:22] <arjun> liskin, i have upower
+[15:29:28] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[15:29:41] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:29:49] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[15:29:50] <liskin> I kind of expected systemd-logind to emit a PropertyChanged as well, since there is a LidClosed property on /org/freedesktop/login1, but it doesn't :-/
+[15:30:03] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:30:05] <geekosaur> lavaman, you're bouncing
+[15:30:11] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[15:30:18] *** ChanServ sets mode: +o geekosaur
+[15:30:25] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:30:33] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[15:30:34] <arjun> when i run gnome, this done exactly right (probably by gnome itself)
+[15:30:47] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:30:49] *** geekosaur sets mode: +b *!*@98.38.249.169
+[15:30:55] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[15:31:16] *** geekosaur sets mode: -o geekosaur
+[15:31:26] <liskin> (we should probably move this to #xmonad)
+[15:33:07] *** Joins: lionhairdino (~jacoo@121.131.39.82)
+[15:33:16] *** Joins: kaph (~kaph@net-2-47-208-144.cust.vodafonedsl.it)
+[15:36:42] *** Joins: boxscape_ (~boxscape_@p4ff0b9d5.dip0.t-ipconnect.de)
+[15:38:22] *** Quits: Gurkenglas (~Gurkengla@dslb-090-186-104-244.090.186.pools.vodafone-ip.de) (Ping timeout: 256 seconds)
+[15:40:17] <boxscape_> Any idea what might drive GHC to produce this error? It seems nonsensical. https://paste.tomsmeding.com/LAGAbg5P
+[15:40:19] <boxscape_> I'm hoping that someone has encountered a similar "Could not deduce x from context x" error and remembers why it ocurred.
+[15:40:38] *** Quits: arjun (~arjun@user/arjun) (Remote host closed the connection)
+[15:41:03] *** Quits: Feuermagier (~Feuermagi@user/feuermagier) (Remote host closed the connection)
+[15:41:25] *** Joins: Feuermagier (~Feuermagi@user/feuermagier)
+[15:41:28] <boxscape_> oh hm I suppose probably the kinds are different somehow
+[15:42:02] <geekosaur> hm, do you need ScopedTypeVariables for that second x to be in scope?
+[15:42:32] <geekosaur> or is that automatic in instance definitions? I forget
+[15:42:37] <boxscape_> I don't think I do, but I already had it enabled
+[15:43:24] <boxscape_> I think adding a kind signature will help, if I can figure out what it should be. Though I suspect the kinds are need are only exported from hidden modules -.-
+[15:43:39] <boxscape_> s/are/I
+[15:44:40] <boxscape_> geekosaur turns out you do need ScopedTypeVariables for this after all, though it's not the cause of this particular error
+[15:45:11] *** Quits: schuelermine (~schuelerm@user/schuelermine) (Ping timeout: 250 seconds)
+[15:45:47] <geekosaur> maybe a type signature on getField would help clarify which x? (you probably do need explicit forall there)
+[15:46:01] <geekosaur> might require an extension
+[15:47:06] <geekosaur> InstanceSigs?
+[15:47:55] <geekosaur> apparently not
+[15:48:07] *** Quits: Feuermagier (~Feuermagi@user/feuermagier) (Remote host closed the connection)
+[15:48:25] *** Joins: Feuermagier (~Feuermagi@user/feuermagier)
+[15:48:36] <geekosaur> actually yes, I just got my search wrong
+[15:49:54] *** Quits: Feuermagier (~Feuermagi@user/feuermagier) (Remote host closed the connection)
+[15:50:49] <boxscape_> Adding an instance sig doesn't help, unfortunately. I think it knows what `x` it is, but wrapping it in `Name` introduces an additional kind variable that's currently likely filled with `Any`. I'll have to look at the FIR source to see what kind I'll need to give it.
+[15:51:02] *** ChanServ sets mode: +o litharge
+[15:51:02] *** litharge sets mode: -bo *!*@98.38.249.169 litharge
+[15:51:15] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:51:20] *** Joins: Feuermagier (~Feuermagi@user/feuermagier)
+[15:51:21] <geekosaur> sigh
+[15:51:23] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[15:51:25] *** Quits: Feuermagier (~Feuermagi@user/feuermagier) (Remote host closed the connection)
+[15:51:29] *** ChanServ sets mode: +o geekosaur
+[15:51:36] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:51:44] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[15:51:59] *** Joins: lavaman (~lavaman@98.38.249.169)
+[15:52:04] *** geekosaur sets mode: +b *!*@98.38.249.169$##fix-your-connection
+[15:52:06] *** Quits: lavaman (~lavaman@98.38.249.169) (Remote host closed the connection)
+[15:55:27] <boxscape_> using -fprint-explicit-kinds helps and show that the kinds indeed don't match
+[15:57:08] *** Joins: Inst (~delicacie@c-98-208-218-119.hsd1.fl.comcast.net)
+[15:58:10] <boxscape_> this code (same but added kind signature) works :) https://paste.tomsmeding.com/eJBmYiMs
+[15:59:23] *** geekosaur sets mode: -o geekosaur
+[15:59:25] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 240 seconds)
+[16:01:41] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[16:03:36] *** Joins: Andrew (andrew@andrewyu.org)
+[16:05:42] *** Quits: Vajb (~Vajb@2001:999:274:c862:3b86:e1e1:5bff:355e) (Read error: Connection reset by peer)
+[16:05:55] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[16:12:20] *** ChanServ sets mode: +o litharge
+[16:12:21] *** litharge sets mode: -bo *!*@98.38.249.169$##fix-your-connection litharge
+[16:14:45] *** Quits: deadmarshal (~deadmarsh@95.38.117.123) (Ping timeout: 268 seconds)
+[16:16:13] *** AlexNoo_ is now known as AlexNoo
+[16:35:42] *** Joins: Gurkenglas (~Gurkengla@dslb-090-186-104-244.090.186.pools.vodafone-ip.de)
+[16:36:06] *** Quits: georgy (~bc8147f2@cerf.good1.com) (Quit: CGI:IRC (Session timeout))
+[16:38:11] *** Quits: max22- (~maxime@lfbn-ren-1-1026-62.w92-139.abo.wanadoo.fr) (Ping timeout: 268 seconds)
+[16:40:08] *** Quits: Inst (~delicacie@c-98-208-218-119.hsd1.fl.comcast.net) (Ping timeout: 256 seconds)
+[16:41:24] <Andrew> I've literally seen people writing in Haskell IMPERATIVELY, i.e. putting everything in IO() and do
+[16:42:12] *** Quits: kjak (~kjak@pool-108-45-56-21.washdc.fios.verizon.net) (Ping timeout: 250 seconds)
+[16:42:17] *** Joins: lavaman (~lavaman@98.38.249.169)
+[16:42:26] *** Joins: yauhsien_ (~yauhsien@61-231-37-18.dynamic-ip.hinet.net)
+[16:42:27] <boxscape_> kinda doing that in the project I'm writing right now because every second line (might be hyperbole) is an FFI call to Vulkan
+[16:42:28] *** Quits: yauhsien_ (~yauhsien@61-231-37-18.dynamic-ip.hinet.net) (Remote host closed the connection)
+[16:42:29] <polyphem>  Andrew : sure
+[16:42:51] <Andrew> I mean, I'm not sure if Haskell is the right language to do that in
+[16:43:00] *** Joins: yauhsien_ (~yauhsien@61-231-37-18.dynamic-ip.hinet.net)
+[16:43:24] <boxscape_> I don't really see any disadvantages compared to doing it in a different language. Except for the part where Haskell is missing idris' !-notation.
+[16:43:26] <Andrew> ~~there are no purely functional languages, as much as I like lambdas)
+[16:43:41] <Andrew> True though
+[16:43:56] <Andrew> Also, anyone knows of any alternative compilers?
+[16:46:37] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 240 seconds)
+[16:47:03] *** Joins: machinedgod (~machinedg@24.105.81.50)
+[16:47:37] <polyphem> Andrew: there have been other implementations/compilers for haskell , however i think only ghc is activly maintained 
+[16:47:58] <Andrew> Yeah I noticed that
+[16:48:14] <Andrew> I'm pretty happy with GHC, except for that fact that compiling Hello World takes like a few seconds
+[16:48:18] <polyphem> Andrew: there is also eta/frege targeting the jvw
+[16:48:29] <Andrew> JVW?
+[16:48:36] <boxscape_> jvm?
+[16:48:38] <polyphem> jvm , sorry
+[16:49:11] <boxscape_> I think among non-GHC haskell compilers Frege has had the most recent commit
+[16:49:11] * Andrew doesn't like Java, so that doesn't matter to him :D
+[16:49:13] <boxscape_> in May last year
+[16:51:09] *** Joins: CHUD (~CHUD@host-80-41-89-108.as13285.net)
+[16:52:02] *** Joins: georgy (~bc8147f2@cerf.good1.com)
+[16:53:08] <polyphem> Andrew: have you optimizatiions -O2 turned on , that increases compile time consideratly
+[16:53:53] <Andrew> polyphem: Seems so lol
+[16:53:56] *** Quits: shailangsa (~shailangs@host86-185-98-37.range86-185.btcentralplus.com) (Remote host closed the connection)
+[16:54:32] <polyphem> its almost never necessary to have it turned on, it increases compile time though
+[16:54:42] <georgy> Andrew, it is common to use interpreter (ghci) when developing, and then compile a final product
+[16:54:50] <Andrew> I'm used to that since I used gcc before
+[16:54:58] <Andrew> georgy: Yes, that's what I do rn
+[16:55:01] <polyphem> check out ghcid, it reduces compile time while developing to give fast feed back
+[16:55:46] <boxscape_> though VS Code with HLS is a more popular solution these days I believe
+[16:55:57] <boxscape_> (...or another editor with HLS)
+[16:56:00] * Andrew uses emacs instead of VS code
+[16:56:03] <Andrew> let's see...
+[16:56:37] <polyphem> HLS however doesnt support latest ghc though ...
+[16:56:38] <Andrew> I do have haskell packages installed, but I haven't utilized it... i'm just opening vterms and running ghci there
+[16:56:53] <boxscape_> polyphem it does since yesterday
+[16:57:18] <polyphem> ok, then i am nnot up to date  :)
+[16:57:37] <boxscape_> (though of course if that's something that matters you'd face the same issue for a few months once 9.4 is released)
+[16:57:40] *** Joins: deadmarshal (~deadmarsh@95.38.117.123)
+[16:59:45] <polyphem> Andrew: when you use vterms , ghcid is for you , also check out hdc : https://github.com/lazamar/haskell-docs-cli
+[17:00:33] <Andrew> Nah, I'll check out haskell-mode and haskell-emacs, because using vterm to run ghc and other stuff seems silly, since I'll want my code in a file afterwards anyways, but I'll check those out
+[17:01:00] *** Joins: lavaman (~lavaman@98.38.249.169)
+[17:04:18] *** Quits: Gurkenglas (~Gurkengla@dslb-090-186-104-244.090.186.pools.vodafone-ip.de) (Ping timeout: 250 seconds)
+[17:05:36] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 250 seconds)
+[17:07:38] <jackdk> Andrew: I use dante with ghcid and am reasonably happy
+[17:08:15] <Andrew> I used to yank and paste code from emacs into the repl, which is reasonably stupid
+[17:08:52] <polyphem> Andrew: ghcid recompiles your file automatically upon file save 
+[17:09:14] <polyphem> Andrew: no need to copy paste
+[17:09:35] <Andrew> polyphem: while true; do inotifywait -e close_write program.hs; make program; ./program; done
+[17:10:37] *** Quits: pooryorick (~pooryoric@87-119-174-173.tll.elisa.ee) (Ping timeout: 240 seconds)
+[17:12:04] <polyphem> Andrew: yeah, but ghcid , also runs linter  can handle stack and cabal and gives you errors ...
+[17:14:01] <Andrew> that's nice
+[17:17:47] *** forell_ is now known as forell
+[17:18:17] *** Quits: forell (~forell@host-178-216-90-220.sta.tvknaszapraca.pl) (Changing host)
+[17:18:17] *** Joins: forell (~forell@user/forell)
+[17:21:58] *** Quits: jespada (~jespada@87.74.36.188) (Ping timeout: 268 seconds)
+[17:23:03] *** Joins: jespada (~jespada@87.74.36.188)
+[17:26:58] *** Joins: max22- (~maxime@2a01cb088335980091c6fbcd4fea35f7.ipv6.abo.wanadoo.fr)
+[17:30:02] *** Joins: segfaultfizzbuzz (~rustisafu@2602:306:cd3c:9350:59e3:db49:aa0a:46e5)
+[17:33:43] *** Joins: bontaq (~user@ool-45779fe5.dyn.optonline.net)
+[17:36:14] *** Quits: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475) (Ping timeout: 256 seconds)
+[17:38:01] *** Joins: mon_aaraj (~MonAaraj@user/mon-aaraj/x-4416475)
+[17:38:58] *** Joins: Codaraxis (~Codaraxis@user/codaraxis)
+[17:38:59] *** Joins: kuribas (~user@ptr-25vy0iaa493etjqvp1u.18120a2.ip6.access.telenet.be)
+[17:39:16] *** Joins: o-90 (~o-90@gateway/tor-sasl/o-90)
+[17:42:51] *** Quits: mestre (~mestre@191.177.181.194) (Quit: Lost terminal)
+[17:47:09] *** Joins: pwug (~pwug@user/pwug)
+[17:56:33] *** Joins: zer0bitz (~zer0bitz@2001:2003:f444:a000:ec86:7a91:dddd:e8c7)
+[17:57:46] *** Quits: juhp (~juhp@128.106.188.82) (Ping timeout: 256 seconds)
+[18:01:15] *** Quits: yauhsien_ (~yauhsien@61-231-37-18.dynamic-ip.hinet.net) (Remote host closed the connection)
+[18:01:48] *** Quits: o-90 (~o-90@gateway/tor-sasl/o-90) (Ping timeout: 276 seconds)
+[18:02:44] *** Quits: kimjetwav (~user@2607:fea8:2363:8f00:79e4:1253:5b58:4ecf) (Remote host closed the connection)
+[18:04:34] *** Quits: dyeplexer (~dyeplexer@user/dyeplexer) (Ping timeout: 256 seconds)
+[18:12:05] *** Joins: yauhsien_ (~yauhsien@61-231-37-18.dynamic-ip.hinet.net)
+[18:12:10] *** Quits: boxscape_ (~boxscape_@p4ff0b9d5.dip0.t-ipconnect.de) (Quit: Connection closed)
+[18:17:02] *** Quits: yauhsien_ (~yauhsien@61-231-37-18.dynamic-ip.hinet.net) (Ping timeout: 256 seconds)
+[18:18:05] *** Quits: deadmarshal (~deadmarsh@95.38.117.123) (Ping timeout: 268 seconds)
+[18:19:29] *** Joins: ph88 (~ph88@2a02:8109:9e00:71d0:48e1:be0c:b23c:dea9)
+[18:19:37] *** Joins: emad (~emad@156.214.92.21)
+[18:19:59] *** Joins: pretty_dumm_guy (trottel@gateway/vpn/protonvpn/prettydummguy/x-88029655)
+[18:31:19] *** Joins: ProfSimm (~ProfSimm@87.227.196.109)
+[18:33:04] *** Joins: CiaoSen (~Jura@p200300c95737a2002a3a4dfffe84dbd5.dip0.t-ipconnect.de)
+[18:33:12] *** Joins: dyeplexer (~dyeplexer@user/dyeplexer)
+[18:38:51] *** Joins: Inst (~delicacie@c-98-208-218-119.hsd1.fl.comcast.net)
+[18:44:24] *** Quits: chenqisu1 (~chenqisu1@183.217.200.249) (Ping timeout: 250 seconds)
+[18:45:56] *** Quits: Inst (~delicacie@c-98-208-218-119.hsd1.fl.comcast.net) (Ping timeout: 256 seconds)
+[18:47:47] *** Joins: pooryorick (~pooryoric@87-119-174-173.tll.elisa.ee)
+[18:47:56] *** Joins: son0p (~ff@2800:484:1d81:b700:d40b:900:b387:320)
+[18:48:27] *** Joins: zmt01 (~zmt00@user/zmt00)
+[18:52:37] *** Quits: zmt01 (~zmt00@user/zmt00) (Ping timeout: 240 seconds)
+[18:56:01] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:2541:beac:9acd:61a8)
+[18:59:08] <georgy> hi
+[18:59:33] <georgy> how can I pass haskell function as a callback to a C function that accepts function pointer as void*?
+[19:00:17] *** Quits: eggplantade (~Eggplanta@2600:1700:bef1:5e10:2541:beac:9acd:61a8) (Ping timeout: 240 seconds)
+[19:05:30] *** Quits: califax (~califax@user/califx) (Ping timeout: 276 seconds)
+[19:06:45] *** Quits: coot (~coot@213.134.190.95) (Quit: coot)
+[19:07:25] <georgy> ok, let me step back a bit, how would I pass haskell function to a C function that accepts function pointer? is this still up to date example/
+[19:07:28] <georgy> http://wiki.haskell.org/GHC/Using_the_FFI#Callbacks_into_Haskell_from_foreign_code
+[19:07:36] *** Joins: califax (~califax@user/califx)
+[19:07:43] <georgy> I'm not sure I understand this: foreign import ccall "wrapper"   wrap :: (CDouble -> CDouble) -> IO (FunPtr (CDouble -> CDouble))
+[19:08:10] *** Joins: kjak (~kjak@pool-108-45-56-21.washdc.fios.verizon.net)
+[19:08:51] *** Joins: lbseale (~ep1ctetus@user/ep1ctetus)
+[19:12:13] *** Quits: lbseale (~ep1ctetus@user/ep1ctetus) (Client Quit)
+[19:13:13] <[exa]> georgy: have to say the "wrapper" there isn't really documented
+[19:14:42] <[exa]> it seems like it is the thing that adds the necessary bits into the haskell notion of function (closure data + recipe for evaluating them) to the void*; you get a void pointer that you can pass to C and call as if it was a plain old ccall, then you clean the wrapper with freeHsFunPtr
+[19:16:51] <geekosaur> it's semi-documented in the language report
+[19:17:25] <geekosaur> (which I just noticed has a bad example for a different case, it treats errno as an actual variable)
+[19:18:12] <[exa]> oh here https://gitlab.haskell.org/ghc/ghc/-/wikis/commentary/rts/ffi#foreign-import-wrapper
+[19:18:42] <[exa]> "adjustor thunk", wow.
+[19:20:48] <geekosaur> that's what you get for looking in the commentary :)
+[19:20:56] *** Quits: pavonia (~user@user/siracusa) (Quit: Bye!)
+[19:22:53] <int-e> geekosaur: well, if you don't like guts you shouldn't ask what the sausage is made of :)
+[19:23:16] <geekosaur> that was more or less my point :)
+[19:23:30] <int-e> oh
+[19:23:54] <int-e> (I'm mixing up nicks as usual, [exa] would've be the correct target)
+[19:24:25] *** Joins: madjestic (~madjestic@88-159-247-120.fixed.kpn.net)
+[19:24:54] *** Quits: wei2912 (~wei2912@138.75.71.147) (Remote host closed the connection)
+[19:30:11] *** Joins: little_mac (~little_ma@2601:410:4300:3ce0:b1c1:7d23:9565:94df)
+[19:33:06] *** Joins: bob (~bob@pool-173-54-217-168.nwrknj.fios.verizon.net)
+[19:35:01] *** bob is now known as soxen
+[19:45:34] *** Quits: soxen (~bob@pool-173-54-217-168.nwrknj.fios.verizon.net) (Quit: Leaving)
+[19:46:13] *** Joins: raehik (~raehik@cpc95906-rdng25-2-0-cust156.15-3.cable.virginm.net)
+[19:48:25] *** Joins: wombat875 (~wombat875@pool-72-89-24-154.nycmny.fios.verizon.net)
+[19:49:03] <georgy> it took me 15 minutes to figure out why this failed to compile:      ptr <- castUINTPtrToPtr (fromIntegral x)
+[19:49:17] *** Quits: georgy (~bc8147f2@cerf.good1.com) (Quit: CGI:IRC (Error))
+[19:49:23] *** Joins: fef (~thedawn@user/thedawn)
+[19:49:56] *** Joins: georgy (~bc8147f2@83.167.180.121)
+[19:50:01] <georgy> Couldn't match type 'Ptr' with 'IO'       Expected type: IO ()         Actual type: Ptr ()
+[19:51:08] *** Joins: zer0bitz_ (~zer0bitz@2001:2003:f444:a000:319a:8ff4:9a9c:6a36)
+[19:51:21] <ski> yeh, you wanted `let ptr = ...'
+[19:51:44] <georgy> yes
+[19:52:00] *** Joins: slowButPresent (~slowButPr@user/slowbutpresent)
+[19:52:00] <ski> (also, is `UINT_PTR' in `Num' ?)
+[19:52:03] <Andrew> Unsafe stuff
+[19:52:31] <ski> the cast ?
+[19:52:35] <Andrew> By the way, just curious, what are you trying to achieve with callbacks?
+[19:52:48] <Andrew> Pointers are unsafe to me :)
+[19:53:03] *** Quits: kaph (~kaph@net-2-47-208-144.cust.vodafonedsl.it) (Read error: Connection reset by peer)
+[19:53:18] *** Quits: zer0bitz (~zer0bitz@2001:2003:f444:a000:ec86:7a91:dddd:e8c7) (Ping timeout: 250 seconds)
+[19:53:20] *** Joins: Morrow_ (~Morrow@bzq-110-168-31-106.red.bezeqint.net)
+[19:53:30] <geekosaur> they're inevitable if you're doing FFI
+[19:53:40] <geekosaur> one could of course argue the FFI is unsafe though
+[19:53:50] <georgy> I am calling C function that accepts a callback, and it passes pointer to callback as integral value
+[19:54:01] <ski> (is it `void *' or `void (*)()' ?)
+[19:54:10] <Andrew> ~~everything not-purely-functional is unsafe, so all programs that do things are unsafe~~
+[19:54:26] <georgy> callback is a function pointer
+[19:54:27] <Andrew> I'd argue that haskells that contain Monads feel a bit chunky
+[19:54:51] *** Quits: CHUD (~CHUD@host-80-41-89-108.as13285.net) (Ping timeout: 256 seconds)
+[19:54:54] *** Quits: gehmehgeh (~user@user/gehmehgeh) (Ping timeout: 276 seconds)
+[19:55:55] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[19:55:55] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[19:55:55] *** Joins: wroathe (~wroathe@user/wroathe)
+[19:56:23] *** Joins: soxen (~bbrahms@pool-173-54-217-168.nwrknj.fios.verizon.net)
+[19:56:31] *** Joins: gehmehgeh (~user@user/gehmehgeh)
+[19:56:46] *** Quits: Morrow (~Morrow@bzq-110-168-31-106.red.bezeqint.net) (Ping timeout: 250 seconds)
+[19:57:00] <ski> chunky ?
+[19:57:20] <Andrew> Human feelings are weird and unsafe
+[19:57:21] <ski> how're lists chunky ?
+[19:57:23] *** Joins: Morrow (~Morrow@bzq-110-168-31-106.red.bezeqint.net)
+[19:57:30] *** Quits: Morrow_ (~Morrow@bzq-110-168-31-106.red.bezeqint.net) (Read error: Connection reset by peer)
+[19:58:03] *** Joins: doyougnu (~doyougnu@cpe-67-249-83-190.twcny.res.rr.com)
+[19:58:07] <Andrew> lists aren't chunky
+[19:58:09] *** Joins: zmt01 (~zmt00@user/zmt00)
+[19:58:10] <Andrew> "do" is chunky
+[19:58:11] *** Quits: soxen (~bbrahms@pool-173-54-217-168.nwrknj.fios.verizon.net) (Client Quit)
+[19:58:30] * ski still has no idea what "chunky" is intended to mean
+[19:59:01] * Andrew cannot define it, either
+[19:59:02] *** Joins: random-jellyfish (~random-je@user/random-jellyfish)
+[19:59:07] <ski> georgy : does it really accept a plain `void *' ("anonymous data pointer", not a function pointer) ?
+[20:00:21] *** Joins: soxen (~bbrahms@pool-173-54-217-168.nwrknj.fios.verizon.net)
+[20:00:38] *** Joins: yauhsien_ (~yauhsien@61-231-37-18.dynamic-ip.hinet.net)
+[20:00:40] <maerwald> Andrew: you mean most programs are (>>) and thus don't really need the monad interface?
+[20:00:49] <Andrew> maerwald: No?
+[20:00:58] *** Joins: Morrow_ (~Morrow@bzq-110-168-31-106.red.bezeqint.net)
+[20:01:19] <Andrew> they're needed, but they're just not pure-feeling enough for me, maybe I'm a jerk
+[20:01:23] <random-jellyfish> I'm trying to model a Discrete Event System Specification in Haskell https://en.wikipedia.org/wiki/DEVS, and I'm not sure whether to include the delta, ta and lambda functions as fields of the DEVS data type or to put them in a type class and then create and instance of that for DEVS, any thoughts on this?
+[20:01:52] *** Joins: shailangsa (~shailangs@host86-185-98-37.range86-185.btcentralplus.com)
+[20:02:33] <geekosaur> Andrew, or maybe you'd prefer themathematical side to the CS side
+[20:02:48] <Andrew> That's true
+[20:02:59] <random-jellyfish> or as a more general question, when should have functions as fields of records and when should you have them in type classes?
+[20:03:19] *** Quits: mbuf (~Shakthi@122.162.13.98) (Quit: Leaving)
+[20:04:02] *** Quits: Morrow (~Morrow@bzq-110-168-31-106.red.bezeqint.net) (Ping timeout: 240 seconds)
+[20:04:06] <geekosaur> random-jellyfish, type classes are for when you have conceptually similar operations on different types
+[20:04:51] <geekosaur> if you have only the type DEVS to deal with, a typeclass is pointless and may slow things down
+[20:05:54] <random-jellyfish> good point
+[20:06:15] *** Parts: jakalx (~jakalx@base.jakalx.net) (Error from remote client)
+[20:06:25] <random-jellyfish> I'll make them fields of DEVS then
+[20:06:50] *** Quits: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20) (Remote host closed the connection)
+[20:07:31] *** Joins: cosimone (~user@2001:b07:ae5:db26:c24a:d20:4d91:1e20)
+[20:09:06] *** Quits: ProfSimm (~ProfSimm@87.227.196.109) (Remote host closed the connection)
+[20:10:36] *** Quits: fef (~thedawn@user/thedawn) (Quit: Leaving)
+[20:10:48] *** Joins: denbrahe (~denbrahe@2001:470:69fc:105::19c0)
+[20:11:02] *** Joins: jakalx (~jakalx@base.jakalx.net)
+[20:13:17] *** Joins: Gurkenglas (~Gurkengla@dslb-090-186-104-244.090.186.pools.vodafone-ip.de)
+[20:13:40] *** Quits: denbrahe (~denbrahe@2001:470:69fc:105::19c0) (Quit: Reconnecting)
+[20:13:57] *** Joins: denbrahe (~denbrahe@2001:470:69fc:105::19c0)
+[20:18:20] *** Quits: unmanbearpig (~unmanbear@user/unmanbearpig) (Quit: WeeChat 3.3)
+[20:19:03] *** Joins: fef (~thedawn@user/thedawn)
+[20:20:16] *** Quits: denbrahe (~denbrahe@2001:470:69fc:105::19c0) (Quit: Reconnecting)
+[20:20:27] <Andrew> geekosaur: I'm actually quite new to haskell though
+[20:20:39] *** Joins: denbrahe (~denbrahe@2001:470:69fc:105::19c0)
+[20:20:40] <Andrew> Barely scratched the surface of Monads
+[20:21:23] <ski> monads are quite diverse
+[20:21:56] <geekosaur> poke at the state monad for a simple example (and a demonstration that monads by themselves do not mean impurity)
+[20:21:57] <random-jellyfish> I'd recommend to start with the list monad, that's where I first understood the power of monads
+[20:22:07] <geekosaur> list would be next, yes
+[20:22:11] *** Quits: kuribas (~user@ptr-25vy0iaa493etjqvp1u.18120a2.ip6.access.telenet.be) (Quit: ERC (IRC client for Emacs 26.3))
+[20:22:20] <geekosaur> but state's easier to figure out if you're new
+[20:22:37] <geekosaur> list will twist your brain a bit, but thereby show you what monads bring to the table
+[20:23:03] <ski> (and `do'-notation is just some pretty syntactic sugar. to understand monads, you should get a feel for particular examples of monads, what they do / what they're about, how they work. how the basic operations `return' and `(>>=)' work for that monad)
+[20:23:29] <geekosaur> (and IO barely uses monads tbh, it just does sequencing via them)
+[20:23:37] <ski> `Maybe' might be a nice starting-point, before lists
+[20:24:26] <random-jellyfish> I how to use StateT monad transformer from this example of 99 bottles of beer : https://www.99-bottles-of-beer.net/language-haskell-1360.html
+[20:24:33] <random-jellyfish> I learned how to use StateT monad transformer from this example of 99 bottles of beer : https://www.99-bottles-of-beer.net/language-haskell-1360.html
+[20:25:34] <random-jellyfish> I think intuitive examples are always good for learning
+[20:26:04] <Andrew> Thanks
+[20:26:26] <Andrew> I assume IO monads just use lambda nesting to achieve "sequences"?
+[20:26:49] <Andrew> That's the only functional way of doing it that I can understand
+[20:27:07] <random-jellyfish> they use the the bind operator, like all other monads
+[20:27:26] <ski> before tackling monads, you should be comfortable with polymorphism, higher-order functions, `data' types (including parameterized ones), and type classes
+[20:27:39] * Andrew has 100MB of free memory running some homemade AI stuff in the background, he wonders if there are machine learning haskell libs
+[20:28:08] <Andrew> Forgot the name, I think I'm okay with typeclasses and polymorphism thereof
+[20:28:19] <Andrew> I tackled Lisp before, so higher-order is okay
+[20:28:29] <Andrew> I'm not doing well in monoids and semigroups, so mehh
+[20:28:38] <Andrew> Probably should review thhat first
+[20:29:00] <ski> yea, it's probably a good idea to have some idea how those work. also functors
+[20:29:12] <Andrew> That, I never touched
+[20:29:32] <random-jellyfish> monoids are isomorphic to strings endowed with concatenation - that's all I need to know about monoids
+[20:29:34] <ski> all monads are functors. but functors are simpler to understand, so you should cover those first
+[20:30:03] <random-jellyfish> and I have no idea what semigroups are and what they do, are they important?
+[20:30:16] <Andrew> I do know what semigroups are from math
+[20:30:42] <Andrew> (I'm from China and 8th-grade math class doesn't include that, but people talk about group theory)
+[20:30:45] <ski> > sortBy (comparing length <> compare) (words "The quick brown fox jumps over the lazy dog)"  -- cute monoid example, effecting sorting primarily by length and secondarily by the usual lexicographic ordering (among words of the same length here)
+[20:30:46] <lambdabot>  <hint>:1:244: error:
+[20:30:46] <lambdabot>      parse error (possibly incorrect indentation or mismatched brackets)
+[20:31:01] <ski> > sortBy (comparing length <> compare) (words "The quick brown fox jumps over the lazy dog)")  -- eh, missing bracket :)
+[20:31:02] <lambdabot>  ["The","fox","the","dog)","lazy","over","brown","jumps","quick"]
+[20:31:25] <Andrew> I might know what functors are without knowing (i.e. I don't know the name), but whatever, I'll learn on them, I don't think I know them
+[20:31:30] <ski> ah, that's nice, Andrew
+[20:31:34] <Andrew> thanks all!
+[20:31:37] *** Quits: madjestic (~madjestic@88-159-247-120.fixed.kpn.net) (Ping timeout: 240 seconds)
+[20:32:48] <ski> semigroups and monoids are almost the same. both have a (binary) operation (which should be associative). monoids also have a "neutral element / identity / unit" (combining another element with the neutral element, using the binary operation, gives back the other element)
+[20:33:48] <ski> and groups are monoids in which each element has an inverse (iow, you have a unary operation which gives the inverse of its operand), where the combination of an element and its inverse gives the neutral element
+[20:33:50] <random-jellyfish> semigroupt don't have the unit?
+[20:33:56] <random-jellyfish> semigroups*
+[20:34:03] <ski> they don't need to
+[20:34:17] <ski> (but all monoids are semigroups, so those do have unit)
+[20:34:42] <random-jellyfish> are there any intuitive examples of semigroups?
+[20:34:44] *** Joins: burnsidesLlama (~burnsides@dhcp168-016.wadham.ox.ac.uk)
+[20:34:48] <ski> the operation `(+)' with neutral element `0' and inverse `negate' is a group
+[20:35:30] <ski> the operation `(*)' with neutral element `1' and inverse `recip' is a group .. if we discount non-invertible elements, like `0'
+[20:35:44] <ski> the operation `(++)' with neutral element `[]' is a monoid
+[20:35:56] <ski> the operation `max' is a semigroup, and so is `min'
+[20:36:07] *** Joins: froduck (~froduck@cpc101088-sgyl37-2-0-cust22.18-2.cable.virginm.net)
+[20:36:18] <ski> > recip 2
+[20:36:19] <lambdabot>  0.5
+[20:36:24] <ski> (that's `1/2')
+[20:36:51] <geekosaur> [29 16:56:26] <Andrew> I assume IO monads just use lambda nesting to achieve "sequences"? <-- it's the state monad with a minimal state token, thus setting up a trivial data dependency between calls enforcing a sequence
+[20:37:10] <ski> `(&&)' with `True', and `(||)' with `False', are also monoids
+[20:37:24] <Andrew> That sounds hacky
+[20:37:31] <ski> hm, and `gcd' with `0', and `lcm' with `1'
+[20:37:37] <Andrew> But I think I'm almost to the point on that one, yay
+[20:37:51] <Andrew> *Why am I not in b ed yet*
+[20:38:04] *** Quits: CiaoSen (~Jura@p200300c95737a2002a3a4dfffe84dbd5.dip0.t-ipconnect.de) (Ping timeout: 268 seconds)
+[20:38:22] * ski . o O ( isn't it morning over there ? )
+[20:38:30] <Andrew> I think there are also closures, which are just binary operations that result in something inside the set
+[20:38:39] <Andrew> 01:48
+[20:38:47] <froduck> maybe you folded your sheets wrong, and spacetime is preventing you from smoothing them or something
+[20:38:51] <ski> ah, ok
+[20:39:28] *** Joins: SummerSonw (~The_viole@203.77.49.232)
+[20:39:33] <froduck> probably if you had some gravity magnets to make your bed with...
+[20:39:54] <random-jellyfish> I would assume all natural numbers >0 with addition form a semigroup?
+[20:39:54] *** Quits: yauhsien_ (~yauhsien@61-231-37-18.dynamic-ip.hinet.net) (Remote host closed the connection)
+[20:40:04] <ski> yes
+[20:40:40] <random-jellyfish> and could it be that is where the prefix semi comes from? because you're basically throwing away half the elements of a group to get a semigroup?
+[20:40:56] <ski> hm .. never thought of that before
+[20:41:03] <ski> i guess it could be plausible
+[20:41:31] <ski> (usually i think of "semi-" as meaning roughly "not quite" or "somewhat less than")
+[20:41:32] *** Quits: soxen (~bbrahms@pool-173-54-217-168.nwrknj.fios.verizon.net) (Ping timeout: 240 seconds)
+[20:41:54] <froduck> rndom-jellyfish: half the axioms
+[20:42:18] *** Quits: froduck (~froduck@cpc101088-sgyl37-2-0-cust22.18-2.cable.virginm.net) (Quit: Connection closed)
+[20:42:23] <random-jellyfish> perfect, now I know what semigroups are
+[20:42:30] * ski . o O ( "Half would have been just right, said the girl who got triplets." )
+[20:42:41] <random-jellyfish> that's how I like to learn math, from examples
+[20:43:03] <random-jellyfish> I trust the Phd folks with the proofs
+[20:43:22] <ski> i guess maximum and minimum are my immediate go-to examples
+[20:43:41] <Andrew> I like to learn stuff via examples, and think of a definition/proof through that
+[20:43:46] <Andrew> Whatever, afk
+[20:43:51] *** Joins: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg)
+[20:45:09] <random-jellyfish> Andrew when you get to learning about lenses...just learn how to use them first
+[20:46:05] <random-jellyfish> don't try to go down the rabbit hole with understanding what's behind them
+[20:46:06] *** Joins: romesrf (~romes@44.190.189.46.rev.vodafone.pt)
+[20:46:13] *** Quits: SummerSonw (~The_viole@203.77.49.232) (Quit: Leaving)
+[20:46:16] <random-jellyfish> you'll risk your sanity
+[20:46:48] <random-jellyfish> I'm joking of course...but I did find lenses to be very complicated
+[20:47:59] *** Joins: yauhsien_ (~yauhsien@61-231-37-18.dynamic-ip.hinet.net)
+[20:48:29] <lagash> And whatever you do, do NOT use lenses under direct sunlight, it'll burn!
+[20:50:09] <romesrf> random-jellyfish: there is a great talk by simon peyton jones on lenses
+[20:50:15] <romesrf> it did it for me
+[20:52:32] *** Quits: yauhsien_ (~yauhsien@61-231-37-18.dynamic-ip.hinet.net) (Ping timeout: 240 seconds)
+[20:53:43] <random-jellyfish> thanks, I'll put it on my watch later list
+[20:54:05] *** Joins: soxen (~bbrahms@pool-173-54-217-168.nwrknj.fios.verizon.net)
+[21:00:25] *** Joins: alt-romes (~romes@44.190.189.46.rev.vodafone.pt)
+[21:00:39] *** Joins: Inst (~delicacie@c-98-208-218-119.hsd1.fl.comcast.net)
+[21:02:12] *** Quits: romesrf (~romes@44.190.189.46.rev.vodafone.pt) (Ping timeout: 250 seconds)
+[21:04:07] *** Joins: lavaman (~lavaman@98.38.249.169)
+[21:05:42] *** Joins: emf_ (~emf@2620:10d:c090:400::5:29d7)
+[21:05:45] *** Joins: RFV (~Thunderbi@111.red-88-5-241.dynamicip.rima-tde.net)
+[21:08:16] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 245 seconds)
+[21:08:57] *** Quits: emf (~emf@2601:602:9400:8f0:435:b386:5ad4:6eb2) (Ping timeout: 240 seconds)
+[21:09:06] *** Quits: Inst (~delicacie@c-98-208-218-119.hsd1.fl.comcast.net) (Ping timeout: 245 seconds)
+[21:09:10] *** Quits: RFV (~Thunderbi@111.red-88-5-241.dynamicip.rima-tde.net) (Client Quit)
+[21:10:18] *** Quits: alt-romes (~romes@44.190.189.46.rev.vodafone.pt) (Quit: WeeChat 3.4)
+[21:11:10] *** Joins: econo (uid147250@user/econo)
+[21:12:44] *** Joins: zer0bitz (~zer0bitz@2001:2003:f444:a000:f8f2:a6ee:f8f:27a0)
+[21:14:08] *** Joins: tzh (~tzh@c-24-21-73-154.hsd1.or.comcast.net)
+[21:15:32] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[21:16:58] *** Quits: zer0bitz_ (~zer0bitz@2001:2003:f444:a000:319a:8ff4:9a9c:6a36) (Ping timeout: 260 seconds)
+[21:17:15] *** Joins: RMSBach (~guygastin@137.184.131.156)
+[21:17:19] *** Joins: lavaman (~lavaman@98.38.249.169)
+[21:17:44] *** Quits: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg) (Remote host closed the connection)
+[21:18:03] *** Joins: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg)
+[21:19:31] *** Joins: zincy (~zincy@host86-151-99-97.range86-151.btcentralplus.com)
+[21:19:47] <EvanR> if you think lens is complicated, you can read this instead which is simular http://conal.net/blog/posts/semantic-editor-combinators
+[21:20:03] *** Quits: bitdex (~bitdex@gateway/tor-sasl/bitdex) (Ping timeout: 276 seconds)
+[21:22:41] *** Quits: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg) (Ping timeout: 256 seconds)
+[21:23:44] *** Joins: bitdex (~bitdex@gateway/tor-sasl/bitdex)
+[21:24:02] *** Quits: zincy (~zincy@host86-151-99-97.range86-151.btcentralplus.com) (Ping timeout: 240 seconds)
+[21:24:07] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[21:24:07] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[21:24:07] *** Joins: wroathe (~wroathe@user/wroathe)
+[21:26:37] *** Quits: kjak (~kjak@pool-108-45-56-21.washdc.fios.verizon.net) (Ping timeout: 240 seconds)
+[21:26:49] *** Joins: deadmarshal (~deadmarsh@95.38.117.123)
+[21:27:50] *** Quits: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi) (Read error: Connection reset by peer)
+[21:28:30] <dolio> I don't think there's anything that complicated about lenses. The complication is people explaining and relating different ways of implementing them.
+[21:28:38] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 250 seconds)
+[21:28:45] *** Joins: coot (~coot@213.134.190.95)
+[21:30:20] <dolio> And getting the type system to automatically accept various subtyping relationships based on the implementation details.
+[21:30:50] *** Quits: wombat875 (~wombat875@pool-72-89-24-154.nycmny.fios.verizon.net) (Ping timeout: 256 seconds)
+[21:32:07] *** Joins: zincy (~zincy@2a00:23c8:970c:4801:f0bc:c4cb:1665:1c67)
+[21:32:10] *** Joins: kaph (~kaph@net-2-47-208-144.cust.vodafonedsl.it)
+[21:32:55] *** Joins: wombat875 (~wombat875@pool-72-89-24-154.nycmny.fios.verizon.net)
+[21:33:59] *** Joins: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg)
+[21:38:11] <random-jellyfish> does ghc 8.6.5 support DuplicateRecordFields?
+[21:40:15] <random-jellyfish> nvm found it, it's from 8.0.1
+[21:41:27] *** Quits: Jing (~hedgehog@240e:390:7c53:a7e1:247f:ed9b:32f9:1faf) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[21:44:05] *** Quits: soxen (~bbrahms@pool-173-54-217-168.nwrknj.fios.verizon.net) (Read error: Connection reset by peer)
+[21:46:06] *** Joins: Null_A (~null_a@2601:645:8700:2290:6509:ee11:ea28:47c)
+[21:46:53] *** Joins: eggplantade (~Eggplanta@2600:1700:bef1:5e10:2541:beac:9acd:61a8)
+[21:47:56] *** Quits: orcus (~orcus@user/brprice) (Quit: ZNC 1.8.1 - https://znc.in)
+[21:47:56] *** Quits: dispater- (~dispater@user/brprice) (Quit: ZNC 1.8.1 - https://znc.in)
+[21:49:11] *** Joins: jao (~jao@66.63.167.119)
+[21:50:17] *** Quits: lionhairdino (~jacoo@121.131.39.82) (Ping timeout: 240 seconds)
+[21:50:43] *** Joins: dispater (~dispater@user/brprice)
+[21:51:14] *** Joins: orcus (~orcus@user/brprice)
+[21:52:51] *** Joins: alp (~alp@user/alp)
+[21:55:02] *** Joins: vglfr (~vglfr@88.155.52.56)
+[21:55:20] *** Joins: CiaoSen (~Jura@p200300c95737a2002a3a4dfffe84dbd5.dip0.t-ipconnect.de)
+[21:58:35] *** Quits: pwug (~pwug@user/pwug) (Quit: Leaving)
+[21:59:26] *** Quits: jao (~jao@66.63.167.119) (Ping timeout: 260 seconds)
+[22:01:22] *** Joins: jao (~jao@68.235.43.172)
+[22:11:36] *** Quits: beaky (~beaky@2a03:b0c0:0:1010::1e:a001) (Ping timeout: 245 seconds)
+[22:12:29] *** Joins: beaky (~beaky@2a03:b0c0:0:1010::1e:a001)
+[22:14:04] *** Joins: justsomeguy (~justsomeg@user/justsomeguy)
+[22:17:10] <justsomeguy> In GHCi, why does alpha = ['a'..'z']; l [] = 0; l (_:xs) = 1 + l xs; l alpha; :sprint alpha result in l = _, but if I change the definitino of l to l t = case t of { [] -> 0; (_:xs) -> 1 + l xs }, then :sprint alpha prints alpha = "abcdefghijklmnopqrstuvwxyz"?
+[22:17:14] *** Joins: Vajb (~Vajb@hag-jnsbng11-58c3a8-176.dhcp.inet.fi)
+[22:18:19] *** Quits: dyeplexer (~dyeplexer@user/dyeplexer) (Remote host closed the connection)
+[22:19:00] *** Quits: lavaman (~lavaman@98.38.249.169) (Ping timeout: 256 seconds)
+[22:20:32] *** Joins: asivitz (uid178348@id-178348.tinside.irccloud.com)
+[22:20:46] <EvanR> alpha resets to egg state if nothing is holding onto it
+[22:20:59] *** Joins: Sgeo (~Sgeo@user/sgeo)
+[22:21:01] <EvanR> to avoid using a lot of memory when doing ghci stuff
+[22:22:59] <justsomeguy> What is egg state? Do you mean a thunk? The part that confuses me is that the new definition of l forces evaluation of the values in alpha in the first place. I was expecting the same result of alpha = _.
+[22:23:07] <mrianbloom> What is the most developed library for frontend gui development for Haskell on linux?
+[22:23:14] <EvanR> the original thunk if you will, before it was evauated
+[22:24:13] <justsomeguy> Before the figurative egg was cracked open :)
+[22:24:13] <geekosaur> mrianbloom, gi-gtk probably
+[22:24:23] <geekosaur> unless by "frontend" you mean web
+[22:24:27] *** Quits: random-jellyfish (~random-je@user/random-jellyfish) (Ping timeout: 256 seconds)
+[22:24:48] <monochrom> I guess "linux" means not web. :)
+[22:24:58] <mrianbloom> no I mean linux desktop
+[22:25:16] <EvanR> that's my theory and it could be wrong, for instance, I don't know if resetting a thunk to egg state makes any sense. Because you can't really do it normally, even if that would be nice
+[22:25:54] <mrianbloom> Could also mean windows etc, but right now it's just Ubuntu.
+[22:26:00] <EvanR> but I know that printing out an infinite list in ghci doesn't use infinite memory
+[22:26:01] <geekosaur> ghci does have special support for that, but supposedly those two definitions of `l` should be identical and in fact the simplifier should generate the second fromn the first
+[22:26:21] <EvanR> (necessarily)
+[22:26:24] <polyphem> mrianbloom: there is monomer , its new but interresting , and its multiplatform
+[22:26:37] *** Joins: random-jellyfish (~random-je@user/random-jellyfish)
+[22:26:48] <mrianbloom> polyphem: cool I'll check that out
+[22:27:42] <monochrom> I think previous explorations of :sprint reported in this channel already established that :sprint is way more hair-splitting than a reasonable (even realistic) lazy evaluation model.
+[22:27:48] <polyphem> https://github.com/fjvallarino/monomer
+[22:28:41] <EvanR> otoh if the original question was about "most developed" then no, probably GTK
+[22:28:54] <EvanR> as cool as monomer looks
+[22:30:32] <mrianbloom> I might have phrased it, most used or most popular. But honestly a good design (functional approach) is also  attractive.
+[22:31:34] <EvanR> most used, popular haskell GUI might either be a web browser or a fancy abuse of terminal xD
+[22:31:40] <monochrom> This is why every question of the form "best X" "most ___ X" should never be taken seriously.
+[22:32:31] <monochrom> The querents themselves aren't even honest perfectionists in the first place.
+[22:32:41] <mrianbloom> Gosh
+[22:32:53] *** Joins: CHUD (~CHUD@host-80-41-89-108.as13285.net)
+[22:33:00] <EvanR> back in the 90s basically *every* program written for windows had a GUI. today basically no haskell program has a GUI 
+[22:33:02] <monochrom> Do you really need the absolutely best Haskell textbook to learn Haskell?
+[22:35:18] *** Quits: FinnElija (~finn_elij@user/finn-elija/x-0085643) (Remote host closed the connection)
+[22:35:43] *** Joins: FinnElija (~finn_elij@user/finn-elija/x-0085643)
+[22:36:53] * ski . o O ( why settle for less than perfect ? )
+[22:37:14] <maerwald> because you won't settle
+[22:37:29] *** Quits: CHUD (~CHUD@host-80-41-89-108.as13285.net) (Ping timeout: 256 seconds)
+[22:39:16] *** Quits: justsomeguy (~justsomeg@user/justsomeguy) (Quit: WeeChat 3.4)
+[22:42:27] <mrianbloom> Incidentally "Types And Programming Languages" is probably the best haskell textbook. No Haskell in there though ;)
+[22:42:44] *** Quits: deadmarshal (~deadmarsh@95.38.117.123) (Ping timeout: 250 seconds)
+[22:43:12] <monochrom> It doesn't have lazy evaluation or non-strictness.
+[22:43:21] <random-jellyfish> I found Real World Haskell to be straight to the point
+[22:43:24] <monochrom> And it has infinite types which Haskell doesn't have.
+[22:43:50] <dolio> What if PFPL is the best Haskell textbook?
+[22:44:16] <mrianbloom> I'm just saying, I earned the most about Haskell there.
+[22:44:27] <mrianbloom> *learned
+[22:44:29] <monochrom> PFPL is even against lazy evaluation!
+[22:44:39] <dolio> Right, that would make it very ironic. :)
+[22:44:45] <monochrom> hahaha
+[22:45:55] *** Joins: mmalter (~mmalter@88.126.10.237)
+[22:46:53] <mrianbloom> "Structure and Interpretation of Computer Programs" is my other favorite Haskell  textbook. (Again no Haskell.)
+[22:46:53] *** Quits: dispater (~dispater@user/brprice) (Quit: ZNC 1.8.2 - https://znc.in)
+[22:46:53] *** Quits: orcus (~orcus@user/brprice) (Quit: ZNC 1.8.2 - https://znc.in)
+[22:47:30] *** Quits: coot (~coot@213.134.190.95) (Ping timeout: 250 seconds)
+[22:47:56] <mrianbloom> It does have a lambda on the cover though.
+[22:48:00] <monochrom> It lacks pattern matching for algebraic data types. The resulting clumsiness shows.
+[22:48:05] <ski> @quote rules.of.go
+[22:48:05] <lambdabot> sarah says: "But I don't _want_ functional programming!" -- Sarah Peyton Jones, age 11, upon hearing the rules of Go
+[22:48:39] *** Joins: dispater (~dispater@user/brprice)
+[22:49:08] *** Quits: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg) (Remote host closed the connection)
+[22:49:11] *** Joins: orcus (~orcus@user/brprice)
+[22:49:27] *** Joins: ProfSimm (~ProfSimm@176-12-60-137.pon.spectrumnet.bg)
+[22:50:06] <EvanR> yeah I still don't understand the rules of Go
+[22:50:41] <monochrom> You can view my pickiness in a positive light. If those 3 issues are all I could raise of those 3 books, that just means I'm quietly acknowledge that they are pretty good in all other aspects.
+[22:50:58] <monochrom> Every silver lining has tarnish.
+[22:57:40] <byorgey> EvanR: if you don't understand the rules of Go you haven't tried very hard
+[22:58:13] <byorgey> unless you're referring to the esoteric corner cases about different sorts of ko rules...
+[22:58:13] <EvanR> I can place the pieces and stuff but the details keep slipping
+[22:58:23] <EvanR> how to end the damn game
+[22:58:25] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[22:58:25] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[22:58:25] *** Joins: wroathe (~wroathe@user/wroathe)
+[22:59:03] <EvanR> you need game theory to figure out when to agree to end the game
+[22:59:32] <EvanR> also no I haven't tried very hard
+[22:59:38] <johnw> EvanR: just play to the bitter end (when you can't place any more pieces), and you'll find that there's a moment in the game when it's obvious that you'll never recover, sort of like in Monopoly.
+[22:59:43] <[exa]> EvanR: you need to ensure free safe space defended by pieces of your color for your own folk, that's it
+[22:59:53] <EvanR> I always play monopoly so long that I pass out
+[22:59:54] <[exa]> EvanR: whoever has the most space at the end, wins
+[23:00:27] <[exa]> accepting that you can't do much anymore is the end
+[23:00:57] * byorgey is also fond of https://senseis.xmp.net/?TrompTaylorRules , though no one uses those exact rules in practice
+[23:01:46] <mmalter> Hello. Anyone has experience doing statistical modelling of time series in an ML inspired language? Any advice, pointer?
+[23:02:09] <mmalter> The Haskell situation seem not too good, the OCaml situation looks horrible.
+[23:03:01] <[exa]> mmalter: "statistical modeling of time series" is a pretty wide range of problems, anything specific?
+[23:03:18] <mmalter> well i don't want to reimplement dickey fuller for example
+[23:03:54] <mmalter> but something not too barebone for ARMA would be nice
+[23:04:08] <mmalter> and I am not dreaming too much about multivariate analysis
+[23:04:16] <mmalter> but I am ok doing things myself
+[23:04:26] <mmalter> just dont want to reimplement box jenkins
+[23:05:04] <mmalter> Tbh, I am pretty sure many implementations are out there. Maybe just not published
+[23:06:25] <[exa]> like, this is probably not a welcome advice but isn't there a R package that does exactly that?
+[23:06:41] <mmalter> well, you guessed where I am coming from :D
+[23:06:51] <[exa]> haha okay. :D
+[23:06:53] <geekosaur> sometimes the right tool for the job is a thing
+[23:07:14] <[exa]> R is underrated.
+[23:07:16] <mmalter> Well, I guess I'll just have to get to work then...
+[23:07:48] <[exa]> I had luck with writing the R package authors directly, if something didn't work or seemed cryptic
+[23:08:04] <[exa]> the whole ecosystem there is kinda proud of the status that they solve the problems
+[23:08:17] *** Quits: Techcable (~Techcable@168.235.93.147) (Ping timeout: 240 seconds)
+[23:08:40] <mmalter> Meh most people use Matlab or python nowadays. It's a bit distasteful.
+[23:08:45] <mmalter> Not to sound snobby
+[23:08:51] <[exa]> you probably expected pointers to haskell packages but, well, I'm sorry, not aware of any of this
+[23:09:03] <mmalter> that would have been great
+[23:09:17] <mmalter> No but I am beggining to think it does not exist
+[23:09:29] <mmalter> There is hmatrix so it's not like I am completely naked
+[23:09:41] <[exa]> maybe idle for some time, there's 7 hundred people who might have tried the same
+[23:11:47] <[exa]> btw check out julia folks, they might have interesting stuff (for me often if R fails and there's not even a package for the problem in javas and parseltongues, julia has surprisingly cool libraries)
+[23:14:24] <mmalter> I might try that, all the cool kids talk about it. It's just that I really prefer having one general language that solves (sometimes awkwardly) all my problems. I think I'll just write something not too ambitious in Haskell.
+[23:14:37] <mmalter> idk I might get rich and famous doing so
+[23:16:58] *** Joins: coot (~coot@213.134.190.95)
+[23:21:24] *** Joins: tfeb (~tfb@88.98.95.237)
+[23:22:17] *** Joins: waleee (~waleee@2001:9b0:21d:fc00:398f:b003:b90d:acf4)
+[23:22:30] <EvanR> a silver hammer, or something
+[23:23:00] <EvanR> one size fits all problems solution
+[23:23:35] <geekosaur> every language has its turing tarpit
+[23:24:07] <monochrom> a gold hammer has a better chance of fitting more holes because gold is softer >:)
+[23:24:27] <EvanR> if all you have is a gold hammer, every problem looks like an iron hole
+[23:24:38] <monochrom> hee hee
+[23:26:25] *** Joins: Codaraxis_ (~Codaraxis@user/codaraxis)
+[23:26:38] <EvanR> I was so waiting to see how thor could fit into haskell somehow
+[23:27:04] <mmalter> Or the reverse.
+[23:27:06] <mmalter> Sorry
+[23:27:40] <monochrom> Haskell could be good at what Matlab and R are good at. Just needs someone to do library bindings. Note that it is not like Matlab and R really cares about destructive updates. (They happily clone a whole matrix and then GC the old one.)
+[23:28:54] <mmalter> Honnestly I can see why it's not there. It's just not fun to code.
+[23:29:01] <EvanR> particular algorithms can benefit from a local use of destructive updates
+[23:29:19] <mmalter> Well in that case most algo
+[23:29:33] <mmalter> But anyway, everybody do these algo in fortran
+[23:29:48] <EvanR> in before a haskell to fortran DSL
+[23:29:56] <mmalter> he
+[23:29:57] *** Quits: Codaraxis (~Codaraxis@user/codaraxis) (Ping timeout: 240 seconds)
+[23:30:35] <EvanR> or perhaps a corresponding decompiler to turn fortran into haskell code (which can be sent back to fortran 1 to 1, like a lens)
+[23:30:57] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 240 seconds)
+[23:31:08] <EvanR> fortran lens
+[23:31:34] <EvanR> put your haskell goggles on
+[23:32:30] *** Joins: vicfred (~vicfred@user/vicfred)
+[23:34:19] *** Quits: Codaraxis_ (~Codaraxis@user/codaraxis) (Quit: Leaving)
+[23:34:26] *** Quits: tfeb (~tfb@88.98.95.237) (Quit: died)
+[23:34:56] *** Quits: wombat875 (~wombat875@pool-72-89-24-154.nycmny.fios.verizon.net) (Ping timeout: 256 seconds)
+[23:36:31] *** Joins: wombat875 (~wombat875@pool-72-89-24-154.nycmny.fios.verizon.net)
+[23:36:51] <segfaultfizzbuzz> monochrom: actually i've done some high performance matlab programming. you're right that if you are doing a crap paper napkin calculation you do GC but if you are doing any kind of even somewhat performance sensitive calculation you annotate which matrices are references to avoid allocation/deallocation
+[23:37:04] <segfaultfizzbuzz> if the matrices are large that is
+[23:37:22] <random-jellyfish> I just realized I never wrote anything useful in Haskell in my entire life...only small experiments and unfinished work...so embarrassing
+[23:37:56] <polyphem> mmalter: haven't used it but perhaps : https://tweag.github.io/HaskellR/
+[23:38:30] *** Quits: fef (~thedawn@user/thedawn) (Ping timeout: 276 seconds)
+[23:39:16] *** Joins: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com)
+[23:39:16] *** Quits: wroathe (~wroathe@206-55-188-8.fttp.usinternet.com) (Changing host)
+[23:39:16] *** Joins: wroathe (~wroathe@user/wroathe)
+[23:40:50] <mmalter> polyphem: damn, I don't know how I missed it. Thanks a lot, really helpful
+[23:44:00] *** Quits: wroathe (~wroathe@user/wroathe) (Ping timeout: 256 seconds)
+[23:44:10] *** Quits: Null_A (~null_a@2601:645:8700:2290:6509:ee11:ea28:47c) (Remote host closed the connection)
+[23:47:58] *** Quits: wombat875 (~wombat875@pool-72-89-24-154.nycmny.fios.verizon.net) (Ping timeout: 256 seconds)
+[23:48:01] *** Joins: madjestic (~madjestic@88-159-247-120.fixed.kpn.net)
+[23:48:45] *** Quits: coot (~coot@213.134.190.95) (Quit: coot)
+[23:48:47] *** Quits: CiaoSen (~Jura@p200300c95737a2002a3a4dfffe84dbd5.dip0.t-ipconnect.de) (Ping timeout: 250 seconds)
+[23:51:59] <polyphem> mmalter: np
+[23:54:26] *** Quits: bendo (~bendo@ip5f5bebbb.dynamic.kabel-deutschland.de) (Quit: leaving)
+[23:59:39] <sm> random-jellyfish: good, time to fix that!
+[23:59:43] *** Quits: alp (~alp@user/alp) (Ping timeout: 268 seconds)

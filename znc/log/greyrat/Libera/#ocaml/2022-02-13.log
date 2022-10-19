@@ -1,0 +1,375 @@
+[00:00:13] <d_bot> <hcarty> I wrote <https://github.com/hcarty/lwt-binio/blob/master/src/lwt_binio.mli> a while ago when I ran into the mmap issue and needed random access to values in a file
+[00:00:59] <d_bot> <VPhantom> Thanks, I'm checking it out right now.
+[00:02:01] <d_bot> <VPhantom> In my case I _almost_ read my input sequentially but there's a few instances of reading too much and rewinding a bit, hence why I scrapped the stdin idea.
+[00:53:29] *** Quits: sagax (~sagax_nb@user/sagax) (Quit: Konversation terminated!)
+[01:16:58] <companion_cube> @VPhantom: if the files are not ginormous, reading them to memory is probably fast enough™
+[01:18:45] *** Quits: Serpent7776 (~Serpent77@90-156-31-193.internetia.net.pl) (Quit: leaving)
+[01:19:54] <d_bot> <VPhantom> That's what I'm betting on. This is a batch tool so as long as memory use stays decent, I'm good. I just need to figure out a decent way to load a file into `bytes` and vice versa.
+[01:20:46] <d_bot> <VPhantom> (I'm scrapping the mmap idea for now because I'll need `bytes` for `ocaml-protoc` anyway.)
+[01:25:21] <companion_cube> I forget if there's a stdlib function for that now
+[01:25:34] <d_bot> <VPhantom> Funny, there's an `in_channel.ml` in the Stdlib but I can't find it in the namespaces available in `utop`. 🤔
+[01:25:53] <companion_cube> not sure it's released yet
+[01:26:11] <companion_cube> anyway, my personal solution is `CCIO.with_in "foo" CCIO.read_all`
+[01:26:12] <d_bot> <VPhantom> Oh wow Septembre 2021, I see yeah.
+[01:26:26] <d_bot> <VPhantom> Thanks, I'll check that out.
+[01:28:01] <d_bot> <VPhantom> `try while true do ... raise Exit done with Exit -> ...` I would never have thought of doing a "read-it-all" loop like that! 😱
+[01:29:20] <companion_cube> :D
+[01:29:39] <companion_cube> these days I use `let continue = ref true in while !continue do … done`
+[01:29:44] <companion_cube> but you know, same difference.
+[01:29:54] <d_bot> <VPhantom> I managed to miss `Bytes.extend` when I played with those last month. Sounds much better than creating a new one every time I need to grow.
+[01:30:53] <companion_cube> hu, didn't know it either
+[01:31:08] <companion_cube> I mean it still allocates
+[01:31:11] <d_bot> <VPhantom> Oh, nevermind, it still creates a new `Bytes.t` and blits to it anyway, in all cases.
+[01:31:11] <d_bot> <Anurag> extend creates a new bytes behind the scenes and then uses blit to copy things over
+[01:31:27] <d_bot> <VPhantom> I thought it might've used `realloc()` or something when only extending on the right.
+[01:31:27] <companion_cube> it's just simpler than create + blit
+[01:32:08] <d_bot> <VPhantom> I still think a bit too much in C terms. 😉
+[01:32:25] <companion_cube> well, the GC doesn't have realloc afaik :)
+[01:34:47] <d_bot> <VPhantom> Yeah, I thought I might've seen a realloc somewhere for growing Bigarrays but I can't find it now so it must've been wishful thinking. 😛
+[01:35:21] <companion_cube> ah, but bigarrays are different
+[01:35:30] <companion_cube> they're in the C heap I think.
+[01:35:38] <d_bot> <VPhantom> Of course, yes.
+[01:35:42] <companion_cube> which is why they're pinned and can be passed to C blabla
+[01:35:52] <d_bot> <VPhantom> bla indeed.
+[01:36:54] <d_bot> <VPhantom> Just curious, since you do a final copy anyway in your `read_all`, why not read into a `Buffer.t` and then get `bytes` out of that at the end?
+[01:37:34] <d_bot> <VPhantom> (…instead of hermit crab'ing growing bytes along the way)
+[01:39:44] <d_bot> <Anurag> @VPhantom you probably saw `realloc` in core. They have functions that perform that operation for their bigstring
+[01:40:13] <d_bot> <VPhantom> Possibly.
+[01:40:58] <sleepydog> @VPhantom what do you want to eventually do with the data?
+[01:41:20] <d_bot> <Anurag> <https://github.com/janestreet/core/blob/master/core/src/bigstring_stubs.c#L87>
+[01:41:47] <d_bot> <VPhantom> In this case, feed it to a Protobuf decoder which requires `bytes` input. The other decoder can take various things as input (bigstring, bytes, buffer, string) but I'll stick to bytes.
+[01:42:21] <sleepydog> ah ok. I like the approach of reading into a `Buffer.t` and pulling your bytes out of that when you're done.
+[01:42:32] <d_bot> <VPhantom> @Anurag Yup, that must be it.
+[01:43:16] <d_bot> <VPhantom> @sleepydog: Yeah that's what I might do, although I just realized if I'm not bothering with `stdin` I might as well use the file's length to create an appropriately-sized `bytes` from the start and loop-read into that.
+[01:45:13] <sleepydog> ah right, you said you ditched the mmap idea
+[01:45:55] <companion_cube> @VPhantom: because I can't get the bytes out of Buffer
+[01:46:06] <d_bot> <VPhantom> For now yes. I'd love to read that way but since half my formats require bytes anyway, might as well just use those uniformly for now.
+[01:46:15] *** Quits: unyu (~pyon@user/pyon) (Quit: WeeChat 3.4)
+[01:46:36] <companion_cube> I guess I could use `contents`, but well, it's simpler in this particular case to grow it myself
+[01:46:39] <d_bot> <VPhantom> @companion_cube There's `Buffer.to_bytes` which copies to achieve it.
+[01:46:57] <d_bot> <VPhantom> …but I think your `Bytes.sub_string` copies as well. 🤔
+[01:47:00] <companion_cube> also, at the time, Buffer.input (or whatever) was broken
+[01:47:04] <companion_cube> yes
+[01:47:14] <companion_cube> reading into the buffer was hard
+[01:47:19] *** Joins: rgrinberg (~textual@2806:101e:7:5da4:3851:118b:4a93:672e)
+[01:47:27] <companion_cube> I fixed that in the stdlib years ago but my code is still compatible with 4.03
+[01:47:35] <companion_cube> anyway, at this point, fuck Buffer
+[01:47:40] <d_bot> <VPhantom> I see, yes.
+[01:47:52] <sleepydog> i missed the memo, what's wrong with Buffer?
+[01:47:53] <d_bot> <VPhantom> Yeah I know where you stand on Buffer. 😉
+[01:48:12] <companion_cube> look at Buffer.add_channel, it's weird
+[01:48:19] <sleepydog> the implementation?
+[01:48:36] <companion_cube> sleepydog: the API too restrictive and apparently no one cares
+[01:48:46] <d_bot> <VPhantom> There was a pull request from ccube which didn't go well.
+[01:48:52] <sleepydog> raises Invalid_argument if len < 0 or len > Sys.max_string_length -- huh?
+[01:49:11] <companion_cube> yeah I'm angry about the PR
+[01:49:32] <d_bot> <VPhantom> I thought it was quite reasonable but hey I'm new here.
+[01:50:20] *** Joins: unyu (~pyon@user/pyon)
+[01:50:31] <d_bot> <VPhantom> (I'm wondering if blitting from an mmaped input file to bytes would be simpler than a DIY reading loop…)
+[01:51:30] <sleepydog> but then you're back to only supporting files. as a lover of unix pipes I must object! :)
+[01:51:43] <companion_cube> or unix sockets
+[01:52:03] <sleepydog> unix sockets are mmap-able?
+[01:52:15] <companion_cube> no, no
+[01:52:23] <sleepydog> ah, sorry, misread
+[01:52:33] <companion_cube> just saying reading loops are nice.
+[01:52:43] *** Quits: bobo (~bobo@37.166.205.136) (Ping timeout: 256 seconds)
+[01:52:45] <d_bot> <VPhantom> Even my loop would need the size of its input, the way I'm looking at things, to allocate one bytes of exactly the right size from the start. I agree that supporting stdio would be nice, but I'm cutting a few corners right now due to a deadline.
+[01:52:47] *** Joins: spip (~bobo@37.166.248.134)
+[01:53:19] <d_bot> <VPhantom> Lots of `(* TODO ... *)` comments peppered around. 😛
+[01:53:21] <companion_cube> do you _know_ it'll be too slow if you just use `CCIO.read_all`?
+[01:53:54] <d_bot> <VPhantom> Oh, no Sir! But I'm not pulling in Containers _yet_ so this is a DIY function.
+[01:54:19] <companion_cube> didn't you mention a deadline? 🙃
+[01:54:24] <d_bot> <VPhantom> hehehe
+[01:54:26] <sleepydog> :)
+[01:55:00] <d_bot> <VPhantom> I might make more sense tomorrow. Time to call it a day!
+[01:55:15] *** Quits: rgrinberg (~textual@2806:101e:7:5da4:3851:118b:4a93:672e) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[01:56:16] *** Joins: rgrinberg (~textual@2806:101e:7:5da4:3851:118b:4a93:672e)
+[01:58:16] *** Joins: zebrag (~chris@user/zebrag)
+[02:29:36] *** Quits: bartholin (~bartholin@158.110.71.2) (Quit: Leaving)
+[02:34:40] <d_bot> <Guy Moquet> just wondering why there are no `List.reduce` in stdlib
+[02:35:04] <d_bot> <Guy Moquet> is it because it'ss a bad practice? The stdlib yet contains many functions that throw exceptions
+[02:39:41] <sleepydog> reduce is the same as fold, right?
+[02:39:43] *** Quits: rgrinberg (~textual@2806:101e:7:5da4:3851:118b:4a93:672e) (Ping timeout: 250 seconds)
+[02:39:47] <sleepydog> there is List.fold_{left, right}
+[02:41:13] <d_bot> <NULL> fold with no default and an exception if the list is empty
+[02:41:38] *** Joins: rgrinberg (~textual@187.194.14.9)
+[02:46:48] <d_bot> <glennsl> doesn't seem all that useful when you can just combine `hd` and `tl`  with a `fold` to accomplish the same.
+[02:48:38] <sleepydog> e.g. `let reduce f l = List.(fold_left f (hd l) (tl l))
+[02:56:44] *** Quits: rgrinberg (~textual@187.194.14.9) (Read error: Connection reset by peer)
+[02:57:20] <d_bot> <Guy Moquet> ah yes of course, thank
+[02:58:08] *** Joins: rgrinberg (~textual@187.194.14.9)
+[03:02:38] *** Quits: rgrinberg (~textual@187.194.14.9) (Read error: Connection reset by peer)
+[03:03:43] *** Joins: rgrinberg (~textual@187.194.14.9)
+[03:39:56] *** Quits: rgrinberg (~textual@187.194.14.9) (Read error: Connection reset by peer)
+[03:41:35] *** Joins: rgrinberg (~textual@2806:101e:7:5da4:f5fc:59c9:ba9b:990)
+[03:42:20] *** Quits: Tuplanolla (~Tuplanoll@91-159-69-98.elisa-laajakaista.fi) (Quit: Leaving.)
+[03:48:37] *** Quits: rgrinberg (~textual@2806:101e:7:5da4:f5fc:59c9:ba9b:990) (Ping timeout: 240 seconds)
+[03:52:37] *** Joins: rgrinberg (~textual@187.194.14.9)
+[04:01:05] *** Quits: rgrinberg (~textual@187.194.14.9) (Read error: Connection reset by peer)
+[04:01:29] *** Joins: rgrinberg (~textual@2806:101e:7:5da4:18bd:1c0d:516:57be)
+[04:06:24] *** Quits: rgrinberg (~textual@2806:101e:7:5da4:18bd:1c0d:516:57be) (Ping timeout: 250 seconds)
+[04:08:33] *** Joins: rgrinberg (~textual@2806:101e:7:5da4:89b6:75bb:9400:4d95)
+[05:19:12] *** Quits: rgrinberg (~textual@2806:101e:7:5da4:89b6:75bb:9400:4d95) (Ping timeout: 250 seconds)
+[05:20:29] *** Joins: rgrinberg (~textual@2806:101e:7:5da4:9818:747d:186f:47b5)
+[05:21:29] *** Joins: adanwan_ (~adanwan@gateway/tor-sasl/adanwan)
+[05:22:20] *** Quits: adanwan (~adanwan@gateway/tor-sasl/adanwan) (Remote host closed the connection)
+[05:27:55] *** Joins: motherfsck (~motherfsc@user/motherfsck)
+[05:28:18] *** Quits: Haudegen (~quassel@178.115.237.87.static.drei.at) (Ping timeout: 256 seconds)
+[05:31:31] <d_bot> <Jektrix> VPhantom, are you doing gRPC with OCaml? Or just using protobuf standalone. I've seen it mostly used with gRPC until now in other domains
+[05:35:11] *** Quits: rgrinberg (~textual@2806:101e:7:5da4:9818:747d:186f:47b5) (Ping timeout: 256 seconds)
+[05:36:48] *** Joins: rgrinberg (~textual@2806:101e:7:5da4:f0a2:d1c3:4490:2515)
+[05:42:37] *** Quits: rgrinberg (~textual@2806:101e:7:5da4:f0a2:d1c3:4490:2515) (Ping timeout: 240 seconds)
+[05:48:50] *** Joins: rgrinberg (~textual@2806:101e:7:5da4:4414:dfd5:8bde:213a)
+[05:53:53] *** Quits: rgrinberg (~textual@2806:101e:7:5da4:4414:dfd5:8bde:213a) (Ping timeout: 256 seconds)
+[05:55:34] *** Joins: rgrinberg (~textual@2806:101e:7:5da4:69db:e827:4059:f439)
+[06:01:51] <d_bot> <VPhantom> Just Protobuf. I will use it for RPC but for various reasons it's not gRPC, not even service definitions.
+[06:02:43] <d_bot> <VPhantom> Our internal "bus" will be based on Redis, not HTTP.
+[06:11:10] <companion_cube> like, redis streams? blocking stuff on lists?
+[06:20:45] *** Quits: rgrinberg (~textual@2806:101e:7:5da4:69db:e827:4059:f439) (Quit: My MacBook has gone to sleep. ZZZzzz…)
+[06:54:55] <d_bot> <Jektrix> I've been finding gRPC (in Typescript, not OCaml) kind of frustrating at times to deal with
+[06:55:32] <d_bot> <Jektrix> It's good but I'm wondering if there's something simpler out there to use.
+[06:59:26] <companion_cube> https://twitchtv.github.io/twirp/ ? :)
+[07:01:36] <sleepydog> so it's just protobuf or json over http/1.1 ?
+[07:01:57] <companion_cube> pretty much
+[07:02:08] <companion_cube> which probably makes a lot more sense than gRPC for most people?
+[07:02:13] <sleepydog> i agree
+[07:03:27] *** Joins: rgrinberg (~textual@2806:101e:7:5da4:69db:e827:4059:f439)
+[07:14:40] <d_bot> <Jektrix> my main difficulties with grpc come from the reconnection/retry/repair of RPCs (especially bidirectional) and having to write a lot of application code on top to make bidirectional streams resilient
+[07:14:43] <d_bot> <Jektrix> i'll take a look at this
+[07:16:01] <d_bot> <Jektrix> I've also seen `ocaml-rpc` but haven't played with it yet
+[07:16:04] <companion_cube> I don't think this is supposed to have streaming :D
+[07:16:24] <companion_cube> it's more of a classic http request/response but with protobuf
+[07:16:46] <companion_cube> (and there's no OCaml implementation of the service part, only protobuf)
+[07:16:50] <companion_cube> (afaik)
+[07:17:08] <d_bot> <Jektrix> still. thanks for the link. always good to see what's out there and get a lay of the land
+[07:17:44] <companion_cube> there's also https://storj.github.io/drpc/ as a more custom things
+[07:17:56] <companion_cube> but in both cases these are Go-originated alternatives to gRPC
+[07:18:07] <companion_cube> by people who found gRPC too big and complicated
+[07:19:54] <sleepydog> i would prefer whatever is easiest to troubleshoot when it breaks. i have to diagnose problems in gRPC services in my day job and it's difficult
+[07:21:54] <companion_cube> and that's where http1.1 ought to be nicer
+[07:23:14] <sleepydog> indeed. i'm not a fan of HTTP/2's "feature" to multiplex streams over a single TCP stream.
+[07:25:21] *** Quits: waleee (~waleee@h-98-128-229-110.NA.cust.bahnhof.se) (Ping timeout: 245 seconds)
+[07:28:52] <Corbin> I haven't used it, but it's worth mentioning https://capnproto.org/rpc.html too, and apparently there's an actively-developed RPC implementation for OCaml https://github.com/mirage/capnp-rpc
+[07:28:57] <d_bot> <Anurag> `zmq` can be another decent option. It has decent abstractions where it takes care of socket connections etc, and lets the application deal with a higher level message oriented communication workflow
+[07:29:40] <Corbin> ..."I haven't used" is misleading, sorry. I haven't used the C++ or OCaml versions.
+[07:30:02] <companion_cube> ZMQ is kind of nice.
+[07:30:19] <companion_cube> capnproto, imho, looks super cool and interesting… but also so complicated that you only have a handful of implementations in the wild
+[07:30:37] *** Quits: rgrinberg (~textual@2806:101e:7:5da4:69db:e827:4059:f439) (Ping timeout: 240 seconds)
+[07:30:53] <companion_cube> it might be technically better than flatbuffers or protobuf, but if it's a niche technology there's also many drawbacks
+[07:31:03] <companion_cube> (we're on #ocaml, I don't need to detail i guess)
+[07:31:12] <sleepydog> heh
+[07:32:13] <Corbin> I've written a Capn encoder, decoder, and RPC stubs. It's medium difficulty. You have to be comfortable with some things being dynamically typed. Capability handling is hard even in cap-safe environments.
+[07:32:35] <companion_cube> from the schema file? or from capnproto official compiler?
+[07:33:52] <Corbin> Using the official compiler. The official way of doing it involves a kind of circular bootstrap, and it wasn't fun. Parsing the schema file sounds really easy, but you're not guaranteed to have the same struct layouts across languages if you do that.
+[07:34:32] <companion_cube> well, that's my point. very complicated :p
+[07:34:54] <companion_cube> if there's effectively only one compiler, it's less robust than having a lot of independent compilers
+[07:35:13] <companion_cube> (and to be clear, protobuf isn't perfect on that either, but at least things like ocaml-protoc are 100% from scratch)
+[07:36:35] <Corbin> Sure. IMHO if you don't need the speed, then don't do it. And this also applies to schemata in general; decoding a protobuf requires looking at tagged values, and that's a common feature with these nice backwards-compatible protocols.
+[07:37:13] <companion_cube> protobuf wire format is considerably simpler
+[07:37:20] <companion_cube> not sure if that's what you're saying ? :)
+[07:37:44] <Corbin> I developed about half a Capn stack for Monte before realizing that JSON would work just as well. The current RPC framework just uses JSON over https://amp-protocol.net/
+[07:38:35] <Corbin> Capn is meant to be faster protobufs. If protobufs aren't on the menu, then Capn shouldn't be either.
+[07:40:40] <companion_cube> yeah
+[07:40:45] <companion_cube> it's faster, but a lot more complicated
+[07:40:52] <companion_cube> and there's the speed vs size tradeoff.
+[07:41:07] <companion_cube> it'd be awesome if people ditched gRPC and adopted capnproto's RPC system en masse
+[07:41:13] <companion_cube> but I think it'll never happen
+[07:42:07] <Corbin> Yes. And TBF implementing their "level 3" or "level 4" RPC is non-trivial in *any* language. Gotta implement a little capability-handling framework. Something like the "Gordian surgeon" is required to slice objects into minimal network-safe units.
+[07:42:45] <Corbin> http://www.erights.org/data/serial/jhu-paper/deconstructing.html is the obligatory archeological link. Where they say "Data-E", substitute "JSON", as Crockford eventually renamed it.
+[07:44:29] <sleepydog> thanks for this link, i haven't read it before
+[07:44:56] <companion_cube> yeah exactly, Corbin. the RPC thing is really advanced.
+[07:45:10] <companion_cube> this might just be ahead of its time
+[07:47:46] <Corbin> companion_cube: Yeah. I've been trying to make this stuff more accessible for years, and I'm not sure what else I can do besides (a) build little toys like Monte and (b) interoperate with standards like Capn when they arise. And (c) write cryptic obscurantist ramblings on public boards~
+[07:48:44] <Corbin> Really, we just need JSON but with holes that can hold references to capabilities. When you want to send an object reference to somebody, either encode it as a JSON literal or just send the reference as a hole.
+[07:50:16] <companion_cube> write a RFC? :p
+[07:50:25] <companion_cube> tbh I think json is just overly wasteful
+[07:50:35] <companion_cube> it's nice and readable, ish, but really, what a waste
+[07:52:33] <Corbin> What do you think of AMP, at amp-protocol.net? Full disclosure: I pay to host this domain, but I don't control the docs. It happens to be low-latency, easy to implement, and extensible to hold a rich AST or JSON or whatever.
+[07:53:48] <companion_cube> it's an unfortunate name
+[07:55:07] <companion_cube> hmm it says "statically, strongly typed" but I don't see any schema anywhere :/
+[07:55:23] <Corbin> Yeah. And just like with those other cases, our usage predates the rude usage by those other folks. I've used multiprocessing on AMP in Python for a Minecraft server, and in Monte for a raytracer.
+[07:55:31] <companion_cube> ah damn :/
+[07:55:47] <Corbin> https://github.com/twisted/ampoule/blob/master/examples/pid.py The schema's declared in a DSL, in the class on l4.
+[07:56:35] *** Joins: rgrinberg (~textual@187.194.14.9)
+[07:56:46] <companion_cube> hmm so it seems a bit like jsonrpc, but with something better than json?
+[07:56:48] * Corbin dives into the cringe archives
+[07:57:20] <companion_cube> DSL? sad
+[07:59:34] <Corbin> Yeah. https://github.com/bravoserver/bravo/blob/master/bravo/remote.py here's a serious usage. The reason it's a DSL is because they intended all subprocesses to be forked children; they did not really consider other usage patterns.
+[08:00:41] <Corbin> And indeed, JSON-RPC is a serious contender. The main reason I prefer AMP is because I don't like the overhead of HTTP; it's harder to write a secure HTTP client/server and asymmetric.
+[08:05:28] <companion_cube> you don't have to do http for jsonrpc, in theory
+[08:05:32] <companion_cube> it's transport agnostic
+[08:05:35] <companion_cube> (see: LSP)
+[08:16:24] *** Quits: zebrag (~chris@user/zebrag) (Quit: Konversation terminated!)
+[08:19:48] *** Quits: rgrinberg (~textual@187.194.14.9) (Read error: Connection reset by peer)
+[08:20:09] *** Joins: rgrinberg (~textual@187.194.14.9)
+[08:21:07] *** Quits: rgrinberg (~textual@187.194.14.9) (Read error: Connection reset by peer)
+[08:34:11] *** Joins: rgrinberg (~textual@187.194.14.9)
+[08:36:41] *** Quits: rgrinberg (~textual@187.194.14.9) (Read error: Connection reset by peer)
+[08:37:41] *** Joins: rgrinberg (~textual@2806:101e:7:5da4:a54b:13e2:82b5:a352)
+[08:42:17] *** Quits: rgrinberg (~textual@2806:101e:7:5da4:a54b:13e2:82b5:a352) (Ping timeout: 240 seconds)
+[08:50:53] *** Joins: rgrinberg (~textual@2806:101e:7:5da4:8d02:94d4:341b:3a0c)
+[08:54:57] <d_bot> <darrenldl> the want to write a .ics generator intensifies as semester closes in hmmm
+[09:27:24] *** Joins: Dimonax (~Dimonax@2600:6c4a:727f:ee89:215:17ff:feea:8304)
+[09:41:25] *** Joins: mbuf (~Shakthi@117.96.194.162)
+[09:50:11] *** Quits: rgrinberg (~textual@2806:101e:7:5da4:8d02:94d4:341b:3a0c) (Ping timeout: 256 seconds)
+[10:53:14] *** Quits: spip (~bobo@37.166.248.134) (Quit: Konversation terminated!)
+[11:46:41] *** Joins: Serpent7776 (~Serpent77@90-156-31-193.internetia.net.pl)
+[12:02:05] *** Joins: Tuplanolla (~Tuplanoll@91-159-69-98.elisa-laajakaista.fi)
+[12:25:13] *** Quits: mbuf (~Shakthi@117.96.194.162) (Remote host closed the connection)
+[12:31:09] *** Joins: mro (~mro@p548e25ae.dip0.t-ipconnect.de)
+[13:09:03] *** Quits: mro (~mro@p548e25ae.dip0.t-ipconnect.de) (Remote host closed the connection)
+[13:10:19] *** Joins: bartholin (~bartholin@109.53.6.197)
+[13:15:51] *** Joins: mbuf (~Shakthi@117.96.194.162)
+[13:29:15] *** Joins: random-jellyfish (~random-je@user/random-jellyfish)
+[13:31:03] <random-jellyfish> Hi, I'm using the visual studio plugin for OCaml and if try to "open Graphics;;" it says "Unbound module Graphics"
+[13:31:19] <random-jellyfish> I have installed the graphics package
+[13:31:33] <random-jellyfish> is there some extra setup I have to do in vscode?
+[13:33:58] <d_bot> <Jektrix> is your vscode plugin set to use the same opam switch as the one you installed `ocaml-lsp-server` into?
+[13:34:25] <d_bot> <Jektrix> Well, to back things up, have you installed `ocaml-lsp-server` ?
+[13:34:47] <random-jellyfish> yes I have
+[13:35:24] <d_bot> <Jektrix> Check that vscode is using the correct opam switch first of all, I've made that mistake a few times
+[13:37:00] <random-jellyfish> it's giving me the option to select a sandbox: a global or a custom one
+[13:37:23] <random-jellyfish> global one seems to be default but with that it doesn't work
+[13:37:39] <d_bot> <Jektrix> Hmm, global should work. If you do ctrl+shift+p and restart language server what happens?
+[13:38:12] <random-jellyfish> same
+[13:38:53] <d_bot> <Jektrix> are you using dune?
+[13:39:53] <random-jellyfish> no, don't think so, what is dune?
+[13:40:11] <random-jellyfish> I just want to run a small example
+[13:40:19] <random-jellyfish> I'm still learning ocaml
+[13:40:22] <octachron> A build system for OCaml.
+[13:40:26] <random-jellyfish> I have a project with one file
+[13:40:31] <d_bot> <Jektrix> Probably have to wait for someone more experienced than me to chime in but I always have to dune build first
+[13:40:39] <random-jellyfish> and in that file I want to use the Graphics module
+[13:40:50] <random-jellyfish> and vscode says "Unbound module"
+[13:41:12] <d_bot> <Jektrix> so you may need to compile your code with `open Graphics` in it **once** first for the vscode lsp plugin to recognise it. I believe this is because it needs Merlin to spit out information first.
+[13:41:20] <octachron> Then it is probably better to learn how to dune a simple dune file in order to add the graphics library to your project
+[13:41:21] <random-jellyfish> if I open up the ocaml repl and do "#require "graphics";; open Graphics;;" it doesn't show any errors
+[13:42:07] <octachron> require "graphics" is used to load the graphics library
+[13:42:31] <d_bot> <Jektrix> I generally find after I create a new module or install a new package, i need to compile my code once first before the LSP recognises that it exists for some reason. again, I think it's related to merlin but not 100% sure.
+[13:43:31] <random-jellyfish> can you tell me how to compile a single file from the command line?
+[13:43:33] <octachron> You can use ocamlfind directly to compile directly your file with the graphics library, but that is not really scalable
+[13:43:37] <random-jellyfish> I can probably search for it
+[13:44:18] <d_bot> <Butanium (@me on answer)> It's recommanded to use dun
+[13:44:35] <octachron> and the small dune file that I speak of is "(executable (name main) (libraries graphics))" (where main is the name of your main module)
+[13:44:53] <d_bot> <Jektrix> I can't even remember the commands since I pretty much always use dune.
+[13:44:54] <d_bot> <Jektrix> it should be `ocamlopt -o program.exe file1.ml` I think
+[13:45:37] <d_bot> <Butanium (@me on answer)> Also don't you need `eval $(opam env) ` ?
+[13:46:01] <octachron> @Jektrix, your are missing the graphics library, which is kind of the whole point?
+[13:46:41] <d_bot> <Jektrix> Oh right whoops, yeah I haven't done it on the command line in so long without dune I forgot... you need to add ocamlfind in front to find and include the package.
+[13:47:09] <d_bot> <Jektrix> just do the dune file octachron posted random-jellyfish
+[13:47:23] <random-jellyfish> what should the dune file be named?
+[13:47:47] <d_bot> <Jektrix> `dune`
+[13:47:50] <random-jellyfish> okay
+[13:49:05] <d_bot> <Jektrix> you will need to opam install dune as well if you haven't already. after that you will have your `main.ml` and `dune`, then you can run `dune exec main.exe` to compile and run the program.
+[13:49:17] <random-jellyfish> wait a minute
+[13:49:28] <random-jellyfish> my example file was named "graphics.ml"
+[13:49:36] <random-jellyfish> I changed it and now the error is gone
+[13:49:45] <random-jellyfish> could that have been the problem?
+[13:49:55] <random-jellyfish> that the file has the same name as some installed module?
+[13:50:04] <octachron> Yes, module names need to be unique
+[13:50:08] <d_bot> <Jektrix> lol
+[13:50:17] <random-jellyfish> right
+[13:50:19] <d_bot> <Jektrix> I ... didn't think of that. Sorry random-jellyfish
+[13:50:20] <random-jellyfish> perfect
+[13:50:35] <octachron> (and if you are using an old version of OCaml, graphics might not be a library yet)
+[13:51:05] <random-jellyfish> I've installed it on ubuntu with "sudo apt install ..."
+[13:51:35] <random-jellyfish> opam found and installed graphics
+[13:55:42] <random-jellyfish> in the dune file, the name parameter should be the same as the file I want to compile?
+[14:02:09] <octachron> It should be the name of your main module, and if you have only one file, then it is also your "main" module.
+[14:03:07] <octachron> The advantage of dune is then that you will not need to change anything when you add more (auxiliary) modules to your project.
+[14:03:37] *** Quits: Dimonax (~Dimonax@2600:6c4a:727f:ee89:215:17ff:feea:8304) (Quit: Leaving)
+[14:05:20] *** Joins: mro (~mro@p200300d72f2da7006dc7a4d747aee2df.dip0.t-ipconnect.de)
+[14:07:38] <random-jellyfish> so I renamed my file to main.ml
+[14:07:45] <random-jellyfish> "dune build" runs without error
+[14:07:59] <random-jellyfish> but now how do I run it?
+[14:10:21] <random-jellyfish> nevermind, found the executable
+[14:10:29] *** Quits: mro (~mro@p200300d72f2da7006dc7a4d747aee2df.dip0.t-ipconnect.de) (Remote host closed the connection)
+[14:20:53] *** Joins: mro (~mro@p200300d72f2da7006dc7a4d747aee2df.dip0.t-ipconnect.de)
+[14:31:30] <d_bot> <Butanium (@me on answer)> you can do `dune exec ./main.exe`
+[14:37:10] *** Joins: Haudegen (~quassel@178.115.237.87.static.drei.at)
+[14:39:45] *** Quits: mro (~mro@p200300d72f2da7006dc7a4d747aee2df.dip0.t-ipconnect.de) (Remote host closed the connection)
+[14:43:09] <random-jellyfish> thanks
+[14:44:46] *** Quits: bartholin (~bartholin@109.53.6.197) (Ping timeout: 256 seconds)
+[14:56:52] *** Joins: bartholin (~bartholin@109.53.0.141)
+[15:14:35] <d_bot> <gabriel_> hello guys, can someone explain to me how to terminate a program please
+[15:15:31] <d_bot> <gabriel_> here is my program :
+[15:15:32] <d_bot> <gabriel_>  let rec pgcd a b = match (a,b) with
+[15:15:33] <d_bot> <gabriel_>     |(a,b) when a=b->a
+[15:15:34] <d_bot> <gabriel_>     |(a,b) when a>b -> pgcd(a-b) b
+[15:15:36] <d_bot> <gabriel_>     |_->pgcd a (b-a);;
+[15:23:25] <qwr> that is a function, probably terminating by itself
+[15:25:19] *** Quits: hyphen (~hyphen@41.40.168.24) (Ping timeout: 256 seconds)
+[15:26:58] *** Joins: hyphen (~hyphen@102.42.162.235)
+[15:28:07] *** Joins: Nahra (~user@static.161.95.99.88.clients.your-server.de)
+[15:30:13] <random-jellyfish> isn't it like writing in an imperative language while(a!=b) { if(a>b) a = a-b else b = b-a; } ?
+[15:32:52] <d_bot> <gabriel_> ok
+[15:36:27] <random-jellyfish> if you run it with a==b then it will run forever
+[15:36:56] <random-jellyfish> because if will be set to 0 in the first iteration and then a>b forever
+[15:42:19] *** Quits: random-jellyfish (~random-je@user/random-jellyfish) (Ping timeout: 256 seconds)
+[15:43:48] *** Quits: bartholin (~bartholin@109.53.0.141) (Ping timeout: 272 seconds)
+[15:47:55] <d_bot> <VPhantom> Re: RPC with Protobuf, first we never have ambiguity about which message we're dealing with anywhere, because we have a single wrapper message that can contain anything we might want at a root level. One of these things is an RPC "message" which may contain authentication stuff (for public API users) and any number of requests and responses (both sides can issue both). Requests include a magic number so responses can be matched,
+[15:56:55] *** Joins: bartholin (~bartholin@109.53.5.205)
+[16:04:59] *** Quits: bartholin (~bartholin@109.53.5.205) (Ping timeout: 256 seconds)
+[16:17:38] *** Joins: bartholin (~bartholin@109.53.4.116)
+[16:31:44] *** Joins: gravicappa (~gravicapp@178.214.246.212)
+[16:59:57] *** Quits: cross (~cross@spitfire.i.gajendra.net) (Quit: leaving)
+[17:00:32] *** Joins: cross (~cross@spitfire.i.gajendra.net)
+[17:43:37] *** Quits: bartholin (~bartholin@109.53.4.116) (Ping timeout: 240 seconds)
+[17:56:01] *** Joins: bartholin (~bartholin@109.53.0.13)
+[18:02:55] *** Joins: mro (~mro@p200300d72f2da7006dc7a4d747aee2df.dip0.t-ipconnect.de)
+[18:07:00] *** Quits: mro (~mro@p200300d72f2da7006dc7a4d747aee2df.dip0.t-ipconnect.de) (Remote host closed the connection)
+[18:19:24] <d_bot> <Jean Issou> @everyone
+[18:19:26] <d_bot> <Jean Issou> https://docs.google.com/forms/d/e/1FAIpQLSc53uGay2Q8P01_MBIW8nIAWmZXGAVMeqUWlq_bMNub0-UG7Q/viewform?usp=sf_link
+[18:24:48] <d_bot> <VPhantom> (Thank you moderators, for whatever that was! 😉)
+[18:28:44] *** Joins: jlrnick (~josephler@2a01cb040a159400593e7a6802b925cf.ipv6.abo.wanadoo.fr)
+[18:32:00] *** Quits: bartholin (~bartholin@109.53.0.13) (Ping timeout: 256 seconds)
+[18:51:16] *** Quits: hyphen (~hyphen@102.42.162.235) (Ping timeout: 272 seconds)
+[18:52:30] *** Joins: hyphen (~hyphen@102.41.3.139)
+[18:52:38] *** Joins: bartholin (~bartholin@109.53.0.13)
+[18:54:46] *** Quits: jlrnick (~josephler@2a01cb040a159400593e7a6802b925cf.ipv6.abo.wanadoo.fr) (Ping timeout: 260 seconds)
+[19:02:48] *** Joins: spip (~bobo@37.171.176.64)
+[19:08:44] *** Joins: mro (~mro@p200300d72f2da7006dc7a4d747aee2df.dip0.t-ipconnect.de)
+[19:13:01] *** Quits: mro (~mro@p200300d72f2da7006dc7a4d747aee2df.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[19:19:02] *** Quits: bartholin (~bartholin@109.53.0.13) (Ping timeout: 256 seconds)
+[19:19:03] *** Quits: mbuf (~Shakthi@117.96.194.162) (Quit: Leaving)
+[19:19:26] *** Joins: bartholin (~bartholin@109.53.0.13)
+[19:53:37] *** Quits: bartholin (~bartholin@109.53.0.13) (Ping timeout: 240 seconds)
+[19:55:18] *** Quits: hyphen (~hyphen@102.41.3.139) (Ping timeout: 256 seconds)
+[20:00:42] *** Joins: hyphen (~hyphen@41.35.164.250)
+[20:07:56] *** Joins: bartholin (~bartholin@109.53.2.43)
+[20:25:00] *** Quits: bartholin (~bartholin@109.53.2.43) (Ping timeout: 272 seconds)
+[20:28:48] *** Joins: mro (~mro@port-92-195-165-172.dynamic.as20676.net)
+[20:37:31] *** Joins: bartholin (~bartholin@109.53.5.12)
+[20:49:42] *** Quits: bartholin (~bartholin@109.53.5.12) (Ping timeout: 272 seconds)
+[20:51:44] *** Joins: rgrinberg (~textual@2806:101e:7:5da4:f931:4dd:828a:cfc2)
+[21:02:18] *** Joins: bartholin (~bartholin@109.53.3.128)
+[21:12:27] *** Quits: rgrinberg (~textual@2806:101e:7:5da4:f931:4dd:828a:cfc2) (Ping timeout: 256 seconds)
+[21:14:12] *** Joins: rgrinberg (~textual@187.194.14.9)
+[21:19:12] *** Joins: waleee (~waleee@h-98-128-229-110.NA.cust.bahnhof.se)
+[21:23:49] *** Quits: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca) (Quit: WeeChat 3.4)
+[21:24:26] *** Joins: Anarchos (~Anarchos@88.168.112.216)
+[21:32:22] *** Quits: mro (~mro@port-92-195-165-172.dynamic.as20676.net) (Remote host closed the connection)
+[21:33:05] *** Quits: bartholin (~bartholin@109.53.3.128) (Ping timeout: 256 seconds)
+[21:44:46] *** Joins: ouestbillie (~gallup@192-222-138-215.qc.cable.ebox.net)
+[21:46:14] *** Joins: bartholin (~bartholin@109.53.5.105)
+[21:47:07] *** Quits: rgrinberg (~textual@187.194.14.9) (Read error: Connection reset by peer)
+[21:47:51] *** Joins: rgrinberg (~textual@2806:101e:7:5da4:9dd2:64b9:16ba:553d)
+[22:04:01] *** Quits: rgrinberg (~textual@2806:101e:7:5da4:9dd2:64b9:16ba:553d) (Ping timeout: 256 seconds)
+[22:15:14] *** Joins: jlrnick (~josephler@2a01cb040a159400593e7a6802b925cf.ipv6.abo.wanadoo.fr)
+[22:15:16] *** Quits: hyphen (~hyphen@41.35.164.250) (Ping timeout: 256 seconds)
+[22:17:15] *** Joins: hyphen (~hyphen@41.47.119.183)
+[22:29:13] *** Quits: ouestbillie (~gallup@192-222-138-215.qc.cable.ebox.net) (Quit: leaving)
+[22:30:09] *** Quits: Anarchos (~Anarchos@88.168.112.216) (Quit: Vision[]: i've been blurred!)
+[22:39:20] *** Joins: perrierjouet (~perrier-j@modemcable012.251-130-66.mc.videotron.ca)
+[22:49:13] *** Joins: sda (~sda@2a01cb040495d8001b241566d5bd4a39.ipv6.abo.wanadoo.fr)
+[22:49:27] *** Quits: sda (~sda@2a01cb040495d8001b241566d5bd4a39.ipv6.abo.wanadoo.fr) (Client Quit)
+[23:03:48] *** Joins: vicfred (~vicfred@user/vicfred)
+[23:04:14] *** Quits: vicfred (~vicfred@user/vicfred) (Remote host closed the connection)
+[23:04:37] *** Joins: vicfred (~vicfred@user/vicfred)
+[23:26:33] <d_bot> <orbitz> If I have merlin setup emacs, is there a compelling reason to move to ocaml-lsp in emacs?
+[23:29:23] *** Quits: vicfred (~vicfred@user/vicfred) (Quit: Leaving)
+[23:32:54] *** Quits: bartholin (~bartholin@109.53.5.105) (Ping timeout: 256 seconds)
+[23:45:15] *** Joins: bartholin (~bartholin@109.53.0.29)
+[23:50:21] *** Quits: adanwan_ (~adanwan@gateway/tor-sasl/adanwan) (Ping timeout: 276 seconds)
+[23:50:35] *** Joins: adanwan (~adanwan@gateway/tor-sasl/adanwan)
+[23:53:22] *** Quits: bartholin (~bartholin@109.53.0.29) (Ping timeout: 272 seconds)

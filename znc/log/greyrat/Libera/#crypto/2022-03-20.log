@@ -1,0 +1,597 @@
+[00:00:21] *** Quits: TunnelJ (~TunnelJ@99-167-200-231.lightspeed.sndgca.sbcglobal.net) (Quit: Quit)
+[00:00:34] *** Joins: brolin (~brolin@179.13.18.50)
+[00:00:48] <ms7821> bECC JS code beautified at https://gist.github.com/marksteward/0a6797a70e5e7dae172adabe2a40cf04
+[00:01:40] <ms7821> even knowing exactly what toEPIF and the v parameter of field_mult are would be super useful
+[00:03:22] <ms7821> (I thought they were mod n and don't mod but testing suggests they're not)
+[00:12:14] *** Quits: brolin (~brolin@179.13.18.50) (Remote host closed the connection)
+[00:17:00] *** Quits: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu) (Ping timeout: 252 seconds)
+[00:22:10] *** Parts: NeoFAT32_ (~NeoFAT32_@118.179.224.74) (Leaving)
+[00:23:24] *** Joins: X-Scale` (~ARM@219.206.137.78.rev.vodafone.pt)
+[00:25:24] *** Quits: X-Scale (~ARM@219.206.137.78.rev.vodafone.pt) (Ping timeout: 240 seconds)
+[00:25:24] *** X-Scale` is now known as X-Scale
+[00:28:38] *** Joins: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu)
+[00:30:50] <int-e>  ms7821: v is always 0, isn't it? v=0 implements field arithmetic in Z_2[x]/(x^163 + x^7 + x^6 + x^3 + 1). v = 1 looks like it's reducing modulo x^171 + x^70 + 1 instead... except the mask on line 632 is wrong. Oh and that polynomial is reducible.
+[00:31:24] <ms7821> v is 1 on line 99
+[00:31:28] <int-e> Err. Nah, the mask is right. But it's reducible, so it won't be a field.
+[00:32:04] <int-e> line 99... oh over there. Well, fun.
+[00:32:32] *** Joins: agrosant (~agrosant@79.103.63.74.dsl.dyn.forthnet.gr)
+[00:33:59] *** Joins: gde33 (~gde33@84-106-154-98.cable.dynamic.v4.ziggo.nl)
+[00:34:02] *** Quits: ___nick___ (~quassel@cpc68286-cdif17-2-0-cust533.5-1.cable.virginm.net) (Ping timeout: 240 seconds)
+[00:38:13] <int-e> Oh, that polynomial does have a degree 163 irreducible factor though... so there's *some* relation to GF(2^163). But the representation is totally different from the other one....
+[00:38:40] <int-e> This is weird. What is this supposed to implement?
+[00:38:59] <ms7821> some sort of B-163 signature challenge thingy
+[00:39:26] *** Parts: agrosant (~agrosant@79.103.63.74.dsl.dyn.forthnet.gr) ()
+[00:39:26] *** Joins: agrosant (~agrosant@79.103.63.74.dsl.dyn.forthnet.gr)
+[00:39:36] <ms7821> but it doesn't actually sign a message afaict, and the client chooses k (r in their parlance) for it
+[00:40:26] *** Joins: sobkas (~sobkas@95.175.17.217)
+[00:41:16] <ms7821> I don't know ECDSA well enough to know if signing a "fixed" message (maybe the sqrt(b) it passes in?) is safe
+[00:42:48] *** Joins: nq (~nq@2a02:2f08:e015:a900:ce88:51fe:c7ec:5ed9)
+[00:43:15] <int-e> ms7821: Well, I see no reason why the v=1 variant of field multiplication exists, especially when it's mixed with the v=0 variant. The existence of that code path is very dubious.
+[00:43:18] <ms7821> like all the literature is like "don't reuse or leak k" but the attacks I've found involve different messages
+[00:46:25] <ms7821> I was wondering if v=1 might be used when you're going to call toEPIF, to allow for much faster calculations?
+[00:47:57] <ms7821> like the way you only need to call mod in RSA at the end
+[00:48:47] <int-e> maybe that's the idea, but x^163 + x^7 + x^6 + x^3 + 1 isn't a factor of x^171 + x^70 + 1; some other irreducible polynomial of degree 163 is.
+[00:50:21] <int-e> too long for IRC; cf. https://paste.debian.net/1234941/
+[01:00:00] <int-e> ms7821: toEPIF only looks at the bottom 163 bits, so passing in a result that's not fully reduced modulo... well, I assume x^163 + x^7 + x^6 + x^3 + 1 is the correct polynomial... is not going to work
+[01:01:00] <ms7821> yeah https://neuromancer.sk/std/nist/B-163
+[01:01:20] <ms7821> (Gx, Gy and sqrtb also match)
+[01:01:59] <ms7821> and hmm, I wonder what it means then
+[01:02:20] <ms7821> it must be something like "to ECC point in field" but I don't know what that would mean exactly
+[01:05:27] <ms7821> I've tried to get my head around ECC stuff properly many times and it just doesn't stick. Like electronics circuit analysis
+[01:09:21] <int-e> ms7821: Oh, wait. the *outputs* of toEPIF are multiplied using the v = 1 version?
+[01:09:38] <ms7821> hmm, I thought it was the inputs
+[01:10:09] <ms7821> guess it's not
+[01:10:38] <ms7821> I assumed EPIF was "tied" to the previous functions
+[01:10:58] <ms7821> but that doesn't seem to be consistent
+[01:10:59] <int-e> And toEPIF uses that big isoTimesAMatrix which might well contain an isomorphism from one GF(2^63) representation to another...
+[01:12:04] <ms7821> why would someone do that?
+[01:14:06] <ms7821> I can't find EPIF_gx anywhere, but it does match isoTimesAMatrix_1
+[01:14:23] <ms7821> and only EPIF_kx is used by this code
+[01:16:50] <int-e> isoTimesAMatrix_1 corresponds to x in the Z_2[x]/(x^163 + x^7 + x^6 + x^3 + 1) representation of GF(2^163).
+[01:17:03] <ms7821> ahaha I have no idea what that means
+[01:20:58] <ms7821> hmm, I wonder if https://patents.google.com/patent/US7200225 is related
+[01:21:10] <ms7821> it's the right time period and mentions x and sqrt[b]/x
+[01:22:31] <ms7821> > specific to curves constructed over binary fields
+[01:22:52] <ms7821> > a simplified method of verifying that an x-coordinate lies on a specific curve
+[01:32:40] *** Joins: X-Scale` (~ARM@92.250.103.201)
+[01:32:48] *** Quits: drathir_tor (~drathir@wireguard/tunneler/drathir) (Remote host closed the connection)
+[01:33:04] *** Quits: llorllale (~llorllale@198.98.119.85) (Ping timeout: 268 seconds)
+[01:35:03] *** Quits: X-Scale (~ARM@219.206.137.78.rev.vodafone.pt) (Ping timeout: 256 seconds)
+[01:35:14] *** X-Scale` is now known as X-Scale
+[01:38:05] *** Joins: drathir_tor (~drathir@wireguard/tunneler/drathir)
+[01:42:54] *** Joins: son0p (~ff@181.136.122.143)
+[01:45:15] *** Quits: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu) (Ping timeout: 256 seconds)
+[01:48:29] <int-e> ms7821: Okay. This actually makes sense. https://paste.debian.net/1234951/ has some key bits of the puzzle.
+[01:48:53] <ms7821> oh wow
+[01:49:04] <int-e> ms7821: As to why someone would do this, I suppose the lower bit weight of x^171 + x^70 + 1 makes that second representation attractive for hardware implementations
+[01:49:40] <ms7821> that's amazing, thank you so much
+[01:53:05] <ms7821> so it's calling toEPIF any time it wants to talk to or compare with an output from the device
+[01:53:23] <int-e> Yeah, that would be my guess.
+[01:54:08] <ms7821> (and uses v=1)
+[01:56:18] <int-e> And there's no fromEPIF so testing this may be a bit tricky :)
+[01:56:56] <ms7821> 😬
+[01:58:00] *** Joins: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu)
+[01:59:09] <ms7821> the reason I started digging into this was the documentation suggested it was just multiplying rG by q, which would be pretty broken
+[01:59:56] <ms7821> but given this shows they've clearly thought hard about the whole flow, and it looks like it is doing at least some sort of signing, I'm going to assume it's not trivially breakable
+[02:00:00] <int-e> maybe the right way to test this is to hack toEPIF to be the identity function and drop the check for v = 1 ;-)
+[02:00:45] <int-e> But... eh, I think I'm done with this.
+[02:00:55] <ms7821> no worries, thanks for your time!
+[02:01:33] <int-e> It's nice feeling to progress from "this makes no sense at all" to "oh actually it does".
+[02:02:38] <ms7821> heh
+[02:02:52] <ms7821> could the IF of EPIF be isomorphic field then?
+[02:12:27] <int-e> I have no idea :)
+[02:13:00] *** Quits: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu) (Ping timeout: 250 seconds)
+[02:25:58] *** Quits: Seirdy (~Seirdy@sourcehut/user/seirdy) (Quit: exiting 3.4)
+[02:26:13] *** Joins: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu)
+[02:40:54] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[02:41:54] *** Quits: Guyver2 (~Guyver@guyver2.xs4all.nl) (Quit: Going offline, see ya! (www.adiirc.com))
+[02:54:57] *** Quits: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu) (Ping timeout: 256 seconds)
+[02:57:10] *** Quits: Major_Biscuit (~MajorBisc@c-001-024-004.client.tudelft.eduvpn.nl) (Ping timeout: 260 seconds)
+[03:04:21] *** Quits: machinedgod (~machinedg@24.105.81.50) (Ping timeout: 256 seconds)
+[03:07:01] *** Joins: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu)
+[03:09:08] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[03:09:24] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[03:14:13] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[03:16:59] *** Quits: ioxzev1z (~ioxzev1z@user/ioxzev1z) (Quit: Leaving)
+[03:33:51] *** Joins: Seirdy (~Seirdy@sourcehut/user/seirdy)
+[03:54:19] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[03:55:18] *** Joins: machinedgod (~machinedg@24.105.81.50)
+[03:58:59] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[04:21:08] *** Joins: Pythayr` (~pither195@2600:1700:82f0:2fe0::1f)
+[04:22:37] *** Quits: Pythayr (~pither195@92.38.171.13) (Ping timeout: 240 seconds)
+[04:27:39] *** Quits: Pythayr` (~pither195@2600:1700:82f0:2fe0::1f) (Ping timeout: 256 seconds)
+[04:29:57] *** Quits: Wulf (~Wulf@user/wulf) (Ping timeout: 240 seconds)
+[04:31:48] *** Joins: Wulf (~Wulf@user/wulf)
+[04:40:20] *** Quits: xx (~xx@user/xx) (Ping timeout: 250 seconds)
+[04:45:57] *** Quits: PJBoy (~PJBoy@user/pjboy) (Ping timeout: 252 seconds)
+[04:51:08] *** Joins: igemnace (~ian@user/igemnace)
+[04:51:41] *** Quits: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu) (Ping timeout: 256 seconds)
+[05:04:02] *** Joins: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu)
+[05:05:02] *** Quits: machinedgod (~machinedg@24.105.81.50) (Ping timeout: 250 seconds)
+[05:13:30] *** Quits: igemnace (~ian@user/igemnace) (Read error: Connection reset by peer)
+[05:15:25] *** Joins: skaro (~skaro@2600:8807:180:80:1173:3f2:e84a:7d63)
+[05:18:37] *** Quits: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470) (Ping timeout: 240 seconds)
+[05:23:17] *** Joins: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470)
+[05:23:36] *** Joins: igemnace (~ian@user/igemnace)
+[05:34:20] *** Quits: gevreeen (~gevreeen@2001:470:67:326:7c6b:19ca:beb4:741f) (Ping timeout: 252 seconds)
+[05:49:54] *** Quits: Everything (~Everythin@37.115.210.35) (Quit: leaving)
+[05:54:54] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[06:00:15] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[06:01:32] *** Quits: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470) (Ping timeout: 240 seconds)
+[06:04:40] *** Joins: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470)
+[06:06:04] *** Quits: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470) (Max SendQ exceeded)
+[06:06:22] *** Joins: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470)
+[06:16:59] *** Quits: sobkas (~sobkas@95.175.17.217) (Remote host closed the connection)
+[06:19:29] *** Joins: sobkas (~sobkas@95.175.17.217)
+[06:21:02] *** Quits: varayu (~varayu@157.37.134.229) (Ping timeout: 240 seconds)
+[06:22:02] *** Quits: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu) (Ping timeout: 240 seconds)
+[06:34:55] *** Joins: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu)
+[06:38:16] *** Joins: sha2ks (~sha2cks@2001:470:69fc:105::1:df0c)
+[06:54:55] *** Quits: lumberjack123 (~alMalsamo@gateway/tor-sasl/almalsamo) (Ping timeout: 240 seconds)
+[06:57:11] *** Joins: lumberjack123 (~alMalsamo@gateway/tor-sasl/almalsamo)
+[06:59:00] *** Quits: igemnace (~ian@user/igemnace) (Remote host closed the connection)
+[07:11:47] *** Joins: ravan (~ravan@user/ravan)
+[07:22:29] *** Quits: sobkas (~sobkas@95.175.17.217) (Quit: sobkas)
+[07:32:00] *** Quits: milkt (~debian@gateway/tor-sasl/milkt) (Remote host closed the connection)
+[07:34:39] *** Joins: bluehoney (~bluehoney@cpe-75-81-204-188.mi.res.rr.com)
+[07:37:32] *** Joins: milkt (~debian@gateway/tor-sasl/milkt)
+[07:39:18] *** Joins: piku (~piku@47-202-113-8.tamp.fl.frontiernet.net)
+[07:42:57] *** Quits: piku (~piku@47-202-113-8.tamp.fl.frontiernet.net) (Client Quit)
+[07:56:01] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[08:00:57] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[08:40:54] *** Joins: BOKALDO (~BOKALDO@user/bokaldo)
+[08:44:06] *** Joins: comet23 (comet23@user/comet23)
+[09:26:54] *** Joins: frost (~frost@user/frost)
+[09:32:55] *** Joins: ravan_ (~ravan@user/ravan)
+[09:35:17] *** Quits: ravan (~ravan@user/ravan) (Ping timeout: 240 seconds)
+[09:46:30] *** Joins: labrador (~labrador@user/labrador)
+[09:48:01] *** Joins: bluehoney_ (~bluehoney@gateway/vpn/pia/bluehoney)
+[09:50:53] *** Quits: bluehoney (~bluehoney@cpe-75-81-204-188.mi.res.rr.com) (Ping timeout: 256 seconds)
+[09:54:17] *** Quits: bluehoney_ (~bluehoney@gateway/vpn/pia/bluehoney) (Ping timeout: 256 seconds)
+[09:57:11] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[10:01:39] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[10:20:54] *** Quits: lagash (lagash@lagash.shelltalk.net) (Ping timeout: 252 seconds)
+[10:22:16] *** Quits: comet23 (comet23@user/comet23) (Quit: Client closed)
+[10:37:31] *** Quits: nq (~nq@2a02:2f08:e015:a900:ce88:51fe:c7ec:5ed9) (Quit: Leaving)
+[10:44:08] *** Joins: gabriel1 (~gabriel1@user/gabriel1)
+[11:05:25] *** Joins: lagash (lagash@lagash.shelltalk.net)
+[11:19:15] *** Quits: Sofia (~sofia@user/sofia) (Ping timeout: 240 seconds)
+[11:24:40] *** Joins: gevreeen (~gevreeen@14.155.114.241)
+[11:33:57] *** Joins: Sofia (~sofia@user/sofia)
+[11:41:32] *** Joins: lainon (~lainon@c-68-46-201-40.hsd1.al.comcast.net)
+[11:42:41] *** Quits: gevreeen (~gevreeen@14.155.114.241) (Quit: gevreeen)
+[11:43:02] *** Joins: gevreeen (~gevreeen@2001:470:67:326:eddf:d09f:71d2:ada1)
+[11:43:24] *** Quits: gevreeen (~gevreeen@2001:470:67:326:eddf:d09f:71d2:ada1) (Read error: Connection reset by peer)
+[11:43:43] *** Joins: gevreeen (~gevreeen@2001:470:67:326:eddf:d09f:71d2:ada1)
+[11:44:49] *** Quits: lainon (~lainon@c-68-46-201-40.hsd1.al.comcast.net) (Remote host closed the connection)
+[11:48:51] *** Joins: lainon (~lainon@c-68-46-201-40.hsd1.al.comcast.net)
+[11:49:07] *** Quits: lainon (~lainon@c-68-46-201-40.hsd1.al.comcast.net) (Remote host closed the connection)
+[11:57:47] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[11:58:00] *** Quits: gabriel1 (~gabriel1@user/gabriel1) (Read error: Connection reset by peer)
+[11:58:48] *** Joins: gabriel1 (~gabriel1@user/gabriel1)
+[12:02:55] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[12:07:28] *** Quits: sebbu (~sebbu@user/sebbu) (Quit: reboot)
+[12:09:12] *** Joins: Pollion (bombar@zamok.crans.org)
+[12:09:49] *** Quits: Pollion (bombar@zamok.crans.org) (Changing host)
+[12:09:49] *** Joins: Pollion (bombar@crans/pollion)
+[12:13:48] *** Joins: gabriel1_ (~gabriel1@37.164.218.102)
+[12:16:12] *** Quits: gabriel1 (~gabriel1@user/gabriel1) (Ping timeout: 250 seconds)
+[12:26:30] *** Joins: MajorBiscuit (~MajorBisc@c-001-023-015.client.tudelft.eduvpn.nl)
+[12:31:26] *** Joins: ravan__ (~ravan@user/ravan)
+[12:33:37] *** Quits: ravan_ (~ravan@user/ravan) (Ping timeout: 240 seconds)
+[12:39:55] *** Quits: filename (~kilitary@188.242.105.134) (Remote host closed the connection)
+[12:45:55] *** Quits: lumberjack123 (~alMalsamo@gateway/tor-sasl/almalsamo) (Ping timeout: 240 seconds)
+[12:48:35] *** Joins: namkeleser (~namkelese@101.175.155.55)
+[12:54:26] *** Quits: jarthur (~jarthur@cpe-70-114-198-37.austin.res.rr.com) (Quit: jarthur)
+[12:56:49] *** Joins: gabriel1__ (~gabriel1@37.172.121.73)
+[12:59:02] *** Quits: gabriel1_ (~gabriel1@37.164.218.102) (Ping timeout: 240 seconds)
+[13:13:57] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[13:24:02] *** Quits: skaro (~skaro@2600:8807:180:80:1173:3f2:e84a:7d63) (Quit: KVIrc 5.0.1 Aria http://www.kvirc.net/)
+[13:29:59] *** Quits: labrador (~labrador@user/labrador) (Quit: Leaving)
+[13:46:24] *** Joins: llorllale (~llorllale@198.98.119.85)
+[13:48:01] *** Joins: Guest63 (~Guest63@185.51.139.212)
+[13:49:27] *** Quits: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu) (Ping timeout: 256 seconds)
+[13:57:33] *** Joins: varayu (~varayu@157.37.187.131)
+[14:01:31] *** Joins: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu)
+[14:02:19] *** Quits: namkeleser (~namkelese@101.175.155.55) (Quit: Client closed)
+[14:04:14] *** Joins: xx (~xx@user/xx)
+[14:08:06] *** Joins: labrador (~labrador@user/labrador)
+[14:17:47] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[14:22:43] *** Quits: wasamasa (~wasamasa@chicken/contributor/wasamasa) (Quit: ZNC - https://znc.in)
+[14:23:06] *** Joins: igemnace (~ian@user/igemnace)
+[14:23:27] *** Quits: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu) (Ping timeout: 256 seconds)
+[14:24:00] *** Joins: wasamasa (~wasamasa@chicken/contributor/wasamasa)
+[14:26:37] *** Quits: gabriel1__ (~gabriel1@37.172.121.73) (Ping timeout: 240 seconds)
+[14:31:55] *** Joins: sebbu (~sebbu@user/sebbu)
+[14:35:25] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[14:36:02] *** Joins: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu)
+[14:36:22] *** Joins: gabriel1 (~gabriel1@user/gabriel1)
+[14:45:50] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[14:46:02] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[14:49:29] *** Joins: labrador_ (~labrador@user/labrador)
+[14:50:33] *** Quits: labrador (~labrador@user/labrador) (Remote host closed the connection)
+[15:04:18] *** Joins: cp_rox (~cp_rox@eduroam-external-69.leeds.ac.uk)
+[15:12:17] *** Joins: namkeleser (~namkelese@101.175.155.55)
+[15:18:26] *** Joins: filename (~kilitary@188.242.105.134)
+[15:26:01] *** Quits: cp_rox (~cp_rox@eduroam-external-69.leeds.ac.uk) (Quit: Client closed)
+[15:34:43] *** Quits: labrador_ (~labrador@user/labrador) (Remote host closed the connection)
+[15:35:07] *** Joins: labrador_ (~labrador@user/labrador)
+[15:44:55] *** Quits: Sofia (~sofia@user/sofia) (Ping timeout: 240 seconds)
+[15:45:19] *** Quits: frost (~frost@user/frost) (Quit: Client closed)
+[15:45:53] *** Joins: dez (uid92154@user/dez)
+[15:50:54] *** Quits: mmlj4 (~mmlj4@ip174-69-109-162.no.no.cox.net) (Ping timeout: 252 seconds)
+[15:53:49] *** Joins: mmlj4 (~mmlj4@ip174-69-109-162.no.no.cox.net)
+[15:57:54] *** Joins: machinedgod (~machinedg@24.105.81.50)
+[15:59:23] *** Joins: Sofia (~sofia@user/sofia)
+[16:18:37] *** Quits: BOKALDO (~BOKALDO@user/bokaldo) (Quit: Leaving)
+[16:33:59] *** Quits: namkeleser (~namkelese@101.175.155.55) (Quit: Client closed)
+[16:39:04] *** Quits: skyl4rk (~tlvb@user/tlvb) (Quit: ZNC 1.8.2 - https://znc.in)
+[16:39:51] *** Joins: skyl4rk (~tlvb@user/tlvb)
+[16:43:29] *** Joins: sobkas (~sobkas@95.175.17.217)
+[17:00:40] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[17:00:53] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[17:05:31] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[17:19:24] *** Quits: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470) (Ping timeout: 240 seconds)
+[17:19:44] *** Joins: ioxzev1z (~ioxzev1z@user/ioxzev1z)
+[17:23:33] *** Joins: [itchyjunk] (~itchyjunk@user/itchyjunk/x-7353470)
+[17:27:58] *** Joins: BOKALDO (~BOKALDO@user/bokaldo)
+[17:28:45] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[18:10:51] *** Quits: skyl4rk (~tlvb@user/tlvb) (Quit: ZNC 1.8.2 - https://znc.in)
+[18:11:37] *** Joins: skyl4rk (~tlvb@user/tlvb)
+[18:13:48] *** Quits: MajorBiscuit (~MajorBisc@c-001-023-015.client.tudelft.eduvpn.nl) (Ping timeout: 240 seconds)
+[18:14:06] *** Quits: labrador_ (~labrador@user/labrador) (Quit: Leaving)
+[18:16:12] *** Quits: varayu (~varayu@157.37.187.131) (Ping timeout: 240 seconds)
+[18:19:29] *** Joins: PJBoy (~PJBoy@user/pjboy)
+[18:23:27] *** Joins: varayu (~varayu@157.37.187.131)
+[18:30:43] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[18:30:58] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[18:31:00] *** Joins: lumberjack123 (~alMalsamo@gateway/tor-sasl/almalsamo)
+[18:35:37] *** Quits: Guest63 (~Guest63@185.51.139.212) (Ping timeout: 256 seconds)
+[18:37:10] *** Joins: BOKALDO_ (~BOKALDO@user/bokaldo)
+[18:37:15] *** Joins: skyl4rk` (~tlvb@user/tlvb)
+[18:37:20] *** Joins: dademurphy_ (~dademurph@45.63.16.83)
+[18:37:26] *** Joins: Doraemon (~NeoCron@p200300e47f277d00ff410b6acd6256a7.dip0.t-ipconnect.de)
+[18:37:42] *** Joins: Gallomimia- (~Gallomimi@node-1w7jra2a2gqpy4xwtt06otrzo.ipv6.telus.net)
+[18:38:18] *** Joins: AllMyNames_2 (~AllMyName@pool-71-186-156-227.bflony.east.verizon.net)
+[18:38:27] *** Joins: slave_blocker (~slave_blo@5.53.158.62)
+[18:38:48] *** Joins: rk4_ (~r@user/rk4)
+[18:38:52] <slave_blocker>  hello, good day :)
+[18:38:59] <slave_blocker>  lets say im translating a thingy about cryypto where the subject is the ed25519...
+[18:39:21] <slave_blocker>  but there is a detail that is bothering me. It is said in this paper that there is only one subgroup of order l?
+[18:40:19] *** Joins: machined1od (~machinedg@24.105.81.50)
+[18:40:37] *** Joins: IKnowNothing (~B4ckBOne@85.10.195.46)
+[18:40:37] *** Quits: IKnowNothing (~B4ckBOne@85.10.195.46) (Excess Flood)
+[18:40:57] <slave_blocker> say that l is a prime number
+[18:41:04] <slave_blocker> how can this be proven
+[18:41:36] <slave_blocker> if the order of a group G is N .
+[18:41:40] *** Joins: IKnowNothing (~B4ckBOne@85.10.195.46)
+[18:41:46] *** Joins: iokill_ (~dave@static.16.105.130.94.clients.your-server.de)
+[18:41:57] <slave_blocker> and N = 2³ * l
+[18:42:04] *** Quits: skyl4rk (~tlvb@user/tlvb) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: dademurphy (~dademurph@45.63.16.83) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: Gallomimia (~Gallomimi@node-1w7jra2a2gqpxl51se5m1r9ba.ipv6.telus.net) (Remote host closed the connection)
+[18:42:05] *** Quits: sebbu (~sebbu@user/sebbu) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: AllMyNames (~AllMyName@user/allmynames) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: rk4 (~r@user/rk4) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: BOKALDO (~BOKALDO@user/bokaldo) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: NeoCron (~NeoCron@p200300e47f277d00ff410b6acd6256a7.dip0.t-ipconnect.de) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: nadio (ice@starlight.iextreme.org) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: machinedgod (~machinedg@24.105.81.50) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: iokill (~dave@static.16.105.130.94.clients.your-server.de) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: MacGyver (~macgyver@user/macgyver) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: llorllale (~llorllale@198.98.119.85) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: ua_ (~ua@public-gprs222674.centertel.pl) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: B4ckBOne (~B4ckBOne@85.10.195.46) (Ping timeout: 240 seconds)
+[18:42:05] *** Quits: epony (epony@user/epony) (Ping timeout: 240 seconds)
+[18:42:23] *** Joins: llorllale (~llorllale@198.98.119.85)
+[18:43:07] <slave_blocker> i want to make it clear to the reader that this is true. But it confuses me so i can't expose it clearly...
+[18:43:10] *** Joins: MacGyver (~macgyver@user/macgyver)
+[18:43:55] *** Joins: ua_ (~ua@public-gprs222674.centertel.pl)
+[18:44:13] *** Joins: epony (epony@user/epony)
+[18:44:33] *** Quits: gevreeen (~gevreeen@2001:470:67:326:eddf:d09f:71d2:ada1) (Ping timeout: 240 seconds)
+[18:44:58] <riv> bruh
+[18:45:10] <slave_blocker> and is this always like that ? if there is a group of order N, and within it there is a subgroup that has a prime order l and l divides N...
+[18:45:42] <slave_blocker> is there always only one subgroup of order l ?
+[18:46:23] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)
+[18:46:26] <riv> let a prime p | |G|. Then there exists a unique subgroup H of G with order p. By Cauchy's theorem H exists. Suppose H' was any subgroup of the same size then H = H' because..
+[18:46:32] *** Quits: epony (epony@user/epony) (Excess Flood)
+[18:46:53] *** Joins: nadio (~ice@95.216.90.23)
+[18:47:07] *** Quits: ua_ (~ua@public-gprs222674.centertel.pl) (Excess Flood)
+[18:47:25] <slave_blocker> of the fundamental theorem in algebra ?
+[18:48:06] <slave_blocker> so you are saying that because the factorization of integers is unique so are the groups within groups and their orders ?
+[18:48:18] <riv> well i just typed half the proof
+[18:48:27] *** Joins: ua_ (~ua@public-gprs222674.centertel.pl)
+[18:48:30] <int-e> this is going all over the place :-/
+[18:50:06] <riv> if H and H' share any element other than 1, they must be equal (because every element other than 1 is a generator for the whole group of size p). If they only share 1 then I think you would have p^2 | |G| maybe?
+[18:52:29] <danieldg> hmm: say (a) is the generator of H and (b) is the generator of (H'), can you say anything about the order of (a*b)?
+[18:52:37] <slave_blocker> well i started doing stuff like :
+[18:52:50] <slave_blocker> P1 = 8 * (1) G
+[18:52:55] <slave_blocker> P2 = 8 * (2) G
+[18:53:00] <riv> there are many generators of these groups not just one
+[18:53:00] <slave_blocker> P3 = 8 * (3) G
+[18:53:02] <slave_blocker> .
+[18:53:03] <slave_blocker> .
+[18:53:04] <slave_blocker> .
+[18:53:09] <slave_blocker> Pl = 8 * (l) G
+[18:53:33] <danieldg> riv: I was trying to make another larger subgroup but it didn't actually work
+[18:54:04] <slave_blocker> riv, is this a good reasoning aswell ?
+[18:54:07] <danieldg> and yes, I should have used 'a generator' not 'the'
+[18:54:18] <slave_blocker> of why there is only one subgroup of size l ?
+[18:54:31] <riv> I don't think that we can say anything about a*b
+[18:54:31] <riv> in the sense that, you can construct weird groups where ab will have basically any order
+[18:54:44] <riv> maybe there is a bit of a restriction because of G being finite
+[18:54:48] *** Quits: udet (~udet@ve603.venus.servdiscount-customer.com) (Read error: Connection reset by peer)
+[18:55:00] *** Joins: udet (~udet@ve603.venus.servdiscount-customer.com)
+[18:55:00] *** Quits: noonien (~noonien@user/noonien) (Quit: Ping timeout (120 seconds))
+[18:55:09] <danieldg> riv: well (a*b)^p = a^p * b^p = 1
+[18:55:20] *** Joins: noonien (~noonien@user/noonien)
+[18:55:46] <danieldg> well, unless it doesn't commute
+[18:56:27] <slave_blocker> but
+[18:56:44] *** Joins: aczid_ (~aczid@tuig.nikhef.nl)
+[18:56:52] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[18:57:26] <slave_blocker> let a composite c | |G|. Then there exists a unique subgroup H of G with order c. By Cauchy's theorem H exists. Suppose H' was any subgroup of the same size then H = H' because.. ?
+[18:57:37] *** Quits: Luke (~ldm@hacksoc/alumni/ldm) (Ping timeout: 250 seconds)
+[18:57:37] *** Quits: mykhal (~m@user/mykhal) (Ping timeout: 250 seconds)
+[18:57:37] *** Quits: aczid (~aczid@tuig.nikhef.nl) (Ping timeout: 250 seconds)
+[18:57:38] *** Quits: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu) (Ping timeout: 250 seconds)
+[18:57:48] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Client Quit)
+[18:58:01] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[18:58:20] <slave_blocker> ...
+[18:58:20] *** Quits: rudi_s (~simon@user/rudi-s/x-7673890) (Ping timeout: 250 seconds)
+[18:58:29] *** Joins: mykhal (~m@user/mykhal)
+[18:58:39] *** Joins: dademurphy (~dademurph@45.63.16.83)
+[18:58:41] *** Joins: Gallomimia (~Gallomimi@node-1w7jra2a2gqpy4xwtt06otrzo.ipv6.telus.net)
+[18:58:57] *** Joins: rudi_s (~simon@user/rudi-s/x-7673890)
+[18:59:04] *** Joins: Rodya (~Rodya@205.185.115.119)
+[18:59:06] *** Joins: lithium_pt (~lithiumpt@178.239.165.57)
+[18:59:08] <slave_blocker> riv does this also work if the order of the subgroup is not prime ?
+[18:59:24] *** Joins: Luke (~ldm@hacksoc/alumni/ldm)
+[18:59:33] *** Joins: river (river@tilde.team/user/river)
+[18:59:38] *** Joins: blarnath (~d34dh0r53@2600:1700:10e0:ecf:5054:ff:fe7c:35f9)
+[18:59:40] *** Joins: martin02_ (~silas@141.84.69.76)
+[18:59:47] <river> hmm
+[18:59:57] <river> i reconnected after typing some stuff
+[18:59:58] *** Joins: madder_enz (~mad_enz@lnsm4-toronto12-50-101-118-206.internet.virginmobile.ca)
+[19:00:12] <slave_blocker> let a composite c | |G|. Then there exists a unique subgroup H of G with order c. By Cauchy's theorem H exists. Suppose H' was any subgroup of the same size then H = H' because.. ?
+[19:00:14] *** Joins: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu)
+[19:00:15] *** Joins: ze26zefo (bfa39a78db@ircbox.informatik.uni-erlangen.de)
+[19:00:17] <river> https://paste.debian.net/1235015/ heres what i wrote slave_blocker 
+[19:00:18] *** Joins: SoniEx2 (~quassel@autistic.space)
+[19:00:18] <slave_blocker>  riv does this also work if the order of the subgroup is not prime ?
+[19:00:19] *** Quits: tolarz (bfa39a78db@ircbox.informatik.uni-erlangen.de) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: lenish (~Rodya@205.185.115.119) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: EmmyNoether (~EmmyNoeth@yoke.ch0wn.org) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: Soni (~quassel@autistic.space) (Remote host closed the connection)
+[19:00:19] *** Quits: dademurphy_ (~dademurph@45.63.16.83) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: riv (river@tilde.team/user/river) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: lithiumpt (~lithiumpt@178.239.165.57) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: martin02 (~silas@141.84.69.76) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: mad_enz (~mad_enz@lnsm4-toronto12-50-101-118-206.internet.virginmobile.ca) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: davjutz (~davutz@d-138-207-232-76.paw.cpe.atlanticbb.net) (Ping timeout: 250 seconds)
+[19:00:19] *** Quits: d34dh0r53 (~d34dh0r53@2600:1700:10e0:ecf:5054:ff:fe7c:35f9) (Quit: ZNC 1.8.2 - https://znc.in)
+[19:00:19] *** Quits: tent405 (~tent405@107-214-50-180.lightspeed.bcvloh.sbcglobal.net) (Ping timeout: 250 seconds)
+[19:00:23] <river> hope it makes sense
+[19:00:29] <river> none of this applies if the order is not prime
+[19:00:30] *** Quits: Gallomimia- (~Gallomimi@node-1w7jra2a2gqpy4xwtt06otrzo.ipv6.telus.net) (Ping timeout: 250 seconds)
+[19:00:34] <int-e> uniqueness isn't true in general. if p | |G| and |G| < p^2 then the number of p-groups of G must be 1, cf. https://en.wikipedia.org/wiki/Sylow_theorems#Statement
+[19:00:46] *** Joins: EmmyNoether (~EmmyNoeth@yoke.ch0wn.org)
+[19:00:49] <river> C_2 x C_2 x C_3 <-- in this example there are two subgroups of order 6
+[19:00:53] <int-e> (follows from the third one)
+[19:01:00] *** Joins: tent405 (~tent405@107-214-50-180.lightspeed.bcvloh.sbcglobal.net)
+[19:01:01] <river> (because you can group one of the C_2's with a C_3)
+[19:01:26] <int-e> uniquness also holds if G is cyclic
+[19:01:42] <int-e> +e
+[19:02:45] *** Joins: davjutz (~davutz@d-138-207-232-76.paw.cpe.atlanticbb.net)
+[19:05:19] <slave_blocker> well in the case that i am studying the ed25519, N = 2³ * l . So the subgroup of order l is cyclic, and every element generates the whole subgroup.
+[19:05:31] *** Joins: skaro (~skaro@2600:8807:180:80:f9db:a60f:d518:281d)
+[19:05:50] <river> did what i pasted help?
+[19:06:40] <slave_blocker> a little bit .
+[19:07:11] <slave_blocker> i'm just missing the link on why thats so special when p is prime
+[19:07:12] <int-e> slave_blocker: that group of order 2^3*l may have several subgroups of order 2. But the Sylow thing tells us that there's only one of order l, because l is prime and larger than 2^3.
+[19:07:42] <river> prime numbers are special because they cannot be split up at all
+[19:07:53] <river> this implies that a group of prime order cannot be split up either
+[19:08:07] <int-e> (I don't know whether that larger group is cyclic or not.)
+[19:08:35] <slave_blocker> (it does not matter)
+[19:08:48] <river> if a large group has p in its prime factorization, but not p^2 - that implies that there is just one subgroup of size p 
+[19:08:50] <slave_blocker> the group H is cyclic because it has a prime order.
+[19:09:17] <river> but 6 | 12, and there are two distinct size 6 subgroups of C_12
+[19:09:18] <int-e> It would matter if you wanted to use that fact about cyclic groups to argue that the subgroup of order l is unique.
+[19:09:29] <int-e> river: no
+[19:09:42] <river> int-e: no what?
+[19:09:45] <int-e> river: there's only the one group, generated by 2
+[19:10:00] <int-e> C_12 isn't isomorphic to C_2 x C_2 x C_3, it's C_4 x C_3.
+[19:10:07] <river> oh thank you, you are right
+[19:10:12] <slave_blocker> uff
+[19:10:19] <river> so correction, 6 | 12, and there are two distinct size 6 subgroups of C_2 x C_2 x C_3
+[19:10:22] <slave_blocker> i was doubting again :)
+[19:10:54] <slave_blocker> hum,
+[19:11:14] <slave_blocker> so the order of the groups maps to its prime factorization...
+[19:11:47] <river> the connection is this: if H is a subgroup of G then |H| | |G|
+[19:11:59] <slave_blocker> yes
+[19:12:03] <slave_blocker> by lagrange
+[19:12:47] <slave_blocker>  there are two distinct size 6 subgroups of C_2 x C_2 x C_3 ???
+[19:13:00] <int-e> 3, actually.
+[19:13:08] <slave_blocker> wich ones?
+[19:13:31] <int-e> C_2 x C_2 has subgroups of size 2 generated by (1,0), (0,1) and (1,1)
+[19:14:11] <slave_blocker> oh my,
+[19:14:11] <river> <(1,0,1)> and <(0,1,1)>  + the one int-e has pointed out!
+[19:14:18] <river> <(1,1,1)> 
+[19:15:09] <slave_blocker> lets just stick with one dimensional arrays?
+[19:15:11] <river> note, <(1,0,1)> = {(1,0,1), (0,0,2), (1,0,0), (0,0,1), (1,0,2), (0,0,0)}
+[19:15:32] *** Quits: dez (uid92154@user/dez) (Quit: Connection closed for inactivity)
+[19:15:35] <slave_blocker> :|
+[19:15:54] <slave_blocker> the horror
+[19:16:56] <slave_blocker> hum, say there is Z_12
+[19:17:27] <slave_blocker> so 6 | 12, and the only subgroup of order 6 is :
+[19:17:43] <slave_blocker> {0,2,4,6,8,10}
+[19:17:51] <river> that's true
+[19:18:03] <slave_blocker> ok and 6 is composite
+[19:18:04] <river> I recomend you try to understand the example I took the time to write out
+[19:18:09] <river> dont let triples scare you off
+[19:18:12] *** Quits: gabriel1 (~gabriel1@user/gabriel1) (Ping timeout: 240 seconds)
+[19:18:19] <int-e> btw, it's not true that there's a subgroup of order d of G whenever d | |G|. Not sure whether this is the simplest example, but A_5 (of order 60) has no subgroup of order 30.
+[19:18:21] <river> it's just 3 groups together
+[19:18:56] <slave_blocker> river the example i am explaining is not with triples.
+[19:19:02] <slave_blocker> thanks and sorry.
+[19:19:13] <river> k
+[19:20:05] <slave_blocker> i guess to stay whithin the additive subgroups is easyest, the Z_n
+[19:20:39] <slave_blocker> so my remaining doubt, is that there is only one subgroup of order k, when k | n .
+[19:21:28] <slave_blocker> is this also true ?
+[19:22:31] <int-e> again, no.
+[19:22:42] <int-e> hmm?
+[19:23:02] <int-e> Actually, I'm not sure how to parse this. It may just be a consequence of Lagrange.
+[19:23:03] <slave_blocker> <int-e> slave_blocker: that group of order 2^3*l may have several subgroups of order 2?
+[19:23:26] <slave_blocker> 2 is also a prime !
+[19:23:43] <int-e> That just means that a subgroup of order 2 actually exists.
+[19:23:49] <slave_blocker> so it should also only contain one subgroup of order 2...
+[19:24:04] <int-e> It doesn't have to be unique... we can't tell that from the group order alone.
+[19:24:28] <slave_blocker> ...
+[19:24:49] <int-e> C_2 x C_2 x C_2 x C_l has the right order and *7* subgroups of order 2.
+[19:25:13] <int-e> Whereas C_8 x C_l has only one.
+[19:26:47] <slave_blocker> ok
+[19:26:57] <slave_blocker> say n = 44
+[19:27:04] <slave_blocker> Z_44
+[19:27:31] <slave_blocker> i claim there are no 2 subgroups with the same order in there.
+[19:28:20] <int-e> C_44? That's cyclic, so sure.
+[19:29:02] <slave_blocker> 44 = 2² * 11
+[19:29:08] <int-e> But if we just know that the order of the group is 44, then while we can infer that there's exactly one subgroup of order 11, we can't say whether the subgroups of order 2 are unique.
+[19:29:53] <slave_blocker> ok find me 2 groups of order 2 in there then.
+[19:29:56] <slave_blocker> please
+[19:30:36] <int-e> C_2 x C_2 x C_11 has three subgroups of order 2, generated by (1,0,0), (0,1,0) and (1,1,0), respectively. C_44 is cyclic, so it has only one subgroup of order 2.
+[19:30:37] <slave_blocker> there is one : {0, 22}
+[19:31:06] <int-e> Not all groups are cyclic.
+[19:31:23] <slave_blocker> but 44 is not prime why should it be cyclic
+[19:31:24] <slave_blocker> ?
+[19:31:48] <int-e> C_44 is generated by a single element, 1.
+[19:31:53] <int-e> That's what "cyclic" means.
+[19:32:13] <slave_blocker> oh
+[19:32:26] <int-e> C_2 x C_2 x C_11 is *not* generated by a single element. So not cyclic. But its order is also 44.
+[19:32:34] <slave_blocker> i thought it means that every element in that group generate the group
+[19:33:12] <int-e> learning++
+[19:33:17] <slave_blocker> ...
+[19:33:45] <slave_blocker> ok
+[19:34:12] <int-e> slave_blocker: I mean, now you know better. That's a gain, isn't it?
+[19:34:39] <slave_blocker> so you are saying that every Z_n, is generated at least by a single element, 1.
+[19:34:51] <slave_blocker> when Z_p then is it abelian?
+[19:35:04] <int-e> All cyclic groups are abelian.
+[19:35:26] <int-e> In terms of the generating element g, g^a g^b = g^(a+b) = g^(b+a) = g^b g^a
+[19:35:47] <slave_blocker> however from what i understood is that in the case of Z_n the order of each subgroup depends on its divisibility on n.
+[19:35:47] *** Joins: dude12312414 (~test@gateway/tor-sasl/dude12312414)
+[19:36:05] <slave_blocker> so if k | n then there is just one subgroup of that order.
+[19:36:31] <int-e> Yep... generated by n/k.
+[19:37:23] <slave_blocker> what ?
+[19:37:37] <slave_blocker> oh my
+[19:38:28] *** Quits: filename (~kilitary@188.242.105.134) (Remote host closed the connection)
+[19:39:33] <slave_blocker> int-e, so you are saying that in the case of N = 2³ * l, there is only one subgroup of order 2 ?
+[19:39:44] <int-e> I don't know.
+[19:39:56] <int-e> I don't know whether that group is cyclic or not.
+[19:40:00] <int-e> It hinges on that.
+[19:40:04] <slave_blocker> so the possible orders for the subgroups are :
+[19:40:21] <int-e> But... we only care about the subgroup of order l, so why dwell on it?
+[19:40:38] <slave_blocker> 1,2,4,8,l,2l,4l,8l
+[19:41:05] <slave_blocker> thats also true !
+[19:41:11] <int-e> (We don't need cyclicity for uniqueness of that subgroup. That's why I brought up the Sylow theorems... they're heavy, but they show this.)
+[19:42:21] <slave_blocker> i was trying to figure out a more general pattern so that it sticks for life.
+[19:42:37] <slave_blocker> N = 2³ * l
+[19:42:56] <slave_blocker> N = 2² * 2 * l
+[19:43:38] <slave_blocker> N = 2 * 2 * 2 * l
+[19:44:37] <slave_blocker> so there must be a mapping of the prime factors to the subgroups...
+[19:45:12] <slave_blocker> there must be only one subgroup of size 2, one of size 4, one of size 8 ...
+[19:46:03] <slave_blocker> but i can't explain this in a verbatim manner... 
+[19:49:27] *** Joins: gdd (~gdd@129.199.146.230)
+[19:50:19] <slave_blocker> anyway
+[19:50:26] *** Quits: slave_blocker (~slave_blo@5.53.158.62) (Quit: Leaving)
+[19:53:40] <dude12312414> (is l a prime, here?)
+[19:53:49] <int-e> dude12312414: yeah
+[19:54:22] <dude12312414> oh ok nvm then
+[19:54:49] <int-e> Also I think the larger group (of order 8l) is actually cyclic. But I'm inferring this circumstantially from writing about Curve25519 rather than actual knowledge.
+[19:55:03] *** Joins: gevreeen (~gevreeen@2001:470:67:326:eddf:d09f:71d2:ada1)
+[19:56:14] <int-e> dude12312414: l is 2^252 + 27742317777372353535851937790883648493. (Helpful, isn't it?)
+[20:07:57] *** Joins: satanist (~satanist@bureaucracy.bureaucracy.de)
+[20:08:35] *** Quits: lumberjack123 (~alMalsamo@gateway/tor-sasl/almalsamo) (Ping timeout: 240 seconds)
+[20:10:41] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[20:10:56] *** Joins: foobaz212 (~foobaz212@109.249.187.65)
+[20:11:05] *** Quits: foobaz212 (~foobaz212@109.249.187.65) (Write error: Broken pipe)
+[20:11:33] *** Joins: foobaz212 (~foobaz212@109.249.187.65)
+[20:11:39] *** Quits: dude12312414 (~test@gateway/tor-sasl/dude12312414) (Quit: THE RAM IS TOO DAMN HIGH)
+[20:12:00] *** Joins: slave_blocker (~slave_blo@5.53.158.62)
+[20:12:00] *** Quits: foobaz212 (~foobaz212@109.249.187.65) (Client Quit)
+[20:12:11] *** IKnowNothing is now known as B4ckBOne
+[20:12:23] <slave_blocker> just one more thing, 
+[20:13:04] <slave_blocker> in this group G of order N = 2³ * l ...
+[20:13:52] <slave_blocker> if i pick any element a and multiply it by 8 that will make it stick inside the subgroup H of order l ?
+[20:16:19] <int-e> Yes.
+[20:18:16] <int-e> you can compute the order by o(a^k) = o(a)/gcd(o(a),k)... so for k=8 that will get rid of all the (up to 3) factors of 2 in the order.
+[20:18:46] *** Parts: agrosant (~agrosant@79.103.63.74.dsl.dyn.forthnet.gr) ()
+[20:18:46] *** Joins: agrosant (~agrosant@79.103.63.74.dsl.dyn.forthnet.gr)
+[20:19:31] <int-e> slave_blocker: Btw, I suspect that the larger group is, in fact, cyclic. But I have not seen any source literally say it.
+[20:20:55] <slave_blocker> uff
+[20:22:25] <slave_blocker> regardless you have contradicted yourself above.
+[20:22:59] <slave_blocker> since 2 | N, there must be only one subgroup of order 2, generated by N/2.
+[20:23:37] <int-e> ?
+[20:24:08] *** Parts: agrosant (~agrosant@79.103.63.74.dsl.dyn.forthnet.gr) ()
+[20:24:08] *** Joins: agrosant (~agrosant@79.103.63.74.dsl.dyn.forthnet.gr)
+[20:24:11] <int-e> C_2 x C_2 x C_11 of order N=44 has 3 subgroups of order 2.
+[20:24:16] *** Quits: ioxzev1z (~ioxzev1z@user/ioxzev1z) (Quit: Leaving)
+[20:24:46] <slave_blocker> ...
+[20:25:03] <slave_blocker> this is not triples this is Z_n
+[20:25:11] <int-e> There's no Z_n
+[20:25:27] <int-e> (Where I could see. Maybe you have more information than I do.)
+[20:25:31] *** Quits: agrosant (~agrosant@79.103.63.74.dsl.dyn.forthnet.gr) (K-Lined)
+[20:25:37] <slave_blocker> i realiye that your knowledge may extend to further dimensions...
+[20:25:57] <int-e> In any case I never said that there is more than one subgroup of order 2. I said that I don't know, because I don't know whether the group is cyclic or not. I suspect it is. II still don't know.
+[20:29:49] *** Quits: machined1od (~machinedg@24.105.81.50) (Ping timeout: 240 seconds)
+[20:30:16] <int-e> (And all the examples with C_2 x C_2 were meant to illustrate why I don't know.)
+[20:31:58] <slave_blocker> this subgroup has a co-factor of 8 {\displaystyle 8} 8, meaning the number of elements in the subgroup is 1 / 8 {\displaystyle 1/8} {\displaystyle 1/8} that of the elliptic curve group.
+[20:32:58] <slave_blocker> so this is more specific the elliptic curve is defined not only over a group but over a field
+[20:33:21] <slave_blocker> so this might take your triply thingys away...
+[20:34:35] <slave_blocker> v^2 = u^3 + A*u^2 + u, called "curve25519":
+[20:35:00] <slave_blocker>  p  2^255 - 19
+[20:35:40] <slave_blocker> so im not talking here about groups im talking about fields
+[20:35:58] *** Joins: sebbu (~sebbu@user/sebbu)
+[20:39:51] <slave_blocker> thanks anyway int-e and river !
+[20:40:31] *** Quits: slave_blocker (~slave_blo@5.53.158.62) (Quit: Leaving)
+[20:41:28] <int-e> Will they realize that there's both a field and a group here? (And another group, the twist...)
+[20:44:48] <int-e> I wish I knew more about that group structure though. :-/
+[20:47:39] <int-e> https://en.wikipedia.org/wiki/Elliptic_curve helps a bit: "The set of points E(Fq) is a finite abelian group. It is always cyclic or the product of two cyclic groups."
+[20:52:45] *** Joins: epony (epony@user/epony)
+[21:03:59] *** Quits: Gallomimia (~Gallomimi@node-1w7jra2a2gqpy4xwtt06otrzo.ipv6.telus.net) (Remote host closed the connection)
+[21:05:18] *** Joins: Gallomimia (~Gallomimi@node-1w7jra2a2gqpvyoqdojxso44b.ipv6.telus.net)
+[21:13:48] *** Joins: w4ld0 (w4ld0@gateway/vpn/protonvpn/w4ld0)
+[21:14:11] *** Joins: foobaz212 (~foobaz212@109.249.187.65)
+[21:22:09] *** Quits: foobaz212 (~foobaz212@109.249.187.65) (Quit: Client closed)
+[21:24:17] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[21:26:06] *** Joins: Guyver2 (Guyver@guyver2.xs4all.nl)
+[21:29:15] *** Joins: nq (~nq@2a02:2f08:e015:a900:7e72:2af9:f526:1e8f)
+[21:32:47] *** Quits: pieguy128 (~pieguy128@bras-base-mtrlpq5031w-grc-35-70-24-248-224.dsl.bell.ca) (Quit: ZNC 1.8.2 - https://znc.in)
+[21:33:05] *** Joins: pieguy128 (~pieguy128@bras-base-mtrlpq5031w-grc-35-70-24-248-224.dsl.bell.ca)
+[21:44:00] *** Joins: lumberjack123 (~alMalsamo@gateway/tor-sasl/almalsamo)
+[21:53:54] *** ze26zefo is now known as tolarz
+[22:10:20] *** Quits: Doraemon (~NeoCron@p200300e47f277d00ff410b6acd6256a7.dip0.t-ipconnect.de) (Quit: Leaving)
+[22:30:34] *** Joins: aleck (~aleck@user/aleck)
+[22:32:09] *** Quits: aleck1 (~aleck@user/aleck) (Ping timeout: 250 seconds)
+[22:41:56] *** Joins: xenoterracide (~xenoterra@99-124-139-34.lightspeed.iplsin.sbcglobal.net)
+[22:44:47] *** Joins: bluehoney (~bluehoney@gateway/vpn/pia/bluehoney)
+[22:46:55] *** Quits: holgersson (~quassel@user/holgersson) (Quit: “Format C:........[Done]“)
+[22:47:12] *** Joins: holgersson (~quassel@user/holgersson)
+[22:57:32] *** Joins: machinedgod (~machinedg@24.105.81.50)
+[23:05:10] *** Quits: BOKALDO_ (~BOKALDO@user/bokaldo) (Quit: Leaving)
+[23:06:09] *** Quits: olspookishmagus (~pookie@snf-137798.vm.okeanos.grnet.gr) (Quit: Lost terminal)
+[23:08:52] *** Quits: xenoterracide (~xenoterra@99-124-139-34.lightspeed.iplsin.sbcglobal.net) (Remote host closed the connection)
+[23:15:53] *** skyl4rk` is now known as skyl4rk
+[23:23:09] *** Quits: xx (~xx@user/xx) (Quit: xx)
+[23:26:36] *** Joins: jarthur (~jarthur@2603-8080-1540-002d-887b-6e2d-8199-f3a8.res6.spectrum.com)
+[23:27:50] *** Joins: olspookishmagus (~pookie@snf-137798.vm.okeanos.grnet.gr)
+[23:33:15] *** Joins: xx (~xx@user/xx)
+[23:36:11] *** Quits: Lord_of_Life (~Lord@user/lord-of-life/x-2819915) (Ping timeout: 245 seconds)
+[23:36:15] *** Joins: Lord_of_Life_ (~Lord@user/lord-of-life/x-2819915)
+[23:37:31] *** Lord_of_Life_ is now known as Lord_of_Life
+[23:40:03] *** Quits: machinedgod (~machinedg@24.105.81.50) (Ping timeout: 252 seconds)
+[23:42:12] *** Quits: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu) (Ping timeout: 240 seconds)
+[23:45:04] *** Joins: ivii (~ivan@user/ivii)
+[23:51:06] *** Quits: g00fy782 (~g00fy@user/g00fy) (Quit: The Lounge - https://thelounge.chat)
+[23:51:41] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Quit: Client closed)
+[23:51:57] *** Joins: foobaz212 (~foobaz212@152.37.103.80)
+[23:55:11] *** Joins: imi (~imi@catv-89-132-115-236.catv.fixed.vodafone.hu)
+[23:56:13] *** Joins: g00fy782 (~g00fy@user/g00fy)
+[23:59:45] *** Quits: foobaz212 (~foobaz212@152.37.103.80) (Ping timeout: 256 seconds)

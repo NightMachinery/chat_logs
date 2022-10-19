@@ -1,0 +1,87 @@
+[00:17:13] <headius> hmm there are a couple failures on 9.3 that seem to be from byteit101 PR
+[00:17:34] <headius> https://github.com/jruby/jruby/runs/5576374889?check_suite_focus=true
+[00:28:27] <byteit101[m]> oh
+[00:29:29] <byteit101[m]> whoa, a new file change comparision viewer in github (beta)
+[00:36:01] <byteit101[m]> puzzling why I haven't ran into this issue before
+[00:50:56] <byteit101[m]> bundle install doesn't install rake
+[00:56:18] <byteit101[m]> Is it intentional that a Java j.l.Class represented by a Ruby Class is not coercable to a j/l/Class?
+[01:04:32] <byteit101[m]> headius: nonetheless: https://github.com/byteit101/jruby/commit/f80378620dae0bb57d9fc40d0b7d922e15d9e3a7
+[01:05:04] <byteit101[m]> I can do a new PR if you'd like, or you can just pick that commit
+[01:43:56] <enebo[m]> https://github.com/jruby/jruby/issues/7102#issuecomment-1069687074
+[01:44:05] <enebo[m]> That is a fun time.
+[02:47:56] <ahorek[m]> <headius> "hmm there are a couple failures..." <- have you find out the reason? I'm getting errors mostly with frozen string literals, even on a commit before byteit101's changes
+[02:48:28] <byteit101[m]> see my commit above 5 messages ago
+[02:49:02] <byteit101[m]> no idea why it changed, but Class vs j.l.Class causing issues.
+[02:49:36] <headius> Yeah unsure why it wasn't caught earlier
+[02:49:46] <byteit101[m]> I don't know how it was working for me
+[02:50:32] <ahorek[m]> do you think it's related to these https://github.com/jruby/jruby/runs/5574528021?check_suite_focus=true ?
+[02:50:38] <byteit101[m]> headius: do you want to just pick that commit up or do you want a PR?
+[02:54:06] <ahorek[m]> ok, thanks for confirmation, it seems to be the cause
+[03:13:19] <headius> I can just grab it
+[10:33:50] <headius> good evening
+[10:33:58] <headius> byteit101: testing that patch locally now and then I will push
+[11:16:54] <headius> ahorek: I am seeing frozen string errors too
+[11:17:39] <headius> I don't see any recent commits that would cause this
+[11:20:04] <headius> ah this branch is behind
+[11:26:21] <headius> damn... byteit101 it seems to be your PR, I have no explanation
+[11:28:53] <headius> ugh no checks were running on your PR for whatever reason
+[11:30:30] <headius> I don't see what would cause it
+[12:17:36] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Ping timeout: 250 seconds)
+[12:18:53] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[12:30:30] <headius> object_id
+[12:40:10] <headius> I think I have a lead
+[12:40:23] <headius> object_id is normally treated specially since it is lazily calculated
+[12:40:32] <headius> but I think the changes here turned it into a normal ivar
+[12:40:54] <headius> and we reject deduplicating strings that have ivars
+[12:41:08] <headius> maybe
+[12:41:33] <headius> those should all be the same object
+[12:41:33] * headius sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/333b740a7dcaa57f7c9430665ed6c6fab10b4803
+[12:44:46] * headius sent a code block: https://libera.ems.host/_matrix/media/r0/download/libera.chat/2aa4b2ad812710359b6076abe694aea6861c04f3
+[12:45:33] <headius> the way these tests are written it will get the literal, deduplicate it, call object_id, which makes that object have vars... next one tries to get same object, deduplicate, but now it has vars so we make a new object
+[15:57:32] <headius> I'm going to revert for now to continue progress on 9.3.4... we can push a new PR with testing and figure out how to handle the object_id case along with the ivars
+[15:57:41] <headius> I still do not see the exact problem
+[15:59:56] <headius> byteit101: this is not your fault... I should have noticed CI was not running on that PR. I don't see an obvious reason why this breaks but I'm pretty sure object_id variable handling is the root issue
+[16:24:09] <headius> revert PR appears to be going mostly green (need to investigate recent changes to concurrent-ruby but the regressions are gone): https://github.com/jruby/jruby/pull/7146
+[16:30:00] <headius> ahorek: you can rebase your test PR or I can just recreate it locally along with a stdlib update
+[16:30:00] <headius> I will push a stdlib update momentarily
+[16:37:48] <headius> looks like only one change from 2.6.8 to 2.6.9 in the versioned stdlib files
+[18:14:20] <headius> enebo: range fix and circular cause fix are green and merging now
+[18:14:35] <headius> I have not slept so I will not be working during the day today
+[18:14:39] <enebo[m]> great
+[18:14:42] <enebo[m]> ok
+[18:14:49] <enebo[m]> I should get a fix in for kwrest
+[18:15:09] <headius> the ivar thing is something with object_id and the way byteit101 reworked stuff... it is reverted but I think we have time to fix that and gain some confidence
+[18:15:12] <headius> or we just punt to 9.3.5
+[18:15:16] <enebo[m]> I think the answer will be to mark the hash as kwrest splat and check it on way in during check_arity and then unmark it
+[18:15:25] <headius> yeah I read your analysis
+[18:15:51] <headius> looking forward to hitting kwargs hard after 9.4 so we can pipeline them through
+[18:15:58] <enebo[m]> yeah
+[18:16:20] <enebo[m]> They will increasingly become important so having them not create the hashes will be big
+[18:17:51] <headius> I have it planned out in my head
+[18:17:56] <headius> hmm github is not letting me close https://github.com/jruby/jruby/issues/7035
+[18:18:13] <headius> some error... "you can't comment at this time"
+[18:18:34] <enebo[m]> I closed it
+[18:18:38] <enebo[m]> not sure what is up
+[18:18:56] <headius> weird
+[18:21:46] <headius> logger release with that fix is out too, updating us
+[18:23:20] <headius> wow, github has some problems today
+[18:23:22] <headius> To github.com:jruby/jruby.git
+[18:23:23] <headius>  ! [remote rejected]       jruby-9.3 -> jruby-9.3 (Internal Server Error)
+[18:23:25] <headius> worked a second time
+[18:25:05] <headius> punted remaining 2.6 work to 9.3.5.0
+[18:25:24] <headius> enebo: only remaining marked issue is your kwargs thing
+[18:25:36] <enebo[m]> cool!
+[18:25:51] <enebo[m]> That also will give us a little more time for this all to settle
+[18:25:52] <headius> and whatever we decide to do with byteit101 ivar stuff
+[18:26:15] <enebo[m]> yeah I just saw the fallout without looking at any why
+[18:26:25] <enebo[m]> id is not atomic was all I really got out
+[18:26:38] <headius> it broke frozen strings by making object_id look like an ivar
+[18:26:48] <headius> we don't dedup strings with ivars
+[18:27:03] <enebo[m]> yeah
+[18:27:10] <headius> so if you call object_id on one then future attempts to dedup it will create a new one
+[18:27:32] <headius> I have not sorted out exactly why it is broken in the patch
+[18:36:37] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Ping timeout: 240 seconds)
+[18:48:10] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[19:49:02] *** Quits: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net) (Ping timeout: 240 seconds)
+[20:05:18] *** Joins: drbobbeaty (~drbob@c-24-14-127-107.hsd1.il.comcast.net)
+[20:08:43] <byteit101[m]> That's very strange. I assume the refactoring of the variable table manager is what caused this. Which test bucket was the failure in so I can look at this after work today?
